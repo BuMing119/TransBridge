@@ -74,7 +74,7 @@ def _facade():
             return OperationResult.completed({"name": name}, run_id=context.run_id)
 
     lifecycle = Lifecycle()
-    facade = GuiProjectCommandFacade(lifecycle, None, lambda: projections.append(aggregate.revision))
+    facade = GuiProjectCommandFacade(lifecycle, lambda: projections.append(aggregate.revision))
     context = RequestContext(
         owner_id="ui",
         run_id="ai-run",

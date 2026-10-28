@@ -83,12 +83,17 @@ class ProjectionDecision:
 
 
 def _freeze_mapping(values: Mapping[str, Any]) -> Mapping[str, Any]:
-    return _FrozenMapping(tuple(sorted((str(key), _freeze_value(value)) for key, value in values.items())))
+    return values if isinstance(values, _FrozenMapping) else _FrozenMapping(tuple(values.items()))
 
 
 @dataclass(frozen=True, slots=True)
 class _FrozenMapping(Mapping[str, Any]):
     pairs: tuple[tuple[str, Any], ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "pairs", tuple(sorted((str(key), freeze_projection_value(value)) for key, value in self.pairs))
+        )
 
     def __getitem__(self, key: str) -> Any:
         for candidate, value in self.pairs:
@@ -107,6 +112,9 @@ class _FrozenMapping(Mapping[str, Any]):
 class _FrozenArray:
     values: tuple[Any, ...]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "values", tuple(freeze_projection_value(value) for value in self.values))
+
     def __iter__(self):
         return iter(self.values)
 
@@ -114,11 +122,14 @@ class _FrozenArray:
         return len(self.values)
 
 
-def _freeze_value(value: Any) -> Any:
+def freeze_projection_value(value: Any) -> Any:
+    """Freeze mutable JSON containers, preserving already immutable projection values."""
+    if isinstance(value, (_FrozenMapping, _FrozenArray)):
+        return value
     if isinstance(value, Mapping):
         return _freeze_mapping(value)
     if isinstance(value, (list, tuple)):
-        return _FrozenArray(tuple(_freeze_value(item) for item in value))
+        return _FrozenArray(tuple(value))
     if value is None or isinstance(value, (str, bool, int)):
         return value
     if isinstance(value, float) and math.isfinite(value):
@@ -141,6 +152,7 @@ def copy_projection_value(value: Any) -> Any:
 
 __all__ = [
     "copy_projection_value",
+    "freeze_projection_value",
     "DirtyState",
     "ProjectionDecision",
     "ProjectionEvent",

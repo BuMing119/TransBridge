@@ -1,10 +1,8 @@
 """Shared operation-plan presentation and runtime adapters."""
 
 from .mappers import (
-    DownloadOperationMapper,
     FomodOperationMapper,
     OperationPlanDraft,
-    UploadOperationMapper,
     WriteOperationMapper,
 )
 from .plan_presenter import (
@@ -48,8 +46,6 @@ __all__ = [
     "OperationTaskRequest",
     "OperationWorkload",
     "OperationPlanDraft",
-    "UploadOperationMapper",
-    "DownloadOperationMapper",
     "WriteOperationMapper",
     "FomodOperationMapper",
     "PreflightCheckState",

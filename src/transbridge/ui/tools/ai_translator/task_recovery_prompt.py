@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QMessageBox, QPushButt
 from transbridge.ui.workers import ApiWorker
 
 INTERRUPTED_STATES = frozenset({"preparing", "running", "applying", "pending_confirmation", "interrupted"})
-RECOVERABLE_STATES = INTERRUPTED_STATES | {"partial", "failed"}
+RECOVERABLE_STATES = INTERRUPTED_STATES | {"partial", "failed", "cancelled", "error", "completed"}
 logger = logging.getLogger(__name__)
 
 
@@ -22,8 +22,9 @@ def matches_version(record, identity):
 
 
 def recovery_summary(record):
-    total = sum(
-        len(source.get("translate_keys", ())) + len(source.get("polish_keys", ())) for source in record["sources"]
+    total = record.get(
+        "scope_count",
+        sum(len(source.get("translate_keys", ())) + len(source.get("polish_keys", ())) for source in record["sources"]),
     )
     completed = record.get("saved_count")
     progress = f"原任务范围 {total} 条"
@@ -36,43 +37,51 @@ def recovery_summary(record):
     return progress
 
 
-def read_recovery_records(directory):
+def read_recovery_records(directory, *, project_id=None, variant_id=None, states=None):
     from transbridge.application.translation.legacy_task_recovery import discover_legacy_records
-    from transbridge.application.translation.proofread_checkpoint import ProofreadCheckpoint
     from transbridge.application.translation.task_recovery import TaskRecoveryStore
 
-    from .task_result_recovery import load_recovery_results
-
     store = TaskRecoveryStore(directory / "ai-task-recovery")
-    saved_records = store.list_records()
+    saved_records = store.list_summaries()
     known = {record["task_id"] for record in saved_records}
     claimed_origins = {record.get("origin_task_id") for record in saved_records}
     records = saved_records + tuple(
         record
-        for record in discover_legacy_records(directory)
+        for record in discover_legacy_records(
+            directory,
+            known=known | claimed_origins,
+            summaries=True,
+            project_id=project_id,
+            variant_id=variant_id,
+            states=states,
+        )
         if record["task_id"] not in known and record["task_id"] not in claimed_origins
     )
-    for record in records:
-        if not record.get("legacy"):
-            try:
-                record["results"] = load_recovery_results(store, record)
-            except (OSError, ValueError) as exc:
-                logger.warning("Cannot read saved results for AI task %s", record["task_id"], exc_info=True)
-                record["supported"] = False
-                record["recovery_error"] = str(exc)
-        if "checkpoint_settings" in record and not any(source["translate_keys"] for source in record["sources"]):
-            record["saved_count"] = sum(
-                ProofreadCheckpoint(
-                    directory / "ai-proofread-resume",
-                    project=record["project_id"],
-                    variant=record["variant_id"],
-                    source=source["key"],
-                    settings=record["checkpoint_settings"],
-                    task_id=record["task_id"],
-                ).saved_count()
-                for source in record["sources"]
-            )
-    return records
+    return tuple(
+        record
+        for record in records
+        if (
+            (project_id is None or str(record.get("project_id")) == str(project_id))
+            and (variant_id is None or str(record.get("variant_id")) == str(variant_id))
+            and (states is None or record.get("state") in states)
+        )
+    )
+
+
+def load_selected_recovery(directory, summary):
+    from transbridge.application.translation.legacy_task_recovery import discover_legacy_records
+    from transbridge.application.translation.task_recovery import TaskRecoveryStore
+    from transbridge.application.translation.task_result_recovery import load_recovery_results
+
+    if summary.get("legacy"):
+        records = discover_legacy_records(directory, task_id=summary["task_id"])
+        if not records:
+            raise ValueError("旧任务缺少可验证的输入或检查点，原记录已保留。")
+        return records[0]
+    store = TaskRecoveryStore(directory / "ai-task-recovery")
+    record = store.load(summary["task_id"])
+    record["results"] = load_recovery_results(store, record)
+    return record
 
 
 class TaskRecoveryPrompt(QDialog):
@@ -183,7 +192,9 @@ class TaskRecoveryDiscovery(QObject):
         directory, identity = scope
 
         def read():
-            return read_recovery_records(directory)
+            return read_recovery_records(
+                directory, project_id=identity[0], variant_id=identity[1], states=INTERRUPTED_STATES
+            )
 
         def loaded(records):
             if self.registry.shutting_down or self.scope() != scope:

@@ -11,11 +11,11 @@ import unittest
 from unittest.mock import patch
 
 from tests.conftest import (
-    MockAppContext,
     make_entry,
     make_llm_config,
     make_test_collection,
 )
+from tests.smart_assistant.postprocess.project_support import project_context
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.smart_assistant.tools.base import ExecutionContext
 
@@ -31,7 +31,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
         self.func = _tool_run_postprocess
 
     def test_a1_empty_collection_returns_fail(self):
-        ctx = MockAppContext(collection=None)
+        ctx = project_context(self, collection=None)
         ec = ExecutionContext(app_context=ctx)
         result = self.func({}, ec)
         self.assertFalse(result.success)
@@ -39,7 +39,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
 
     def test_a2_empty_collection_length_zero(self):
         empty_col = TranslationEntryCollection([])
-        ctx = MockAppContext(collection=empty_col)
+        ctx = project_context(self, collection=empty_col)
         ec = ExecutionContext(app_context=ctx)
         result = self.func({}, ec)
         self.assertFalse(result.success)
@@ -47,7 +47,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
 
     def test_a3_nonexistent_entry_ids_returns_fail(self):
         collection = make_test_collection(5)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
         result = self.func({"entry_ids": ["nonexistent_1", "nonexistent_2"]}, ec)
         self.assertFalse(result.success)
@@ -55,7 +55,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
 
     def test_a4_mixed_entry_ids_filters_correctly(self):
         collection = make_test_collection(5)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         with patch("transbridge.paratranz.config_manager.LLMConfig.load_from_file") as mock_load:
@@ -70,7 +70,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
 
     def test_a5_valid_entry_ids_reaches_config_check(self):
         collection = make_test_collection(5)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         with patch("transbridge.paratranz.config_manager.LLMConfig.load_from_file") as mock_load:
@@ -85,7 +85,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
 
     def test_a6_translation_scope_resolves_entries(self):
         collection = make_test_collection(10)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ctx.translation_scope = {
             "stages": [1],
             "labels": [],
@@ -106,7 +106,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
 
     def test_a7_translation_scope_empty_result_behavior(self):
         collection = make_test_collection(5)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ctx.translation_scope = {
             "stages": [99],
             "labels": [],
@@ -121,7 +121,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
 
     def test_a8_default_phases_list(self):
         collection = make_test_collection(5)
-        ec = ExecutionContext(app_context=MockAppContext(collection=collection))
+        ec = ExecutionContext(app_context=project_context(self, collection=collection))
 
         with patch.object(threading.Thread, "start", return_value=None):
             result = self.func({}, ec)
@@ -132,7 +132,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
 
     def test_a9_custom_phases_in_data(self):
         collection = make_test_collection(5)
-        ec = ExecutionContext(app_context=MockAppContext(collection=collection))
+        ec = ExecutionContext(app_context=project_context(self, collection=collection))
 
         with patch.object(threading.Thread, "start", return_value=None):
             result = self.func(
@@ -146,7 +146,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
 
     def test_a10_unknown_phase_name_no_crash(self):
         collection = make_test_collection(3)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         result = self.func({"entry_ids": ["entry_000"], "phases": ["unknown_phase", "garbage"]}, ec)
@@ -155,7 +155,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
 
     def test_a11_api_key_missing_error_fields(self):
         collection = make_test_collection(3)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         with patch("transbridge.paratranz.config_manager.LLMConfig.load_from_file") as mock_load:
@@ -181,7 +181,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
 
     def test_c1_invalid_scope_rejected(self):
         collection = make_test_collection(5)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         result = self.func({"scope": "invalid_scope"}, ec)
@@ -190,7 +190,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
 
     def test_c2_scope_all_finds_entries_with_translations(self):
         collection = make_test_collection(5)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         with patch.object(threading.Thread, "start", return_value=None):
@@ -201,7 +201,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
 
     def test_c3_scope_passed_finds_correct_entries(self):
         collection = make_test_collection(10)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         with patch.object(threading.Thread, "start", return_value=None):
@@ -212,7 +212,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
 
     def test_c4_scope_has_issues_finds_stage2_entries(self):
         collection = make_test_collection(10)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         with patch.object(threading.Thread, "start", return_value=None):
@@ -223,16 +223,16 @@ class TestStartPolishParamValidation(unittest.TestCase):
     def test_c5_scope_no_matching_entries_returns_fail(self):
         entries = [make_entry(f"e{i}", original=f"orig {i}", translation="", stage=0) for i in range(3)]
         collection = TranslationEntryCollection(entries)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         result = self.func({"scope": "all"}, ec)
         self.assertFalse(result.success)
-        self.assertIn("没有符合 scope=all", result.message)
+        self.assertIn("没有可润色的词条", result.message)
 
     def test_c6_intensity_light_maps_to_light(self):
         collection = make_test_collection(5)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         with patch.object(threading.Thread, "start", return_value=None):
@@ -242,7 +242,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
 
     def test_c7_intensity_medium_maps_to_moderate(self):
         collection = make_test_collection(5)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         with patch.object(threading.Thread, "start", return_value=None):
@@ -252,7 +252,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
 
     def test_c8_intensity_heavy_maps_to_aggressive(self):
         collection = make_test_collection(5)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         with patch.object(threading.Thread, "start", return_value=None):
@@ -262,7 +262,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
 
     def test_c9_entry_ids_overrides_scope(self):
         collection = make_test_collection(10)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         with patch.object(threading.Thread, "start", return_value=None):
@@ -272,7 +272,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
 
     def test_c10_empty_entry_ids_with_scope_default(self):
         collection = make_test_collection(5)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         with patch.object(threading.Thread, "start", return_value=None):
@@ -282,7 +282,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
 
     def test_c11_proofread_is_the_default_strategy(self):
         collection = make_test_collection(5)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         with patch.object(threading.Thread, "start", return_value=None):
@@ -292,7 +292,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
 
     def test_c12_strict_strategy_is_accepted(self):
         collection = make_test_collection(5)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         with patch.object(threading.Thread, "start", return_value=None):
@@ -302,7 +302,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
 
     def test_c13_invalid_strategy_is_rejected(self):
         collection = make_test_collection(5)
-        ctx = MockAppContext(collection=collection)
+        ctx = project_context(self, collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
         result = self.func({"scope": "all", "strategy": "unknown"}, ec)
@@ -310,7 +310,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
         self.assertIn("无效 strategy", result.message)
 
     def test_c11_no_collection_rejected_by_decorator(self):
-        ctx = MockAppContext(collection=None)
+        ctx = project_context(self, collection=None)
         ec = ExecutionContext(app_context=ctx)
 
         result = self.func({}, ec)

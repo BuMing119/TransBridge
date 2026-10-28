@@ -37,6 +37,7 @@ from transbridge.application.terminology.runtime import (
 from transbridge.application.use_cases import ValidateContextUseCase
 from transbridge.config import ConfigRepository, UiPreferenceRepository, default_config_repository
 from transbridge.config.paths import get_data_dir
+from transbridge.config.task_results import TaskResultPreferenceRepository
 
 from .adapters import DenyByDefaultSecurity, NullSecretStore, SystemClock, UuidGenerator
 from .persistence import build_persistence_v2_services
@@ -85,7 +86,7 @@ def build_runtime(
         backend=BoundedThreadPoolBackend(max_workers=3),
     )
     runtime_settings = dict(settings or {})
-    if "ui_preferences" not in runtime_use_cases.names():
+    if "ui_preferences" not in runtime_use_cases.names() or "task_result_preferences" not in runtime_use_cases.names():
         ui_config_path = runtime_settings.get("ui_config_path")
         config_repository = (
             default_config_repository()
@@ -95,7 +96,10 @@ def build_runtime(
                 legacy_path=runtime_settings.get("legacy_config_path", ui_config_path),
             )
         )
-        runtime_use_cases.register("ui_preferences", UiPreferenceRepository(config_repository))
+        if "ui_preferences" not in runtime_use_cases.names():
+            runtime_use_cases.register("ui_preferences", UiPreferenceRepository(config_repository))
+        if "task_result_preferences" not in runtime_use_cases.names():
+            runtime_use_cases.register("task_result_preferences", TaskResultPreferenceRepository(config_repository))
     persistence_root = runtime_settings.get("persistence_v2_root")
     if persistence_root is None:
         persistence_root = Path(get_data_dir())
@@ -171,7 +175,6 @@ def build_runtime(
         "project_projection": persistence.project_projection,
         "session_projection": persistence.session_projection,
         "source_baselines": persistence.baselines,
-        "legacy_identity_mappings": persistence.legacy_identities,
         "task_history": task_history,
         "task_recovery": task_recovery,
         "task_recovery_expectations": task_recovery_expectations,

@@ -8,7 +8,7 @@ import pytest
 
 from tests.ui.tools import test_ai_project_name_preparation as support
 from transbridge.application.translation import FilesystemTranslationCheckpointPort
-from transbridge.ui.tools.ai_translator.task_entry_results import TaskEntryResults
+from transbridge.application.translation.task_entry_results import TaskEntryResults
 from transbridge.ui.tools.ai_translator.task_worker import AiTaskWorker
 
 name_run = support.name_run

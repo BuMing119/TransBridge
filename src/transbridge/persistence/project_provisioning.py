@@ -17,19 +17,12 @@ from transbridge.application.io import (
     FormatId,
     ParseRequest,
     SourceDescriptor,
-    Stage,
     TranslationIoUseCase,
 )
 from transbridge.application.io.identity import SourceNamespace
 from transbridge.application.projects.provisioning import (
     PreparedProjectSource,
-    PreparedSourceHydration,
     ProjectSourceRequest,
-)
-from transbridge.persistence.v2.variant import (
-    SourceBaseline,
-    SourceFingerprint,
-    VariantEntryState,
 )
 
 _PLUGIN_SUFFIXES = {".esp", ".esm", ".esl"}
@@ -90,8 +83,10 @@ class TranslationIoProjectSourcePreparer:
         )
         if parsed.format_id is FormatId.JSON_PARATRANZ:
             parsed = replace(parsed, entries=tuple(entry.to_translation_entry() for entry in parsed.entries))
-        allowed_partial = parsed.outcome is OperationOutcome.PARTIAL and all(
-            item.code == "SOURCE_LOCATOR_CONFLICT" for item in parsed.diagnostics
+        allowed_partial = parsed.outcome is OperationOutcome.PARTIAL and (
+            all(item.code == "SOURCE_LOCATOR_CONFLICT" for item in parsed.diagnostics)
+            or parsed.format_id is FormatId.JSON_PARATRANZ
+            and options.get("invalid_record_policy", "partial") == "partial"
         )
         if (parsed.outcome is not OperationOutcome.COMPLETED and not allowed_partial) or parsed.source_snapshot is None:
             code = parsed.diagnostics[0].code if parsed.diagnostics else "PROJECT_SOURCE_PARSE_FAILED"
@@ -106,35 +101,18 @@ class TranslationIoProjectSourcePreparer:
                 "PROJECT_SOURCE_FINGERPRINT_MISMATCH",
                 "工程来源内容与预期指纹不一致。",
             )
-        namespace = _source_namespace(parsed)
-        baseline = SourceBaseline(
-            SourceFingerprint(namespace, parsed.source_snapshot.sha256),
-            tuple(_baseline_entry_state(entry, role=role, format_id=parsed.format_id) for entry in parsed.entries),
-        )
+        _source_namespace(parsed)
         diagnostics = tuple(replace(item, severity=DiagnosticSeverity.WARNING) for item in parsed.diagnostics)
-        hydration = None
-        if all(hasattr(entry, "snapshot") for entry in parsed.entries):
-            hydration = PreparedSourceHydration(
-                location=str(path),
-                fingerprint=parsed.source_snapshot.sha256,
-                format_id=parsed.format_id,
-                source_snapshot=parsed.source_snapshot,
-                entries=tuple(entry.snapshot() for entry in parsed.entries),
-            )
-        return PreparedProjectSource(
-            (
-                ("source_id", namespace.value),
-                ("enabled", True),
-                ("format_id", parsed.format_id.value),
-                ("format_options", dict(sorted(options.items()))),
-                ("location", str(path)),
-                ("path", str(path)),
-                ("fingerprint", parsed.source_snapshot.sha256),
-                ("role", role),
-            ),
-            baseline,
-            diagnostics,
-            hydration,
+        from transbridge.application.projects.prepared_source_results import prepare_parsed_source
+
+        return prepare_parsed_source(
+            str(path),
+            parsed.entries,
+            parsed.source_snapshot,
+            parsed.format_id,
+            tuple(sorted(options.items())),
+            role=role,
+            diagnostics=diagnostics,
         )
 
 
@@ -145,22 +123,6 @@ def _infer_format(path: Path) -> FormatId:
         ErrorCategory.INPUT,
         "PROJECT_SOURCE_FORMAT_REQUIRED",
         "无法识别工程来源格式，请明确选择格式。",
-    )
-
-
-def _baseline_entry_state(entry, *, role: str, format_id: FormatId) -> VariantEntryState:
-    translation = entry.translation
-    stage = entry.stage
-    if role == "migration" and format_id is FormatId.PLUGIN_SSE:
-        translation = translation or entry.original
-        stage = Stage.TRANSLATED if translation.strip() else Stage.UNTRANSLATED
-    return VariantEntryState(
-        entry.identity,
-        translation,
-        stage,
-        provenance=entry.provenance,
-        external_refs=entry.external_refs,
-        revision=entry.revision,
     )
 
 

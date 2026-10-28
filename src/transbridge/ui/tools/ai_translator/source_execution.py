@@ -9,14 +9,15 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from transbridge.ai_translator.activity import batch_message
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
+from transbridge.application.translation.task_scope import SourceTask
 
 from .source_reporting import (
     build_source_snapshot as build_source_snapshot,
     build_task_record as build_task_record,
     render_source_report as render_source_report,
 )
-from .task_scope import SourceTask
 from .workflow_log_store import WorkflowLogStore
 
 logger = logging.getLogger(__name__)
@@ -221,7 +222,6 @@ class SourceExecutor:
             reference_source=task.key,
             request_lane=task.key,
             batch_executor=self.batch_executor,
-            checkpoint_identity=run_id + ".esp",
             prepared_names=None if name_preparation or repair_requirements else self.prepared_names.get(task.key),
             committed_draft=None if name_preparation or repair_requirements else self.reused_drafts.get(task.key),
             defer_generated_terms=name_preparation,
@@ -248,7 +248,7 @@ class SourceExecutor:
             progress_callback=translation_progress,
             stop_event=self.stop,
             pause_event=self.pause,
-            log_callback=lambda idx, text: self.log(task.key, f"[{idx}] {text}"),
+            log_callback=lambda idx, text: self.log(task.key, batch_message(idx, text)),
             stream_callback=lambda idx, chunk: store.write_chunk(f"batch_{idx:03d}", chunk),
             stage_progress_callback=stage_progress,
             term_repair_requirements=repair_requirements,

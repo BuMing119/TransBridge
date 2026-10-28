@@ -168,7 +168,7 @@ def test_save_failure_prioritizes_save_without_rerunning_or_reapplying(layout_ap
     window, session, _ = make_window()
     save = session.save_translation
 
-    def fail_save(*, on_success, on_error):
+    def fail_save(*, on_success, on_error, background_validate=None):
         session.project_saved = snapshot
         on_error("test storage unavailable")
 
@@ -180,7 +180,7 @@ def test_save_failure_prioritizes_save_without_rerunning_or_reapplying(layout_ap
     window.show()
     settle_layout(layout_app)
     notices = _dismiss_notice(window)
-    assert notices[0].defaultButton().text() == ("重试快照" if snapshot else "重试保存")
+    assert notices[0].defaultButton().text() == "重试保存"
     assert _primary(window) == [window.save_button]
     assert "无需重新运行任务" in window.next_step.text()
     assert window.retry_button.isVisible() and window.retry_button.isEnabled()
@@ -215,6 +215,7 @@ def test_failed_application_offers_existing_success_without_rerunning(layout_app
 def test_preparation_failure_explains_new_task_path_and_close_is_not_cancel(layout_app, make_window):
     window, session, _ = make_window()
     window.prepare()
+    _wait_until(lambda: hasattr(session, "error_callback"))
     session.is_busy = False
     session.error_callback("snapshot unavailable")
     _wait_reports(layout_app, window)
@@ -240,6 +241,7 @@ def test_closing_during_application_or_save_does_not_interrupt_completion(layout
     monkeypatch.setattr(session, "apply_entries_async" if phase == "apply" else "save_translation", delayed)
     worker = _start(window, session)
     worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
+    _wait_until(lambda: bool(pending))
     window.show()
     settle_layout(layout_app)
     assert _primary(window) == []
@@ -255,7 +257,13 @@ def test_closing_during_application_or_save_does_not_interrupt_completion(layout
     window.show()
     settle_layout(layout_app)
     assert session.saved and session.commits == 1
-    assert _primary(window) == [window.report_button]
+    assert _primary(window) == [window.report_button], {
+        "primary_buttons": [button.text() for button in _primary(window)],
+        "state": window.run.state,
+        "record_error": window.run.records.error,
+        "recovery_error": window.run.recovery.error,
+        "save_status": window.run.save_status,
+    }
 
 
 def test_record_failure_offers_record_retry_without_rerunning_completed_task(layout_app, make_window, monkeypatch):

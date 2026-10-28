@@ -6,9 +6,11 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import tempfile
+from threading import RLock
 from typing import Any
 import uuid
 
@@ -16,6 +18,9 @@ from transbridge.application.contracts import Diagnostic, OperationOutcome
 from transbridge.application.io import EntryKey, EntryRevision
 
 from .postprocess import PostProcessCandidate, PostProcessStageOutcome, ReportSnapshot
+
+_HISTORY_LOCK = RLock()
+_logger = logging.getLogger(__name__)
 
 
 def atomic_json(path: Path, value: Mapping) -> None:
@@ -45,6 +50,10 @@ class TaskHistoryStore:
         return self.root / hashlib.sha256(run_id.encode("utf-8")).hexdigest()
 
     def save(self, record: dict) -> Path:
+        with _HISTORY_LOCK:
+            return self._save(record)
+
+    def _save(self, record: dict) -> Path:
         directory = self._directory(record["run_id"])
         previous_path = directory / "metadata.json"
         previous = self._read(previous_path) if previous_path.exists() else {}
@@ -66,6 +75,14 @@ class TaskHistoryStore:
         except BaseException:
             payload_path.unlink(missing_ok=True)
             raise
+        # Only our previously referenced payload is superseded by this atomic
+        # metadata switch. Preserve other tasks, manual history and evidence.
+        old_name = previous.get("record_file", "")
+        if Path(old_name).name == old_name and old_name.startswith("record-") and old_name.endswith(".json"):
+            try:
+                (directory / old_name).unlink(missing_ok=True)
+            except OSError:
+                _logger.warning("Cannot remove superseded task report %s", directory / old_name, exc_info=True)
         return payload_path
 
     def list_records(self) -> tuple[dict, ...]:
@@ -73,6 +90,10 @@ class TaskHistoryStore:
         return tuple(sorted(records, key=lambda item: item.get("created_at", ""), reverse=True))
 
     def load(self, run_id: str) -> dict:
+        with _HISTORY_LOCK:
+            return self._load(run_id)
+
+    def _load(self, run_id: str) -> dict:
         directory = self._directory(run_id)
         metadata = self._read(directory / "metadata.json")
         filename = metadata["record_file"]
@@ -86,12 +107,20 @@ class TaskHistoryStore:
         """Cheap discovery; payload validation remains in the asynchronous load."""
         return (self._directory(run_id) / "metadata.json").is_file()
 
-    def update_metadata(self, run_id: str, **fields: Any) -> None:
-        allowed = {"state", "applied", "saved"}
+    def update_metadata(self, run_id: str, *, expected_record_file: str | None = None, **fields: Any) -> None:
+        with _HISTORY_LOCK:
+            self._update_metadata(run_id, expected_record_file=expected_record_file, **fields)
+
+    def _update_metadata(self, run_id: str, *, expected_record_file: str | None = None, **fields: Any) -> None:
+        allowed = {"state", "applied", "saved", "project_saved", "snapshot_saved", "version_label", "ended_at"}
         if set(fields) - allowed:
             raise ValueError("unsupported task history metadata field")
         path = self._directory(run_id) / "metadata.json"
         metadata = self._read(path)
+        if expected_record_file is not None and metadata.get("record_file") != expected_record_file:
+            raise ValueError("task history payload changed before its status update")
+        if all(metadata.get(key) == value for key, value in fields.items()):
+            return
         metadata.update(fields)
         metadata["updated_at"] = datetime.now(UTC).isoformat()
         atomic_json(path, metadata)

@@ -3,7 +3,6 @@ from dataclasses import replace
 from itertools import count
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -101,14 +100,14 @@ def test_update_migrates_all_variants_and_reopens_with_new_source(project):
     assert [entry.original for entry in hydrated] == ["Two", "One changed", "Four"]
 
 
-def test_overwritten_source_preserves_translations_but_requires_review(project):
+def test_overwritten_source_compares_saved_original_and_preserves_reviewed_state(project):
     services, service, context, _, path, _ = project
     preview, _ = _prepare(project, [(3, "Three"), (2, "Two"), (1, "One")], overwrite=True)
-    assert preview.unverified == 3 and preview.warnings
+    assert preview.unverified == 0 and not preview.warnings
     result = service.commit(preview.token, context)
     assert result.is_success, result.diagnostics
     assert all(
-        entry.translation == "译文" and entry.stage.value == 2
+        entry.translation == "译文" and entry.stage.value == 5
         for entry in services.project_lifecycle.active.variant.snapshot().entries
     )
     assert "recovery" not in services.current_project_opener.open_path(path, context).value
@@ -126,12 +125,8 @@ def test_pure_reordering_preserves_reviewed_state_and_produces_new_order(project
     assert all(entry.stage.value == 5 for entry in services.project_lifecycle.active.variant.snapshot().entries)
 
 
-def test_reordered_source_projects_into_context_only_remote_plan(project):
-    from transbridge.application.io.paratranz_context_order import format_ordered_context
-    from transbridge.application.ports.paratranz import ParaTranzEntry
-    from transbridge.application.sync import SyncOperation, SyncPlanner
-    from transbridge.paratranz.sync_snapshot import _snapshot
-    from transbridge.ui.operations.production_support import local_snapshots
+def test_reordered_source_projects_into_current_download_snapshot_order(project):
+    from transbridge.application.sync.batch_download import snapshots_from_entries
     from transbridge.ui.source_hydration import apply_variant_projection, collection_from_hydration
 
     services, service, context, _, path, _ = project
@@ -140,28 +135,15 @@ def test_reordered_source_projects_into_context_only_remote_plan(project):
         opened = services.current_project_opener.open_path(path, context)
         collection = collection_from_hydration(opened.value["hydrations"][0])
         states = tuple(entry.to_dict() for entry in services.project_lifecycle.active.variant.snapshot().entries)
-        return local_snapshots(SimpleNamespace(collection=apply_variant_projection(collection, states)), 7)
+        return snapshots_from_entries(apply_variant_projection(collection, states))
 
     before = local()
-    wire = tuple(
-        ParaTranzEntry(
-            index + 1,
-            entry.entry_key.local_key,
-            entry.original,
-            entry.translation,
-            format_ordered_context(entry.context, entry.context_order),
-            entry.stage,
-        )
-        for index, entry in enumerate(before)
-    )
     preview, _ = _prepare(project, [(3, "Three"), (2, "Two"), (1, "One")])
     assert service.commit(preview.token, context).is_success
     after = local()
-    remote = tuple(_snapshot(entry, after[0].entry_key.namespace, "project:7") for entry in wire)
-    plan = SyncPlanner().plan(after, remote, operation=SyncOperation.UPLOAD)
-    assert [item.reason for item in plan.items].count("context_order_changed") == 2
-    assert [item.reason for item in plan.items].count("unchanged") == 1
-    assert plan.requires_confirmation
+    assert [entry.entry_key for entry in after] == list(reversed([entry.entry_key for entry in before]))
+    assert [entry.context_order for entry in after] == [0, 1, 2]
+    assert all(entry.external_ref is None for entry in after)
 
 
 @pytest.mark.parametrize("change", ["source", "edit", "variant_disk", "project_disk"])

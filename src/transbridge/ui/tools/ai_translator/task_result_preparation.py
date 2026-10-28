@@ -40,8 +40,8 @@ def prepare_application(ledger, tasks):
     return ledger, selected
 
 
-def prepare_applied(ledger, selected):
-    ledger.mark_applied(selected)
+def prepare_merge_receipt(ledger, result):
+    ledger.record_merge(result)
     _ = ledger.index
     return ledger
 

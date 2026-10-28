@@ -9,6 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from tests.ui.tools import test_ai_task_session as session_support, test_unified_task_progress as support
+from tests.ui.tools.ai_runtime_support import frozen_ai_request
 from transbridge.ai_translator.project_terminology_runtime import ProjectTerminologyBinding
 from transbridge.ai_translator.translation_entry_outcomes import TranslationEntryOutcome
 from transbridge.application.tasks import TaskRuntime
@@ -80,18 +81,19 @@ def test_task_center_cancel_while_worker_runs_blocks_publication(qapp, make_wind
 
 
 def test_task_center_cancel_during_real_async_apply_never_changes_live_collection(qapp, session, monkeypatch):
-    """Exercise the real detached merge and GUI publication after worker completion."""
-    from transbridge.ui.tools.ai_translator.task_apply_preparation import DraftMergeInput
+    """Runtime cancellation fences the final authoritative merge mutation."""
+    from transbridge.ui.version_persistence import VersionPersistence
 
     entered, release = threading.Event(), threading.Event()
-    original_prepare = DraftMergeInput.prepare
 
-    def held_prepare(merge):
+    def held_merge():
         entered.set()
-        assert release.wait(5), "test did not release detached result merging"
-        return original_prepare(merge)
+        assert release.wait(5), "test did not release authoritative result merging"
 
-    monkeypatch.setattr(DraftMergeInput, "prepare", held_prepare)
+    calls = []
+    session._ctx.runtime_context = object()
+    session._ctx.project_commands = session_support._v2_commands(session._ctx, calls, before_merge=held_merge)
+    session._persistence = VersionPersistence(session._ctx, session.version_identity)
     monkeypatch.setattr(task_run, "AiTaskWorker", support._Worker)
     runtime = TaskRuntime(
         id_generator=SimpleNamespace(new_id=lambda: "closure-audit-async"),
@@ -120,6 +122,7 @@ def test_task_center_cancel_during_real_async_apply_never_changes_live_collectio
         support._wait_until(lambda: not run.busy)
         assert next(iter(session._ctx.collection)).translation == "", "Cancelled candidate reached live collection"
         assert not session.applied_keys
+        assert not any(kind == "merge" for kind, _ in calls)
     finally:
         release.set()
         run.shutdown()
@@ -161,6 +164,7 @@ def test_partial_preview_retry_keeps_remote_terminology_client(qapp, make_window
         request_budget=AiRequestBudget(1),
         terminology_binding=ProjectTerminologyBinding(),
     )
+    request = frozen_ai_request(request)
     consistency = TaskConsistency(request)
     failed_source = replace(session.tasks[1], esp_path="second.esp")
 

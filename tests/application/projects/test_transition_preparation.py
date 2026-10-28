@@ -7,7 +7,6 @@ import pytest
 from tests.application.projects.test_lifecycle import _active, _context, _harness, _refs
 from transbridge.application.projects import DirtyDecision, GuiProjectCommandFacade, TransitionTarget
 from transbridge.application.projects.transition_preparation import active_signature
-from transbridge.persistence.v2.baselines import LegacyIdentityRegistry
 from transbridge.persistence.v2.variant import VariantChangeSet
 
 
@@ -145,7 +144,7 @@ def test_explicit_empty_signature_allows_initial_open_and_close_callback_receive
 
 def test_facade_forwards_guard_and_callback_without_committing_on_failure():
     harness, old, target = _opening(dirty=True)
-    facade = GuiProjectCommandFacade(harness.service, LegacyIdentityRegistry())
+    facade = GuiProjectCommandFacade(harness.service)
     changed_project = replace(old.project, envelope=replace(old.project.envelope, revision=9))
     expected = active_signature(replace(old, project=changed_project))
     seen = []

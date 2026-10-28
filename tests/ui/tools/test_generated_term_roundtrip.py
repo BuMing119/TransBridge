@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.ui.tools.ai_runtime_support import frozen_ai_request
 from transbridge.ai_translator.generated_term_writer import GeneratedTermWriter
 from transbridge.ai_translator.shared_term_pool import SharedTermPool
 from transbridge.ai_translator.term_database import TermDatabaseManager
@@ -23,6 +24,7 @@ def generated_task(request, tmp_path, monkeypatch):
     monkeypatch.setattr(LLMConfig, "get_ai_translator_dir", staticmethod(directory))
     config = LLMConfig(term_priority=["dynamic"], enable_semantic_match=False)
     run = SimpleNamespace(run_id="generated-roundtrip", config=config, spec=SimpleNamespace(mode="mixed"))
+    run = frozen_ai_request(run)
     guard = TaskConsistency(run)
     pool = (
         SharedTermPool("project", "variant", "zh_CN", path=tmp_path / "shared.json")

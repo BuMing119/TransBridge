@@ -7,6 +7,9 @@ Story 03B: 重构为 EditorController 类。
 
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import replace
+
 from transbridge.application.translation.entry_alias import ai_entry_key
 
 from .base import ToolResult, filter_entries, require_collection, require_runtime_context, validate_params
@@ -239,17 +242,19 @@ class EditorController:
         if entry is None:
             return ToolResult.fail(f"条目不存在: {entry_id}")
 
-        old_translation = entry.translation
-        entry.translation = new_translation
+        from ._project_tool_mutations import ProjectToolTarget
 
+        before = entry.snapshot()
+        old_translation = entry.translation
         old_stage = entry.stage
         if new_stage is not None:
             if new_stage not in _VALID_STAGES:
                 return ToolResult.fail(f"无效的 stage 值: {new_stage}，合法值: {sorted(_VALID_STAGES)}")
-            entry.stage = int(new_stage)
-
-        # C10: 通知 UI 条目已修改（信号在主线程发射）
-        ctx.publish_collection_modified()
+        record = replace(entry, translation=new_translation, stage=old_stage if new_stage is None else int(new_stage))
+        try:
+            warnings = ProjectToolTarget.capture(ctx).commit_records((record,), before=(before,))
+        except (RuntimeError, ValueError, OSError) as exc:
+            return ToolResult.fail(technical_error(exc))
 
         return ToolResult.ok(
             f"已更新 {entry_id}",
@@ -257,9 +262,10 @@ class EditorController:
                 "entry_id": entry_id,
                 "old_translation": old_translation[:100] if old_translation else "",
                 "new_translation": new_translation[:100],
-                "stage": entry.stage,
-                "stage_changed": old_stage != entry.stage,
+                "stage": record.stage,
+                "stage_changed": old_stage != record.stage,
             },
+            warnings=warnings or None,
         )
 
     # ── 批量标记 ──────────────────────────────────────────────────
@@ -279,44 +285,40 @@ class EditorController:
         if not entry_ids:
             return ToolResult.fail("entry_ids 不能为空")
 
-        updated = 0
+        from ._project_tool_mutations import ProjectToolTarget
+
+        records = []
+        before = []
         not_found = []
         for eid in entry_ids:
             entry = collection.get(eid)
             if entry is None:
                 not_found.append(eid)
                 continue
-            entry.stage = int(stage)
-            updated += 1
-
-        # C10: 通知 UI 条目已修改（信号在主线程发射）
-        if updated > 0:
-            ctx.publish_collection_modified()
+            before.append(entry.snapshot())
+            records.append(replace(entry, stage=int(stage)))
+        try:
+            warnings = ProjectToolTarget.capture(ctx).commit_records(records, before=before)
+        except (RuntimeError, ValueError, OSError) as exc:
+            return ToolResult.fail(technical_error(exc))
+        updated = len(records)
 
         failed = [{"entry_id": eid, "reason": "条目不存在"} for eid in not_found] if not_found else None
         if failed:
-            return ToolResult.partial_ok(
+            result = ToolResult.partial_ok(
                 f"已将 {updated} 条条目设为 stage={stage}（{len(failed)} 条未找到）",
                 data={"updated_count": updated, "not_found": not_found},
                 failed_items=failed,
             )
+            result.warnings = warnings or None
+            return result
         return ToolResult.ok(
             f"已将 {updated} 条条目设为 stage={stage}",
             data={"updated_count": updated},
+            warnings=warnings or None,
         )
 
     # ── 标签管理 (Story 08) ───────────────────────────────────────
-
-    def _resolve_label_id(self, label_name: str, ctx) -> str | None:
-        """根据标签名查找标签 ID。返回 lid 或 None（标签不存在时）。
-
-        M51: 先构建 name→id 查找字典，O(n) 一次建表后 O(1) 查询。
-        M27: 消除 assign/remove/batch 三处重复查找循环。
-        """
-        label_lib = getattr(ctx, "label_library", None) or {}
-        # M51: 构建 name→id 字典避免每次线性扫描
-        name_to_id: dict[str, str] = {v.get("name", ""): k for k, v in label_lib.items() if v.get("name")}
-        return name_to_id.get(label_name)
 
     def list_labels(self, args: dict, ctx) -> ToolResult:
         """列出所有已定义的标签。"""
@@ -340,6 +342,12 @@ class EditorController:
         action = args["action"].strip().lower()
         if action not in ("create", "assign", "unassign", "batch_assign"):
             return ToolResult.fail(f"无效的 action: {action}，可选: create/assign/unassign/batch_assign")
+        source_identity = (
+            getattr(ctx, "_target_source_key", getattr(ctx, "active_key", None)),
+            frozenset(entry.identity.namespace for entry in collection or ()),
+        )
+        before = _copy_label_state(ctx)
+        entry_labels, label_library = deepcopy(before)
 
         if action == "create":
             name = args.get("name", "").strip()
@@ -349,13 +357,18 @@ class EditorController:
             import uuid
 
             lid = uuid.uuid4().hex[:8]
-            entry_labels, label_library = _copy_label_state(ctx)
             label_library[lid] = {"name": name, "color": color}
             try:
-                _commit_label_state(ctx, entry_labels, label_library)
+                warnings = _commit_label_state(
+                    ctx, entry_labels, label_library, before=before, source_identity=source_identity
+                )
             except Exception as exc:
                 return ToolResult.fail(f"创建标签失败：{technical_error(exc)}")
-            return ToolResult.ok(f"已创建标签: {name}", data={"label_id": lid, "name": name, "color": color})
+            return ToolResult.ok(
+                f"已创建标签: {name}",
+                data={"label_id": lid, "name": name, "color": color},
+                warnings=warnings or None,
+            )
 
         # assign / unassign / batch_assign 共用参数校验
         if collection is None:
@@ -364,7 +377,7 @@ class EditorController:
         label_name = args.get("name", "").strip()
         if not label_name:
             return ToolResult.fail("请提供标签名 (name)")
-        lid = self._resolve_label_id(label_name, ctx)
+        lid = next((key for key, value in label_library.items() if value.get("name") == label_name), None)
         if lid is None:
             return ToolResult.fail(f"标签不存在: {label_name}")
 
@@ -378,47 +391,57 @@ class EditorController:
             entry_ids = args.get("entry_ids", [])
             if not entry_ids:
                 return ToolResult.fail("请提供 entry_ids")
-            entry_labels, label_library = _copy_label_state(ctx)
             for eid in entry_ids:
                 entry_labels.setdefault(eid, set()).add(lid)
             try:
-                _commit_label_state(ctx, entry_labels, label_library)
+                warnings = _commit_label_state(
+                    ctx, entry_labels, label_library, before=before, source_identity=source_identity
+                )
             except Exception as exc:
                 return ToolResult.fail(f"分配标签失败：{technical_error(exc)}")
             return ToolResult.ok(
-                f"已为 {len(entry_ids)} 条条目分配标签 '{label_name}'", data={"assigned_count": len(entry_ids)}
+                f"已为 {len(entry_ids)} 条条目分配标签 '{label_name}'",
+                data={"assigned_count": len(entry_ids)},
+                warnings=warnings or None,
             )
 
         elif action == "unassign":
             entry_ids = args.get("entry_ids", [])
             if not entry_ids:
                 return ToolResult.fail("请提供 entry_ids")
-            entry_labels_read = getattr(ctx, "entry_labels", None) or {}
+            entry_labels_read = before[0]
             removed = sum(1 for eid in entry_ids if eid in entry_labels_read and lid in entry_labels_read[eid])
-            entry_labels, label_library = _copy_label_state(ctx)
             for eid in entry_ids:
                 entry_labels.get(eid, set()).discard(lid)
             try:
-                _commit_label_state(ctx, entry_labels, label_library)
+                warnings = _commit_label_state(
+                    ctx, entry_labels, label_library, before=before, source_identity=source_identity
+                )
             except Exception as exc:
                 return ToolResult.fail(f"移除标签失败：{technical_error(exc)}")
-            return ToolResult.ok(f"已从 {removed} 条条目移除标签 '{label_name}'", data={"removed_count": removed})
+            return ToolResult.ok(
+                f"已从 {removed} 条条目移除标签 '{label_name}'",
+                data={"removed_count": removed},
+                warnings=warnings or None,
+            )
 
         elif action == "batch_assign":
             filter_state = ctx.filter_state
-            entry_labels_read = getattr(ctx, "entry_labels", None) or {}
+            entry_labels_read = before[0]
             entries = filter_entries(collection, filter_state, entry_labels=entry_labels_read)
             _filtered_ids = [e.identity.serialize() if e.requires_original_match else e.key for e in entries]
-            entry_labels, label_library = _copy_label_state(ctx)
             for eid in _filtered_ids:
                 entry_labels.setdefault(eid, set()).add(lid)
             try:
-                _commit_label_state(ctx, entry_labels, label_library)
+                warnings = _commit_label_state(
+                    ctx, entry_labels, label_library, before=before, source_identity=source_identity
+                )
             except Exception as exc:
                 return ToolResult.fail(f"批量分配标签失败：{technical_error(exc)}")
             return ToolResult.ok(
                 f"已为筛选范围内 {len(entries)} 条条目批量分配标签 '{label_name}'",
                 data={"assigned_count": len(entries), "filter_total": len(entries)},
+                warnings=warnings or None,
             )
 
 
@@ -427,30 +450,27 @@ def _copy_label_state(ctx) -> tuple[dict[str, set[str]], dict[str, dict]]:
         str(entry_id): set(label_ids) for entry_id, label_ids in (getattr(ctx, "entry_labels", None) or {}).items()
     }
     label_library = {
-        str(label_id): dict(info) for label_id, info in (getattr(ctx, "label_library", None) or {}).items()
+        str(label_id): deepcopy(info) for label_id, info in (getattr(ctx, "label_library", None) or {}).items()
     }
     return entry_labels, label_library
 
 
-def _commit_label_state(ctx, entry_labels: dict[str, set[str]], label_library: dict[str, dict]) -> None:
+def _commit_label_state(
+    ctx, entry_labels: dict[str, set[str]], label_library: dict[str, dict], *, before, source_identity
+):
+    warnings = []
     commit = getattr(ctx, "commit_label_state", None)
     if callable(commit):
-        commit(entry_labels, label_library)
-        return
+        commit(entry_labels, label_library, before=before, source_identity=source_identity, warnings=warnings)
+        return warnings
 
     from .types import ExecutionContext
 
     execution = ExecutionContext(app_context=ctx)
-    if bool(getattr(ctx, "uses_authoritative_projection", False)) and execution._target_version_identity is None:
-        # Compatibility for minimal non-runtime test doubles. Real authoritative
-        # AppContext instances always expose a stable active_version_identity.
-        result = ctx.replace_projected_labels(entry_labels, label_library)
-        if hasattr(result, "is_success") and not result.is_success:
-            diagnostics = tuple(getattr(result, "diagnostics", ()))
-            message = diagnostics[0].message if diagnostics else "标签变更提交失败。"
-            raise RuntimeError(message)
-        return
-    execution.commit_label_state(entry_labels, label_library)
+    execution.commit_label_state(
+        entry_labels, label_library, before=before, source_identity=source_identity, warnings=warnings
+    )
+    return warnings
 
 
 # ── 无状态 controller + 模块级兼容 wrapper ───────────────────────
@@ -499,7 +519,9 @@ def _tool_list_labels(args: dict, ctx) -> ToolResult:
 @require_runtime_context
 @validate_params(_PARAM_SCHEMAS["manage_entry_labels"])
 def _tool_manage_entry_labels(args: dict, ctx, collection=None) -> ToolResult:
-    return _editor_ctrl.manage_entry_labels(args, ctx, collection)
+    return _editor_ctrl.manage_entry_labels(
+        args, ctx, getattr(ctx, "collection", None) if collection is None else collection
+    )
 
 
 # ── 注册 ──────────────────────────────────────────────────────

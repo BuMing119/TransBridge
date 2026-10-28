@@ -538,6 +538,8 @@ def test_credential_save_failure_never_closes_or_reveals_backend_details(
 
 
 def test_background_connection_check_ignores_late_result_after_close(qapp) -> None:
+    from transbridge.ui.worker_registry import get_api_worker_registry
+
     release = threading.Event()
     button = QPushButton("测试 AI 连接")
     status = QLabel("尚未测试")
@@ -554,11 +556,12 @@ def test_background_connection_check_ignores_late_result_after_close(qapp) -> No
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
         qapp.processEvents()
-        if not settings_connection_module._ACTIVE_WORKERS:
+        if not settings_connection_module._ACTIVE_WORKERS and not get_api_worker_registry().busy:
             break
         time.sleep(0.01)
 
     assert not settings_connection_module._ACTIVE_WORKERS
+    assert not get_api_worker_registry().busy
     assert "迟到结果" not in status.text()
 
 

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from PyQt6.QtWidgets import QApplication
 import pytest
 
+from tests.ui.tools.ai_runtime_support import ai_task_runtime
 from transbridge.application.tasks import JobState, TaskRuntime
 from transbridge.paratranz.config_manager import LLMConfig
 from transbridge.ui.tools.ai_translator import config_presenter as config_module
@@ -19,7 +20,6 @@ from transbridge.ui.tools.ai_translator.run_spec import (
     capabilities_for,
     preflight_ai_run,
 )
-from transbridge.ui.tools.ai_translator.task_adapter import AiLegacyRunState, LegacyAiTaskAdapter
 
 
 @dataclass
@@ -176,7 +176,7 @@ def test_preflight_api_embedding_reports_missing_model_and_endpoint() -> None:
 
 def test_run_request_has_global_identity_and_copy_on_read_config() -> None:
     saved = _config(model="before")
-    controller = RunController(owner_id="window")
+    controller = RunController(task_runtime=ai_task_runtime(), owner_id="window")
     request = controller.begin(
         "translate",
         saved,
@@ -191,7 +191,7 @@ def test_run_request_has_global_identity_and_copy_on_read_config() -> None:
     first = request.config
     first.model = "mutated-copy"
 
-    assert request.run_id.startswith("ai-")
+    assert request.run_id == request.runtime_ref.run_id
     assert request.generation == 1
     assert request.config.model == "before"
     assert request.spec.owner.project_id == "project"
@@ -204,7 +204,8 @@ def test_workload_capabilities_do_not_invent_recovery_or_retry() -> None:
     translate = capabilities_for("translate")
 
     assert mixed.task_controls.supports_cancel is True
-    assert mixed.task_controls.supports_pause is False
+    assert mixed.task_controls.supports_pause is True
+    assert mixed.task_controls.supports_resume is True
     assert translate.task_controls.supports_pause is True
     assert translate.task_controls.supports_resume is True
     assert translate.task_controls.supports_checkpoint is False
@@ -212,38 +213,6 @@ def test_workload_capabilities_do_not_invent_recovery_or_retry() -> None:
     assert translate.retry_failed is False
     assert translate.open_global_log is False
     assert translate.open_global_result is False
-
-
-def test_legacy_activity_requires_cancel_confirmation_and_rejects_late_updates() -> None:
-    controller = RunController(owner_id="window")
-    request = controller.begin("mixed", _config(), [Entry("one")])
-    activity = LegacyAiTaskAdapter(request.spec)
-
-    assert activity.progress(1, 2, "running") is True
-    assert activity.finish(cancelled=True) is False
-    assert activity.request_cancel() is True
-    assert activity.activity.state is AiLegacyRunState.CANCELLING
-    assert activity.finish(cancelled=True) is True
-    assert activity.activity.state is AiLegacyRunState.CANCELLED
-    assert activity.progress(2, 2, "late") is False
-
-
-def test_legacy_adapter_projects_real_s03_activity_without_invented_evidence() -> None:
-    controller = RunController(owner_id="window")
-    request = controller.begin("translate", _config(), [Entry("one")], esp_path="plugin.esp")
-    adapter = LegacyAiTaskAdapter(request.spec)
-    adapter.progress(3, 10, "第三批")
-
-    projected = adapter.task_activity
-
-    assert projected.run_id == request.run_id
-    assert dict(projected.progress) == {"current": 3, "total": 10, "message": "第三批"}
-    assert projected.available_actions.pause is True
-    assert projected.available_actions.cancel is True
-    assert projected.available_actions.recover is False
-    assert projected.available_actions.retry is False
-    assert projected.available_actions.open_log is False
-    assert projected.available_actions.open_result is False
 
 
 def test_task_runtime_bridge_projects_immediately_and_forwards_real_controls() -> None:
@@ -262,7 +231,7 @@ def test_task_runtime_bridge_projects_immediately_and_forwards_real_controls() -
 
     adapter = controller.create_activity(request)
     worker = _WorkerControls()
-    controller.attach(request.run_id, worker=worker, activity=adapter)
+    adapter.bind_worker(worker)
     assert adapter.task_activity.available_actions.pause is True
     assert adapter.task_activity.available_actions.cancel is True
 
@@ -276,7 +245,7 @@ def test_task_runtime_bridge_projects_immediately_and_forwards_real_controls() -
 
 def test_failed_subset_retry_repreflights_and_allocates_new_run_id() -> None:
     entries = [Entry("failed", translation="old"), Entry("ok", translation="old")]
-    controller = RunController(owner_id="window")
+    controller = RunController(task_runtime=ai_task_runtime(), owner_id="window")
     previous = controller.begin("polish", _config(), entries).spec
     controller.finish(previous.run_id)
 
@@ -296,7 +265,7 @@ def test_failed_subset_retry_repreflights_and_allocates_new_run_id() -> None:
 
 
 def test_result_navigation_is_owner_scoped_and_uses_opaque_report_reference() -> None:
-    controller = RunController(owner_id="owner")
+    controller = RunController(task_runtime=ai_task_runtime(), owner_id="owner")
     request = controller.begin("polish", _config(), [Entry("one", translation="old")])
     navigator = AiResultNavigator()
     report = Path(__file__)
@@ -314,11 +283,11 @@ def test_result_navigation_is_owner_scoped_and_uses_opaque_report_reference() ->
 def test_run_controller_survives_100_owner_lifecycles_without_accepting_late_callbacks() -> None:
     observed: list[int] = []
     for index in range(100):
-        controller = RunController(owner_id=f"window-{index}")
+        controller = RunController(task_runtime=ai_task_runtime(), owner_id=f"window-{index}")
         request = controller.begin("polish", _config(), [Entry(str(index), translation="old")])
-        guarded = controller.guard(request.run_id, observed.append)
         controller.close()
-        guarded(index)
+        if controller.accepts(request.run_id):
+            observed.append(index)
 
     assert observed == []
 
@@ -472,11 +441,3 @@ def test_ai_naming_scheme_creation_routes_to_the_project_terminology_workbench(m
     assert opened == [True]
     window.close()
     app.processEvents()
-
-
-def test_translation_handoff_starts_worker_then_reactivates_progress_deferred() -> None:
-    source = Path("src/transbridge/ui/tools/ai_translator/run_controller.py").read_text(encoding="utf-8")
-    function = source[source.index("def start_translation_run(") : source.index("def start_mixed_run(")]
-
-    assert function.index("progress_created(progress)") < function.index("worker.start()")
-    assert function.index("worker.start()") < function.index("show_and_activate(progress, deferred=True)")

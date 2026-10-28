@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-import gc
 from pathlib import Path
 from types import SimpleNamespace
-import weakref
 
 from transbridge.application.contracts import RequestContext
 from transbridge.application.io import FormatId, ParseRequest, SourceDescriptor, TranslationIoUseCase
@@ -84,57 +82,6 @@ def _runtime():
     return SimpleNamespace(tasks=tasks)
 
 
-def test_production_builder_installs_all_four_features_without_remote_work() -> None:
-    runtime = _runtime()
-    facade = build_operation_plan_facade(
-        runtime,
-        RequestContext("gui", project_id="p", variant_id="v"),
-        dialog_factory=_ConfirmingDialog,
-    )
-    context = SimpleNamespace(
-        collection=TranslationEntryCollection(),
-        current_project={"id": 1},
-        paratranz_project_id=1,
-        config=SimpleNamespace(
-            token="configured",
-            base_url="https://paratranz.cn",
-            user_id=7,
-            config_revision=1,
-        ),
-        current_user={"id": 7},
-        active_project_id="local-project",
-        dirty=False,
-        is_member=lambda: True,
-    )
-
-    dialog = facade.begin_upload(context)
-    assert dialog.shown and not dialog.exec_called
-    assert facade.active_plan_count == 1
-    retained = weakref.ref(dialog)
-    del dialog
-    gc.collect()
-    assert retained() is not None
-    retained().destroyed.emit()
-    assert facade.active_plan_count == 0
-    cancelled = facade.begin_upload(context, paratranz_project_id="42", set_as_default=True)
-    fields = {field.field_id: field.value for field in cancelled.plan.editable_fields}
-    assert fields == {
-        "paratranz_project_id": "42",
-        "set_as_default": "true",
-        "conflict_policy": "prefer_local",
-        "apply_remote_deletions": "true",
-        "upload_decisions": "{}",
-    }
-    cancelled.rejected.emit()
-    assert facade.active_plan_count == 0
-    assert facade.tasks is runtime.tasks
-    assert not facade.supports(OperationKind.UPLOAD, context, batch=True)
-    assert not facade.supports(
-        OperationKind.WRITE,
-        SimpleNamespace(active_slot=SimpleNamespace(source_snapshot=None, format_id=None, collection=None)),
-    )
-
-
 def test_production_write_uses_hydration_and_task_runtime_after_one_confirmation(tmp_path: Path) -> None:
     source = tmp_path / "source.xml"
     source.write_bytes(Path("tests/contracts/io/fixtures/eet-small.xml").read_bytes())
@@ -207,7 +154,8 @@ def test_production_batch_write_preflights_all_hydrated_sources_before_submissio
     )
 
     assert facade.supports(OperationKind.WRITE, context, batch=True)
-    dialog = facade.begin_write(context, batch=True)
+    output_dir = tmp_path / "output"
+    dialog = facade.begin_write(context, batch=True, output_directory=str(output_dir))
     dialog.preflight_requested.emit(dialog.plan.session_id, ())
 
     assert dialog.preflight is not None and dialog.preflight.ready
@@ -216,5 +164,5 @@ def test_production_batch_write_preflights_all_hydrated_sources_before_submissio
     jobs = runtime.tasks.list(OwnerRef("gui", "gui.operation-plan", project_id="p", variant_id="v"))
     assert len(jobs) == 1
     assert jobs[0].state is JobState.COMPLETED
-    assert (tmp_path / "source-1_translated.xml").is_file()
-    assert (tmp_path / "source-2_translated.xml").is_file()
+    assert (output_dir / "source-1.xml").is_file()
+    assert (output_dir / "source-2.xml").is_file()

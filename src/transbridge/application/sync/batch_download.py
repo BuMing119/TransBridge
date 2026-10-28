@@ -1,4 +1,4 @@
-"""Plan source-isolated downloads and rebase accepted updates on current edits."""
+"""Plan source-isolated downloads from fixed local and remote input."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from transbridge.application.io.paratranz_context_order import context_orders
 from transbridge.converter.translation_entry import TranslationEntry
 
 from .download_review import DownloadDecision
-from .local_candidate import RemoteSourceIndex, build_local_candidate
 from .models import (
     ConflictPolicy,
     DeletionPolicy,
@@ -57,16 +56,6 @@ class BatchDownloadPlan:
     @property
     def deferred_count(self) -> int:
         return sum(plan.conflicts for plan in self.plans)
-
-
-@dataclass(frozen=True, slots=True)
-class BatchDownloadCandidates:
-    """Only ``updated_keys`` may be submitted; all other current state is retained."""
-
-    entries: tuple[LocalEntrySnapshot, ...]
-    updated_keys: tuple[EntryKey, ...]
-    deferred_keys: tuple[EntryKey, ...]
-    replan_source_ids: tuple[str, ...]
 
 
 def snapshots_from_entries(entries: Sequence[TranslationEntry]) -> tuple[LocalEntrySnapshot, ...]:
@@ -130,70 +119,6 @@ def plan_batch_download(
             else baseline
         )
     return BatchDownloadPlan(sources, tuple(plans), tuple(sorted(set(choices) - retained)))
-
-
-def rebased_candidates(
-    preview: BatchDownloadPlan, current_sources: Sequence[BatchDownloadSource]
-) -> BatchDownloadCandidates:
-    """Accept unchanged targets while preserving unrelated and concurrent local edits.
-
-    Revision-only churn is harmless. Changed source text or membership requires a
-    fresh source plan; edits to a target translation defer only that target.
-    """
-    current_sources = tuple(current_sources)
-    _validate_sources(current_sources)
-    current = {source.source_id: source for source in current_sources}
-    replacements, updated, deferred, replan = {}, [], [], []
-    for source, plan in zip(preview.sources, preview.plans, strict=True):
-        fresh = current.get(source.source_id)
-        if fresh is None or _source_layout(source.local_entries) != _source_layout(fresh.local_entries):
-            replan.append(source.source_id)
-            deferred.extend(item.entry_key for item in plan.items if item.action is SyncAction.UPDATE_LOCAL)
-            continue
-        before = {entry.entry_key: entry for entry in source.local_entries}
-        fresh_entries = {entry.entry_key: entry for entry in fresh.local_entries}
-        remote_sources = RemoteSourceIndex(source.remote_entries)
-        items = []
-        for item in plan.items:
-            if item.action is not SyncAction.UPDATE_LOCAL:
-                continue
-            original = before[item.entry_key]
-            latest = fresh_entries[item.entry_key]
-            if (latest.translation, latest.stage, latest.deleted) != (
-                original.translation,
-                original.stage,
-                original.deleted,
-            ):
-                accepted = remote_sources.get_for_item(item)
-                if (latest.translation, latest.stage) != (accepted.translation, accepted.stage):
-                    deferred.append(item.entry_key)
-                continue
-            items.append(item)
-        candidate = build_local_candidate(
-            fresh.local_entries,
-            remote_sources,
-            tuple(items),
-            attach_remote_refs=False,
-            preserve_local_source=True,
-        )
-        accepted = {item.entry_key for item in items}
-        for entry in candidate:
-            latest = fresh_entries[entry.entry_key]
-            if entry.entry_key in accepted and (entry.translation, entry.stage) != (latest.translation, latest.stage):
-                replacements[entry.entry_key] = entry
-                updated.append(entry.entry_key)
-    return BatchDownloadCandidates(
-        tuple(replacements.get(entry.entry_key, entry) for source in current_sources for entry in source.local_entries),
-        tuple(updated),
-        tuple(deferred),
-        tuple(replan),
-    )
-
-
-def _source_layout(entries):
-    return tuple(
-        (entry.entry_key, entry.original, entry.context, entry.context_order, entry.deleted) for entry in entries
-    )
 
 
 def _validate_sources(sources):

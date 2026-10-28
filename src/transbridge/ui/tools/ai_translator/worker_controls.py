@@ -23,6 +23,7 @@ class SerialAiWorkerControls:
         self._closed = False
         self._pending = False
         self._draining = False
+        self._last_control = None
 
     def accept(self, snapshot: JobSnapshot) -> None:
         with self._lock:
@@ -35,6 +36,7 @@ class SerialAiWorkerControls:
             if self._closed:
                 return
             self._worker = worker
+            self._last_control = None
             self._newer(snapshot)
             self._pending = True
             self._drain()
@@ -43,6 +45,7 @@ class SerialAiWorkerControls:
         with self._lock:
             if self._worker is worker:
                 self._worker = None
+                self._last_control = None
 
     def bind_run(self, callback: Callable[[], None] | None, snapshot: JobSnapshot) -> None:
         with self._lock:
@@ -93,10 +96,13 @@ class SerialAiWorkerControls:
                 }.get(state)
                 if worker is None or action is None:
                     continue
+                if self._last_control == (worker, action):
+                    continue
                 callback = getattr(worker, action, None)
                 if not callable(callback) and action == "stop":
                     callback = getattr(worker, "cancel", None)
                 if callable(callback):
+                    self._last_control = (worker, action)
                     callback()
         finally:
             self._draining = False

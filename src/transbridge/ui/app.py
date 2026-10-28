@@ -136,10 +136,12 @@ def main(
         projection = AppContext(
             project_projection=app_runtime.use_cases.resolve("project_projection"),
             project_commands=app_runtime.use_cases.resolve("gui_project_commands"),
+            project_catalog=app_runtime.use_cases.resolve("project_catalog"),
             project_remote_bindings=app_runtime.use_cases.resolve("project_remote_bindings"),
             runtime_context=binding.context,
             effective_terminology_factory=effective_terminology_factory,
             terminology_profile_service_factory=terminology_profile_service_factory,
+            task_result_preferences_provider=app_runtime.use_cases.resolve("task_result_preferences").load,
         )
         window = MainWindow(
             app_context=projection,

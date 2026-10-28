@@ -58,7 +58,9 @@ def test_theme_revision_preserves_run_scope_inputs_report_and_subscription_lifec
     workbench = SimpleNamespace(filtered_entries=lambda: (), locate_entry=lambda _entry_id: None)
     service, theme_view = _theme(qapp, tmp_path)
     baseline_subscriptions = theme_view.active_subscription_count
-    window = AITranslatorWindow(context, workbench, theme_view=theme_view)
+    from tests.ui.tools.ai_runtime_support import ai_task_runtime
+
+    window = AITranslatorWindow(context, workbench, theme_view=theme_view, task_runtime=ai_task_runtime())
     report_entry = TranslationEntry(
         id="report-entry",
         key="REPORT",

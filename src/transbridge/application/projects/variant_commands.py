@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
+from transbridge.application.contracts import DomainError, ErrorCategory
 from transbridge.application.io.identity import EntryKey, ExternalEntryRef
 from transbridge.application.io.stage_policy import Stage
 from transbridge.persistence.v2.variant import VariantEntryState
@@ -106,6 +107,8 @@ def patch_entry_states(
     entries: tuple[VariantEntryState, ...],
     states: Mapping[EntryKey, tuple[str, int]],
 ) -> tuple[VariantEntryState, ...]:
+    if not states:
+        return entries
     normalized = {key: (str(translation), Stage(stage)) for key, (translation, stage) in states.items()}
     available = {entry.entry_key for entry in entries}
     if missing := set(normalized).difference(available):
@@ -134,6 +137,8 @@ def patch_entry_records(
 ) -> tuple[VariantEntryState, ...]:
     """Patch translation, stage and external identity without touching source-owned text."""
 
+    if not patches:
+        return entries
     normalized = {
         key: EntryStatePatch(str(patch.translation), Stage(patch.stage), tuple(patch.external_refs))
         for key, patch in patches.items()
@@ -162,6 +167,26 @@ def patch_entry_records(
                 inferred_fields=tuple(value for value in entry.inferred_fields if value != "external_refs"),
             )
         )
+    # Reference identity belongs to one source collection. Other sources may
+    # legitimately share a remote entry; their state must not become a gate.
+    reference_namespaces = {
+        entry.entry_key.namespace
+        for entry in entries
+        if (patch := normalized.get(entry.entry_key)) is not None and patch.external_refs != entry.external_refs
+    }
+    if reference_namespaces:
+        owners = {}
+        for entry in projected:
+            if entry.entry_key.namespace not in reference_namespaces:
+                continue
+            for reference in entry.external_refs:
+                previous = owners.setdefault((entry.entry_key.namespace, reference.index_key), entry.entry_key)
+                if previous != entry.entry_key:
+                    raise DomainError(
+                        ErrorCategory.CONFLICT,
+                        "EXTERNAL_REF_CONFLICT",
+                        f"external reference conflict: {reference.index_key}",
+                    )
     return tuple(projected)
 
 

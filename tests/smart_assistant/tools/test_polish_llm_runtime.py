@@ -174,7 +174,10 @@ def test_proofread_strategy_retries_provider_error_then_retains_originals(tmp_pa
 
 @pytest.mark.parametrize("initial_stage", [1, 2])
 @pytest.mark.parametrize("damaged_syntax", [False, True])
-def test_proofread_preserves_text_and_applies_questionable_stage(initial_stage, damaged_syntax) -> None:
+@pytest.mark.parametrize("explicit_review", [False, True])
+def test_proofread_preserves_text_and_applies_questionable_stage(
+    initial_stage, damaged_syntax, explicit_review
+) -> None:
     from transbridge.smart_assistant.tools._polish_execution import execute_polish
 
     entry = make_entry("first", original="Hello {name}", translation="你好 {name}", stage=initial_stage)
@@ -187,6 +190,11 @@ def test_proofread_preserves_text_and_applies_questionable_stage(initial_stage, 
                 {
                     "entry_key": value["entry_key"],
                     "final_translation": "你好" if damaged_syntax else value["current_translation"],
+                    **(
+                        {"review_status": "retained", "review_reason": "Current translation preserves the source."}
+                        if explicit_review
+                        else {}
+                    ),
                 }
                 for value in entries
             ]
@@ -204,7 +212,7 @@ def test_proofread_preserves_text_and_applies_questionable_stage(initial_stage, 
     )
 
     actual = collection.get("first")
-    expected_stage = 2 if damaged_syntax else initial_stage
+    expected_stage = 2 if damaged_syntax or not explicit_review else initial_stage
     assert summary.results["first"].accepted
     assert summary.results["first"].target_stage == expected_stage
     assert actual.stage == expected_stage

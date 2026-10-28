@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
@@ -49,6 +50,17 @@ class ProjectArchiveInspection:
         return self.name_conflict
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectArchiveDraft:
+    """Validated import records shared by portable and historical project inputs."""
+
+    project: ProjectDto
+    variants: tuple[VariantSnapshot, ...]
+    snapshots: tuple[dict, ...]
+    members: tuple[str, ...]
+    assets: tuple[tuple[str, bytes], ...] = ()
+
+
 class ProjectArchiveService:
     def __init__(
         self,
@@ -61,6 +73,7 @@ class ProjectArchiveService:
         *,
         id_factory,
         source_preparer,
+        source_artifact_store=None,
     ) -> None:
         self._filesystem = filesystem
         self._paths = RepositoryPaths(root, filesystem)
@@ -71,6 +84,7 @@ class ProjectArchiveService:
         self._snapshots = snapshots
         self._ids = id_factory
         self._source_preparer = source_preparer
+        self._source_artifacts = source_artifact_store
 
     def export_project(self, destination: str, context: RequestContext) -> str:
         active = self._lifecycle.active
@@ -119,7 +133,12 @@ class ProjectArchiveService:
                                     "project_id": ref.identity.value,
                                     "variant": snapshot.to_dto().envelope.to_dict(),
                                 })
-                        sources = capture_sources(archive, project["data"]["sources"])
+                        from .source_artifact_archive import capture_artifacts
+
+                        sources = capture_sources(
+                            archive, project["data"]["sources"], source_artifacts=self._source_artifacts
+                        )
+                        capture_artifacts(archive, project["data"]["sources"], self._source_artifacts)
                         owned = Path(self._paths.root) / "projects" / ref.identity.encoded
                         capture_owned_assets(archive, owned)
                         archive.writestr(
@@ -148,10 +167,10 @@ class ProjectArchiveService:
                 self._lifecycle.validate_export_lease(token, context)
 
     def inspect_import(self, source: str, context: RequestContext) -> ProjectArchiveInspection:
-        """Validate an archive and report conflicts without changing persistence."""
+        """Inspect a project package, transparently normalizing supported formats."""
 
-        with zipfile.ZipFile(source) as archive:
-            project, _variants, _snapshots, _members = self._decode_archive(archive, context)
+        with self._prepare_import(source, context) as (_archive, draft):
+            project = draft.project
         ref = ProjectRef(ProjectId(project.envelope.identity))
         records = self._catalog_records()
         return ProjectArchiveInspection(
@@ -170,8 +189,8 @@ class ProjectArchiveService:
         requested_name: str | None = None,
         copy_on_identity_conflict: bool = False,
     ) -> str:
-        with zipfile.ZipFile(source) as archive:
-            project, variants, snapshots, members = self._decode_archive(archive, context)
+        with self._prepare_import(source, context) as (archive, draft):
+            project, variants, snapshots, members = draft.project, draft.variants, draft.snapshots, draft.members
             records = self._catalog_records()
             ref = ProjectRef(ProjectId(project.envelope.identity))
             identity_conflict = self._filesystem.exists(self._projects.path_for(ref)) or any(
@@ -188,7 +207,25 @@ class ProjectArchiveService:
                 )
             elif requested_name is not None:
                 project = self._rename_project(project, requested_name)
-            return self._publish(archive, project, variants, snapshots, members)
+            return self._publish(archive, project, variants, snapshots, members, draft.assets)
+
+    @contextmanager
+    def _prepare_import(self, source: str, context: RequestContext):
+        path = Path(source)
+        if path.suffix.lower() != ".transbridge" or not path.is_file():
+            raise ValueError("请选择 .transbridge 工程包。")
+        with zipfile.ZipFile(path) as archive:
+            decoded = self._decode_archive(archive, context)
+            assets = ()
+            if "archive.json" not in archive.namelist():
+                from .legacy_project_records import LegacyArchiveRecords
+                from .legacy_project_tasks import capture_legacy_task_assets
+
+                assets = capture_legacy_task_assets(
+                    LegacyArchiveRecords(archive),
+                    variant_names=decoded[0].envelope.data["legacy"]["variant_name_map"],
+                )
+            yield archive, ProjectArchiveDraft(*decoded, assets)
 
     def _decode_archive(self, archive, context):
         validate_archive(archive)
@@ -304,10 +341,16 @@ class ProjectArchiveService:
                 or not snapshot["name"].strip()
             ):
                 raise ValueError("项目包快照名称或版本无效")
-            validate_v2(snapshot["variant"], ref)
+            snapshot["variant"] = validate_v2(
+                migrate_to_current(snapshot["variant"], ref).document, ref
+            ).envelope.to_dict()
         owned = self._paths.guard(os.path.join(self._paths.root, "projects", project_ref.identity.encoded))
+        from .source_artifact_archive import is_artifact_member, validate_artifacts
+
         members = tuple(
-            info.filename for info in archive.infolist() if not info.is_dir() and info.filename != "archive.json"
+            info.filename
+            for info in archive.infolist()
+            if not info.is_dir() and info.filename != "archive.json" and not is_artifact_member(info.filename)
         )
         destinations = [self._paths.guard(member_destination(name, owned)) for name in members]
         if len({os.path.normcase(path) for path in destinations}) != len(destinations):
@@ -327,9 +370,10 @@ class ProjectArchiveService:
             if "path" in item.get("legacy", {}):
                 item["legacy"]["path"] = item["location"]
         validate_v2(project.envelope.to_dict(), project_ref)
+        validate_artifacts(archive, sources, locations)
         return project, tuple(variants), snapshots, members
 
-    def _publish(self, archive, project, variants, snapshots, members):
+    def _publish(self, archive, project, variants, snapshots, members, assets=()):
         ref = ProjectRef(ProjectId(project.envelope.identity))
         owned = self._paths.guard(os.path.join(self._paths.root, "projects", ref.identity.encoded))
         catalog_path = self._documents.path("project-catalog.json")
@@ -343,7 +387,9 @@ class ProjectArchiveService:
             name = project.envelope.data["name"]
             if any(item.name_key == project_name_key(name) for item in records):
                 raise ValueError("已有同名工程；导入已取消，现有工程未改变")
-            required = sum(archive.getinfo(member).file_size for member in members)
+            required = sum(archive.getinfo(member).file_size for member in members) + sum(
+                len(payload) for _, payload in assets
+            )
             Path(self._paths.root).mkdir(parents=True, exist_ok=True)
             if shutil.disk_usage(self._paths.root).free < required + 64 * 1024**2:
                 raise ValueError("磁盘空间不足，无法安全导入项目包")
@@ -351,12 +397,22 @@ class ProjectArchiveService:
             created = []
             catalog_started = False
             try:
+                from .source_artifact_archive import import_artifacts
+
+                if "archive.json" in archive.namelist():
+                    import_artifacts(archive, project.envelope.data["sources"], self._source_artifacts)
                 for member in members:
                     path = self._paths.guard(member_destination(member, owned))
                     if self._filesystem.exists(path):
                         raise ValueError("工程资产目录已存在，拒绝覆盖")
                     created.append(path)
                     self._documents.write_bytes(path, archive.read(member), token)
+                for member, payload in assets:
+                    path = self._paths.guard(member_destination(f"assets/{member}", owned))
+                    if self._filesystem.exists(path):
+                        raise ValueError("工程成果资产已存在，拒绝覆盖")
+                    created.append(path)
+                    self._documents.write_bytes(path, payload, token)
                 for variant in variants:
                     path = self._variants.path_for(variant.ref)
                     if self._filesystem.exists(path):

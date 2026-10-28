@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
@@ -157,6 +157,10 @@ class ParaTranzPort(Protocol):
     def list_entries(
         self, project_id: int, *, limit: int, cancellation: CancellationPort | None = None
     ) -> tuple[ParaTranzEntry, ...]: ...
+
+    def iter_entries(
+        self, project_id: int, *, limit: int, cancellation: CancellationPort | None = None
+    ) -> Iterator[ParaTranzEntry]: ...
 
     def upsert_entry(
         self,

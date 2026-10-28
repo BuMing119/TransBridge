@@ -235,58 +235,6 @@ class MaterializationResult:
     migration_plan: FingerprintMigrationPlan | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class LegacyProjection:
-    entry: Any
-    translation: str
-    stage: int
-
-
-def legacy_variant_entry_key(entry: Any) -> str:
-    """Preserve plain legacy IDs, but never collapse text-disambiguated entries."""
-    identity = getattr(entry, "entry_key", None)
-    if isinstance(identity, EntryKey) and identity.original is not None:
-        return identity.serialize()
-    return entry.id
-
-
-def plan_legacy_variant_projection(
-    entries: Iterable[Any],
-    translations: Mapping[str, str],
-    stages: Mapping[str, int],
-    *,
-    source_baseline: Iterable[Any] | None,
-) -> tuple[tuple[LegacyProjection, ...], bool]:
-    """Plan the lossy old-list projection without mutating caller state.
-
-    Missing values can only be replaced when the caller supplies the source
-    baseline.  Returning ``False`` as the second item exposes that migration
-    boundary instead of silently treating process state as a baseline.
-    """
-
-    baseline = None
-    if source_baseline is not None:
-        baseline = {
-            legacy_variant_entry_key(entry): (entry.translation, entry.stage) for entry in source_baseline if entry.id
-        }
-    projections: list[LegacyProjection] = []
-    complete = True
-    for entry in entries:
-        if not entry.id:
-            continue
-        key = legacy_variant_entry_key(entry)
-        if key in translations:
-            translation = translations[key]
-            stage = stages.get(key, entry.stage)
-        elif baseline is not None and key in baseline:
-            translation, stage = baseline[key]
-        else:
-            complete = False
-            continue
-        projections.append(LegacyProjection(entry, translation, stage))
-    return tuple(projections), complete
-
-
 class VariantAggregate:
     """In-memory authority with one validation/commit boundary."""
 
@@ -296,19 +244,14 @@ class VariantAggregate:
         self._fingerprints = snapshot.source_fingerprints
         self._entries = {entry.entry_key: entry for entry in snapshot.entries}
         self._label_library = snapshot.label_library
+        self._snapshot = snapshot
 
     @property
     def revision(self) -> int:
         return self._revision
 
     def snapshot(self) -> VariantSnapshot:
-        return VariantSnapshot(
-            self.ref,
-            self._fingerprints,
-            tuple(self._entries.values()),
-            self._revision,
-            self._label_library,
-        )
+        return self._snapshot
 
     def commit(
         self,
@@ -341,6 +284,7 @@ class VariantAggregate:
         self._entries = {entry.entry_key: entry for entry in projected.entries}
         self._label_library = projected.label_library
         self._revision = projected.revision
+        self._snapshot = projected
         return self._revision
 
 
@@ -505,7 +449,7 @@ def _compatibility_key(key: EntryKey) -> str:
 
 def _freeze_json(value: Any) -> Any:
     if isinstance(value, (_FrozenObject, _FrozenArray)):
-        value = _thaw_json(value)
+        return value
     try:
         json.dumps(value, allow_nan=False)
     except (TypeError, ValueError) as exc:
@@ -557,7 +501,6 @@ def _read_legacy_compatibility_state(
 __all__ = [
     "FingerprintConflict",
     "FingerprintMigrationPlan",
-    "LegacyProjection",
     "MaterializationResult",
     "SourceBaseline",
     "SourceFingerprint",
@@ -567,5 +510,4 @@ __all__ = [
     "VariantMaterializer",
     "VariantSnapshot",
     "collect_variant_snapshot",
-    "plan_legacy_variant_projection",
 ]

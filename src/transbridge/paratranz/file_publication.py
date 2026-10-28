@@ -13,7 +13,7 @@ from transbridge.application.file_upload import FileWriteResult
 from transbridge.application.ports.paratranz import ExternalServiceError
 
 from .api.paratranz_files_api import ParatranzFilesAPI
-from .categorized_upload import UploadCancellation, _complete_files, _file_path
+from .file_transport import UploadCancellation, _complete_files, _file_path
 from .paratranz_client import RetryPolicy
 
 

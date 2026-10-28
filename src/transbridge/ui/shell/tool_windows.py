@@ -76,6 +76,12 @@ class ToolWindows:
 
         context = getattr(self._host, "context", None)
         paratranz_config = None if context is None else context.config
+        runtime = getattr(self._host, "app_runtime", None)
+        task_result_preferences = (
+            runtime.use_cases.resolve("task_result_preferences")
+            if runtime is not None and "task_result_preferences" in runtime.use_cases.names()
+            else None
+        )
 
         def paratranz_saved(config) -> None:
             if context is not None:
@@ -92,6 +98,7 @@ class ToolWindows:
             paratranz_config=paratranz_config,
             reload_llm=LLMConfig.load_from_file,
             on_paratranz_saved=paratranz_saved,
+            task_result_preferences=task_result_preferences,
         )
         dialog.exec()
         if context is not None and context.config.token and not context.current_user:

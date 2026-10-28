@@ -13,17 +13,28 @@ import pytest
 
 from transbridge.application.contracts import OperationResult
 from transbridge.application.io.identity import EntryKey, SourceNamespace
+from transbridge.application.translation.result_merge import (
+    ResultConflictPolicy,
+    ResultEntryState,
+    merge_result_entries,
+)
+from transbridge.application.translation.task_merge_evidence import TaskMergeEvidenceStore
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.projection_types import CollectionSlot
 from transbridge.ui.tools.ai_translator import task_session
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 from transbridge.ui.version_persistence import VersionPersistence
+
+_application = None
 
 
 @pytest.fixture(scope="module")
 def qapp():
-    return QApplication.instance() or QApplication([])
+    # Global worker signal buses outlive a single module's fixture teardown.
+    global _application
+    _application = QApplication.instance() or QApplication([])
+    return _application
 
 
 def _entry(source, text=""):
@@ -78,16 +89,114 @@ class _Persistence:
             publish()
         else:
             commit_mutation(publish)
-        return SimpleNamespace(is_success=not self.fail_commit)
+        return OperationResult.completed({}) if not self.fail_commit else OperationResult.cancelled()
 
     def save_translation(self, entries, name):
         self.saves.append((name, deepcopy(entries)))
         if not self.fail_save:
-            self.project_saved = self.snapshot_saved = True
-        return SimpleNamespace(is_success=not self.fail_save)
+            self.project_saved = True
+        return OperationResult.completed({}) if not self.fail_save else OperationResult.cancelled()
+
+    def freeze_merge_translation(self, candidates, policy, **options):
+        return lambda: self.merge_translation(candidates, policy, **options)
+
+    def acknowledge_merge(self, result):
+        assert result.is_success
+
+    def freeze_save_project(self):
+        entries = tuple(entry for slot in self.ctx.slots.values() for entry in slot.collection)
+        return lambda: self.save_translation(entries, "current")
+
+    def acknowledge_save(self):
+        pass
 
     def mark_project_saved(self):
         self.project_saved = True
+
+    def merge_translation(self, candidates, policy, *, commit_mutation=None, before_commit=None):
+        entries = {entry.identity: entry for slot in self.ctx.slots.values() for entry in slot.collection}
+        plan = merge_result_entries(
+            {row.base.entry_key: row.base for row in candidates},
+            {key: _state(entry) for key, entry in entries.items()},
+            {row.incoming.entry_key: row.incoming for row in candidates},
+            policy=policy,
+        )
+        if before_commit is not None:
+            before_commit(plan)
+        payload = tuple(
+            replace(entries[row.entry_key], translation=row.translation, stage=row.stage) for row in plan.applied
+        )
+        result = self.commit_translation(payload, commit_mutation=commit_mutation)
+        if not result.is_success:
+            return result
+        for row in plan.applied:
+            entries[row.entry_key].translation, entries[row.entry_key].stage = row.translation, row.stage
+        if plan.applied:
+            self.project_saved = self.snapshot_saved = False
+        return OperationResult.completed(plan)
+
+
+def _state(entry):
+    return ResultEntryState(entry.identity, entry.original, entry.translation, entry.stage, entry.context or "")
+
+
+class _Evidence(TaskMergeEvidenceStore):
+    """Observe the real precommit evidence and postcommit receipt persistence."""
+
+    def __init__(self, directory, on_save=None):
+        super().__init__(directory, "contract-regression")
+        self.on_save = on_save
+        self.receipts = []
+
+    def save(self, *args):
+        path = super().save(*args)
+        if self.on_save is not None:
+            self.on_save(*args)
+        return path
+
+    def acknowledge(self, candidates, plan, policy):
+        self.receipts.append((candidates, plan, policy))
+        return super().acknowledge(candidates, plan, policy)
+
+
+def _v2_commands(ctx, calls, *, before_merge=None, before_save=None):
+    """Exercise the real persistence adapter with a small authoritative merge port."""
+
+    def merge(candidates, _runtime, *, policy, before_commit=None, commit_mutation=None, **expected):
+        assert expected["expected_variant_ref"].identity.value == ctx.active_version_identity[1]
+        if before_merge is not None:
+            before_merge()
+        entries = {entry.identity: entry for slot in ctx.slots.values() for entry in slot.collection}
+        plan = merge_result_entries(
+            {row.base.entry_key: row.base for row in candidates},
+            {key: _state(entry) for key, entry in entries.items()},
+            {row.incoming.entry_key: row.incoming for row in candidates},
+            policy=policy,
+        )
+
+        def publish():
+            if before_commit is not None:
+                before_commit(plan)
+            for row in plan.applied:
+                entries[row.entry_key].translation, entries[row.entry_key].stage = row.translation, row.stage
+            calls.append(("merge", plan))
+            if plan.applied:
+                ctx.variant_revision += 1
+
+        publish() if commit_mutation is None else commit_mutation(publish)
+        return OperationResult.completed(plan)
+
+    def snapshot(name, _runtime):
+        calls.append(("snapshot", name))
+        return OperationResult.completed({})
+
+    def save(_runtime):
+        if before_save is not None:
+            before_save()
+        calls.append(("save", None))
+        return OperationResult.completed({})
+
+    return SimpleNamespace(merge_entry_states=merge, save_snapshot=snapshot, save=save)
 
 
 @pytest.fixture
@@ -119,6 +228,14 @@ def _wait(qapp, session):
     assert not session.is_busy
 
 
+def _complete(session):
+    if session.completed:
+        return session._commit_result
+    result = session.apply_entries(set(session._draft.keys))
+    session.finish()
+    return result
+
+
 def _capture(qapp, session):
     success, errors = [], []
     session.capture_before(on_success=success.append, on_error=errors.append)
@@ -133,7 +250,7 @@ def _save(qapp, session):
     return success, errors
 
 
-def test_task_output_is_deeply_detached_until_all_sources_commit(qapp, session):
+def test_task_output_is_deeply_detached_and_commits_only_target_changes(qapp, session):
     original = session._ctx.collection
     translated = session.tasks[0].translate_entries[0]
     polished = session.tasks[1].polish_entries[0]
@@ -146,14 +263,13 @@ def test_task_output_is_deeply_detached_until_all_sources_commit(qapp, session):
 
     success, errors = _capture(qapp, session)
     assert success and not errors
-    before = session._persistence.snapshots[0][1]
-    assert [entry.translation for entry in before] == ["", "旧译文", "不变"]
-    session.mark_completed()
+    assert not session._persistence.snapshots
+    _complete(session)
     committed = session._persistence.commits[0]
-    assert [entry.translation for entry in committed] == ["新译文", "润色译文", "不变"]
-    assert len({entry.identity for entry in committed}) == 3
+    assert {entry.translation for entry in committed} == {"新译文", "润色译文"}
+    assert len({entry.identity for entry in committed}) == 2
     assert len({entry.id for entry in committed}) == 1
-    assert next(iter(original)).translation == ""
+    assert next(iter(original)).translation == "新译文"
     assert next(iter(session._ctx.collection)).translation == "新译文"
     assert session._ctx.notifications == [session._ctx.collection]
     assert session.can_save
@@ -165,59 +281,60 @@ def test_cancel_discards_output_without_reverting_user_edits(qapp, session):
     next(iter(session._ctx.collection)).translation = "用户编辑"
     session.rollback_uncommitted()
     with pytest.raises(RuntimeError, match="已取消"):
-        session.mark_completed()
+        _complete(session)
     assert next(iter(session._ctx.collection)).translation == "用户编辑"
     assert session._persistence.commits == []
     assert not session.can_save
 
 
-@pytest.mark.parametrize("change", ["identity", "revision", "entry", "source", "collection", "unselected"])
-def test_any_concurrent_version_or_source_change_blocks_whole_commit(qapp, session, change):
+@pytest.mark.parametrize("change", ["identity", "revision", "source", "collection", "unselected"])
+def test_fixed_task_merges_through_unrelated_changes_but_rejects_identity_switch(qapp, session, change):
     _capture(qapp, session)
     ctx = session._ctx
     if change == "identity":
         ctx.active_version_identity = ("project", "other")
     elif change == "revision":
         ctx.variant_revision += 1
-    elif change == "entry":
-        next(iter(ctx.collection)).stage = 9
     elif change == "source":
         ctx.slots["first"] = CollectionSlot("First", ctx.collection)
     elif change == "collection":
         ctx.slots["first"].collection = TranslationEntryCollection(deepcopy(tuple(ctx.collection)))
     else:
         next(iter(ctx.slots["third"].collection)).translation = "用户更新其它插件"
-    with pytest.raises(RuntimeError, match="已变化|已修改"):
-        session.mark_completed()
-    assert session._persistence.commits == []
-    assert not session.completed
+    candidate = session.tasks[0].translate_entries[0]
+    candidate.translation = "固定输入的结果"
+    if change == "identity":
+        with pytest.raises(RuntimeError, match="已变化"):
+            _complete(session)
+        assert session._persistence.commits == []
+        assert not session.completed
+    else:
+        _complete(session)
+        assert next(iter(ctx.collection)).translation == "固定输入的结果"
+        assert session.completed
+        if change == "unselected":
+            assert next(iter(ctx.slots["third"].collection)).translation == "用户更新其它插件"
 
 
 def test_failed_snapshot_and_commit_never_publish_output_and_are_retryable(qapp, session):
-    session._persistence.fail_snapshot = True
-    success, errors = _capture(qapp, session)
-    assert not success and errors
-    with pytest.raises(RuntimeError, match="快照尚未完成"):
-        session.mark_completed()
-    session._persistence.fail_snapshot = False
     _capture(qapp, session)
     session.tasks[0].translate_entries[0].translation = "待提交"
     session._persistence.fail_commit = True
     with pytest.raises(RuntimeError, match="版本操作失败"):
-        session.mark_completed()
+        _complete(session)
     assert next(iter(session._ctx.collection)).translation == ""
     assert not session.can_save
     session._persistence.fail_commit = False
-    session.mark_completed()
+    _complete(session)
     assert next(iter(session._ctx.collection)).translation == "待提交"
 
 
 def test_commit_capture_and_save_are_idempotent_and_failed_save_can_retry(qapp, session):
     _capture(qapp, session)
     _capture(qapp, session)
-    assert len(session._persistence.snapshots) == 1
-    first = session.mark_completed()
-    assert session.mark_completed() is first
+    assert not session._persistence.snapshots
+    first = _complete(session)
+    assert _complete(session) is first
     assert len(session._persistence.commits) == 1
     session._persistence.fail_save = True
     success, errors = _save(qapp, session)
@@ -230,44 +347,20 @@ def test_commit_capture_and_save_are_idempotent_and_failed_save_can_retry(qapp, 
     assert len(session._persistence.commits) == 1
 
 
-def test_save_rejects_changes_after_completion(qapp, session):
+def test_external_save_cannot_claim_overwritten_task_result_is_durable(qapp, session):
     _capture(qapp, session)
-    session.mark_completed()
+    session.tasks[0].translate_entries[0].translation = "AI成果"
+    _complete(session)
     next(iter(session._ctx.collection)).translation = "运行后编辑"
-    with pytest.raises(RuntimeError, match="已修改"):
-        _save(qapp, session)
-    assert session._persistence.saves == []
-
-
-def test_session_reports_project_saved_when_after_snapshot_fails(qapp, session):
-    _capture(qapp, session)
-    session.mark_completed()
-    persistence = session._persistence
-    persistence.project_saved = False
-    persistence.snapshot_saved = False
-
-    def save(_entries, _name):
-        persistence.project_saved = True
-        if not persistence.snapshot_saved:
-            raise OSError("快照写入失败")
-        return SimpleNamespace(is_success=True)
-
-    persistence.save_translation = save
-    success, errors = _save(qapp, session)
-    assert not success and errors
-    assert session.project_saved and not session.snapshot_saved
-    assert session.can_save and not session.saved
-    persistence.snapshot_saved = True
-    success, errors = _save(qapp, session)
-    assert success and not errors
-    assert session.project_saved and session.snapshot_saved and session.saved
-    assert not session.can_save
+    session._ctx.dirty = False
+    assert not session.observe_project_saved()
+    assert not session.project_saved
 
 
 def test_session_keeps_original_project_history_location(session, tmp_path):
-    session._ctx.active_project = SimpleNamespace(project_dir=tmp_path / "original")
-    run = task_session.TaskSession(session._ctx, (), SimpleNamespace(mode="translate"))
-    session._ctx.active_project = SimpleNamespace(project_dir=tmp_path / "other")
+    run = task_session.TaskSession(
+        session._ctx, (), SimpleNamespace(mode="translate"), project_dir=tmp_path / "original"
+    )
     session._ctx.active_version_identity = ("other", "variant")
     assert run.version_identity == ("project", "variant")
     assert run.project_dir == tmp_path / "original"
@@ -285,31 +378,27 @@ def test_external_project_save_is_latched_without_claiming_snapshot_saved(qapp, 
     session._ctx.dirty = False
     assert not session.observe_project_saved()
     _capture(qapp, session)
-    session.mark_completed()
+    _complete(session)
     session._ctx.dirty = True
     assert not session.observe_project_saved()
     session._ctx.dirty = False
     assert session.observe_project_saved()
-    assert session.project_saved and not session.snapshot_saved and not session.saved
+    assert session.project_saved and not session.saved
     assert session.can_save
     assert not session.observe_project_saved()
     session._ctx.dirty = True
     assert session.project_saved  # Historical durability of this task's version stays latched.
 
 
-@pytest.mark.parametrize("change", ["project", "revision", "entries", "collection", "unknown_dirty"])
+@pytest.mark.parametrize("change", ["project", "entries", "unknown_dirty"])
 def test_clean_unrelated_state_cannot_mark_task_result_saved(qapp, session, change):
     _capture(qapp, session)
-    session.mark_completed()
+    _complete(session)
     session._ctx.dirty = False
     if change == "project":
         session._ctx.active_version_identity = ("other", "variant")
-    elif change == "revision":
-        session._ctx.variant_revision += 1
     elif change == "entries":
         next(iter(session._ctx.collection)).translation = "外部修改"
-    elif change == "collection":
-        session._ctx.slots["first"].collection = TranslationEntryCollection(deepcopy(tuple(session._ctx.collection)))
     else:
         session._ctx.dirty = None
     assert not session.observe_project_saved()
@@ -318,15 +407,16 @@ def test_clean_unrelated_state_cannot_mark_task_result_saved(qapp, session, chan
 
 def test_authoritative_projection_is_not_overwritten_after_commit(qapp, session):
     _capture(qapp, session)
-    projected = TranslationEntryCollection([_entry("first", "权威译文")])
+    projected = TranslationEntryCollection([replace(_entry("first", "候选"), stage=0)])
 
-    def commit(entries):
+    def commit(entries, **options):
         session._ctx.slots["first"] = CollectionSlot("First", projected)
         session._ctx.variant_revision += 1
         return SimpleNamespace(is_success=True)
 
     session._persistence.commit_translation = commit
-    session.mark_completed()
+    session.tasks[0].translate_entries[0].translation = "候选"
+    _complete(session)
     assert session._ctx.collection is projected
     success, errors = _save(qapp, session)
     assert success and not errors
@@ -339,80 +429,27 @@ def test_duplicate_identity_mapping_is_rejected_before_snapshot(session):
         task_session.TaskSession(ctx, (), SimpleNamespace(mode="translate"))
 
 
-def test_snapshot_success_after_cancel_does_not_start_execution(qapp, session):
-    success, errors = [], []
-    session.capture_before(on_success=success.append, on_error=errors.append)
-    session.rollback_uncommitted()
-    _wait(qapp, session)
-    assert not success and errors
-    assert not session.completed
-
-
 def test_real_version_persistence_preserves_all_source_entry_keys_and_commits_once(qapp, session):
     calls = []
     ctx = session._ctx
     ctx.runtime_context = object()
 
-    def commit(states, _runtime, **expected):
-        calls.append(("commit", states))
-        assert expected["expected_project_revision"] == 3
-        assert expected["expected_variant_revision"] == 4
-        ctx.variant_revision = 5
-        return OperationResult.completed({"revision": 5})
-
-    def snapshot(name, _runtime):
-        calls.append(("snapshot", name))
-        return OperationResult.completed({"name": name})
-
-    def save(_runtime):
-        calls.append(("save", None))
-        return OperationResult.completed({})
-
-    ctx.project_commands = SimpleNamespace(replace_entry_states=commit, save_snapshot=snapshot, save=save)
+    ctx.project_commands = _v2_commands(ctx, calls)
     session._persistence = VersionPersistence(ctx, ctx.active_version_identity)
     _capture(qapp, session)
     session.tasks[0].translate_entries[0].translation = "翻译"
-    session.mark_completed()
-    session.mark_completed()
+    _complete(session)
+    _complete(session)
     success, errors = _save(qapp, session)
     assert success and not errors
-    assert [kind for kind, _value in calls] == ["snapshot", "commit", "save", "snapshot"]
-    assert len(calls[1][1]) == 3
-    assert calls[1][1][session.tasks[0].translate_entries[0].identity] == ("翻译", 0)
-
-
-def test_legacy_ambiguous_ids_fail_closed(session):
-    session._ctx.uses_authoritative_projection = False
-    with pytest.raises(ValueError, match="迁移到 V2"):
-        task_session.TaskSession(session._ctx, (), SimpleNamespace(mode="translate"))
-
-
-def test_real_legacy_persistence_retains_unselected_plugin(qapp, session, tmp_path):
-    from transbridge.persistence.variant_store import VariantStore
-
-    ctx = session._ctx
-    ctx.uses_authoritative_projection = False
-    tasks = []
-    for key, slot in ctx.slots.items():
-        slot.collection = TranslationEntryCollection(replace(entry, id=key) for entry in slot.collection)
-        if key == "first":
-            tasks.append(SourceTask(key, slot.label, None, slot.collection, tuple(slot.collection), ()))
-    ctx.active_project = SimpleNamespace(variant_dir=lambda _name: tmp_path)
-    ctx.active_variant = "main"
-    ctx.variant_store = VariantStore(tmp_path / "current.json")
-    ctx.entry_labels, ctx.label_library = {}, {}
-    run = task_session.TaskSession(ctx, tuple(tasks), SimpleNamespace(mode="translate"))
-    run._persistence = VersionPersistence(ctx, ctx.active_version_identity)
-    success, errors = _capture(qapp, run)
-    assert success and not errors
-    # Snapshot preparation writes an independent store, never the live GUI cache.
-    assert ctx.variant_store.translations == {}
-    run.tasks[0].translate_entries[0].translation = "翻译"
-    run.mark_completed()
-    success, errors = _save(qapp, run)
-    assert success and not errors
-    restored = VariantStore.load(tmp_path / "current.json")
-    assert restored.translations == {"first": "翻译", "second": "旧译文", "third": "不变"}
+    assert [kind for kind, _value in calls] == ["merge", "save"]
+    plan = calls[0][1]
+    assert len(plan.applied) == 1
+    assert (plan.applied[0].entry_key, plan.applied[0].translation) == (
+        session.tasks[0].translate_entries[0].identity,
+        "翻译",
+    )
+    assert next(iter(ctx.slots["third"].collection)).translation == "不变"
 
 
 def test_retry_failed_source_resets_partial_output_and_keeps_successful_draft(qapp, session):
@@ -420,16 +457,16 @@ def test_retry_failed_source_resets_partial_output_and_keeps_successful_draft(qa
     first, second = session.tasks
     first.translate_entries[0].translation = "成功副本"
     second.polish_entries[0].translation = "失败插件的部分输出"
-    session.reset_sources({"second"})
+    session.retry_entries({entry.identity for entry in session.tasks[1].entries})
     assert session.tasks[0] is first
     assert first.translate_entries[0].translation == "成功副本"
     retried = session.tasks[1]
     assert retried is not second
     assert retried.polish_entries[0].translation == "旧译文"
     assert retried.collection.get(retried.polish_entries[0].identity) is retried.polish_entries[0]
-    session.mark_completed()
+    _complete(session)
     with pytest.raises(RuntimeError, match="已经提交"):
-        session.reset_sources({"second"})
+        session.retry_entries({entry.identity for entry in session.tasks[1].entries})
 
 
 def test_partial_apply_keeps_unselected_inputs_and_only_publishes_translation_fields(qapp, session):
@@ -437,7 +474,6 @@ def test_partial_apply_keeps_unselected_inputs_and_only_publishes_translation_fi
     translated = session.tasks[0].translate_entries[0]
     rejected = session.tasks[1].polish_entries[0]
     translated.translation, translated.stage = "通过检查", 3
-    translated.original = "意外修改原文"
     translated.metadata[0][1]["value"].append(9)
     rejected.translation = "未采纳的草稿"
 
@@ -496,7 +532,7 @@ def test_retry_slice_preserves_source_context_and_other_drafts(qapp, session):
     assert next(iter(ctx.collection)).translation == ""
 
 
-def test_partial_apply_save_retry_then_apply_uses_new_persistence_and_snapshot(qapp, session):
+def test_partial_apply_save_retry_reuses_persistence_without_rebuilding_history(qapp, session):
     _capture(qapp, session)
     first, second = session.tasks[0].translate_entries[0], session.tasks[1].polish_entries[0]
     first.translation = "首次成功"
@@ -505,26 +541,23 @@ def test_partial_apply_save_retry_then_apply_uses_new_persistence_and_snapshot(q
     persistence = session._persistence
     success, errors = _save(qapp, session)
     assert success and not errors and session.saved
-    previous_name = session.after_snapshot_name
     retried = session.retry_entries({second.identity})
     assert retried[0].polish_entries[0].translation == "旧译文"
     retried[0].polish_entries[0].translation = "重试成功"
     session.apply_entries({second.identity})
-    assert session._persistence is not persistence
-    assert session.after_snapshot_name != previous_name
-    assert not session.saved and not session.project_saved and not session.snapshot_saved
+    assert session._persistence is persistence
+    assert not session.saved and not session.project_saved
     assert session.can_save and not session.completed
     assert next(iter(session._ctx.collection)).translation == "首次成功"
     assert next(iter(session._ctx.slots["second"].collection)).translation == "重试成功"
     session._persistence.fail_save = True
     success, errors = _save(qapp, session)
     assert not success and errors
-    snapshot_name = session.after_snapshot_name
     session._persistence.fail_save = False
     success, errors = _save(qapp, session)
     assert success and not errors
-    assert session.after_snapshot_name == snapshot_name
-    assert len(session._persistence.commits) == 1 and len(session._persistence.saves) == 2
+    assert len(session._persistence.commits) == 2 and len(session._persistence.saves) == 3
+    assert not session._persistence.snapshots
     session.finish()
     assert session.completed
 
@@ -548,16 +581,26 @@ def test_cancel_after_partial_apply_preserves_applied_and_allows_save(qapp, sess
 
 
 @pytest.mark.parametrize("action", ["apply", "retry"])
-def test_external_edit_after_own_partial_commit_still_blocks_action(qapp, session, action):
+def test_external_edit_after_partial_commit_preserves_current_and_retry_uses_fixed_input(
+    qapp, session, tmp_path, action
+):
     _capture(qapp, session)
     first, second = session.tasks[0].translate_entries[0], session.tasks[1].polish_entries[0]
     first.translation = "已应用"
     session.apply_entries({first.identity})
     next(iter(session._ctx.slots["second"].collection)).translation = "用户新编辑"
     operation = session.apply_entries if action == "apply" else session.retry_entries
-    with pytest.raises(RuntimeError, match="已修改"):
-        operation({second.identity})
+    second.translation = "新AI结果"
+    evidence = []
+    session.merge_evidence_writer = _Evidence(tmp_path, lambda *args: evidence.append(args))
+    result = operation({second.identity})
     assert next(iter(session._ctx.slots["second"].collection)).translation == "用户新编辑"
+    if action == "apply":
+        assert result.kept_current_keys == (second.identity,)
+        assert second.identity not in session.applied_keys
+        assert evidence and evidence[0][1].conflicts
+    else:
+        assert result[0].polish_entries[0].translation == "旧译文"
 
 
 def test_unknown_or_applied_keys_cannot_be_retried(qapp, session):
@@ -573,30 +616,18 @@ def test_unknown_or_applied_keys_cannot_be_retried(qapp, session):
         session.retry_entries({key})
 
 
-def test_real_v2_partial_commits_use_latest_revision_and_retry_snapshot_only(qapp, session, monkeypatch):
+def test_real_v2_partial_commits_merge_latest_targets_and_retry_save_without_history(qapp, session, monkeypatch):
     monkeypatch.setattr(task_session, "VersionPersistence", VersionPersistence)
     ctx = session._ctx
     calls = []
     ctx.runtime_context = object()
-    fail_after_snapshot = False
+    fail_save = False
 
-    def commit(states, _runtime, **expected):
-        assert expected["expected_variant_revision"] == ctx.variant_revision
-        calls.append(("commit", deepcopy(states)))
-        ctx.variant_revision += 1
-        return OperationResult.completed({"revision": ctx.variant_revision})
-
-    def snapshot(name, _runtime):
-        calls.append(("snapshot", name))
-        if fail_after_snapshot:
+    def saving():
+        if fail_save:
             raise OSError("磁盘暂时不可写")
-        return OperationResult.completed({})
 
-    def save(_runtime):
-        calls.append(("save", None))
-        return OperationResult.completed({})
-
-    ctx.project_commands = SimpleNamespace(replace_entry_states=commit, save_snapshot=snapshot, save=save)
+    ctx.project_commands = _v2_commands(ctx, calls, before_save=saving)
     session._persistence = VersionPersistence(ctx, ctx.active_version_identity)
     _capture(qapp, session)
     first, second = session.tasks[0].translate_entries[0], session.tasks[1].polish_entries[0]
@@ -605,20 +636,22 @@ def test_real_v2_partial_commits_use_latest_revision_and_retry_snapshot_only(qap
     assert _save(qapp, session)[0]
     failed = session.retry_entries({second.identity})[0].polish_entries[0]
     failed.translation = "校对成功"
+    next(iter(ctx.slots["third"].collection)).translation = "其它来源新编辑"
+    ctx.variant_revision += 7
     session.apply_entries({failed.identity})
-    fail_after_snapshot = True
+    fail_save = True
     success, errors = _save(qapp, session)
-    assert not success and errors and session.project_saved and not session.snapshot_saved
-    fail_after_snapshot = False
+    assert not success and errors and not session.project_saved
+    fail_save = False
     assert _save(qapp, session)[0]
-    commits = [data for kind, data in calls if kind == "commit"]
+    commits = [data for kind, data in calls if kind == "merge"]
     assert len(commits) == 2
-    assert commits[0][second.identity][0] == "旧译文"
-    assert commits[1][first.identity][0] == "翻译成功"
-    assert commits[1][second.identity][0] == "校对成功"
+    assert [(row.entry_key, row.translation) for row in commits[0].applied] == [(first.identity, "翻译成功")]
+    assert [(row.entry_key, row.translation) for row in commits[1].applied] == [(second.identity, "校对成功")]
+    assert next(iter(ctx.slots["third"].collection)).translation == "其它来源新编辑"
     assert [kind for kind, _ in calls].count("save") == 2
     snapshots = [data for kind, data in calls if kind == "snapshot"]
-    assert snapshots[-1] == snapshots[-2] and snapshots[-1] != snapshots[1]
+    assert not snapshots
 
 
 def test_failed_second_application_preserves_saved_generation(qapp, session, monkeypatch):
@@ -628,48 +661,49 @@ def test_failed_second_application_preserves_saved_generation(qapp, session, mon
     session.apply_entries({first.identity})
     assert _save(qapp, session)[0]
     previous = session._persistence
-    previous_snapshot = session.after_snapshot_name
-    failing = _Persistence(session._ctx, session.version_identity)
-    failing.fail_commit = True
-    monkeypatch.setattr(task_session, "VersionPersistence", lambda *args: failing)
+    previous.fail_commit = True
     with pytest.raises(RuntimeError, match="版本操作失败"):
         session.apply_entries({second.identity})
     assert session._persistence is previous and session.saved
-    assert session.after_snapshot_name == previous_snapshot
     assert session.applied_keys == frozenset({first.identity})
     assert next(iter(session._ctx.slots["second"].collection)).translation == "旧译文"
-    failing.fail_commit = False
+    previous.fail_commit = False
     session.apply_entries({second.identity})
     assert next(iter(session._ctx.slots["second"].collection)).translation == "待应用"
 
 
-def test_real_legacy_partial_save_and_retry_preserve_all_sources(qapp, session, tmp_path, monkeypatch):
-    from transbridge.persistence.variant_store import VariantStore
+@pytest.mark.parametrize("change", ["original", "context", "missing", "candidate_original"])
+def test_structural_target_change_is_pending_even_when_prefer_incoming(qapp, session, tmp_path, change):
+    _capture(qapp, session)
+    candidate = session.tasks[0].translate_entries[0]
+    candidate.translation = "AI成果"
+    current = next(iter(session._ctx.collection))
+    if change == "original":
+        current.original = "新原文"
+    elif change == "context":
+        current.context = "新上下文"
+    elif change == "missing":
+        session._ctx.slots["first"].collection = TranslationEntryCollection()
+    else:
+        candidate.original = "候选偷偷改变的原文"
+    evidence = []
+    session.policy = ResultConflictPolicy.PREFER_INCOMING
+    session.merge_evidence_writer = _Evidence(tmp_path, lambda *args: evidence.append(args))
+    plan = session.apply_entries({candidate.identity})
+    assert not plan.applied and not session.applied_keys
+    assert [conflict.reason for conflict in plan.pending] == ["source_changed_or_missing"]
+    assert current.translation == ""
+    assert evidence and evidence[0][1].pending == plan.pending
+    assert session.merge_evidence_writer.load()[0]["applied_keys"] == []
 
-    monkeypatch.setattr(task_session, "VersionPersistence", VersionPersistence)
-    ctx = session._ctx
-    ctx.uses_authoritative_projection = False
-    tasks = []
-    for key, slot in ctx.slots.items():
-        slot.collection = TranslationEntryCollection(replace(entry, id=key) for entry in slot.collection)
-        if key != "third":
-            tasks.append(SourceTask(key, slot.label, None, slot.collection, tuple(slot.collection), ()))
-    ctx.active_project = SimpleNamespace(variant_dir=lambda _name: tmp_path)
-    ctx.active_variant = "main"
-    ctx.variant_store = VariantStore(tmp_path / "current.json")
-    ctx.entry_labels, ctx.label_library = {}, {}
-    run = task_session.TaskSession(ctx, tuple(tasks), SimpleNamespace(mode="translate"))
-    assert _capture(qapp, run)[0]
-    first, second = run.tasks[0].translate_entries[0], run.tasks[1].translate_entries[0]
-    first.translation, second.translation = "第一次成功", "待重试"
-    run.apply_entries({first.identity})
-    assert _save(qapp, run)[0]
-    restored = VariantStore.load(tmp_path / "current.json")
-    assert restored.translations == {"first": "第一次成功", "second": "旧译文", "third": "不变"}
-    retried = run.retry_entries({second.identity})[0].translate_entries[0]
-    assert retried.translation == "旧译文"
-    retried.translation = "第二次成功"
-    run.apply_entries({retried.identity})
-    assert _save(qapp, run)[0]
-    restored = VariantStore.load(tmp_path / "current.json")
-    assert restored.translations == {"first": "第一次成功", "second": "第二次成功", "third": "不变"}
+
+def test_save_current_project_does_not_mark_replaced_ai_result_durable(qapp, session):
+    _capture(qapp, session)
+    candidate = session.tasks[0].translate_entries[0]
+    candidate.translation = "AI成果"
+    session.apply_entries({candidate.identity})
+    next(iter(session._ctx.collection)).translation = "用户后续编辑"
+    success, errors = _save(qapp, session)
+    assert not success and errors and "替换" in errors[0]
+    assert session._persistence.project_saved
+    assert not session.project_saved and not session.saved

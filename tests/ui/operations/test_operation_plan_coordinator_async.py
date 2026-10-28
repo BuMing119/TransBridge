@@ -1,5 +1,5 @@
 from transbridge.ui.operations.coordinator import OperationPlanCoordinator
-from transbridge.ui.operations.mappers import OperationPlanDraft, UploadOperationMapper
+from transbridge.ui.operations.mappers import OperationPlanDraft, WriteOperationMapper
 from transbridge.ui.operations.plan_presenter import OperationPlanPresenter
 from transbridge.ui.operations.plan_view import OperationKind
 
@@ -41,6 +41,8 @@ class _DeferredWorker:
 
 
 class _Dialog:
+    requires_async_preflight = True
+
     def __init__(self, plan, _parent=None) -> None:
         self.plan = plan
         self.preflight = None
@@ -113,17 +115,17 @@ def test_remote_preflight_is_deferred_and_cancelled_dialog_ignores_late_result()
         workers.append(worker)
         return worker
 
-    mapper = UploadOperationMapper()
+    mapper = WriteOperationMapper()
     presenter = OperationPlanPresenter((mapper,), _Submitter())
     coordinator = OperationPlanCoordinator(
         presenter,
-        {OperationKind.UPLOAD: lambda _context, _batch, _values: _draft()},
+        {OperationKind.WRITE: lambda _context, _batch, _values: _draft()},
         owner_id=lambda _context: "gui",
-        discard_factories={OperationKind.UPLOAD: discarded.append},
+        discard_factories={OperationKind.WRITE: discarded.append},
         preflight_worker_factory=worker_factory,
         dialog_factory=_Dialog,
     )
-    dialog = coordinator.begin_upload(object())
+    dialog = coordinator.begin_write(object())
 
     dialog.preflight_requested.emit(dialog.plan.session_id, ())
 
@@ -146,15 +148,15 @@ def test_operation_specific_dialog_can_start_remote_preflight_automatically() ->
         return worker
 
     coordinator = OperationPlanCoordinator(
-        OperationPlanPresenter((UploadOperationMapper(),), _Submitter()),
-        {OperationKind.UPLOAD: lambda _context, _batch, _values: _draft()},
+        OperationPlanPresenter((WriteOperationMapper(),), _Submitter()),
+        {OperationKind.WRITE: lambda _context, _batch, _values: _draft()},
         owner_id=lambda _context: "gui",
         preflight_worker_factory=worker_factory,
         dialog_factory=_Dialog,
-        dialog_factories={OperationKind.UPLOAD: _AutoDialog},
+        dialog_factories={OperationKind.WRITE: _AutoDialog},
     )
 
-    dialog = coordinator.begin_upload("context")
+    dialog = coordinator.begin_write("context")
 
     assert dialog.context == "context"
     assert len(workers) == 1
@@ -170,14 +172,14 @@ def test_changed_options_queue_latest_preflight_without_showing_stale_error() ->
         return worker
 
     coordinator = OperationPlanCoordinator(
-        OperationPlanPresenter((UploadOperationMapper(),), _Submitter()),
-        {OperationKind.UPLOAD: lambda _context, _batch, _values: _draft()},
+        OperationPlanPresenter((WriteOperationMapper(),), _Submitter()),
+        {OperationKind.WRITE: lambda _context, _batch, _values: _draft()},
         owner_id=lambda _context: "gui",
-        edit_factories={OperationKind.UPLOAD: lambda _draft_value, _fields: _draft()},
+        edit_factories={OperationKind.WRITE: lambda _draft_value, _fields: _draft()},
         preflight_worker_factory=worker_factory,
         dialog_factory=_RefreshingDialog,
     )
-    dialog = coordinator.begin_upload(object())
+    dialog = coordinator.begin_write(object())
 
     dialog.preflight_requested.emit(dialog.plan.session_id, (("strategy", "first"),))
     dialog.preflight_requested.emit(dialog.plan.session_id, (("strategy", "second"),))

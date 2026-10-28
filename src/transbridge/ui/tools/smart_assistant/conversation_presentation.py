@@ -113,8 +113,7 @@ class ConversationPresentation(QObject):
             return
         facade = self.facade
         ctx = facade.context
-        project = getattr(ctx, "active_project", None)
-        name = getattr(ctx, "project_name", "") or (getattr(project, "name", "") if project is not None else "")
+        name = getattr(ctx, "project_name", "")
         path = getattr(ctx, "esp_path", "")
         if not name and isinstance(path, (str, Path)) and path:
             name = Path(path).name

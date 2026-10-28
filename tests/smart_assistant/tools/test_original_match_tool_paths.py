@@ -25,34 +25,25 @@ def _entries():
     )
 
 
-def test_assistant_query_ids_support_exact_edit_stage_and_selection():
+def test_assistant_query_ids_support_exact_edit_stage_and_selection(current_project_factory):
     first, second = _entries()
     collection = TranslationEntryCollection((first, second))
-    selected = set()
-
-    def select_entries(ids, action):
-        selected.update(ids)
-        return len(selected)
-
-    context = SimpleNamespace(
-        collection=collection,
-        filter_state={},
-        entry_labels={},
-        publish_collection_modified=lambda: None,
-        select_entries=select_entries,
-        selected_ids=selected,
-    )
+    project = current_project_factory(collection)
+    context = project.context
     controller = EditorController()
     rows = controller.get_visible_entries({}, context, collection).data["entries"]
     first_id = rows[0]["key"]
     assert first_id == first.identity.serialize()
     assert rows[1]["key"] == second.identity.serialize()
     assert controller.edit_translation({"entry_id": first_id, "new_translation": "chosen"}, context, collection).success
-    assert (first.translation, second.translation) == ("chosen", "old-second")
-    assert controller.set_stage({"entry_ids": [first_id], "stage": 3}, context, collection).success
-    assert (first.stage, second.stage) == (3, 1)
+    assert tuple(context.collection.get(entry.identity).translation for entry in (first, second)) == (
+        "chosen",
+        "old-second",
+    )
+    assert controller.set_stage({"entry_ids": [first_id], "stage": 3}, context, context.collection).success
+    assert tuple(context.collection.get(entry.identity).stage for entry in (first, second)) == (3, 1)
     assert controller.select_entries({"entry_ids": [first_id]}, context).success
-    assert selected == {first_id}
+    assert context.selected_ids == {first_id}
     assert not controller.select_entries({"entry_ids": ["same"]}, context).success
     with pytest.warns(RuntimeWarning, match="ambiguous"):
         assert not controller.edit_translation(
@@ -119,26 +110,24 @@ def test_assistant_polish_applies_each_accepted_original_result(monkeypatch):
 @pytest.mark.parametrize("with_ordinary", [False, True])
 @pytest.mark.parametrize("force_overwrite", [False, True])
 def test_assistant_upload_skips_original_matched_entries_before_remote_write(
-    monkeypatch, caplog, with_ordinary, force_overwrite
+    monkeypatch, caplog, with_ordinary, force_overwrite, current_project_factory, tmp_path
 ):
     entries = _entries()
     ordinary = TranslationEntry("normal", "normal", "plain", "translated", 1, "BOOK:FULL")
     collection = TranslationEntryCollection((*entries, ordinary) if with_ordinary else entries)
-    sent, committed = [], []
+    sent = []
 
     def upsert(project_id, entry, **kwargs):
         sent.append(entry)
         return replace(entry, remote_id=7)
 
-    monkeypatch.setattr(
-        "transbridge.smart_assistant.tools._entry_upload.ProjectToolTarget.capture",
-        lambda context: SimpleNamespace(check=lambda: None, commit_records=lambda rows: committed.extend(rows)),
-    )
+    project = current_project_factory(collection)
+    monkeypatch.setattr(project.commands, "task_result_directory", lambda _context: tmp_path)
     with caplog.at_level(logging.WARNING):
         result = upload_entries(
             {"force_overwrite": force_overwrite},
-            SimpleNamespace(),
-            collection,
+            project.context,
+            project.context.collection,
             SimpleNamespace(upsert_entry=upsert),
             11,
             None,
@@ -151,4 +140,6 @@ def test_assistant_upload_skips_original_matched_entries_before_remote_write(
     assert "PARATRANZ_ORIGINAL_MATCH_SKIPPED" in caplog.text
     assert [entry.key for entry in sent] == (["normal"] if with_ordinary else [])
     assert all(isinstance(entry, ParaTranzEntry) for entry in sent)
-    assert [entry.key for entry in committed] == (["normal"] if with_ordinary else [])
+    assert [entry.key for entry in project.context.collection if entry.external_refs] == (
+        ["normal"] if with_ordinary else []
+    )

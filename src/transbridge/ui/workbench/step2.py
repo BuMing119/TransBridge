@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QLabel,
     QMenu,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QVBoxLayout,
@@ -641,8 +642,9 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         entry_labels: dict[str, set[str]],
         label_library: dict[str, dict],
     ) -> bool:
-        if not getattr(self._ctx, "uses_authoritative_projection", False):
-            return True
+        if self._ctx.project_commands is None or self._ctx.runtime_context is None:
+            QMessageBox.warning(self, "标签未修改", "请先打开工程，再修改标签。")
+            return False
         result = self._ctx.replace_projected_labels(entry_labels, label_library)
         return result.is_success
 

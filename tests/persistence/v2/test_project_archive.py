@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from copy import deepcopy
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -47,6 +48,16 @@ def _ok(result):
 
 def _file_state(root):
     return {path.relative_to(root).as_posix(): path.read_bytes() for path in Path(root).rglob("*") if path.is_file()}
+
+
+def _assert_publication_rolled_back(root, before):
+    after = _file_state(root)
+    assert {path: after[path] for path in before} == before
+    # Immutable, unreferenced source content may precede a failed Project transaction.
+    # Existing assets and every authoritative record must still be byte-identical.
+    for path in after.keys() - before.keys():
+        assert path.startswith(("source_artifacts/manifests/", "source_artifacts/blobs/"))
+        assert Path(path).stem == hashlib.sha256(after[path]).hexdigest()
 
 
 def _bundle_content(path):
@@ -107,6 +118,68 @@ def exported_project(tmp_path, services_factory):
         variant_refs=(first_ref, second_ref),
         key=key,
     )
+
+
+@pytest.mark.parametrize("snapshot_version", [2, 3])
+def test_import_upgrades_project_variants_and_history_together(
+    tmp_path, services_factory, exported_project, snapshot_version
+):
+    source = exported_project
+    manifest, members = _bundle_content(source.bundle)
+    manifest["project"]["schema_version"] = 3
+    for variant in manifest["variants"]:
+        variant["schema_version"] = 3
+    for snapshot in manifest["snapshots"]:
+        snapshot["variant"]["schema_version"] = snapshot_version
+    bundle = _write_bundle(tmp_path / "earlier.transbridge", manifest, members)
+    original_bytes = bundle.read_bytes()
+    target = services_factory("upgraded")
+
+    inspection = target.project_archive.inspect_import(str(bundle), source.context)
+    assert inspection.name == manifest["project"]["data"]["name"]
+    imported = target.project_archive.import_project(str(bundle), source.context)
+    assert json.loads(Path(imported).read_bytes())["schema_version"] == 4
+    repository = ProjectSnapshotRepository(target.root, target.filesystem)
+    for ref in source.variant_refs:
+        assert target.variants.read_snapshot(ref).envelope.to_dict()["schema_version"] == 4
+        histories = repository.list(ref)
+        expected = [row for row in manifest["snapshots"] if row["variant"]["id"] == ref.identity.value]
+        assert {row.name for row in histories} == {row["name"] for row in expected}
+        for history in histories:
+            restored = repository.load(history.identity, ref).to_dto().envelope.to_dict()
+            old = next(row["variant"] for row in expected if row["name"] == history.name)
+            assert restored == {**old, "schema_version": 4}
+    _ok(target.current_project_opener.open_path(imported, source.context))
+    current_package = tmp_path / "current.transbridge"
+    target.project_archive.export_project(str(current_package), source.context)
+    current, _ = _bundle_content(current_package)
+    assert current["project"]["schema_version"] == 4
+    assert all(row["schema_version"] == 4 for row in current["variants"])
+    assert all(row["variant"]["schema_version"] == 4 for row in current["snapshots"])
+    assert bundle.read_bytes() == original_bytes
+
+
+@pytest.mark.parametrize("kind", ["directory", "project-json", "zip", "directory-with-package-suffix"])
+def test_import_rejects_unpackaged_inputs_without_publishing(tmp_path, services_factory, kind):
+    target = services_factory("unsupported")
+    source = (
+        tmp_path
+        / {
+            "directory": "old",
+            "project-json": "project.json",
+            "zip": "old.zip",
+            "directory-with-package-suffix": "folder.transbridge",
+        }[kind]
+    )
+    if kind in {"directory", "directory-with-package-suffix"}:
+        source.mkdir()
+    else:
+        source.write_bytes(b"unpackaged data")
+    before = _file_state(target.root)
+    for operation in (target.project_archive.inspect_import, target.project_archive.import_project):
+        with pytest.raises(ValueError, match=r"\.transbridge"):
+            operation(str(source), RequestContext("gui"))
+        assert _file_state(target.root) == before
 
 
 def test_roundtrip_keeps_all_variants_snapshots_and_relocates_sources_without_activation(
@@ -446,7 +519,7 @@ def test_existing_project_asset_is_preserved_after_rejecting_import(tmp_path, se
     with pytest.raises(ValueError, match="覆盖"):
         target.project_archive.import_project(str(bundle), exported_project.context)
 
-    assert _file_state(target.root) == before
+    _assert_publication_rolled_back(target.root, before)
 
 
 class _FailingFilesystem(OsPersistenceFilesystem):
@@ -497,7 +570,7 @@ def test_publication_failure_rolls_back_every_new_record_and_preserves_active_pr
         target.project_archive.import_project(str(source.bundle), source.context)
 
     assert filesystem.triggered
-    assert _file_state(root) == before
+    _assert_publication_rolled_back(root, before)
     assert target.project_lifecycle.active is active
     assert not active.dirty
 
@@ -514,20 +587,25 @@ def test_catalog_failure_on_first_import_leaves_no_partial_project(services_fact
         target.project_archive.import_project(str(exported_project.bundle), exported_project.context)
 
     assert filesystem.triggered
-    assert _file_state(target.root) == before
+    _assert_publication_rolled_back(target.root, before)
     assert target.project_lifecycle.active is None
 
 
-def test_changed_source_or_dirty_project_does_not_replace_an_existing_archive(tmp_path, exported_project):
+def test_saved_source_can_be_archived_after_external_change_but_dirty_project_is_not_exported(
+    tmp_path, exported_project
+):
     source = exported_project
     destination = tmp_path / "keep.transbridge"
     destination.write_bytes(b"previous bundle")
+    captured = source.source.read_bytes()
     source.source.write_bytes(b"changed source")
-    with pytest.raises(ValueError, match="来源文件已改变"):
-        source.services.project_archive.export_project(str(destination), source.context)
-    assert destination.read_bytes() == b"previous bundle"
+    source.services.project_archive.export_project(str(destination), source.context)
+    with zipfile.ZipFile(destination) as archive:
+        manifest = json.loads(archive.read("archive.json"))
+        assert archive.read(manifest["sources"][0]["member"]) == captured
+    saved = destination.read_bytes()
     _ok(source.services.gui_project_commands.update_entry(source.key, source.context, translation="未保存"))
     with pytest.raises(ValueError, match="保存"):
         source.services.project_archive.export_project(str(destination), source.context)
-    assert destination.read_bytes() == b"previous bundle"
+    assert destination.read_bytes() == saved
     assert not list(tmp_path.glob(".transbridge-export-*"))

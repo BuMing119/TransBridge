@@ -62,32 +62,26 @@ class TranslationResetAction:
         ):
             QMessageBox.warning(self._parent, "取消翻译未执行", "翻译内容已变化，请重新选择词条后再试。")
             return False
-        if context.uses_authoritative_projection:
-            commands = context.project_commands
-            runtime = context.runtime_context
-            if commands is None or runtime is None or self._version_identity is None:
-                QMessageBox.warning(
-                    self._parent, "取消翻译失败", "工程写入服务不可用，译文未改变。请重新打开工程后再试。"
-                )
-                return False
-            project_id, variant_id = self._version_identity
-            result = commands.replace_entry_states(
-                {entry.identity: ("", STAGE_UNTRANSLATED) for entry in self._entries},
-                runtime,
-                expected_project_revision=self._project_revision,
-                expected_variant_revision=self._variant_revision,
-                expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
-            )
-            if not result.is_success:
-                detail = result.diagnostics[0].message if result.diagnostics else "工程提交失败"
-                QMessageBox.warning(self._parent, "取消翻译失败", f"{detail}\n\n译文未改变，请刷新后重试。")
-                return False
+        commands = context.project_commands
+        runtime = context.runtime_context
+        if commands is None or runtime is None or self._version_identity is None:
+            QMessageBox.warning(self._parent, "取消翻译失败", "工程写入服务不可用，译文未改变。请重新打开工程后再试。")
+            return False
+        project_id, variant_id = self._version_identity
+        result = commands.replace_entry_states(
+            {entry.identity: ("", STAGE_UNTRANSLATED) for entry in self._entries},
+            runtime,
+            expected_project_revision=self._project_revision,
+            expected_variant_revision=self._variant_revision,
+            expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+        )
+        if not result.is_success:
+            detail = result.diagnostics[0].message if result.diagnostics else "工程提交失败"
+            QMessageBox.warning(self._parent, "取消翻译失败", f"{detail}\n\n译文未改变，请刷新后重试。")
+            return False
 
-        # Keep the legacy visible entry objects in sync only after authority accepts
-        # the whole batch, matching the existing inline-edit projection boundary.
+        # Synchronize the captured view only after the whole batch commits.
         for entry in self._entries:
             entry.translation = ""
             entry.stage = STAGE_UNTRANSLATED
-        if not context.uses_authoritative_projection:
-            context.mark_dirty()
         return True

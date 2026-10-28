@@ -217,6 +217,8 @@ def test_persist_with_no_new_patch_saves_existing_dirty_work(project):
     assert not active.dirty
     assert disk_state(services, active.formal_variant_ref) == active.variant.snapshot()
     assert active.variant.snapshot().entries == before.entries
+    assert active.variant.revision == before.revision
+    assert services.project_snapshots.list(context) == ()
 
 
 @pytest.mark.parametrize("fail_project_write", [False, True])

@@ -230,7 +230,7 @@ def test_failed_and_cancelled_batches_keep_all_receipts_and_recovery_details_in_
     tmp_path, feature, qapp, monkeypatch, states
 ):
     context = _context(tmp_path, 2)
-    draft = feature.feature.create_draft(context, True, {})
+    draft = feature.feature.create_draft(context, True, {"output_directory": str(tmp_path / "outputs")})
     results = {}
     for index, request in enumerate(draft.request.drafts):
         results[request.target_path] = (
@@ -290,7 +290,7 @@ def test_batch_uses_the_terminology_projection_confirmed_in_preflight(tmp_path, 
         feature.adapter,
         HydratedWritePreflightService(entry_projection=projection),
     )
-    draft = composed.create_draft(_context(tmp_path, 2), True, {})
+    draft = composed.create_draft(_context(tmp_path, 2), True, {"output_directory": str(tmp_path / "outputs")})
     checked = composed.mapper.preflight(draft)
     assert checked.ready
     projection.text = "预检后被修改的译文"
@@ -310,13 +310,13 @@ def test_batch_retains_incomplete_source_receipt_and_publishes_other_sources(tmp
     else:
         setattr(last, invalid, None)
     assert feature.feature.supports(context, True)
-    draft = feature.feature.create_draft(context, True, {})
+    draft = feature.feature.create_draft(context, True, {"output_directory": str(tmp_path / "outputs")})
     result = _submit(feature, draft)
     assert result.outcome is OperationOutcome.PARTIAL
     assert result.counts.succeeded == 2 and result.counts.failed == 1
     assert len(result.value["outcomes"]) == 3
     assert result.value["outcomes"][-1]["status"] == "failed"
-    assert not (tmp_path / "source-2_translated.esp").exists()
+    assert not (tmp_path / "outputs" / "source-2.esp").exists()
     for request in draft.request.drafts:
         assert _texts(request.target_path) == ["译文0", "译文1"]
 
@@ -324,7 +324,9 @@ def test_batch_retains_incomplete_source_receipt_and_publishes_other_sources(tmp
 @pytest.mark.parametrize("failure", ["existing", "invalid_stage", "directory", "snapshot"])
 def test_batch_preflight_failure_does_not_block_independent_source(tmp_path, feature, failure):
     context = _context(tmp_path, 2)
-    initial = feature.feature.create_draft(context, True, {})
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+    initial = feature.feature.create_draft(context, True, {"output_directory": str(output_dir)})
     bad, good = initial.request.drafts
     target = Path(bad.target_path)
     before = None
@@ -352,7 +354,9 @@ def test_batch_preflight_failure_does_not_block_independent_source(tmp_path, fea
 
 
 def test_batch_target_changed_after_preflight_only_blocks_that_source(tmp_path, feature):
-    draft = feature.feature.create_draft(_context(tmp_path, 2), True, {})
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+    draft = feature.feature.create_draft(_context(tmp_path, 2), True, {"output_directory": str(output_dir)})
     checked = feature.feature.mapper.preflight(draft)
     assert checked.ready
     first, second = draft.request.drafts
@@ -365,7 +369,7 @@ def test_batch_target_changed_after_preflight_only_blocks_that_source(tmp_path, 
 
 
 def test_batch_overlapping_sources_do_not_block_an_independent_third_source(tmp_path, feature):
-    initial = feature.feature.create_draft(_context(tmp_path, 3), True, {})
+    initial = feature.feature.create_draft(_context(tmp_path, 3), True, {"output_directory": str(tmp_path / "outputs")})
     first, second, third = initial.request.drafts
     shared = tmp_path / "shared.esp"
     draft = _write_batch_plan(

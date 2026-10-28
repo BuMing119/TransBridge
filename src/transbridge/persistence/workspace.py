@@ -10,7 +10,7 @@ from ._utils import atomic_write_json
 
 
 class WorkspaceState:
-    """管理 workspace.json —— 项目列表、活跃引用、配置、会话状态。"""
+    """UI preferences and last-session filters; project catalogs live in the repository."""
 
     def __init__(self, path: Path):
         self._path = path
@@ -40,8 +40,6 @@ class WorkspaceState:
     def _empty_template(cls) -> dict:
         return {
             "version": 1,
-            "active_project": None,
-            "projects": {},
             "settings": {
                 "save_behavior": "prompt",
                 "auto_save_interval_minutes": 5,
@@ -52,30 +50,11 @@ class WorkspaceState:
                 },
             },
             "last_session": {
-                "project": None,
-                "variant": None,
                 "filter_state": {},
             },
         }
 
     # ── 属性访问 ─────────────────────────────────────────────────
-
-    @property
-    def projects(self) -> dict[str, str]:
-        """{project_name: project_json_path}"""
-        return self._data.get("projects", {})
-
-    @projects.setter
-    def projects(self, value: dict[str, str]) -> None:
-        self._data["projects"] = value
-
-    @property
-    def active_project(self) -> str | None:
-        return self._data.get("active_project")
-
-    @active_project.setter
-    def active_project(self, name: str | None) -> None:
-        self._data["active_project"] = name
 
     @property
     def settings(self) -> dict:
@@ -84,20 +63,3 @@ class WorkspaceState:
     @property
     def last_session(self) -> dict:
         return self._data.setdefault("last_session", {})
-
-    # ── 便捷方法 ─────────────────────────────────────────────────
-
-    def get_project_path(self, name: str) -> Path | None:
-        """返回项目 project.json 的绝对路径。"""
-        rel = self.projects.get(name)
-        return Path(rel) if rel else None
-
-    def add_project(self, name: str, project_json_path: Path) -> None:
-        self.projects[name] = str(project_json_path)
-        self.active_project = name
-
-    def remove_project(self, name: str) -> None:
-        self.projects.pop(name, None)
-        if self.active_project == name:
-            remaining = list(self.projects.keys())
-            self.active_project = remaining[0] if remaining else None

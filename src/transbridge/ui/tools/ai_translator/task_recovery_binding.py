@@ -2,36 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import fields, is_dataclass
-from enum import Enum
-from hashlib import sha256
-import json
 import logging
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from transbridge.application.translation.task_config_snapshot import execution_signature
 from transbridge.application.translation.task_recovery import TaskRecoveryStore
+from transbridge.application.translation.task_scope import SourceTask
 
 from .task_recovery_persistence import RecoveryInitialization, RecoverySource, RecoveryUpdate
-from .task_scope import SourceTask
 
-_OMITTED = frozenset({
-    "api_key",
-    "apikey",
-    "password",
-    "secret",
-    "token",
-    "access_token",
-    "refresh_token",
-    "authorization",
-    "credential_ref",
-    "credentials",
-    "max_concurrent",
-    "llm_max_retries",
-    "config_revision",
-})
 _STATES = frozenset({
     "preparing",
     "running",
@@ -47,37 +28,9 @@ _STATES = frozenset({
 })
 
 
-def _signature_value(value):
-    if is_dataclass(value):
-        value = {field.name: getattr(value, field.name) for field in fields(value)}
-    elif hasattr(value, "__dict__") and not isinstance(value, Enum):
-        value = vars(value)
-    if isinstance(value, Mapping):
-        return {
-            str(key): _signature_value(item)
-            for key, item in value.items()
-            if not str(key).startswith(("_", "assistant_", "mcp_"))
-            and str(key).lower() not in _OMITTED
-            and not any(word in str(key).lower() for word in ("credential", "password", "secret", "api_key"))
-        }
-    if isinstance(value, (set, frozenset)):
-        return [_signature_value(item) for item in sorted(value, key=str)]
-    if isinstance(value, (tuple, list)):
-        return [_signature_value(item) for item in value]
-    if isinstance(value, Enum):
-        return value.value
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    raise ValueError(f"无法为恢复任务计算配置签名：{type(value).__name__}")
-
-
-def signature(config) -> str:
-    """Hash execution settings without credentials, retaining numeric token limits."""
-    payload = json.dumps(_signature_value(config), ensure_ascii=False, sort_keys=True, allow_nan=False)
-    return sha256(payload.encode("utf-8")).hexdigest()
-
-
 def configure_recovery(window, record, restart=False):
+    if record.get("origin") == "smart-assistant" or record.get("results_only"):
+        raise ValueError("助手任务只恢复已保存成果，请使用 get_task_result 查询、merge_task_result 合入。")
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QLabel
 
@@ -92,7 +45,7 @@ def configure_recovery(window, record, restart=False):
     getattr(controls, f"mode_{mode}").setChecked(True)
     if not restart and not record.get("legacy") and "execution_config" in record:
         restored = window._config_presenter.restore_task_config(record["execution_config"], mode)
-        if signature(restored) != record["config_digest"]:
+        if execution_signature(restored) != record["config_digest"]:
             raise ValueError("原任务配置快照与签名不匹配，请重新开始。")
     for name in ("translate", "polish", "mixed", "custom"):
         getattr(controls, f"mode_{name}").setEnabled(False)
@@ -178,11 +131,7 @@ def complete_empty_recovery(window, tasks) -> bool:
     if selection is None or any(task.entries for task in tasks):
         return False
     provider = getattr(window, "_task_project_directory_provider", None)
-    directory = (
-        provider()
-        if provider is not None
-        else getattr(getattr(window._ctx, "active_project", None), "project_dir", None)
-    )
+    directory = provider() if provider is not None else None
     EmptyRecoveryCompletion(directory, selection).execute()
     publish_empty_recovery(window)
     return True
@@ -242,6 +191,7 @@ class TaskRecoveryBinding(QObject):
             overwrite=bool(getattr(request.spec, "overwrite", False)),
             origin=getattr(request, "recovery_record", None),
             reference_snapshot=None if reference is None else reference.to_dict(),
+            conflict_policy=str(getattr(session, "policy", "keep_current")),
         )
         self._task_id = request.recovery_task_id or request.run_id
         if not asynchronous:
@@ -281,20 +231,19 @@ class TaskRecoveryBinding(QObject):
             state = "cancelled"
         elif run.shutting_down and not (self.session.completed and self.session.project_saved):
             state = "interrupted"
+        elif state == "completed" and bool(run.entries.ready_keys):
+            state = "partial"
         elif state == "completed" and not self.session.project_saved:
             state = "applying"
         entries = frozen_entry_results
         if entries is None:
-            # Real ledgers contain frozen rows and private, never-mutated before
-            # snapshots. Only the small compatibility path needs a deep copy.
-            freeze = getattr(run.entries, "freeze", None)
-            entries = freeze() if callable(freeze) else deepcopy(run.entries)
+            entries = run.entries.freeze()
         self._sequence += 1
         if self.session.project_saved:
             self._saved_entries = entries
         update = RecoveryUpdate(self._sequence, state, bool(self.session.project_saved), entries, self._saved_entries)
         if not self.asynchronous:
-            self.record = update.execute(self.store, self._task_id)
+            self.record = {**self.record, **update.execute(self.store, self._task_id)}
             return
         if self._initialization_failed:
             return  # The initialization error was already delivered to the owner.
@@ -343,7 +292,7 @@ class TaskRecoveryBinding(QObject):
         else:
             callbacks = None
             if error is None and sequence == self._sequence:
-                self.record = value
+                self.record = {**self.record, **value}
         if error is not None:
             self.error = str(error)
             self.failed.emit(self.error)
@@ -353,4 +302,4 @@ class TaskRecoveryBinding(QObject):
         self.changed.emit()
 
 
-__all__ = ["TaskRecoveryBinding", "complete_empty_recovery", "configure_recovery", "recovery_sources", "signature"]
+__all__ = ["TaskRecoveryBinding", "complete_empty_recovery", "configure_recovery", "recovery_sources"]

@@ -9,6 +9,7 @@ import pytest
 from tests.ui.responsive_layout_support import settle_layout, themed_layout_app  # noqa: F401
 from tests.ui.test_ui_settings_dialog import _dialog, _preferences
 from transbridge.config.llm import LLMConfig
+from transbridge.config.task_results import TaskResultPreferenceRepository
 from transbridge.config.ui_preferences import DEFAULT_THEME_ID, ThemeMode
 from transbridge.ui.foundation.theme_service import ThemePreference
 from transbridge.ui.settings.sections import SettingsSection
@@ -16,9 +17,11 @@ from transbridge.ui.settings.sections import SettingsSection
 
 @pytest.mark.parametrize("mode", [ThemeMode.LIGHT, ThemeMode.DARK])
 def test_settings_tab_visits_active_form_before_footer_and_returns_to_navigation(layout_app, tmp_path, mode):
+    preferences = _preferences(tmp_path)
     service, dialog = _dialog(
         layout_app,
-        _preferences(tmp_path),
+        preferences,
+        task_result_preferences=TaskResultPreferenceRepository(preferences._repository),
         llm_config=LLMConfig(),
         paratranz_config=SimpleNamespace(token="", base_url="https://example.invalid", timeout=30),
     )

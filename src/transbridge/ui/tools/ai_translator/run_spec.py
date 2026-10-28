@@ -125,22 +125,14 @@ class FrozenExecutionConfig:
 
 
 def capabilities_for(mode: AiRunMode) -> AiRunCapabilities:
-    """Return only controls proven by the S03 workload inventory."""
+    """All task modes use AiTaskWorker's shared pause, resume and cancellation controls."""
 
-    if mode == "mixed":
-        controls = JobCapabilities(
-            supports_pause=False,
-            supports_resume=False,
-            supports_cancel=True,
-            supports_checkpoint=False,
-        )
-    else:
-        controls = JobCapabilities(
-            supports_pause=True,
-            supports_resume=True,
-            supports_cancel=True,
-            supports_checkpoint=False,
-        )
+    controls = JobCapabilities(
+        supports_pause=True,
+        supports_resume=True,
+        supports_cancel=True,
+        supports_checkpoint=False,
+    )
     return AiRunCapabilities(task_controls=controls)
 
 

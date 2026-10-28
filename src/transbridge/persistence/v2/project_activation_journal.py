@@ -18,9 +18,9 @@ from transbridge.application.contracts import DomainError, ErrorCategory
 
 from .atomic_documents import AtomicDocumentStore
 from .ids import ProjectId, ProjectRef, VariantId, VariantRef
-from .models import LoadedRecord
 from .project_record_guard import require_record_version, verified_preimage
 from .schema import parse_json_bytes, serialize_document, validate_v2
+from .validated_reads import decode_validated_read, reuse_validated_reads
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class ProjectActivationProtocol:
         self._lock.add_recovery(self.recover_pending)
 
     def commit(self, activation, transaction_id, *, publish_baselines=None, restore_baselines=None):
-        with self._lock:
+        with self._lock, reuse_validated_reads():
             self.recover_pending()
             records = self._records(activation)
             if not records:
@@ -72,7 +72,7 @@ class ProjectActivationProtocol:
             self._cleanup(path, transaction_id, committed=True)
 
     def recover_pending(self):
-        with self._lock:
+        with self._lock, reuse_validated_reads():
             for path in self._filesystem.list_files(self._directory):
                 self._recover(path)
 
@@ -124,15 +124,14 @@ class ProjectActivationProtocol:
         previous = None
         if self._filesystem.exists(path):
             previous = self._filesystem.read_bytes(path)
-            value = validate_v2(parse_json_bytes(previous), ref)
-            current = LoadedRecord(ref, value, _digest(previous))
+            current = decode_validated_read(repository, ref, previous, validate=validate_v2)
         require_record_version(current, revision, digest, identity=ref.identity.value)
         if current is not None:
             previous = verified_preimage(self._filesystem, repository, ref, current)
         payload = previous if not write else None if target is None else serialize_document(target.envelope.to_dict())
         # Unchanged payloads are the validated, hash-verified preimage above.
         if write and payload is not None:
-            validate_v2(parse_json_bytes(payload), ref)
+            decode_validated_read(repository, ref, payload, validate=validate_v2, reuse_unchanged=True)
         return _record_data(
             "project" if isinstance(ref, ProjectRef) else "variant",
             ref.identity.value,
@@ -186,11 +185,12 @@ class ProjectActivationProtocol:
                     if _digest(value) != record[f"{field}_digest"]:
                         raise ValueError("record checksum mismatch")
                     if value is not None:
-                        parsed = parse_json_bytes(value)
                         if record["kind"] != "pointer":
-                            validate_v2(parsed, self._ref(record))
+                            ref = self._ref(record)
+                            repository = self._projects if isinstance(ref, ProjectRef) else self._variants
+                            decode_validated_read(repository, ref, value, validate=validate_v2)
                         else:
-                            _validate_pointer(parsed)
+                            _validate_pointer(parse_json_bytes(value))
             self._validate_participants(document["records"])
             return document
         except Exception as exc:

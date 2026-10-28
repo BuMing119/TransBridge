@@ -6,6 +6,8 @@ from collections import OrderedDict, deque
 from collections.abc import Callable
 from threading import RLock
 
+from transbridge.ai_translator.activity import ActivityKind
+
 from .task_run_presentation import concise_event
 
 
@@ -40,6 +42,7 @@ class TaskFeedback:
         self._lock = RLock()
         self._states = OrderedDict()
         self._logs = deque()
+        self._attention = OrderedDict()
         self._omitted = None
         self._sequence = 0
         self._closed = False
@@ -77,8 +80,19 @@ class TaskFeedback:
             self._sequence += 1
             self._logs.append((self._sequence, "log", source, event))
             if len(self._logs) > self._max_logs:
-                sequence, _, key, _ = self._logs.popleft()
-                self._note_omitted(sequence, key)
+                sequence, _, key, previous = self._logs.popleft()
+                if previous.kind in {ActivityKind.WARNING, ActivityKind.ERROR}:
+                    # Retain the latest displaced warning per source separately
+                    # so routine traffic cannot erase all evidence of a failure.
+                    if key in self._attention:
+                        old_sequence, _, _, _ = self._attention.pop(key)
+                        self._note_omitted(old_sequence, key)
+                    self._attention[key] = (sequence, "attention", key, previous)
+                    if len(self._attention) > self._max_states:
+                        _, (old_sequence, _, old_key, _) = self._attention.popitem(last=False)
+                        self._note_omitted(old_sequence, old_key)
+                else:
+                    self._note_omitted(sequence, key)
 
     def drain(self, *, all_pending: bool = False) -> None:
         """Deliver at most one routine log batch; barriers can drain the bounded tail."""
@@ -145,12 +159,13 @@ class TaskFeedback:
             (
                 *self._states.values(),
                 *self._logs,
+                *self._attention.values(),
                 *self._barriers,
                 *((self._omitted,) if self._omitted is not None else ()),
             ),
             key=lambda item: item[0],
         )
-        limit = self._max_logs + 1 if all_pending else self._batch_size
+        limit = self._max_logs + self._max_states + 1 if all_pending else self._batch_size
         batch = []
         sent = 0
 
@@ -161,7 +176,7 @@ class TaskFeedback:
 
         for item in pending:
             sequence, kind, key, payload = item
-            if kind in {"log", "omitted"}:
+            if kind in {"log", "attention", "omitted"}:
                 if sent == limit:
                     # Logs retain their own order and delivery budget, but a
                     # log flood must never hold the latest status behind them.
@@ -170,9 +185,9 @@ class TaskFeedback:
                     if self._omitted != item:
                         continue
                     self._omitted = None
-                    payload = (
-                        f"已省略 {payload} 条较早的过程消息（界面缓冲已达上限）；请结合任务结果与 LLM 日志查看详情。"
-                    )
+                    payload = f"已省略 {payload} 条较早的任务动态（界面缓冲已达上限）；最终处理结果请使用“查看结果”。"
+                elif kind == "attention":
+                    del self._attention[key]
                 else:
                     if not self._logs or self._logs[0][0] != sequence:
                         continue

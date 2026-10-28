@@ -17,11 +17,11 @@ from transbridge.application.io.identity import EntryKey, Provenance, SourceName
 from transbridge.application.io.mutation import ChangeSet, EntryPatch, MutationStatus
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.application.translation.postprocess import PostProcessCandidate, ReportSnapshot
+from transbridge.application.translation.task_entry_results import TaskEntryResults
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.tools.ai_translator.source_execution import SourceOutcome, build_source_snapshot
-from transbridge.ui.tools.ai_translator.task_entry_results import TaskEntryResults
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 from transbridge.ui.tools.ai_translator.task_term_closure import close_task_terms, fail_task_term_closure
 
 

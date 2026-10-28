@@ -10,6 +10,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QLabel
 
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
+from transbridge.persistence.workspace import WorkspaceState
 from transbridge.ui.coordinators.guided_project_coordinator import (
     GuidedDraftPhase,
     GuidedProjectCoordinator,
@@ -263,8 +264,8 @@ def test_start_center_renders_one_primary_action_and_unavailable_recent_reason()
     widget.close()
 
 
-def test_authoritative_startup_without_active_reference_shows_empty_center(monkeypatch) -> None:
-    workspace = SimpleNamespace(active_project=None, projects={})
+def test_authoritative_startup_without_active_reference_shows_empty_center(monkeypatch, tmp_path) -> None:
+    workspace = WorkspaceState(tmp_path / "workspace.json")
     monkeypatch.setattr(
         "transbridge.ui.coordinators.project_coordinator.WorkspaceState.load",
         lambda _path: workspace,

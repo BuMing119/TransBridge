@@ -34,6 +34,7 @@ def save_host():
         active_project_id="project",
         project_name="Project",
         active_variant_id="variant",
+        active_version_identity=("project", "variant"),
         project_variants=({"id": "variant", "name": "Default"},),
         project_sources=(),
         dirty=True,
@@ -174,3 +175,16 @@ def test_finished_thread_remains_owned_until_gui_completion_is_delivered(save_ho
     assert host._save_worker is None
     assert bar.save_state.phase is SavePhase.CLEAN
     assert bar._save_btn.isEnabled()
+
+
+def test_save_completion_does_not_acknowledge_another_clean_project(save_host):
+    host = save_host
+    completed = []
+    host._save_current_project = lambda: SimpleNamespace(is_success=True)
+    assert MainWindow.save_current_project_async(host, automatic=True, on_finished=completed.append)
+    assert host._save_worker.wait(5_000)
+    host._ctx.active_version_identity = ("other-project", "other-variant")
+    host._ctx.dirty = False
+    _wait_until(lambda: bool(completed))
+    assert completed == [False]
+    assert host.messages == []

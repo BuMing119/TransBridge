@@ -15,6 +15,14 @@ from transbridge.writer.plugin_writer import PluginWriter
 
 from .contracts import FormatId, SourceDescriptor, SourceSnapshot, WriteRequest
 from .identity import EntryKey
+from .plugin_bsa_output import (
+    bsa_output_enabled,
+    bsa_output_path,
+    localized_loose_paths,
+    localized_render_target,
+    pack_localized_strings,
+    validate_bsa_destination,
+)
 from .plugin_localized_sources import (
     _localized_source_snapshots as _localized_source_snapshots,
     _snapshot_localized_sources,
@@ -126,28 +134,28 @@ def write_plugin(request: WriteRequest) -> OperationResult[tuple[str, ...]]:
         target = _local_path(request.target.uri)
         target.parent.mkdir(parents=True, exist_ok=True)
         if localized_sources:
-            localized_requests = _localized_write_requests(
-                request,
-                target,
-                localized_sources,
-            )
-            localized_validations = tuple(
-                adapter.validate_write(localized_request) for adapter, localized_request in localized_requests
-            )
-            failed_validation = next(
-                (item for item in localized_validations if item.outcome is not OperationOutcome.COMPLETED),
-                None,
-            )
-            if failed_validation is not None:
-                return _copy_failure(failed_validation)
             string_artifacts: list[str] = []
             localized_diagnostics: list[Diagnostic] = []
-            for adapter, localized_request in localized_requests:
-                localized_result = adapter.write(localized_request)
-                if localized_result.outcome is not OperationOutcome.COMPLETED:
-                    return _copy_failure(localized_result)
-                string_artifacts.extend(localized_result.artifact_refs)
-                localized_diagnostics.extend(localized_result.diagnostics)
+            packed = bsa_output_enabled(snapshot, request.options)
+            validate_bsa_destination(snapshot, target, request.options)
+            with localized_render_target(target, packed=packed) as render_target:
+                localized_requests = _localized_write_requests(request, render_target, localized_sources)
+                localized_validations = tuple(
+                    adapter.validate_write(localized_request) for adapter, localized_request in localized_requests
+                )
+                failed_validation = next(
+                    (item for item in localized_validations if item.outcome is not OperationOutcome.COMPLETED), None
+                )
+                if failed_validation is not None:
+                    return _copy_failure(failed_validation)
+                for adapter, localized_request in localized_requests:
+                    localized_result = adapter.write(localized_request)
+                    if localized_result.outcome is not OperationOutcome.COMPLETED:
+                        return _copy_failure(localized_result)
+                    string_artifacts.extend(localized_result.artifact_refs)
+                    localized_diagnostics.extend(localized_result.diagnostics)
+                if packed:
+                    string_artifacts = [pack_localized_strings(target, render_target, string_artifacts)]
             plugin_saved = writer._inline_count > 0 or target != source_path
             if plugin_saved:
                 if writer._inline_count:
@@ -339,16 +347,9 @@ def plugin_artifact_paths(snapshot: SourceSnapshot, target: str, options=()) -> 
     """Enumerate final outputs before any staging or overwrite can begin."""
     if snapshot.format_id is not FormatId.PLUGIN_SSE:
         return (target,)
-    language = str(dict(options).get("language", dict(snapshot.metadata).get("localized_language", "english")))
-    if not language or any(char in language for char in "/\\:") or language in {".", ".."}:
-        raise ValueError("localized output language must be a filename component")
-    path = Path(target)
-    companions = tuple(
-        str(path.parent / "Strings" / f"{path.stem}_{language.capitalize()}{_strings_suffix(source.format_id)}")
-        for source, _entries in _snapshot_localized_sources(snapshot)
-    )
-    if len(set(companions)) != len(companions):
-        raise ValueError("localized outputs must have unique filenames")
+    companions = localized_loose_paths(snapshot, target, options)
+    if bsa_output_enabled(snapshot, options):
+        return (target, str(bsa_output_path(Path(target))))
     return (target, *companions)
 
 

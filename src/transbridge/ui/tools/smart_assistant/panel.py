@@ -238,8 +238,8 @@ class SmartAssistantPanel(QDockWidget):
     def _get_project_name(self) -> str:
         try:
             ctx = self._chat.context
-            if hasattr(ctx, "active_project") and ctx.active_project:
-                return getattr(ctx.active_project, "name", "")
+            if ctx.project_name:
+                return ctx.project_name
             if hasattr(ctx, "esp_path") and ctx.esp_path:
                 return Path(ctx.esp_path).stem
         except Exception:

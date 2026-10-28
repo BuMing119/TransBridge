@@ -15,6 +15,8 @@ class CloseInputGuard:
 
     def suspend(self) -> None:
         for window in QApplication.topLevelWidgets():
+            if window.property("tbCloseProgress") is True:
+                continue
             # A worker result may require a modal confirmation. Keep it usable;
             # the lifecycle waits for it before saving or disposing resources.
             if window.isVisible() and window.isEnabled() and window.windowModality() == Qt.WindowModality.NonModal:

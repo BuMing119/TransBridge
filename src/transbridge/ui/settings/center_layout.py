@@ -37,6 +37,7 @@ from .embedding_page import EmbeddingSettingsPage
 from .page_common import unavailable_page
 from .paratranz_page import ParaTranzSettingsPage
 from .sections import SECTION_LABELS, SettingsSection
+from .task_results_page import TaskResultsSettingsPage
 from .terminology_page import TerminologySettingsPage
 
 
@@ -148,6 +149,13 @@ def build_settings_center(dialog: object, initial_section: SettingsSection) -> N
             (page.token_edit, page.base_url_edit, page.timeout_spin, page.disconnect_check),
         )
     _insert_page(dialog, SettingsSection.PARATRANZ, page)
+    results_repository = dialog._task_result_preferences
+    results_page = (
+        TaskResultsSettingsPage(results_repository, dialog)
+        if results_repository is not None
+        else unavailable_page("此设置入口尚未接入结果处理配置。", dialog)
+    )
+    _insert_page(dialog, SettingsSection.TASK_RESULTS, results_page)
 
     body.addWidget(dialog._section_list)
     body.addWidget(dialog._stack, 1)

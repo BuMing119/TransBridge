@@ -37,6 +37,7 @@ from .project_record_guard import record_matches
 from .project_write_lock import ProjectWriteLock
 from .schema import parse_json_bytes, serialize_document, validate_v2, version_of
 from .session_write_lease import session_write_lease
+from .validated_reads import decode_validated_read, remember_validated_read, validated_read
 
 _MUTATION_LOCKS_GUARD = RLock()
 _MUTATION_LOCKS: dict[tuple[type[object] | int, str], ProjectWriteLock] = {}
@@ -91,15 +92,31 @@ class JsonRepository[RefT, DtoT]:
     def read_snapshot(self, ref: RefT) -> DtoT:
         """Validate a record without writing migrations, backups or quarantine files."""
 
-        document = parse_json_bytes(self._filesystem.read_bytes(self.path_for(ref)))
+        return cast(DtoT, self.read_snapshot_record(ref).value)
+
+    def read_snapshot_record(self, ref: RefT) -> LoadedRecord:
+        """Read a detached DTO and the hash of its actual persisted source bytes.
+
+        ``migrated`` marks a legacy document normalized only in memory. Such a
+        view cannot seed current-schema evidence or bypass load-time migration.
+        """
+        raw = self._filesystem.read_bytes(self.path_for(ref))
+        cached = validated_read(self, ref, raw)
+        if cached is not None:
+            return cached
+        document = parse_json_bytes(raw)
         if version_of(document) < SCHEMA_VERSION:
             document = migrate_to_current(document, ref).document
-        return cast(DtoT, validate_v2(document, ref))
+            return LoadedRecord(ref, validate_v2(document, ref), hashlib.sha256(raw).hexdigest(), migrated=True)
+        return decode_validated_read(self, ref, raw, validate=validate_v2)
 
     def load(self, ref: RefT) -> LoadResult:
         self._check_ref(ref)
         path = self.path_for(ref)
         raw = self._filesystem.read_bytes(path)
+        cached = validated_read(self, ref, raw)
+        if cached is not None:
+            return cached
         digest = hashlib.sha256(raw).hexdigest()
         try:
             document = parse_json_bytes(raw)
@@ -115,10 +132,9 @@ class JsonRepository[RefT, DtoT]:
 
         if version == SCHEMA_VERSION:
             try:
-                value = validate_v2(document, ref)
+                return decode_validated_read(self, ref, raw, validate=validate_v2)
             except SchemaValidationError as exc:
                 return self._quarantine(ref, path, raw, digest, exc)
-            return LoadedRecord(ref, value, digest)
 
         backup_path = self._paths.backup(ref, digest, version)
         verified_copy(
@@ -159,6 +175,7 @@ class JsonRepository[RefT, DtoT]:
             dropped_fields=draft.dropped_fields,
             conflicts=draft.conflicts,
         )
+        remember_validated_read(self, migrated_raw, LoadedRecord(ref, value, migrated_digest), full_schema=True)
         return LoadedRecord(
             ref,
             value,
@@ -174,9 +191,9 @@ class JsonRepository[RefT, DtoT]:
         document = value.envelope.to_dict()
         if self._kind is EntityKind.PROJECT and version_of(document) == 2:
             document = migrate_to_current(document, ref).document
-        validated = validate_v2(document, ref)
         raw = serialize_document(document)
-        digest = hashlib.sha256(raw).hexdigest()
+        validated = decode_validated_read(self, ref, raw, validate=validate_v2, remember=False, reuse_unchanged=True)
+        digest = validated.source_hash
         path = self.path_for(ref)
         self._assert_writable_destination(ref, path)
         staging_replace(
@@ -189,7 +206,7 @@ class JsonRepository[RefT, DtoT]:
             purpose="save",
             durable=ref.kind is EntityKind.SESSION,
         )
-        return LoadedRecord(ref, validated, digest)
+        return remember_validated_read(self, raw, validated)
 
     def delete(self, ref: RefT) -> None:
         """Delete one validated record after its owning aggregate dropped the reference."""
@@ -225,9 +242,8 @@ class JsonRepository[RefT, DtoT]:
                     actual_revision,
                     current.source_hash,
                 )
-            document = parse_json_bytes(raw)
-            restored = validate_v2(document, ref)
-            if not isinstance(restored, self._dto_type):
+            restored = decode_validated_read(self, ref, raw, validate=validate_v2, remember=False, reuse_unchanged=True)
+            if not isinstance(restored.value, self._dto_type):
                 raise TypeError("restored persistence preimage has the wrong DTO type")
             digest = hashlib.sha256(raw).hexdigest()
             path = self.path_for(ref)
@@ -240,6 +256,7 @@ class JsonRepository[RefT, DtoT]:
                 token=digest,
                 purpose="restore",
             )
+            remember_validated_read(self, raw, restored)
             loaded = self.load(ref)
             if not isinstance(loaded, LoadedRecord) or loaded.source_hash != digest:
                 raise RuntimeError("restored persistence preimage could not be verified")
@@ -249,6 +266,8 @@ class JsonRepository[RefT, DtoT]:
         if not self._filesystem.exists(path):
             return
         existing = self._filesystem.read_bytes(path)
+        if validated_read(self, ref, existing) is not None:
+            return
         try:
             document = parse_json_bytes(existing)
             version = version_of(document)
@@ -268,7 +287,7 @@ class JsonRepository[RefT, DtoT]:
                 "Load and migrate the legacy record before saving current-schema data.",
             )
         try:
-            validate_v2(document, ref)
+            decode_validated_read(self, ref, existing, validate=validate_v2)
         except SchemaValidationError as exc:
             raise ReadOnlyWriteRefused(
                 "INVALID_EXISTING_RECORD",
@@ -341,15 +360,17 @@ class JsonRepository[RefT, DtoT]:
 
     def _recover_before_load_side_effects(self, ref) -> LoadedRecord | None:
         raw = self._filesystem.read_bytes(self.path_for(ref))
+        cached = validated_read(self, ref, raw)
+        if cached is not None:
+            return cached
         try:
             document = parse_json_bytes(raw)
             if version_of(document) > SCHEMA_VERSION:
                 return
-            value = validate_v2(document, ref)
             if version_of(document) == SCHEMA_VERSION:
                 # The caller still owns the read lease. Reuse this validated
                 # read rather than parsing and validating the same file again.
-                return LoadedRecord(ref, value, hashlib.sha256(raw).hexdigest())
+                return decode_validated_read(self, ref, raw, validate=validate_v2)
         except SchemaValidationError:
             pass
         self._mutation_lock.recover()
@@ -374,6 +395,10 @@ class ProjectRepository(JsonRepository[ProjectRef, ProjectDto]):
     def read_snapshot(self, ref: ProjectRef) -> ProjectDto:
         with self._mutation_lock.reading():
             return super().read_snapshot(ref)
+
+    def read_snapshot_record(self, ref: ProjectRef) -> LoadedRecord:
+        with self._mutation_lock.reading():
+            return super().read_snapshot_record(ref)
 
     def save_if_revision(
         self,
@@ -455,6 +480,10 @@ class VariantRepository(JsonRepository[VariantRef, VariantDto]):
         with self._mutation_lock.reading():
             return super().read_snapshot(ref)
 
+    def read_snapshot_record(self, ref: VariantRef) -> LoadedRecord:
+        with self._mutation_lock.reading():
+            return super().read_snapshot_record(ref)
+
     def save_if_revision(
         self,
         ref: VariantRef,
@@ -508,9 +537,12 @@ class SessionRepository(JsonRepository[SessionRef, SessionDto]):
         super().__init__(root, filesystem, kind=EntityKind.SESSION, dto_type=SessionDto)
 
     def read_snapshot(self, ref: SessionRef) -> SessionDto:
-        value = super().read_snapshot(ref)
-        self._validate_attachments(ref, value)
-        return value
+        return cast(SessionDto, self.read_snapshot_record(ref).value)
+
+    def read_snapshot_record(self, ref: SessionRef) -> LoadedRecord:
+        record = super().read_snapshot_record(ref)
+        self._validate_attachments(ref, cast(SessionDto, record.value))
+        return record
 
     @contextmanager
     def write_transaction(self, ref: SessionRef) -> Iterator[None]:

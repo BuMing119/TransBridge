@@ -19,9 +19,7 @@ __all__ = ["AppContext", "CollectionSlot"]
 
 if TYPE_CHECKING:
     from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
-    from transbridge.persistence.project import ProjectHandle
     from transbridge.persistence.v2.ids import VariantRef
-    from transbridge.persistence.variant_store import VariantStore
     from transbridge.persistence.workspace import WorkspaceState
 
 
@@ -54,6 +52,8 @@ class AppContext(QObject):
         runtime_context=None,
         effective_terminology_factory=None,
         terminology_profile_service_factory=None,
+        task_result_preferences_provider=None,
+        project_catalog=None,
     ):
         super().__init__(parent)
         self._config: ParatranzConfig = ParatranzConfig.create_or_load()
@@ -68,9 +68,6 @@ class AppContext(QObject):
 
         # 持久化相关（ADR-006）
         self._workspace: WorkspaceState | None = None
-        self._active_project: ProjectHandle | None = None
-        self._active_variant: str | None = None
-        self._variant_store: VariantStore | None = None
 
         # Story 03: ViewModel 扩展
         self._filter_state: dict = dict(self.DEFAULT_FILTER_STATE)
@@ -91,6 +88,8 @@ class AppContext(QObject):
         self._runtime_context = runtime_context
         self._effective_terminology_factory = effective_terminology_factory
         self._terminology_profile_service_factory = terminology_profile_service_factory
+        self.task_result_preferences_provider = task_result_preferences_provider
+        self.project_catalog = project_catalog
         self.__init_safe_mutate()
         self._project_view = ProjectViewBinding(self, project_projection)
         self._project_view.start()
@@ -381,52 +380,16 @@ class AppContext(QObject):
         self._workspace = v
 
     @property
-    def active_project(self) -> ProjectHandle | None:
-        return self._active_project
-
-    @active_project.setter
-    def active_project(self, v: ProjectHandle | None) -> None:
-        if self._project_projection is not None:
-            raise RuntimeError("active_project is a read-only projection; use the lifecycle command facade")
-        self._active_project = v
-        self.workspace_changed.emit()
-
-    @property
     def active_variant(self) -> str | None:
-        return self._active_variant
-
-    @active_variant.setter
-    def active_variant(self, name: str | None) -> None:
-        if self._project_projection is not None:
-            raise RuntimeError("active_variant is a read-only projection; use the lifecycle command facade")
-        old = self._active_variant
-        self._active_variant = name
-        if old != name and name is not None:
-            self.variant_changed.emit(name)
-
-    @property
-    def variant_store(self) -> VariantStore | None:
-        return self._variant_store
-
-    @variant_store.setter
-    def variant_store(self, v: VariantStore | None) -> None:
-        if self._project_projection is not None:
-            raise RuntimeError("variant_store is disabled when V2 aggregate authority is active")
-        self._variant_store = v
-
-    def mark_dirty(self) -> None:
-        """标记当前版本数据已修改，触发自动保存防抖。"""
-        if self._project_projection is not None:
-            return
-        if self._variant_store is not None:
-            self._variant_store.dirty = True
-            self.dirty_changed.emit()
+        """Display name of the current projected variant."""
+        return next(
+            (str(item["name"]) for item in self.project_variants if item["id"] == self.active_variant_id),
+            None,
+        )
 
     @property
     def dirty(self) -> bool:
-        if self._project_projection is not None:
-            return self._project_view.state.dirty
-        return self._variant_store is not None and self._variant_store.dirty
+        return self._project_view.state.dirty
 
     @property
     def active_variant_id(self) -> str | None:
@@ -491,20 +454,11 @@ class AppContext(QObject):
 
     @property
     def project_name(self) -> str | None:
-        if self._project_projection is not None:
-            return self._project_view.state.name
-        return None if self._active_project is None else self._active_project.name
+        return self._project_view.state.name
 
     @property
     def project_variants(self) -> tuple[dict[str, object], ...]:
-        if self._project_projection is not None:
-            return tuple(dict(value) for value in self._project_view.state.variants)
-        if self._active_project is None:
-            return ()
-        return tuple(
-            {"id": value["name"], "name": value["name"], "active": value["name"] == self._active_variant}
-            for value in self._active_project.variants
-        )
+        return tuple(dict(value) for value in self._project_view.state.variants)
 
     @property
     def project_sources(self) -> tuple[dict[str, object], ...]:
@@ -604,16 +558,9 @@ class AppContext(QObject):
 
     @property
     def active_version_identity(self) -> tuple[str, str] | None:
-        """Return the stable Project/Variant identity used by long-running UI actions."""
-
-        if self._project_projection is not None:
-            if self._project_view.state.project_id is None or self._project_view.state.variant_id is None:
-                return None
-            return self._project_view.state.project_id, self._project_view.state.variant_id
-        if self._active_project is None or self._active_variant is None:
+        if self.active_project_id is None or self.active_variant_id is None:
             return None
-        project_key = str(getattr(self._active_project, "config_path", None) or self._active_project.name)
-        return project_key, self._active_variant
+        return self.active_project_id, self.active_variant_id
 
     @property
     def project_commands(self):

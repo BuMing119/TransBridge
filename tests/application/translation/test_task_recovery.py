@@ -53,33 +53,28 @@ def test_duplicate_create_never_overwrites_existing_record(tmp_path):
     assert store.load("task-one") == original
 
 
-def test_concurrent_create_has_one_winner_without_overwriting(tmp_path, monkeypatch):
+def test_concurrent_create_has_one_winner_without_overwriting(tmp_path):
     barrier = Barrier(2)
-    atomic_write = task_recovery.atomic_json
 
-    def simultaneous_write(path, value):
-        atomic_write(path, value)
+    def simultaneous_create(state):
         barrier.wait(timeout=5)
+        return TaskRecoveryStore(tmp_path).create({**record(), "state": state})
 
-    monkeypatch.setattr(task_recovery, "atomic_json", simultaneous_write)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [
-            pool.submit(TaskRecoveryStore(tmp_path).create, {**record(), "state": state})
-            for state in ("first", "second")
-        ]
+        futures = [pool.submit(simultaneous_create, state) for state in ("first", "second")]
         successes = [future.result() for future in futures if future.exception() is None]
         errors = [future.exception() for future in futures if future.exception() is not None]
     assert len(successes) == len(errors) == 1
     assert isinstance(errors[0], FileExistsError)
     assert TaskRecoveryStore(tmp_path).load("task-one") == successes[0]
-    assert len(tuple(tmp_path.iterdir())) == 1
+    assert len(tuple(tmp_path.glob("*.json"))) == 1
 
 
 def test_task_id_is_hashed_and_cannot_escape_root(tmp_path):
     store = TaskRecoveryStore(tmp_path)
     value = record("../../outside")
     assert store.create(value) == value
-    files = tuple(tmp_path.iterdir())
+    files = tuple(tmp_path.glob("*.json"))
     assert len(files) == 1 and len(files[0].stem) == 64
     assert store.load(value["task_id"]) == value
 
@@ -117,7 +112,7 @@ def test_update_failure_keeps_previous_durable_record(tmp_path, monkeypatch):
     with pytest.raises(OSError, match="disk failure"):
         store.update("task-one", state="completed")
     assert store.load("task-one") == original
-    assert len(tuple(tmp_path.iterdir())) == 1
+    assert len(tuple(tmp_path.glob("*.json"))) == 1
 
 
 def test_rejects_duplicate_sources_and_entry_identities(tmp_path):

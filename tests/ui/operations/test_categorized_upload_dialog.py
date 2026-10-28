@@ -298,7 +298,11 @@ def test_all_application_callbacks_run_on_background_workers(qapp):
 
     def upload(_selection, _progress, _cancel):
         observed_threads.append(get_ident())
-        return UploadReceipt(8, 0)
+        return UploadReceipt(7, 1, retry_count=1)
+
+    def retry_upload(_progress, _cancel):
+        observed_threads.append(get_ident())
+        return UploadReceipt(1, 0)
 
     def settle(subject):
         for _ in range(200):
@@ -308,14 +312,18 @@ def test_all_application_callbacks_run_on_background_workers(qapp):
             QTest.qWait(5)
         pytest.fail("后台分类上传操作未结束")
 
-    subject = _dialog(load_preview=load_preview, upload=upload)
+    subject = _dialog(load_preview=load_preview, upload=upload, retry_upload=retry_upload)
     subject.show()
     settle(subject)
     subject._upload_button.click()
     settle(subject)
-    assert len(observed_threads) == 2
+    assert subject._retry_button.isVisible()
+    subject._retry_button.click()
+    settle(subject)
+    assert len(observed_threads) == 3
     assert all(thread != main_thread for thread in observed_threads)
-    assert "分类上传完成（按文件计数）：成功 8，失败或待核实 0" in subject._status.text()
+    assert "分类补传完成（按文件计数）：成功 1，失败或待核实 0" in subject._status.text()
+    assert subject._retry_button.isHidden()
     assert subject._upload_button.isEnabled()
     subject.close()
     qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)

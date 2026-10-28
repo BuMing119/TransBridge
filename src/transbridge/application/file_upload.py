@@ -35,6 +35,7 @@ class FileReceipt:
 @dataclass(frozen=True, slots=True)
 class FileUploadReceipt:
     files: tuple[FileReceipt, ...]
+    retry_files: tuple[CategorizedFile, ...] = ()
 
     @property
     def succeeded(self):
@@ -117,19 +118,24 @@ def execute_file_upload(
     if len({file.path for file in files}) != len(files):
         raise ValueError("多个本地分类指向相同上传路径。")
     if cancelled():
-        return FileUploadReceipt(tuple(FileReceipt(file.path, "cancelled", "已取消，尚未上传。") for file in files))
+        return FileUploadReceipt(
+            tuple(FileReceipt(file.path, "cancelled", "已取消，尚未上传。") for file in files), files
+        )
     check_current()
     if progress:
         progress(0, len(files), "正在获取云端文件列表…")
     inventory = port.inventory(project_id)
     receipts = []
+    retry_files = []
     stopped = ""
     for index, file in enumerate(files):
         if cancelled():
             receipts.append(FileReceipt(file.path, "cancelled", "已取消后续文件。"))
+            retry_files.append(file)
             continue
         if stopped:
             receipts.append(FileReceipt(file.path, "skipped", stopped))
+            retry_files.append(file)
             continue
         if progress:
             progress(index, len(files), f"正在上传文件：{file.path}")
@@ -139,14 +145,16 @@ def execute_file_upload(
             log_failure("file_upload_target", exc, path=file.path)
             stopped = f"本地工程或目标已变化，后续文件未上传：{exc}"
             receipts.append(FileReceipt(file.path, "skipped", stopped))
+            retry_files.append(file)
             continue
         try:
             records = wire_records(file)
         except (TypeError, ValueError) as exc:
             log_failure("file_upload_prepare", exc, path=file.path)
             receipts.append(FileReceipt(file.path, "failed", str(exc)))
+            retry_files.append(file)
             continue
-        parts = _publish_parts(project_id, file.path, records, inventory, port, mode, cancelled, check_current)
+        parts = _publish_parts(project_id, file, records, inventory, port, mode, cancelled, check_current, retry_files)
         receipts.extend(parts)
         for item in parts:
             log_event(
@@ -161,27 +169,29 @@ def execute_file_upload(
             stopped = "账号权限或请求限流未恢复，后续文件未上传。"
         if progress:
             progress(index + 1, len(files), f"{file.path}：{receipt.message}")
-    return FileUploadReceipt(tuple(receipts))
+    return FileUploadReceipt(tuple(receipts), tuple(retry_files))
 
 
-def _publish_parts(project_id, path, records, inventory, port, mode, cancelled, check_current):
+def _publish_parts(project_id, file, records, inventory, port, mode, cancelled, check_current, retry_files):
     """Retain deterministic 413 splitting without remapping keys or source order."""
-    target = PurePosixPath(path)
+    target = PurePosixPath(file.path)
     counter = 0
 
-    def publish(rows, split=False):
+    def publish(rows, entries, split=False):
         nonlocal counter
-        part_path = str(target.with_name(f"{target.stem}_{counter + 1}{target.suffix}")) if split else path
+        part_path = str(target.with_name(f"{target.stem}_{counter + 1}{target.suffix}")) if split else file.path
         result = _upload_one(project_id, part_path, rows, inventory, port, mode, cancelled, check_current)
         if result.status == "too_large" and len(rows) > 1:
             middle = len(rows) // 2
-            return (*publish(rows[:middle], True), *publish(rows[middle:], True))
+            return (*publish(rows[:middle], entries[:middle], True), *publish(rows[middle:], entries[middle:], True))
         counter += 1
         if result.status == "too_large":
             result = replace(result, status="failed", message="单条词条仍超过服务器文件大小限制。")
+        if result.status not in {"succeeded", "unchanged"}:
+            retry_files.append(replace(file, path=part_path, entries=entries))
         return (result,)
 
-    return publish(records)
+    return publish(records, file.entries)
 
 
 def _upload_one(project_id, path, records, inventory, port, mode, cancelled, check_current):

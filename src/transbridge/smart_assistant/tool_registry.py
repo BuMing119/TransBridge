@@ -4,7 +4,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 import re
-from typing import Any
+from typing import Any, Literal
 
 from transbridge.application.tools.schema import (
     LegacySchemaConversionError,
@@ -31,8 +31,14 @@ class ToolSpec:
     deprecated: bool = False  # M2: 标记已废弃工具
     available: bool = True
     unavailable_reason: str = ""
+    # Target-scoped reads use durable results rather than the captured selection.
+    request_scope: Literal["selection", "target"] = "selection"
 
     def __post_init__(self):
+        if self.request_scope not in {"selection", "target"}:
+            raise ValueError(f"Invalid tool request scope: {self.request_scope}")
+        if self.request_scope == "target" and self.permission != "read":
+            raise ValueError("Target-only request scope is reserved for read-only tools")
         if not self.summary and self.description:
             m = re.match(r"①(.+?)(?:②|$)", self.description)
             if m:
@@ -131,6 +137,7 @@ class _ToolRegistry:
                     require_confirmation=td.get("require_confirmation", False),
                     deprecated=td.get("deprecated", False),
                     max_output_size=td.get("max_output_size", 102400),
+                    request_scope=td.get("request_scope", "selection"),
                 ),
                 namespace=namespace,
             )

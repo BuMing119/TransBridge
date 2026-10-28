@@ -9,6 +9,7 @@ import pytest
 
 from tests.dialogue_support import dialogue_entry
 from tests.ui import test_dialogue_authority as authority_tests
+from tests.ui.fixtures.current_editing import CurrentEditingProject
 from transbridge.application.io.identity import EntryRevision, ExternalEntryRef, Provenance
 from transbridge.application.projections import ProjectionSnapshot
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -28,22 +29,20 @@ def authority(monkeypatch):
 
 
 @pytest.fixture
-def context():
+def context(monkeypatch):
     entries = [
         replace(dialogue_entry(form=f"{index:08X}"), original="same", translation=text, stage=stage)
         for index, (text, stage) in enumerate((("new", 1), ("", 0), ("old", 5), ("draft", 1), ("locked", 9)))
     ]
     entries.append(replace(dialogue_entry(form="00000009"), original="same ", translation="", stage=0))
-    notices = []
-    return SimpleNamespace(
-        active_version_identity=("project", "variant"),
-        active_key="source",
-        collection=TranslationEntryCollection(entries),
-        uses_authoritative_projection=False,
-        mark_dirty=lambda: notices.append("dirty"),
-        collection_changed=SimpleNamespace(emit=lambda _: notices.append("changed")),
-        notices=notices,
-    )
+    monkeypatch.setattr("transbridge.ui.context.ParatranzConfig.create_or_load", lambda: SimpleNamespace(token=""))
+    project = CurrentEditingProject(entries, key="source")
+    context = project.context
+    context._editing_project = project
+    context.notices = []
+    context.dirty_changed.connect(lambda: context.notices.append("dirty"))
+    yield context
+    project.close()
 
 
 def test_candidates_are_exact_scoped_and_protect_drafts_and_reviewed_defaults(context):
@@ -65,12 +64,14 @@ def test_candidates_are_exact_scoped_and_protect_drafts_and_reviewed_defaults(co
 def test_selected_batch_is_atomic_and_preserves_review_stage(context):
     entries = list(context.collection)
     candidates = sync_candidates(context, entries[0].identity, "new", {})
-    assert commit_drafts(context, (item.draft for item in candidates[:2])) is None
+    outcome = commit_drafts(context, (item.draft for item in candidates[:2]), projection=context._editing_project.store)
+    assert outcome is None
     assert context.collection.get(entries[1].identity).translation == "new"
     assert context.collection.get(entries[1].identity).stage == 1
     assert context.collection.get(entries[2].identity).stage == 5
     assert context.collection.get(entries[3].identity).translation == "draft"
-    assert context.notices == ["dirty", "changed"]
+    assert context.notices == ["dirty"]
+    assert context.dirty
 
 
 def test_one_conflict_rejects_entire_batch(context):
@@ -89,7 +90,10 @@ def test_detached_editor_preserves_draft_while_project_view_is_unavailable(conte
     target = list(context.collection)[1]
     draft = EntryDraft.capture(context, target)
     draft.text = "draft pending"
-    setattr(context, blocked_state, True)
+    if blocked_state == "project_opening":
+        context.begin_project_open()
+    else:
+        context.project_view_failed = True
     assert "草稿已保留" in draft.commit(context)
     assert context.collection.get(target.identity).translation == ""
     assert draft.text == "draft pending"
@@ -117,7 +121,7 @@ def test_changes_during_confirmation_abort_sync(context, monkeypatch, change):
                 for entry in entries
             )
         elif change == "variant":
-            context.active_version_identity = ("project", "different")
+            monkeypatch.setattr(type(context), "active_version_identity", property(lambda _: ("project", "different")))
         else:
             drafts[(content_scope(context), entries[1].identity)] = EntryDraft.capture(context, entries[1])
         return 1

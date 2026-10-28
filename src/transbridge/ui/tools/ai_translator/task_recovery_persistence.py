@@ -8,8 +8,7 @@ from pathlib import Path
 
 from transbridge.application.io.identity import EntryKey
 from transbridge.application.translation.proofread_checkpoint import proofread_settings
-
-from .task_config_snapshot import execution_snapshot
+from transbridge.application.translation.task_config_snapshot import execution_snapshot
 
 
 @dataclass(frozen=True)
@@ -33,6 +32,7 @@ class RecoveryInitialization:
     overwrite: bool = False
     origin: dict | None = None
     reference_snapshot: dict | None = None
+    conflict_policy: str = "keep_current"
 
     def execute(self, store):
         previous = store.load(self.continuing) if self.continuing else None
@@ -42,14 +42,16 @@ class RecoveryInitialization:
         try:
             if previous is not None and store.load(self.continuing) != previous:
                 raise ValueError("恢复任务记录在取得执行锁前已变化，请刷新后重试。")
-            return self._execute(store)
+            return self._execute(store, previous=previous)
         except Exception:
             store.release()
             raise
 
-    def _execute(self, store):
+    def _execute(self, store, *, previous=None):
+        from transbridge.application.translation.task_config_snapshot import execution_signature as signature
+
         from .source_terms import source_terminology_path
-        from .task_recovery_binding import _STATES, signature
+        from .task_recovery_binding import _STATES
 
         sources = [
             {
@@ -67,6 +69,7 @@ class RecoveryInitialization:
                         "stage": entry.stage,
                         "context": entry.context or "",
                         "revision": entry.revision.value,
+                        "entry": entry.to_dict(),
                     }
                     for entry in source.entries
                 ],
@@ -104,8 +107,10 @@ class RecoveryInitialization:
                 **expected,
                 "checkpoint_settings": proofread_settings(self.config),
                 "execution_config": execution_snapshot(self.config),
+                "conflict_policy": self.conflict_policy,
                 "sources": sources,
                 "state": "preparing",
+                "applied_entries": [],
                 "supported": True,
                 "recovery_contract": 2,
                 "overwrite": self.overwrite,
@@ -119,15 +124,13 @@ class RecoveryInitialization:
                     else {}
                 ),
             })
-        record = store.load(self.continuing)
+        record = previous
         if record["state"] not in _STATES or not record.get("supported", False):
             raise ValueError("原任务恢复状态无效或不受支持。")
         if any(record.get(key) != value for key, value in expected.items()):
             raise ValueError("恢复任务身份或配置不匹配，不能覆盖原任务记录。")
         if record.get("recovery_contract") == 2 and record.get("overwrite", False) != self.overwrite:
             raise ValueError("恢复任务的覆盖选项与原记录不匹配。")
-        if record["state"] in {"completed", "cancelled"}:
-            raise ValueError("原任务已经完成或取消，请重新开始。")
         known = {source["key"]: source for source in record["sources"]}
         for source in sources:
             old = known.get(source["key"])
@@ -140,20 +143,19 @@ class RecoveryInitialization:
         executions = list(dict.fromkeys((*record.get("execution_runs", (record["task_id"],)), self.task_id)))
         execution_inputs = dict(record.get("execution_inputs", {record["task_id"]: record["sources"]}))
         execution_inputs[self.task_id] = sources
-        from .task_result_recovery import load_recovery_results
+        from transbridge.application.translation.task_result_recovery import load_recovery_results
 
         results = load_recovery_results(store, record)
         references = dict(record.get("execution_references", {}))
         if self.reference_snapshot is not None:
             references[self.task_id] = self.reference_snapshot
-        updated = store.update(
+        metadata = store.update_metadata(
             self.continuing,
             execution_runs=executions,
             execution_inputs=execution_inputs,
             **({"execution_references": references} if references else {}),
         )
-        updated["results"] = results
-        return updated
+        return {**record, **metadata, "results": results}
 
 
 @dataclass(frozen=True)
@@ -165,40 +167,41 @@ class RecoveryUpdate:
     saved_entries: object | None = None
 
     def execute(self, store, task_id):
-        from .task_result_recovery import save_recovery_results
+        from transbridge.application.translation.task_result_recovery import save_recovery_results
 
         save_recovery_results(store, task_id, self.entries)
         # Read the last durable generation in the serialized worker. Coalescing
         # updates must never discard evidence from an earlier successful save.
-        previous = store.load(task_id)
-        applied = {EntryKey.from_dict(row["entry_key"]): row for row in previous.get("applied_entries", ())}
-        applied_keys = self.entries.applied_keys
         saved = self.saved_entries
-        if saved is not None:
-            for key in saved.applied_keys:
-                row = saved.entries[key]
-                applied[key] = {
-                    "entry_key": key.to_dict(),
-                    "original": row.before.original,
-                    "text": row.text,
-                    "stage": row.stage,
-                    "report_details": {
-                        name: value
-                        for name, value in getattr(row, "report_details", {}).items()
-                        if name
-                        in {
-                            "review_status",
-                            "review_reason",
-                            "detected_issues",
-                            "review_before_text",
-                            "review_contract_version",
-                        }
-                    },
-                }
-        return store.update(
-            task_id,
-            state=self.state,
-            applied_entries=list(applied.values()),
-            applied=bool(applied or applied_keys),
-            project_saved=self.project_saved,
-        )
+        saved_rows = {}
+        for key in saved.applied_keys if saved is not None else ():
+            row = saved.entries[key]
+            saved_rows[key] = {
+                "entry_key": key.to_dict(),
+                "original": row.before.original,
+                "text": row.text,
+                "stage": row.stage,
+                "report_details": {
+                    name: value
+                    for name, value in getattr(row, "report_details", {}).items()
+                    if name
+                    in {
+                        "review_status",
+                        "review_reason",
+                        "detected_issues",
+                        "review_before_text",
+                        "review_contract_version",
+                    }
+                },
+            }
+
+        def change(previous):
+            fields = dict(state=self.state, project_saved=self.project_saved)
+            if saved_rows:
+                applied = {EntryKey.from_dict(row["entry_key"]): row for row in previous.get("applied_entries", ())}
+                applied.update(saved_rows)
+                fields["applied_entries"] = list(applied.values())
+            fields["applied"] = bool(previous.get("applied") or saved_rows or self.entries.applied_keys)
+            return fields
+
+        return store.mutate_metadata(task_id, change, load_fields=("applied_entries",) if saved_rows else ())

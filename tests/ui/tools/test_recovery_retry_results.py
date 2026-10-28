@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.conftest import make_entry
-from transbridge.ui.tools.ai_translator.task_entry_results import TaskEntryResults
+from transbridge.application.translation.task_entry_results import TaskEntryResults
 from transbridge.ui.tools.ai_translator.task_result_flow import TaskResultFlow
 
 

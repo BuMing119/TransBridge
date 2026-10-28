@@ -12,6 +12,7 @@ class SettingsSection(StrEnum):
     PARATRANZ = "paratranz"
     AI_DEFAULTS = "ai_defaults"
     TERMINOLOGY = "terminology"
+    TASK_RESULTS = "task_results"
     ADVANCED = "advanced"
 
     @classmethod
@@ -48,6 +49,7 @@ SECTION_LABELS: tuple[tuple[SettingsSection, str], ...] = (
     (SettingsSection.PARATRANZ, "ParaTranz"),
     (SettingsSection.AI_DEFAULTS, "AI 默认参数"),
     (SettingsSection.TERMINOLOGY, "术语与词典"),
+    (SettingsSection.TASK_RESULTS, "结果与冲突"),
     (SettingsSection.ADVANCED, "高级与安全"),
 )
 

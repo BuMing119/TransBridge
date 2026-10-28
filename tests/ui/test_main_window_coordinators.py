@@ -240,7 +240,7 @@ def test_migration_draft_is_non_blocking_and_owned_until_finished(monkeypatch) -
 
 def test_project_dialog_receives_real_window_host(monkeypatch) -> None:
     observed = []
-    host = SimpleNamespace(context=SimpleNamespace(active_project=object(), variant_store=object()))
+    host = SimpleNamespace(context=SimpleNamespace(active_variant_id="variant"))
     monkeypatch.setattr(
         "PyQt6.QtWidgets.QInputDialog.getText",
         lambda parent, *_args: (observed.append(parent) or "", False),

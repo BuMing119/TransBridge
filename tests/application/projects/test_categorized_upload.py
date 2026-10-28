@@ -8,10 +8,8 @@ from transbridge.application.contracts import RequestContext
 from transbridge.application.io import FormatId
 from transbridge.application.io.identity import ExternalEntryRef
 from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
-from transbridge.application.projects.categorized_upload import ProjectCategorizedUploadService
 from transbridge.application.projects.variant_commands import EntryStatePatch
 from transbridge.bootstrap.persistence import build_persistence_v2_services
-from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
 
 
 @pytest.fixture
@@ -48,9 +46,7 @@ def project(tmp_path, request):
         context,
     )
     assert created.is_success, created.diagnostics
-    service = ProjectCategorizedUploadService(
-        services.project_lifecycle, services.baselines, TranslationIoProjectSourcePreparer()
-    )
+    service = services.gui_project_commands._categorized_uploads
     yield services, service, context, first, second
     services.close()
 
@@ -77,7 +73,7 @@ def test_snapshot_contains_all_registered_sources_and_authoritative_unsaved_tran
     assert len({source.entries[0].identity for source in snapshot.sources}) == 2
     state = next(entry for source in snapshot.sources for entry in source.entries if entry.identity == key)
     assert (state.translation, state.stage) == ("尚未保存", 3)
-    assert service.current(original, context).diagnostics[0].code == "CATEGORIZED_UPLOAD_STALE"
+    assert service.current(original, context).is_success
 
 
 def test_snapshot_excludes_disabled_source_and_uses_source_id_after_rename(project):
@@ -102,18 +98,18 @@ def test_snapshot_excludes_disabled_source_and_uses_source_id_after_rename(proje
     assert (snapshot.sources[0].source_id, snapshot.sources[0].label) == (first_id, "新插件名.esp")
 
 
-def test_changed_source_file_requires_refresh_instead_of_silent_reclassification(project):
+def test_changed_source_file_preserves_saved_upload_text_until_explicit_source_update(project):
     _services, service, context, first, _second = project
     write_plugin(first, [(0x800, "Shared", "Changed on disk")])
 
     result = service.snapshot(context, endpoint="https://paratranz.cn", remote_project_id=42)
 
-    assert not result.is_success
-    assert result.diagnostics[0].code == "PROJECT_SOURCE_FINGERPRINT_MISMATCH"
+    assert result.is_success, result.diagnostics
+    assert {entry.original for source in result.value.sources for entry in source.entries} == {"Alice", "Bob"}
 
 
 @pytest.mark.parametrize("change", ["project", "variant", "generation", "project_revision", "variant_revision"])
-def test_current_rejects_snapshot_with_changed_identity_or_revision(project, change):
+def test_frozen_upload_checks_identity_but_tolerates_local_revision_changes(project, change):
     _services, service, context, *_ = project
     snapshot = _snapshot(project)
     invalid = replace(
@@ -129,8 +125,11 @@ def test_current_rejects_snapshot_with_changed_identity_or_revision(project, cha
 
     result = service.current(invalid, context)
 
-    assert not result.is_success
-    assert result.diagnostics[0].code == "CATEGORIZED_UPLOAD_STALE"
+    if change in {"project", "variant"}:
+        assert not result.is_success
+        assert result.diagnostics[0].code == "CATEGORIZED_UPLOAD_STALE"
+    else:
+        assert result.is_success
 
 
 @pytest.mark.parametrize(
@@ -147,7 +146,7 @@ def test_snapshot_rejects_another_local_project_or_variant_context(project, chan
     assert result.diagnostics[0].code == code
 
 
-def test_current_checks_local_revisions_without_rehydrating_source_files(project):
+def test_current_checks_identity_without_rehydrating_source_files(project):
     services, _service, context, first, second = project
     captured = _snapshot(project)
     first.unlink()

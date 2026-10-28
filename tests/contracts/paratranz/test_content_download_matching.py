@@ -4,9 +4,10 @@ from dataclasses import replace
 
 import pytest
 
+from tests.contracts.paratranz.download_result_support import merge_download
 from transbridge.application.io.identity import EntryKey, EntryRevision, ExternalEntryRef, SourceNamespace
 from transbridge.application.sync import candidate_matching, download_planner, local_candidate, planner
-from transbridge.application.sync.batch_download import BatchDownloadSource, plan_batch_download, rebased_candidates
+from transbridge.application.sync.batch_download import BatchDownloadSource, plan_batch_download
 from transbridge.application.sync.download_review import DownloadDecision
 from transbridge.application.sync.local_candidate import RemoteSourceIndex
 from transbridge.application.sync.models import LocalEntrySnapshot, RemoteEntrySnapshot, SyncAction, SyncOperation
@@ -40,7 +41,7 @@ def source(locals_, remotes):
 
 def applied(current, **kwargs):
     preview = plan_batch_download((current,), **kwargs)
-    return preview, rebased_candidates(preview, (current,))
+    return preview, merge_download(preview, (current,))
 
 
 def test_changed_key_falls_back_to_exact_original_and_materializes_without_id():
@@ -50,15 +51,14 @@ def test_changed_key_falls_back_to_exact_original_and_materializes_without_id():
     assert preview.deferred_count == 0
     assert preview.updated_count == 1
     assert preview.plans[0].items[0].reason == "download_original_match"
-    updated = candidate.entries[0]
-    assert (updated.entry_key, updated.original, updated.context, updated.context_order) == (
+    updated = candidate.applied[0]
+    assert (updated.entry_key, updated.original, updated.context) == (
         local().entry_key,
         local().original,
         local().context,
-        17,
     )
     assert updated.translation == "译文"
-    assert updated.external_ref is None
+    assert current.local_entries[0].context_order == 17
 
 
 @pytest.mark.parametrize("stages,expected", [((5, 9), 1), ((-1, 0), 1), ((2, 3), 1), ((5, 5), 5)])
@@ -72,8 +72,7 @@ def test_same_translation_different_context_or_stage_is_content_consensus(stages
     assert preview.deferred_count == 0
     assert preview.plans[0].download_review == ()
     assert preview.plans[0].items[0].reason == "download_translation_consensus"
-    assert (candidate.entries[0].translation, candidate.entries[0].stage) == ("译文", expected)
-    assert candidate.entries[0].external_ref is None
+    assert (candidate.applied[0].translation, candidate.applied[0].stage) == ("译文", expected)
     assert plan_batch_download((replace(current, remote_entries=tuple(reversed(current.remote_entries))),)).plans == (
         preview.plans[0],
     )
@@ -83,22 +82,21 @@ def test_stage_disagreement_retains_already_consistent_local_translation_state()
     current = source((local(translation="译文", stage=3),), (remote(stage=5), remote(stage=9, ref=2)))
     preview, candidate = applied(current)
     assert preview.updated_count == preview.deferred_count == 0
-    assert candidate.entries == current.local_entries
+    assert candidate.applied == ()
 
 
 def test_untranslated_copy_does_not_make_unique_nonempty_translation_ambiguous():
     current = source((local(),), (remote(), remote(translation="", stage=0, ref=2)))
     preview, candidate = applied(current)
     assert preview.deferred_count == 0
-    assert candidate.entries[0].translation == "译文"
+    assert candidate.applied[0].translation == "译文"
 
 
 def test_one_remote_content_can_satisfy_multiple_same_source_local_keys():
     current = source((local("one"), local("two")), (remote("old"),))
     preview, candidate = applied(current)
     assert preview.deferred_count == 0 and preview.updated_count == 2
-    assert [entry.translation for entry in candidate.entries] == ["译文", "译文"]
-    assert all(entry.external_ref is None for entry in candidate.entries)
+    assert [entry.translation for entry in candidate.applied] == ["译文", "译文"]
 
 
 def test_real_translation_ambiguity_groups_metadata_variants_into_one_choice():
@@ -113,8 +111,7 @@ def test_real_translation_ambiguity_groups_metadata_variants_into_one_choice():
     chosen = next(candidate for candidate in row.candidates if candidate.entry.translation == "译文")
     accepted, candidate = applied(current, decisions=(DownloadDecision(row.row_id, chosen.token),))
     assert accepted.deferred_count == 0
-    assert (candidate.entries[0].translation, candidate.entries[0].stage) == ("译文", 1)
-    assert candidate.entries[0].external_ref is None
+    assert (candidate.applied[0].translation, candidate.applied[0].stage) == ("译文", 1)
 
 
 @pytest.mark.parametrize("evidence", ["key_context", "key", "current_translation"])
@@ -125,7 +122,7 @@ def test_distinct_translations_can_be_resolved_by_deterministic_local_evidence(e
     current = source((entry,), (preferred, other))
     preview, candidate = applied(current)
     assert preview.deferred_count == 0
-    assert candidate.entries[0].translation == "译文"
+    assert candidate.applied[0].translation == "译文"
 
 
 @pytest.mark.parametrize("original", ["Other source", "exact source", "Exact source "])
@@ -136,7 +133,7 @@ def test_nonmatching_original_is_preserved_without_unusable_review(original):
     item = next(item for item in preview.plans[0].items if item.entry_key == local().entry_key)
     assert item.action is SyncAction.SKIP
     assert item.reason == "no_matching_original"
-    assert candidate.entries == current.local_entries
+    assert candidate.applied == ()
 
 
 def test_only_untranslated_remote_preserves_existing_local_translation():
@@ -144,7 +141,7 @@ def test_only_untranslated_remote_preserves_existing_local_translation():
     preview, candidate = applied(current)
     assert preview.deferred_count == 0
     assert preview.plans[0].items[0].reason == "remote_untranslated"
-    assert candidate.entries == current.local_entries
+    assert candidate.applied == ()
 
 
 def test_other_namespace_and_qualified_original_mismatch_cannot_supply_content():
@@ -171,12 +168,12 @@ def test_automatic_content_matching_never_bypasses_concurrent_local_edit_review(
         current, review_keys=(local().entry_key,), decisions=(DownloadDecision(row.row_id, "keep_local"),)
     )
     assert kept.deferred_count == 0
-    assert candidate.entries == current.local_entries
+    assert candidate.applied == ()
     accepted, candidate = applied(
         current, review_keys=(local().entry_key,), decisions=(DownloadDecision(row.row_id, row.candidates[0].token),)
     )
     assert accepted.deferred_count == 0
-    assert candidate.entries[0].translation == "译文"
+    assert candidate.applied[0].translation == "译文"
 
 
 def test_existing_strict_download_contract_does_not_gain_general_original_fallback():
@@ -225,7 +222,7 @@ def test_invalid_local_qualified_identity_is_never_overwritten_by_content_matchi
     preview, candidate = applied(current)
     assert preview.deferred_count == 1
     assert preview.plans[0].download_review[0].reason == "original_mismatch"
-    assert candidate.entries == current.local_entries
+    assert candidate.applied == ()
 
 
 def test_empty_original_does_not_match_another_key_but_same_key_remains_usable():
@@ -235,7 +232,8 @@ def test_empty_original_does_not_match_another_key_but_same_key_remains_usable()
     )
     preview, candidate = applied(current)
     assert preview.updated_count == 1 and preview.deferred_count == 0
-    assert [(entry.translation, entry.stage) for entry in candidate.entries] == [("译文", 5), ("", 0)]
+    assert [(entry.translation, entry.stage) for entry in candidate.applied] == [("译文", 5)]
+    assert candidate.applied[0].entry_key == current.local_entries[0].entry_key
     assert (
         next(item for item in preview.plans[0].items if item.entry_key.local_key == "two").reason
         == "no_matching_original"
@@ -283,12 +281,12 @@ def test_thousand_repeated_originals_are_indexed_once_and_fully_materialized(
     monkeypatch.setattr(download_planner, "_review", counted_review)
     preview, candidate = applied(current)
 
-    assert preview.updated_count == len(candidate.updated_keys) == size
+    assert preview.updated_count == len(candidate.applied) == size
     assert preview.deferred_count == 0
-    assert [entry.translation for entry in candidate.entries] == [
+    assert [entry.translation for entry in candidate.applied] == [
         "另译" if key_evidence and index % 2 else "译文" for index in range(size)
     ]
-    assert all(entry.stage == 1 and entry.external_ref is None for entry in candidate.entries)
+    assert all(entry.stage == 1 for entry in candidate.applied)
     assert counts["hash"] <= 9 * size + 20
     assert counts["identity"] <= 4 * size
     assert counts["review"] == 0

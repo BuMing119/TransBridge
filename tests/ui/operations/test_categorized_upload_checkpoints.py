@@ -50,7 +50,7 @@ def test_cancel_after_file_create_does_not_touch_local_metadata(harness, monkeyp
     assert bridge._snapshot(harness) == before
 
 
-def test_background_edit_is_preserved_and_stops_later_files(harness, monkeypatch):
+def test_background_edit_is_preserved_and_frozen_upload_continues_later_files(harness, monkeypatch):
     local = bridge._snapshot(harness).sources[0].entries[0]
     create = harness.remote.create_file
 
@@ -63,6 +63,6 @@ def test_background_edit_is_preserved_and_stops_later_files(harness, monkeypatch
 
     monkeypatch.setattr(harness.remote, "create_file", edit)
     result = bridge._upload(harness)
-    assert result.success_count == result.pending_count == 1
+    assert result.success_count == 2 and result.pending_count == 0
     current = bridge._snapshot(harness).sources[0].entries[0]
     assert (current.translation, current.stage) == ("后台新编辑", 3)

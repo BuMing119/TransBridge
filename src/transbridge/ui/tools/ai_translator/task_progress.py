@@ -9,7 +9,6 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMessageBox,
-    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -24,13 +23,14 @@ from transbridge.ui.foundation.components import ComponentStyle, SemanticState
 from transbridge.ui.windowing import show_and_activate
 
 from ._theme_support import AiThemeBinding
+from .task_activity_panel import TaskActivityPanel
 from .task_run import AiTaskRun
 from .task_run_presentation import source_label
 from .task_widget_style import configure_task_button, configure_task_host, configure_task_title
 
 
 class _SourceProgressTable(QTreeWidget):
-    """Reserve space for actual sources, leaving the remaining height to the log."""
+    """Reserve space for actual sources, with scrolling for large projects."""
 
     def __init__(self):
         super().__init__()
@@ -110,26 +110,17 @@ class AiTaskProgressWindow(QWidget):
         self.sources.setColumnWidth(0, 290)
         layout.addWidget(self.sources)
         diagnostics = QHBoxLayout()
-        self.log_toggle = QPushButton("展开过程日志")
-        self.log_toggle.setCheckable(True)
-        configure_task_button(self.log_toggle)
-        self.log_toggle.toggled.connect(self._toggle_logs)
-        diagnostics.addWidget(self.log_toggle)
+        self.activity_panel = TaskActivityPanel(self)
+        self.logs = self.activity_panel.logs
+        self.log_toggle = self.activity_panel.toggle
+        layout.addWidget(self.activity_panel)
         diagnostics.addStretch()
         self.log_button = QPushButton("LLM 日志")
         configure_task_button(self.log_button)
         self.log_button.clicked.connect(self._open_log)
         diagnostics.addWidget(self.log_button)
         layout.addLayout(diagnostics)
-        self.logs = QPlainTextEdit()
-        self.logs.setReadOnly(True)
-        self.logs.document().setMaximumBlockCount(3000)
-        self.logs.setPlaceholderText("开始后，阶段变化和处理记录会显示在这里。")
-        layout.addWidget(self.logs, 1)
-        self._collapsed_log_space = QWidget()
-        self._collapsed_log_space.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        layout.addWidget(self._collapsed_log_space, 1)
-        self.log_toggle.setChecked(True)
+        layout.addStretch(1)
         self.record_status = QLabel()
         self.record_status.setWordWrap(True)
         self.save_status = QLabel()
@@ -163,7 +154,7 @@ class AiTaskProgressWindow(QWidget):
         layout.addWidget(self.retry_record_button)
         self._theme = AiThemeBinding(self, theme_view, lambda _: self.sources.updateGeometry())
         self.run.changed.connect(self._refresh)
-        self.run.logged.connect(self.logs.appendPlainText)
+        self.run.logged.connect(self.activity_panel.append)
         self.run.preview_requested.connect(self._offer_preview)
         self.run.translation_completed.connect(self.translation_completed)
         self.run.completion_notice.connect(self._show_completion)
@@ -199,10 +190,10 @@ class AiTaskProgressWindow(QWidget):
         self.preview_button.setText("确认结果" if run.state == "pending_confirmation" else "应用成功结果")
         self.preview_button.setEnabled(run.can_apply_success and not self._preview_open)
         self.report_button.setEnabled(run.records.record is not None)
-        retry_snapshot = getattr(self.session, "project_saved", False) and not self.session.saved
-        self.save_button.setText(("重试快照" if run.snapshot_failed else "创建快照") if retry_snapshot else "保存项目")
+        self.save_button.setText("保存项目")
         self.save_button.setEnabled(self.session.can_save and not self.session.is_busy)
         self._refresh_actions()
+        self.activity_panel.observe(run)
 
     def _refresh_source_progress(self):
         view = getattr(self.run, "progress_view", None)
@@ -225,11 +216,6 @@ class AiTaskProgressWindow(QWidget):
                 row.setToolTip(column, value)
         self.sources.updateGeometry()
 
-    def _toggle_logs(self, expanded):
-        self.logs.setVisible(expanded)
-        self._collapsed_log_space.setVisible(not expanded)
-        self.log_toggle.setText("收起过程日志" if expanded else "展开过程日志")
-
     def _refresh_actions(self):
         run = self.run
         executing = run.worker is not None and not run.completion_received and not run.cancelled
@@ -250,7 +236,7 @@ class AiTaskProgressWindow(QWidget):
             hint = "准备完成后会自动开始处理。可取消本次任务。"
         elif executing:
             primary = self.pause_button
-            hint = "可暂停处理，稍后继续；取消任务会放弃尚未应用的结果。"
+            hint = "可暂停后继续；取消处理会保留已完成的成果。"
             if run.pause_state != "running":
                 hint = "可继续处理，或取消本次任务；尚未应用的结果不会写入项目。"
         elif run.applying or self.session.is_busy:
@@ -347,7 +333,28 @@ class AiTaskProgressWindow(QWidget):
         record = self.run.records.record
         if record is None:
             return
-        dialog = TaskResultDialog(record, source_key=self._selected_key(), theme_view=self._theme_view)
+        dialog = TaskResultDialog(
+            record,
+            source_key=self._selected_key(),
+            theme_view=self._theme_view,
+            review_results=self._open_merge_review if self.run.recovery.record is not None else None,
+        )
+        self._dialogs.append(dialog)
+        show_and_activate(dialog)
+
+    def _open_merge_review(self):
+        from .task_merge_dialog import TaskMergeDialog
+
+        record = self.run.recovery.record
+        if record is None or self.run.running:
+            return
+        dialog = TaskMergeDialog(
+            self.session._ctx,
+            self.session.project_dir,
+            record["task_id"],
+            store=self.run.recovery.store,
+            theme_view=self._theme_view,
+        )
         self._dialogs.append(dialog)
         show_and_activate(dialog)
 
@@ -389,9 +396,7 @@ class AiTaskProgressWindow(QWidget):
             retry.clicked.connect(self.run.retry)
             primary = retry
         if notice["error"] and self.session.can_save:
-            retry = dialog.addButton(
-                "重试快照" if self.run.snapshot_failed else "重试保存", QMessageBox.ButtonRole.ActionRole
-            )
+            retry = dialog.addButton("重试保存", QMessageBox.ButtonRole.ActionRole)
             retry.clicked.connect(self.run.save)
             primary = retry
         configure_task_button(primary, primary=True)
@@ -417,6 +422,7 @@ class AiTaskProgressWindow(QWidget):
         event.accept()
 
     def dispose(self):
+        self.activity_panel.timer.stop()
         self.run.dispose()
         for dialog in self._dialogs:
             dialog.close()

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from .task_result_preparation import prepare_application, prepare_applied, prepare_outcomes
+from transbridge.application.translation.result_merge import ResultMergePlan
+
+from .task_result_preparation import prepare_application, prepare_merge_receipt, prepare_outcomes
 
 
 class TaskResultFlow:
@@ -25,8 +27,7 @@ class TaskResultFlow:
                 return
             try:
                 options = dict(on_success=run._ready, on_error=run._prepare_failed)
-                if getattr(run.session, "supports_background_validation", False):
-                    options["background_validate"] = self._validate_background
+                options["background_validate"] = self._validate_background
                 run.session.capture_before(**options)
             except Exception as exc:
                 run._prepare_failed(str(exc))
@@ -51,7 +52,7 @@ class TaskResultFlow:
         record = (self._restore_record or run.recovery.record) if run._attempt == 0 else None
 
         def restore():
-            from .task_result_recovery import restore_recovery_results
+            from transbridge.application.translation.task_result_recovery import restore_recovery_results
 
             self._validate_background()
             return restore_recovery_results(ledger, tasks, record)
@@ -78,6 +79,7 @@ class TaskResultFlow:
     def _results_ready(self, ledger, outcomes):
         run = self.run
         run.entries, run.outcomes = ledger, outcomes
+        run._record()
         run.completion_received = True
         run.progress_view.finish()
         run.progress = (len(run.session.tasks), len(run.session.tasks), "已处理 %v/%m 个来源")
@@ -108,12 +110,7 @@ class TaskResultFlow:
             self._results_ready(*value)
 
         def operation():
-            from .task_result_recovery import save_recovery_results
-
-            value = prepare_outcomes(ledger, outcomes, keys, tasks, previous, cancelled)
-            if run.recovery.store is not None:
-                save_recovery_results(run.recovery.store, run.recovery.record["task_id"], value[0])
-            return value
+            return prepare_outcomes(ledger, outcomes, keys, tasks, previous, cancelled)
 
         run.result_preparation.start(
             operation,
@@ -177,12 +174,8 @@ class TaskResultFlow:
             run.state, run.status = "applying", "正在准备应用结果"
 
             def operation():
-                from .task_result_recovery import save_recovery_results
-
                 self._validate_background()
                 result = prepare_application(ledger, tasks)
-                if run.recovery.store is not None:
-                    save_recovery_results(run.recovery.store, run.recovery.record["task_id"], result[0])
                 self._validate_background()
                 return result
 
@@ -194,33 +187,51 @@ class TaskResultFlow:
     def _apply_prepared(self, value):
         run = self.run
         ledger, selected = value
+        # Deliver model work before any filesystem operation can fail. Retrying
+        # this barrier reuses the ledger and never dispatches the model again.
+        run.entries = ledger
+
+        def durable(_):
+            self._commit_prepared(selected)
+
+        if run.recovery.store is not None:
+            from transbridge.application.translation.task_result_recovery import save_recovery_results
+
+            run.result_preparation.start(
+                lambda: save_recovery_results(run.recovery.store, run.recovery.record["task_id"], ledger),
+                on_success=durable,
+                on_error=run._apply_failed,
+            )
+        else:
+            durable(None)
+
+    def _commit_prepared(self, selected):
+        run = self.run
         if run.cancelled or run.shutting_down:
             run.applying = False
             run._finish_cancelled()
             return
         try:
             run._require_current()
-            run.entries = ledger
             if not selected:
                 run.completion.applied(selected, prepared=True)
                 return
             options = dict(
-                on_success=lambda _: self.applied(selected),
+                on_success=lambda result: self.applied(selected, result),
                 on_error=run._apply_failed,
                 validate=run._require_current,
             )
-            # Real sessions validate file/config inputs again after background
-            # merging. Simple legacy session adapters retain their old contract.
-            if getattr(run.session, "supports_background_validation", False):
-                options["background_validate"] = self._validate_background
+            options["background_validate"] = self._validate_background
             run.session.apply_entries_async(selected, **options)
         except Exception as exc:
             run._apply_failed(str(exc))
         run._record()
         run.changed.emit()
 
-    def applied(self, selected):
+    def applied(self, selected, result=None):
         run = self.run
+        if not isinstance(result, ResultMergePlan):
+            raise TypeError("合入未返回有效回执；任务成果已保留。")
         ledger = run.entries.freeze()
 
         def delivered(value):
@@ -230,9 +241,12 @@ class TaskResultFlow:
             except Exception as exc:
                 run._apply_failed(str(exc))
 
-        run.result_preparation.start(
-            lambda: prepare_applied(ledger, selected), on_success=delivered, on_error=run._apply_failed
-        )
+        selected = {row.entry_key for row in result.applied} | set(result.unchanged_keys)
+
+        def prepare():
+            return prepare_merge_receipt(ledger, result)
+
+        run.result_preparation.start(prepare, on_success=delivered, on_error=run._apply_failed)
 
     def retry(self):
         run = self.run
@@ -253,11 +267,7 @@ class TaskResultFlow:
                     run.rows[task.key] = ("等待", f"{len(task.entries)} 条")
                 self.start(tasks)
 
-            prepare = getattr(run.session, "retry_entries_async", None)
-            if prepare is None:
-                ready(run.session.retry_entries(keys))
-            else:
-                prepare(keys, on_success=ready, on_error=run._prepare_failed)
+            run.session.retry_entries_async(keys, on_success=ready, on_error=run._prepare_failed)
         except Exception as exc:
             run.preparing = False
             run.status = f"无法重试：{exc}"

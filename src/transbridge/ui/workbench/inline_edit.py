@@ -115,19 +115,16 @@ class InlineEditController(QObject):
             translation = ""
         stage = STAGE_TRANSLATED if translation and entry.stage == STAGE_UNTRANSLATED else entry.stage
         try:
-            if self.context.uses_authoritative_projection:
-                result = self.context.update_projected_entry(entry.identity, translation=translation, stage=stage)
-                if not result.is_success:
-                    self._retain(draft, result.diagnostics[0].message if result.diagnostics else "工程提交失败")
-                    return
+            result = self.context.update_projected_entry(entry.identity, translation=translation, stage=stage)
+            if not result.is_success:
+                self._retain(draft, result.diagnostics[0].message if result.diagnostics else "工程提交失败")
+                return
         except Exception as exc:  # GUI boundary: retain the full draft and original diagnostic.
             logging.getLogger(__name__).exception("Inline translation commit failed")
             self._retain(draft, f"提交译文失败：{exc}")
             return
         if _scope(self.context) == draft.scope:
             entry.translation, entry.stage = translation, stage
-            if not self.context.uses_authoritative_projection:
-                self.context.mark_dirty()
             self._refresh_entry(
                 entry,
                 preferred_row=row,

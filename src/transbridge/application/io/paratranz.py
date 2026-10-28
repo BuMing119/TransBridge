@@ -86,6 +86,13 @@ class ParatranzJsonAdapter:
         if _cancelled(request.cancellation):
             return self._cancelled_parse(request)
 
+        return self.parse_content(request, content)
+
+    def parse_content(self, request: ParseRequest, content: bytes) -> ParseResult:
+        """Parse already captured bytes without reopening a mutable source path."""
+        if _cancelled(request.cancellation):
+            return self._cancelled_parse(request)
+
         try:
             payload = json.loads(
                 content.decode("utf-8-sig"),

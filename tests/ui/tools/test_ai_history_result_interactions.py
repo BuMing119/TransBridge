@@ -35,7 +35,7 @@ def views(qapp, layout_app):
                 directory_provider=lambda: None,
                 windows={},
                 shutting_down=False,
-                ctx=SimpleNamespace(),
+                ctx=SimpleNamespace(active_version_identity=("project", "variant")),
                 is_recovery_active=lambda _: False,
             )
             dialog = TaskHistoryDialog(registry)

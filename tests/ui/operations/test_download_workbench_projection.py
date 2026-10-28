@@ -200,7 +200,9 @@ def test_real_download_updates_loaded_workbench_and_keeps_close_save_authority_c
     case.context.activate_slot(case.locations[selected.source_id])
     assert case.context.collection.get(selected.entries[0].identity).translation == "真实工作台云端译文1"
     assert not case.context.authoritative_projection_diverged()
-    assert list((Path(case.services.root) / "snapshots").glob("*.json"))
+    assert not list((Path(case.services.root) / "snapshots").glob("*.json"))
+    directory = case.services.gui_project_commands.task_result_directory(case.request)
+    assert list((Path(directory) / "download-results").glob("*/merge-*.json"))
     assert case.calls.count("/api/projects") == 1
     assert case.calls.count("/api/projects/42/files/1/translation") == 1
     assert case.calls.count("/api/projects/42/files/2/translation") == int(all_sources)

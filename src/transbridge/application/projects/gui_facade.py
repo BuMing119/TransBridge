@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from types import EllipsisType
 from typing import Any
 
@@ -15,7 +16,7 @@ from transbridge.application.contracts import (
     RequestContext,
 )
 from transbridge.application.io.identity import EntryKey
-from transbridge.persistence.v2.baselines import LegacyIdentityRegistry
+from transbridge.application.translation.result_merge import ResultConflictPolicy
 from transbridge.persistence.v2.ids import ProjectRef, VariantRef
 from transbridge.persistence.v2.variant import VariantChangeSet
 
@@ -41,7 +42,6 @@ class GuiProjectCommandFacade:
     def __init__(
         self,
         lifecycle: ProjectLifecycleService,
-        legacy_identities: LegacyIdentityRegistry,
         projection_rebuild: Callable[[], None] | None = None,
         *,
         projects=None,
@@ -54,7 +54,6 @@ class GuiProjectCommandFacade:
         durable_variant_commits: DurableVariantCommitService | None = None,
     ) -> None:
         self._lifecycle = lifecycle
-        self._legacy_identities = legacy_identities
         self._projection_rebuild = projection_rebuild
         self._projects = projects
         self._variants = variants
@@ -87,6 +86,18 @@ class GuiProjectCommandFacade:
     def file_sources_catalog(self, context):
         """List current registered plugins and entry counts without source I/O."""
         return self._categorized_upload_service().catalog(context)
+
+    def task_result_directory(self, context):
+        """Locate the active Project directory for durable task-owned results."""
+        active = self._lifecycle.active
+        if active is None or self._projects is None:
+            raise DomainError(ErrorCategory.PREREQUISITE, "ACTIVE_PROJECT_REQUIRED", "请先打开工程。")
+        if context.project_id not in (None, active.project_ref.identity.value) or context.variant_id not in (
+            None,
+            active.formal_variant_ref.identity.value if active.formal_variant_ref is not None else None,
+        ):
+            raise DomainError(ErrorCategory.CONFLICT, "PROJECT_CONTEXT_MISMATCH", "任务对应的工程版本已切换。")
+        return Path(self._projects.path_for(active.project_ref)).parent
 
     def _categorized_upload_service(self) -> ProjectCategorizedUploadService:
         if self._categorized_uploads is None:
@@ -198,6 +209,15 @@ class GuiProjectCommandFacade:
             expected_variant_ref=expected_variant_ref,
         )
 
+    def add_prepared_source(self, prepared, context, *, expected_variant_ref):
+        if self._source_mutations is None:
+            raise ValueError("工程来源变更服务未配置。")
+        return self._source_mutations.add_prepared_source(
+            prepared,
+            context,
+            expected_variant_ref=expected_variant_ref,
+        )
+
     def remove_source(self, locator: str, context: RequestContext) -> OperationResult[SourceMutationResult]:
         if self._source_mutations is None:
             return OperationResult.failed(
@@ -245,36 +265,20 @@ class GuiProjectCommandFacade:
             return prepared
         return self._lifecycle.commit_transition(prepared.value["token"], context)
 
-    def switch_legacy(
-        self,
-        legacy_project_key: str,
-        legacy_variant_name: str,
-        context: RequestContext,
-        *,
-        dirty_decision: DirtyDecision | None = None,
-    ) -> OperationResult[dict | None]:
-        try:
-            project_ref, variant_ref = self._legacy_identities.resolve(
-                legacy_project_key,
-                legacy_variant_name,
-            )
-        except Exception as exc:  # DomainError is preserved by OperationResult
-            return OperationResult.from_exception(exc, run_id=context.run_id)
-        return self.switch_v2(
-            project_ref,
-            variant_ref,
-            context,
-            dirty_decision=dirty_decision,
-        )
-
     def save(
         self,
         context: RequestContext,
         *,
         expected_active_signature: ActiveSignature | EllipsisType = ...,
+        expected_active_identity: tuple[str, str | None] | EllipsisType = ...,
     ) -> OperationResult[dict | None]:
-        result = self._lifecycle.save_active(context, expected_active_signature=expected_active_signature)
-        if result.is_success and self._projection_rebuild is not None:
+        options = {"expected_active_signature": expected_active_signature}
+        if expected_active_identity is not ...:
+            options["expected_active_identity"] = expected_active_identity
+        active = self._lifecycle.active
+        previous_summary = None if active is None else active.summary()
+        result = self._lifecycle.save_active(context, **options)
+        if result.is_success and self._projection_rebuild is not None and result.value != previous_summary:
             self._projection_rebuild()
         return result
 
@@ -338,6 +342,7 @@ class GuiProjectCommandFacade:
         expected_variant_revision: int | None = None,
         expected_variant_ref: VariantRef | None = None,
         commit_mutation: Callable[[Callable[[], None]], None] | None = None,
+        persist: bool = False,
     ) -> OperationResult[dict[str, Any]]:
         """Commit a complete set of projected translation/stage changes once."""
 
@@ -348,6 +353,42 @@ class GuiProjectCommandFacade:
             expected_variant_revision=expected_variant_revision,
             expected_variant_ref=expected_variant_ref,
             commit_mutation=commit_mutation,
+            persist=persist,
+        )
+
+    def merge_entry_states(
+        self,
+        candidates,
+        context,
+        *,
+        expected_variant_ref,
+        policy=ResultConflictPolicy.KEEP_CURRENT,
+        commit_mutation=None,
+        persist=False,
+        before_commit=None,
+        policies=None,
+        decision_states=None,
+        clear_external_scope=None,
+    ):
+        """Merge completed asynchronous results without relying on launch revisions."""
+        from .result_merge import ProjectResultMergeService
+
+        return ProjectResultMergeService(
+            self._lifecycle,
+            self._categorized_upload_service().result_source_texts,
+            self.replace_entry_states,
+            self.replace_entry_records,
+        ).merge(
+            candidates,
+            context,
+            expected_variant_ref=expected_variant_ref,
+            policy=policy,
+            commit_mutation=commit_mutation,
+            persist=persist,
+            before_commit=before_commit,
+            policies=policies,
+            decision_states=decision_states,
+            clear_external_scope=clear_external_scope,
         )
 
     def replace_entry_records(
@@ -438,6 +479,15 @@ class GuiProjectCommandFacade:
                 and next_label_library == snapshot.label_library
                 and not (persist and active.dirty)
             ):
+                if commit_mutation is not None:
+                    return self._lifecycle.commit_active_content(
+                        active.project,
+                        snapshot,
+                        context,
+                        expected_project_revision=project_revision,
+                        expected_variant_revision=snapshot.revision,
+                        commit_mutation=commit_mutation,
+                    )
                 return OperationResult.completed(
                     {
                         "project_id": active.project.envelope.identity,

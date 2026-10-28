@@ -21,12 +21,7 @@ def _tool_get_app_state(args: dict, ctx) -> ToolResult:
     """返回当前应用状态摘要。"""
     slot = ctx.active_slot
     # m4: 只暴露文件名，不泄露绝对路径
-    # m7: 安全访问 active_project，兼容多种类型
-    project_name = None
-    if hasattr(ctx, "active_project") and ctx.active_project is not None:
-        project_name = getattr(ctx.active_project, "name", None)
-        if project_name is None and isinstance(ctx.active_project, dict):
-            project_name = ctx.active_project.get("name")
+    project_name = ctx.project_name
     # C5: ParaTranz 配置状态
     pt_configured = False
     try:
@@ -141,26 +136,25 @@ def _tool_get_statistics(args: dict, ctx) -> ToolResult:
 
 def _tool_list_local_projects(args: dict, ctx) -> ToolResult:
     """列出本地工作空间中的项目。"""
-    projects = []
+    catalog = ctx.project_catalog
+    if catalog is None:
+        return ToolResult.fail("工程目录服务不可用。")
     try:
-        workspace = ctx.workspace
-        if workspace and hasattr(workspace, "projects"):
-            for p in workspace.projects:
-                # m10/m21: 仅返回项目名(basename)，不暴露绝对路径
-                projects.append({"name": getattr(p, "name", "")})
+        projects = [{"name": item.name} for item in catalog.list_projects().projects]
     except Exception as exc:
-        logger.warning("操作失败: %s", exc)
+        logger.exception("Cannot read the current project catalog")
+        return ToolResult.fail(f"读取工程目录失败：{exc}")
     return ToolResult.ok(f"共 {len(projects)} 个本地项目", data={"projects": projects})
 
 
 def _tool_get_current_project(args: dict, ctx) -> ToolResult:
     """获取当前活跃项目信息。"""
-    project = ctx.active_project
-    if not project:
+    project_name = ctx.project_name
+    if not project_name:
         return ToolResult.ok("当前无活跃项目", data={"active_project": None})
     return ToolResult.ok(
         data={
-            "name": getattr(project, "name", ""),
+            "name": project_name,
             "variant": ctx.active_variant,
             "collection": ctx.active_slot.label if ctx.active_slot else None,
         }

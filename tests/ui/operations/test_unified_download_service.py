@@ -105,6 +105,11 @@ def assert_persisted(data):
     assert data.case.services.projects.read_snapshot(active.project_ref) == active.project
 
 
+def merge_evidence_files(data):
+    directory = data.case.context.project_commands.task_result_directory(data.case.context.runtime_context)
+    return tuple((Path(directory) / "download-results").glob("*/merge-*.json"))
+
+
 def source_path(data, source_id):
     registration = next(source for source in data.case.context.project_sources if source["source_id"] == source_id)
     return Path(registration["location"])
@@ -172,7 +177,11 @@ def test_default_service_factory_reaches_permissions_and_current_file_reads_with
 def test_real_service_policy_changes_and_successful_save_reuse_the_complete_cloud_read(default_download):
     data = default_download
     assert compare(data).updates == 2
-    assert compare(data, policy="prefer_local").updates == 0
+    key = data.case.sources[0].entries[0].identity
+    assert data.case.context.project_commands.update_entry(
+        key, data.case.context.runtime_context, translation="下载期间的新编辑", stage=1
+    ).is_success
+    assert compare(data, policy="keep_current").updates == 1
     assert compare(data).updates == 2
     calls = tuple(data.calls)
 
@@ -181,7 +190,8 @@ def test_real_service_policy_changes_and_successful_save_reuse_the_complete_clou
     assert receipt.updated == 2 and tuple(data.calls) == calls
     assert {translation for translation, _stage in states(data.case).values()} == {"云端1", "云端2"}
     assert_persisted(data)
-    assert list((Path(data.case.services.root) / "snapshots").glob("*.json"))
+    assert not list((Path(data.case.services.root) / "snapshots").glob("*.json"))
+    assert data.session.record["merges"]
 
 
 def test_real_file_api_partial_read_failure_retries_only_the_failed_source(default_download):
@@ -249,7 +259,7 @@ def test_new_selection_uses_current_service_and_does_not_redownload_cached_sourc
     assert paths(data).count("/api/projects/42/files/2/translation") == 1
 
 
-def test_unselected_same_name_source_changes_selected_path_without_cross_source_reads(default_download):
+def test_source_rename_keeps_frozen_selected_result_without_cross_source_reads(default_download):
     data = default_download
     first, second = data.case.sources
     assert compare(data, (first.source_id,)).updates == 1
@@ -266,18 +276,17 @@ def test_unselected_same_name_source_changes_selected_path_without_cross_source_
     assert data.case.services.project_lifecycle.commit_project_update(
         changed, active.project.envelope.revision, data.case.context.runtime_context
     ).is_success
-    # Ordinary and categorized paths must still be named against the complete
-    # registered catalog even when the second same-name source is unselected.
+    # A rename affects future tasks; this task keeps its already downloaded input.
     renamed_sources = tuple(replace(source, label=first.label) for source in data.case.sources)
     names = source_directory_names(renamed_sources)
     data.case.gateway.files = {names[first.source_id] + ".json": 1, names[second.source_id] + ".json": 2}
 
     preview = compare(data, (first.source_id,))
     assert preview.updates == 1
-    assert any(names[first.source_id] + ".json" in detail for detail in preview.details)
+    assert any(first.label + ".json" in detail for detail in preview.details)
     assert data.session.apply(lambda *_: None, data.case.cancel).updated == 1
 
-    assert paths(data).count("/api/projects/42/files/1/translation") == 2
+    assert paths(data).count("/api/projects/42/files/1/translation") == 1
     assert paths(data).count("/api/projects/42/files/2/translation") == 0
     assert states(data.case)[second.entries[0].identity] == ("", 0)
     assert_persisted(data)
@@ -372,7 +381,7 @@ def test_default_facade_real_dialog_worker_http_review_and_save_are_one_complete
 
         assert "并保存到当前本地版本" in dialog._status.text()
         assert "已更新 1 条" in dialog._status.text()
-        assert "下载前还原点已保留" in dialog._summary.text()
+        assert "下载成果与覆盖前内容已保留" in dialog._summary.text()
         assert states(data.case)[selected.entries[0].identity] == ("云端1", 3)
         assert states(data.case)[other.entries[0].identity] == ("", 0)
         assert_persisted(data)
@@ -414,8 +423,7 @@ def test_real_one_click_disk_failure_retries_same_button_without_http_or_another
         assert states(data.case)[selected.entries[0].identity] == ("", 0)
         assert dialog._primary_button.isEnabled() and dialog._primary_button.text() == "重试未完成项"
         initial_http = tuple(data.calls)
-        restore_dir = Path(data.case.services.root) / "snapshots"
-        restore_points = {path: path.read_bytes() for path in restore_dir.glob("*.json")}
+        restore_points = {path: path.read_bytes() for path in merge_evidence_files(data)}
         assert len(restore_points) == 1
 
         dialog._primary_button.click()
@@ -424,7 +432,7 @@ def test_real_one_click_disk_failure_retries_same_button_without_http_or_another
         assert "并保存到当前本地版本" in dialog._status.text()
         assert states(data.case)[selected.entries[0].identity] == ("云端1", 3)
         assert tuple(data.calls) == initial_http
-        assert {path: path.read_bytes() for path in restore_dir.glob("*.json")} == restore_points
+        assert {path: path.read_bytes() for path in merge_evidence_files(data)} == restore_points
         assert attempts == [True, True]
         assert_persisted(data)
 
@@ -489,7 +497,8 @@ def test_real_one_click_saves_dirty_current_version_when_remote_content_already_
         assert_persisted(data)
         active = data.case.services.project_lifecycle.active
         assert data.case.services.variants.read_snapshot(active.formal_variant_ref) != old_disk
-        assert len(list((Path(data.case.services.root) / "snapshots").glob("*.json"))) == 1
+        assert not list((Path(data.case.services.root) / "snapshots").glob("*.json"))
+        assert merge_evidence_files(data)
         assert paths(data) == [
             "/api/projects",
             "/api/projects/42/files",
@@ -543,7 +552,8 @@ def test_real_one_click_all_conflicts_can_save_existing_local_edits_and_keep_pen
         assert dialog._preview is not None and dialog._preview.deferred == 1
         assert not dialog._preview.can_save
         assert dialog._review_button.isVisible() and dialog._review_button.isEnabled()
-        assert len(list((Path(data.case.services.root) / "snapshots").glob("*.json"))) == 1
+        assert not list((Path(data.case.services.root) / "snapshots").glob("*.json"))
+        assert merge_evidence_files(data)
 
 
 @pytest.mark.parametrize("legacy_path", ["LegacyPlugin.json", "legacyplugin.json"])
@@ -769,8 +779,7 @@ def test_real_partial_content_download_retries_only_unfinished_source_after_succ
         assert states(data.case)[second.entries[0].identity] == ("", 0)
         assert_persisted(data)
         assert dialog._primary_button.isEnabled() and dialog._primary_button.text() == "重试未完成项"
-        restore_dir = Path(data.case.services.root) / "snapshots"
-        original_restore_points = {path: path.read_bytes() for path in restore_dir.glob("*.json")}
+        original_restore_points = {path: path.read_bytes() for path in merge_evidence_files(data)}
         assert original_restore_points
         data.failures.clear()
 

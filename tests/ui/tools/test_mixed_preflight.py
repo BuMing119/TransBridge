@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 from PyQt6.QtWidgets import QApplication
 import pytest
 
+from tests.ui.tools.ai_runtime_support import ai_task_runtime
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile, capture_profile_settings
 from transbridge.config.llm import EmbeddingConfig, LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
@@ -14,7 +15,6 @@ from transbridge.converter.translation_entry_collection import TranslationEntryC
 from transbridge.paratranz import config_manager as paratranz_config
 from transbridge.paratranz.config_manager import ActionRule
 from transbridge.ui.tools.ai_translator import (
-    _mixed_worker as mixed_module,
     ai_translator_window as window_module,
     config_presenter as config_module,
 )
@@ -67,7 +67,6 @@ def test_mixed_local_checks_run_without_llm_credentials_or_translation_dependenc
     entries = _entries()
     before = deepcopy(entries)
     scope = _scope(config, entries)
-    monkeypatch.setattr(mixed_module, "WorkflowLogStore", lambda *_args, **_kwargs: MagicMock())
     from transbridge.infra import llm_client, token_counting
 
     monkeypatch.setattr(llm_client, "create_llm_client", lambda *_: pytest.fail("local checks requested an LLM"))
@@ -82,15 +81,32 @@ def test_mixed_local_checks_run_without_llm_credentials_or_translation_dependenc
         mixed_has_translation=bool(scope.translate_entries),
         dependency_available=lambda _: False,
     )
-    worker = mixed_module._MixedWorker(config, list(scope.translate_entries), list(scope.polish_entries))
-    result = worker._run_serial()
+    from transbridge.application.translation.task_scope import SourceTask
+    from transbridge.ui.tools.ai_translator.task_worker import AiTaskWorker
+
+    controller = RunController(task_runtime=ai_task_runtime())
+    request = controller.begin("mixed", config, entries)
+    task = SourceTask(
+        "local",
+        "Local",
+        None,
+        TranslationEntryCollection(entries),
+        tuple(scope.translate_entries),
+        tuple(scope.polish_entries),
+    )
+    worker = AiTaskWorker(request, (task,))
+    outcomes = []
+    worker.completed.connect(outcomes.append)
+    worker.run()
+    result = outcomes[0][0]
+    controller.close()
 
     assert preflight.ready
     assert not AiExecutionProfile.from_config("mixed", config).requires_llm
-    assert set(result) == {"polish"}
-    assert result["polish"].candidates["valid"].accepted
-    assert not result["polish"].candidates["invalid"].accepted
-    assert result["polish"].candidates["invalid"].issues
+    assert result.translation is None
+    assert result.polish["valid"].accepted
+    assert not result.polish["invalid"].accepted
+    assert result.polish["invalid"].issues
     assert entries == before
 
 
@@ -187,7 +203,7 @@ def test_mixed_quick_run_and_start_gate_follow_current_rule_assignment(monkeypat
 def test_retry_uses_existing_stage_or_mode_without_scanning_rules(monkeypatch, mode, has_translation) -> None:
     config = _local_config()
     entries = _entries()
-    controller = RunController(owner_id="mixed-retry")
+    controller = RunController(task_runtime=ai_task_runtime(), owner_id="mixed-retry")
     previous = controller.begin(mode, config, entries).spec
     controller.finish(previous.run_id)
     monkeypatch.setattr(paratranz_config, "apply_rules", lambda *_: pytest.fail("retry rescanned rules"))

@@ -6,7 +6,6 @@ from types import SimpleNamespace
 import pytest
 
 from transbridge.ai_translator.post_processor.base import PostProcessIssue, PostProcessResult
-from transbridge.ai_translator.post_processor.checkpoint import PostProcessCheckpoint
 from transbridge.ai_translator.post_processor.llm_arbiter import ArbitrationContext, LLMArbiter
 from transbridge.ai_translator.post_processor.llm_refiner import LLMRefiner
 from transbridge.ai_translator.post_processor.polisher import PolishResult
@@ -73,7 +72,7 @@ def project(value, refined, *, decision=None, polished=None):
 
 @pytest.mark.parametrize("batch", [False, True])
 @pytest.mark.parametrize("explicit", [False, True])
-def test_refiner_records_actual_request_snapshot_and_roundtrips_without_upgrading_legacy(batch, explicit):
+def test_refiner_records_actual_request_snapshot_without_upgrading_legacy(batch, explicit):
     value = entry()
     result = refine(value, batch=batch, explicit=explicit)
 
@@ -83,24 +82,17 @@ def test_refiner_records_actual_request_snapshot_and_roundtrips_without_upgradin
     assert result.review_before_text == result.reviewed_translation == value.translation
     assert result.detected_issues[0]["standard_translation"] == "瓜尔"
     assert result.review_status == ("term_suspect" if explicit else "needs_review")
-    restored = PostProcessCheckpoint.refine_result_from_dict(
-        json.loads(json.dumps(PostProcessCheckpoint.refine_result_to_dict(result)))
-    )
-    assert restored == result
 
 
 def test_local_decision_inherits_real_refiner_evidence_and_project_closure_does_not_repeat_it():
+    from transbridge.application.translation.task_scope import SourceTask
     from transbridge.converter.translation_entry_collection import TranslationEntryCollection
     from transbridge.ui.tools.ai_translator.source_execution import SourceOutcome
-    from transbridge.ui.tools.ai_translator.task_scope import SourceTask
     from transbridge.ui.tools.ai_translator.task_term_closure import close_task_terms
 
     value = entry()
     refined = refine(value)
     decision = reviewed_decision(ArbitrationContext(value, [issue(value)], refined))
-    decision = PostProcessCheckpoint.decision_from_dict(
-        json.loads(json.dumps(PostProcessCheckpoint.decision_to_dict(decision)))
-    )
     result = project(value, refined, decision=decision)
     assert result.accepted
     assert result.review_contract_version == 1

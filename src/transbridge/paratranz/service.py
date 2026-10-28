@@ -126,15 +126,19 @@ class ParaTranzService:
         cancellation: CancellationPort | None = None,
         file_id: int | None = None,
     ) -> tuple[ParaTranzEntry, ...]:
+        return tuple(self.iter_entries(project_id, limit=limit, cancellation=cancellation, file_id=file_id))
+
+    def iter_entries(self, project_id, *, limit, cancellation=None, file_id=None):
+        """Deliver validated pages incrementally so a later failure retains earlier content."""
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise ValueError("limit must be a positive integer")
         if file_id is not None and (isinstance(file_id, bool) or not isinstance(file_id, int) or file_id < 1):
             raise ValueError("file_id must be a positive integer")
-        items: list[Mapping[str, Any]] = []
+        accumulated = 0
         pagination = SnapshotPagination()
         page = 1
         page_size = min(limit, 800)
-        while len(items) < limit:
+        while accumulated < limit:
             payload = self._strings.list_strings(
                 project_id,
                 page=page,
@@ -150,13 +154,19 @@ class ParaTranzService:
                         actual_file = actual_file.get("id")
                     if actual_file != file_id:
                         raise ValueError("ParaTranz returned an entry outside the requested file")
-            items.extend(current)
-            if pagination.complete(
-                payload, page=page, received=len(current), accumulated=len(items), requested_size=page_size
-            ):
+            completed = pagination.complete(
+                payload,
+                page=page,
+                received=len(current),
+                accumulated=accumulated + len(current),
+                requested_size=page_size,
+            )
+            for item in current[: limit - accumulated]:
+                yield self._typed(ParaTranzEntry.from_mapping, item, "entry")
+            accumulated += len(current)
+            if completed:
                 break
             page += 1
-        return tuple(self._typed(ParaTranzEntry.from_mapping, item, "entry") for item in items[:limit])
 
     def get_entry(self, project_id: int, remote_id: int, *, cancellation=None) -> ParaTranzEntry:
         if isinstance(remote_id, bool) or not isinstance(remote_id, int) or remote_id < 1:

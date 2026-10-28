@@ -2,36 +2,23 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import replace
 
 from transbridge.application.contracts import RequestContext
 
-from .version_snapshot_inputs import capture_legacy_snapshot
-
 
 class VersionPersistence:
-    """Save and snapshot one active V2 or legacy Project/Variant."""
+    """Merge task results and save the current authoritative project."""
 
     def __init__(self, context: object, expected_identity: tuple[str, str]) -> None:
         self._context = context
         self._expected_identity = expected_identity
-        self._expected_project_revision = getattr(context, "project_revision", None)
-        self._expected_variant_revision = getattr(context, "variant_revision", None)
         self._translations_committed = False
-        self._translation_commit_result = None
         self._version_saved = False
-        self._saved_snapshot_name: str | None = None
-        self._saved_snapshot_result = None
-        self._legacy_saved_store = None
 
     @property
     def project_saved(self) -> bool:
         return self._version_saved
-
-    @property
-    def snapshot_saved(self) -> bool:
-        return self._saved_snapshot_name is not None
 
     def mark_project_saved(self) -> None:
         """Acknowledge an external save of this session's already committed version."""
@@ -40,126 +27,73 @@ class VersionPersistence:
             raise RuntimeError("任务结果尚未应用，不能确认项目已保存。")
         self._version_saved = True
 
-    def create_snapshot(self, name: str, entries: tuple[object, ...]):
-        return self.freeze_snapshot(name, entries)()
+    def merge_translation(self, candidates, policy, *, commit_mutation=None, before_commit=None, decision_states=None):
+        """Merge a frozen task's selected results into the latest target content."""
+        result = self.freeze_merge_translation(
+            candidates,
+            policy,
+            commit_mutation=commit_mutation,
+            before_commit=before_commit,
+            decision_states=decision_states,
+        )()
+        if result.is_success:
+            self._translations_committed = True
+            self._version_saved = False
+        return result
 
-    def freeze_snapshot(self, name, entries, *, legacy_inputs=None):
-        """Freeze ports/identity on the GUI thread; returned I/O never reads the UI."""
-        self._require_identity()
-        if self._context.uses_authoritative_projection:
-            commands, runtime_context = self._frozen_v2_ports()
-            return lambda: commands.save_snapshot(name, runtime_context)
-        inputs = legacy_inputs or capture_legacy_snapshot(self._context)
-        return lambda: inputs.store(entries).save_snapshot(inputs.snapshot_dir, name)
-
-    def commit_translation(
-        self, entries: tuple[object, ...], *, commit_mutation: Callable[[Callable[[], None]], None] | None = None
+    def freeze_merge_translation(
+        self, candidates, policy, *, commit_mutation=None, before_commit=None, decision_states=None
     ):
-        """Commit translated entries once without making the version durable."""
-
+        """Freeze authoritative ports on Qt; perform merge and evidence I/O in a worker."""
         self._require_identity()
-        if self._translations_committed:
-            return self._translation_commit_result
+        from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
-        if self._context.uses_authoritative_projection:
-            from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
+        commands, context = self._frozen_v2_ports()
+        project_id, variant_id = self._expected_identity
+        target = VariantRef(VariantId(variant_id), ProjectId(project_id))
+        candidates = tuple(candidates)
 
-            commands, runtime_context = self._v2_ports()
-            states = {entry.identity: (entry.translation, entry.stage) for entry in entries}
-            project_id, variant_id = self._expected_identity
-            committed = commands.replace_entry_states(
-                states,
-                runtime_context,
-                expected_project_revision=self._expected_project_revision,
-                expected_variant_revision=self._expected_variant_revision,
-                expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
-                **({} if commit_mutation is None else {"commit_mutation": commit_mutation}),
+        def operation():
+            return commands.merge_entry_states(
+                candidates,
+                context,
+                expected_variant_ref=target,
+                policy=policy,
+                commit_mutation=commit_mutation,
+                before_commit=before_commit,
+                decision_states=decision_states,
             )
-            if committed.is_success:
-                self._translations_committed = True
-                self._translation_commit_result = committed
-                revision = committed.value.get("revision") if isinstance(committed.value, dict) else None
-                if revision is not None:
-                    self._expected_variant_revision = int(revision)
-            return committed
 
-        _project, variant_store, _variant_name = self._legacy_state()
+        return operation
 
-        def publish():
-            variant_store.collect_from(list(entries), self._context.entry_labels, self._context.label_library)
-
-        if commit_mutation is None:
-            publish()
-        else:
-            commit_mutation(publish)
+    def acknowledge_merge(self, result):
+        """Latch a completed worker commit after projection delivery on Qt."""
+        self._require_identity()
         self._translations_committed = True
-        return None
+        self._version_saved = False
 
-    def save_translation(self, entries: tuple[object, ...], snapshot_name: str):
-        operation = self.freeze_save(entries, snapshot_name)
-        try:
-            return operation()
-        finally:
-            if self._version_saved:
-                self.acknowledge_save()
+    def freeze_save_project(self):
+        """Persist the current project without generating automatic full history."""
+        self._require_identity()
+        commands, context = self._frozen_v2_ports()
+        from transbridge.application.projects.gui_facade import GuiProjectCommandFacade
 
-    def freeze_save(self, entries, snapshot_name, *, legacy_inputs=None):
-        """Commit on the caller thread, then return detached durability work."""
-        committed = self.commit_translation(entries)
-        if self._saved_snapshot_name == snapshot_name:
-            return lambda: self._saved_snapshot_result
-        if self._context.uses_authoritative_projection:
-            commands, runtime_context = self._frozen_v2_ports()
-            if committed is not None and not committed.is_success:
-                return lambda: committed
-            from transbridge.application.projects.gui_facade import GuiProjectCommandFacade
+        options = (
+            {"expected_active_identity": self._expected_identity}
+            if isinstance(commands, GuiProjectCommandFacade)
+            else {}
+        )
 
-            save_options = {}
-            if isinstance(commands, GuiProjectCommandFacade):
-                # save_active does not derive its target from RequestContext.
-                # Match both identities and committed revisions under its lock,
-                # before either writing or reporting an already-clean target.
-                save_options["expected_active_signature"] = (
-                    self._expected_identity[0],
-                    self._expected_project_revision,
-                    self._expected_identity[1],
-                    self._expected_variant_revision,
-                )
-
-            def operation():
-                if not self._version_saved:
-                    saved = commands.save(runtime_context, **save_options)
-                    if not saved.is_success:
-                        return saved
-                    self._version_saved = True
-                return commands.save_snapshot(snapshot_name, runtime_context)
-
-        else:
-            inputs = legacy_inputs or capture_legacy_snapshot(self._context)
-            self._legacy_saved_store = self._context.variant_store
-
-            def operation():
-                store = inputs.store(entries)
-                if not self._version_saved:
-                    store.save()
-                    self._version_saved = True
-                return store.save_snapshot(inputs.snapshot_dir, snapshot_name)
-
-        def save():
-            result = operation()
-            if getattr(result, "is_success", True):
-                self._saved_snapshot_name = snapshot_name
-                self._saved_snapshot_result = result
+        def operation():
+            result = commands.save(context, **options)
+            if result.is_success:
+                self._version_saved = True
             return result
 
-        return save
+        return operation
 
     def acknowledge_save(self):
-        """Update legacy GUI dirty state only after the caller's final input guard."""
         self._require_identity()
-        if self._version_saved and self._legacy_saved_store is not None:
-            if self._context.variant_store is self._legacy_saved_store:
-                self._legacy_saved_store.dirty = False
 
     def _require_identity(self) -> None:
         current = self._context.active_version_identity
@@ -180,14 +114,6 @@ class VersionPersistence:
         if isinstance(context, RequestContext):
             context = replace(context, project_id=self._expected_identity[0], variant_id=self._expected_identity[1])
         return commands, context
-
-    def _legacy_state(self):
-        project = self._context.active_project
-        variant_store = self._context.variant_store
-        variant_name = self._context.active_variant
-        if project is None or variant_store is None or variant_name is None:
-            raise RuntimeError("请先打开一个项目版本。")
-        return project, variant_store, variant_name
 
 
 __all__ = ["VersionPersistence"]

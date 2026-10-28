@@ -2,20 +2,16 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication, QSizePolicy, QVBoxLayout, QWidget
 import pytest
 
 from tests.ui.tools.ai_read_projection_support import wait_for
 from transbridge.ui.tools.ai_translator._llm_log_viewer import _LLMLogViewer
-from transbridge.ui.tools.ai_translator._translation_progress_window import _TranslationProgressWindow
 from transbridge.ui.tools.ai_translator.config_view import AITranslatorView
-from transbridge.ui.tools.ai_translator.run_view import AiMixedProgressWindow
 from transbridge.ui.tools.smart_assistant.composer_editor import ComposerEditor
 from transbridge.ui.tools.smart_assistant.input_view import ChatInputView
 from transbridge.ui.tools.smart_assistant.task_monitor import _TaskCard
@@ -43,37 +39,6 @@ def _assert_horizontal_stable(qapp, widget, action_widget, mutate, *, width: int
 class _Callbacks:
     def __getattr__(self, _name):
         return lambda *_args, **_kwargs: None
-
-
-class _TranslationWorker(QObject):
-    progress = pyqtSignal(int, int, str, int, int, int)
-    log = pyqtSignal(int, str)
-    result = pyqtSignal(object)
-    error = pyqtSignal(str)
-    finished = pyqtSignal()
-
-    def isRunning(self) -> bool:  # noqa: N802 - Qt compatibility
-        return False
-
-
-class _MixedWorker(QObject):
-    progress = pyqtSignal(object)
-    completed = pyqtSignal(object)
-    error = pyqtSignal(str)
-    cancelled = pyqtSignal()
-
-    def isRunning(self) -> bool:  # noqa: N802 - Qt compatibility
-        return False
-
-    def cancel(self) -> None:
-        pass
-
-
-class _Activity:
-    task_activity = None
-
-    def request_cancel(self) -> None:
-        pass
 
 
 def test_output_token_zero_label_is_conditional_on_provider_support(qapp) -> None:
@@ -295,22 +260,3 @@ def test_llm_log_viewer_refreshes_list_manually_and_loads_only_selection(qapp, t
     assert viewer._log_selector.count() == 3
     assert viewer._text_edit.toPlainText() == "first log"
     viewer.close()
-
-
-def test_progress_statuses_do_not_change_window_or_action_geometry(qapp) -> None:
-    single = _TranslationProgressWindow(_TranslationWorker(), SimpleNamespace())
-    message = "翻译进度：" + "长状态" * 300
-    _assert_horizontal_stable(
-        qapp,
-        single,
-        single._llm_log_btn,
-        lambda: single._on_progress(1, 10, message, 1, 0, 0),
-        width=560,
-    )
-    assert single._progress_msg.toolTip() == message
-
-    mixed = AiMixedProgressWindow(_MixedWorker(), _Activity())
-    error = "失败：" + "服务错误" * 300
-    _assert_horizontal_stable(qapp, mixed, mixed._stop, lambda: mixed._on_error(error), width=440)
-    assert error in mixed._status.full_text
-    assert mixed._status.toolTip() == mixed._status.full_text

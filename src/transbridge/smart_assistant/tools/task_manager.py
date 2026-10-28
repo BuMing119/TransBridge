@@ -494,6 +494,14 @@ class TaskManager:
                 )
                 return
         elif not self.set_status(task_id, "completed" if success else "failed"):
+            # Cancellation settles after the running worker unwinds. Keep its
+            # publication receipt for start_thread.finished to deliver then.
+            if current_status == "cancelling" and data is not None:
+                with self._lock:
+                    handle = self._tasks.get(task_id)
+                    if handle is not None and not handle.notified:
+                        handle.result = data
+                        handle.message = message
             return
         # C3-fix: 在锁内快照监听器列表，锁外派发，避免回调执行时持有锁
         with self._lock:

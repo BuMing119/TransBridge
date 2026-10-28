@@ -65,10 +65,10 @@ def postprocess_recovery_options(executor, task):
     """A stable task/source identity; settings and input hashes isolate changed work."""
     if getattr(executor.request, "recovery_directory", None) is None:
         return {}
+    from transbridge.application.translation.task_config_snapshot import execution_signature as signature
     from transbridge.application.translation.workload_models import canonical_hash
 
     from .source_terms import source_run_id
-    from .task_recovery_binding import signature
 
     binding = getattr(executor.request, "terminology_binding", None)
     ref = getattr(binding, "snapshot_ref", None)

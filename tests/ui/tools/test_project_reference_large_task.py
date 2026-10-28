@@ -13,17 +13,18 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 
+from tests.ui.tools.ai_runtime_support import frozen_ai_request
 from transbridge.ai_translator.project_terminology_runtime import ProjectTerminologyBinding
 from transbridge.ai_translator.term_database import TermDatabaseManager
 from transbridge.ai_translator.term_formats import TermEntry
 from transbridge.ai_translator.translation_entry_outcomes import TranslationEntryOutcome
 from transbridge.application.io.identity import EntryKey, SourceNamespace
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.tools.ai_translator.source_execution import SourceExecutor, SourceOutcome
 from transbridge.ui.tools.ai_translator.task_consistency import TaskConsistency
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 
 
 @pytest.mark.slow
@@ -44,6 +45,7 @@ def test_twenty_thousand_entries_reuse_references_and_finish_both_sources(tmp_pa
         terminology_binding=ProjectTerminologyBinding(),
         spec=SimpleNamespace(owner=SimpleNamespace(project_id="project", variant_id="variant")),
     )
+    request = frozen_ai_request(request)
     guard = TaskConsistency(request)
     pause = threading.Event()
     pause.set()

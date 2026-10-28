@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import pytest
 
 from transbridge.application.io.identity import EntryKey, ExternalEntryRef, SourceNamespace
+from transbridge.application.translation.task_entry_results import TaskEntryResults
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from transbridge.ui.tools.ai_translator.task_entry_results import TaskEntryResults
 
 
 def make_results(count=3):

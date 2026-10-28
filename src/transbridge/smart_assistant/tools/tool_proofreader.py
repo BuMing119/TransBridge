@@ -2,45 +2,44 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import logging
 from pathlib import Path
 import threading
 
-from ._postprocess_tool_runtime import (
-    PostprocessToolArgumentError,
-    execute_postprocess_task,
-    resolve_postprocess_request,
-)
 from .base import ToolResult, require_runtime_context
-from .diagnostics import technical_error
-from .task_manager import TaskManager
-from .task_runtime_bridge import task_metadata
 
 logger = logging.getLogger(__name__)
 
-_last_report: dict | None = None
+_last_reports: dict[tuple, dict] = {}
 _last_report_lock = threading.Lock()
 
 
-def _count_committed_fixes(candidates) -> int:
-    """Compatibility helper retained for report-count callers."""
+def _report_scope(ctx) -> tuple:
+    from .translation_task_results import _caller
 
-    return sum(1 for candidate in candidates if candidate.accepted and candidate.text != candidate.before_text)
+    app, context = _caller(ctx)
+    identity = getattr(ctx, "_target_version_identity", None) or getattr(app, "active_version_identity", None)
+    return context.owner_id, context.session_id, identity
 
 
-def set_last_report(report: dict) -> None:
+def set_last_report(report: dict | None, ctx) -> None:
     """Thread-safe write used by post-process and polish tools."""
 
-    global _last_report
+    scope = _report_scope(ctx)
     with _last_report_lock:
-        _last_report = report
+        if report is None:
+            _last_reports.pop(scope, None)
+        else:
+            _last_reports[scope] = deepcopy(report)
 
 
-def get_last_report() -> dict | None:
+def get_last_report(ctx) -> dict | None:
     """Return the most recent canonical post-process summary."""
 
+    scope = _report_scope(ctx)
     with _last_report_lock:
-        return _last_report
+        return deepcopy(_last_reports.get(scope))
 
 
 def _resolve_report_directory(ctx) -> Path:
@@ -62,104 +61,23 @@ class ProofreaderController:
     def run_postprocess(self, args: dict, ctx) -> ToolResult:
         """Start one preset-aware Proofread or strict post-process task."""
 
-        collection = ctx.collection
-        if not collection or len(collection) == 0:
-            return ToolResult.fail("当前没有加载翻译集合")
-        try:
-            request = resolve_postprocess_request(args, ctx, collection)
-        except (PostprocessToolArgumentError, ValueError) as exc:
-            return ToolResult.fail(str(exc))
+        from .postprocess_task_run import launch_postprocess_task
 
-        stop_event = threading.Event()
-        tm = TaskManager()
-        task_id = tm.register(stop_event=stop_event, metadata=task_metadata(ctx, request.metadata))
-        handle = tm.get_handle(task_id)
-        pause_event = handle.pause_event
-        from .tool_translator import _capture_run_entry_states
-
-        run_entry_states = _capture_run_entry_states(ctx, collection)
-
-        def _run() -> None:
-            try:
-                result = execute_postprocess_task(
-                    request,
-                    ctx=ctx,
-                    collection=collection,
-                    task_id=task_id,
-                    stop_event=stop_event,
-                    pause_event=pause_event,
-                    report_directory=_resolve_report_directory(ctx),
-                    commit_guard=handle.execution,
-                )
-                set_last_report(result.report_data)
-                if result.cancelled or stop_event.is_set():
-                    from .tool_translator import _rollback_run_entry_states
-
-                    rollback_error = _rollback_run_entry_states(ctx, collection, run_entry_states)
-                    if rollback_error is not None:
-                        message = f"任务已停止，但回滚失败：{rollback_error}"
-                        tm.set_status(task_id, "failed")
-                        tm.update_progress(task_id, {"error": message})
-                        tm.notify_failed(task_id, message)
-                        return
-                    tm.update_progress(
-                        task_id,
-                        {
-                            "outcome": result.completion_data["outcome"],
-                            "current": result.report_data["total_checked"],
-                            "total": result.report_data["total_checked"],
-                        },
-                    )
-                    tm.set_status(task_id, "cancelled")
-                    tm.notify_failed(task_id, "任务已被用户停止；终态报告已保存")
-                    return
-                if result.committed:
-                    from .tool_translator import _publish_run_entry_states
-
-                    decision = handle.execution.commit(
-                        task_id, lambda: _publish_run_entry_states(ctx, rollback_on_failure=False)
-                    )
-                    if not decision.accepted:
-                        raise InterruptedError("任务已被用户停止；结果未提交")
-                progress = {
-                    "outcome": result.completion_data["outcome"],
-                    "issue_count": result.completion_data["issue_count"],
-                    "auto_fixed": result.completion_data["auto_fixed"],
-                    "current": result.report_data["total_checked"],
-                    "total": result.report_data["total_checked"],
-                }
-                tm.update_progress(task_id, progress)
-                tm.set_status(task_id, "completed")
-                tm.notify_completed(task_id, result.completion_data)
-            except Exception as exc:
-                logger.exception("后处理异常: %s", exc)
-                from .tool_translator import _rollback_run_entry_states
-
-                rollback_error = _rollback_run_entry_states(ctx, collection, run_entry_states)
-                message = technical_error(exc)
-                if rollback_error is not None:
-                    message += f"；回滚失败：{technical_error(rollback_error)}"
-                tm.set_status(task_id, "failed")
-                tm.update_progress(task_id, {"error": message})
-                tm.notify_failed(task_id, message)
-
-        tm.start_thread(task_id, _run)
-        data = {
-            "task_id": task_id,
-            "entry_count": len(request.entries),
-            **request.metadata,
-            "phases": list(request.stages),
-        }
-        return ToolResult.ok(
-            f"后处理已启动 (profile={request.profile}, strategy={request.strategy}, "
-            f"stages={list(request.stages)}, entries={len(request.entries)})",
-            data=data,
+        return launch_postprocess_task(
+            args,
+            ctx,
+            report_directory=_resolve_report_directory,
+            report_callback=set_last_report,
+            manager=self._task_mgr,
         )
 
     def get_quality_report(self, args: dict, ctx) -> ToolResult:
         """Return the most recent post-process or polish report."""
 
-        report = get_last_report()
+        try:
+            report = get_last_report(ctx)
+        except ValueError as exc:
+            return ToolResult.fail(str(exc), error_code="TASK_RESULT_SCOPE_REQUIRED")
         if report is None:
             return ToolResult.ok("暂无质量报告", data={"reports": []})
         phase = report.get("phase", "postprocess")

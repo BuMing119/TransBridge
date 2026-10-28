@@ -39,6 +39,10 @@ def test_worker_thread_feedback_is_delivered_on_gui_thread_in_one_log_batch(make
     monkeypatch.setattr(task_run, "AiTaskWorker", _BatchWorker)
     window, session, _ = make_window()
     worker = support._start(window, session)
+    # Startup persists task/recovery records asynchronously. Their changed
+    # signals are independent of the worker feedback measured below.
+    support._wait_reports(qapp, window)
+    qapp.processEvents()
     calls, logs = [], []
     window.run.changed.connect(lambda: calls.append(threading.get_ident()))
     window.run.logged.connect(logs.append)

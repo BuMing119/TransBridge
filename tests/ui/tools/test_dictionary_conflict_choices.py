@@ -7,6 +7,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QMessageBox, QPushButton, QScrollArea
 import pytest
 
+from tests.ui.fixtures.current_editing import CurrentEditingProject
 from tests.ui.responsive_layout_support import settle_layout, themed_layout_app as themed_layout_app
 from transbridge.config.ui_preferences import DEFAULT_THEME_ID, ThemeMode
 from transbridge.converter.translation_entry import TranslationEntry
@@ -27,11 +28,9 @@ def test_real_dictionary_arbitration_and_review_keep_the_automatic_choice(layout
     monkeypatch.setattr(dictionary_panel, "TranslationMemoryManager", lambda **_kwargs: manager)
     monkeypatch.setattr(QMessageBox, "information", lambda *_args: QMessageBox.StandardButton.Ok)
     collection = TranslationEntryCollection([TranslationEntry("one", "one", "Dragon", "", 0, "NPC_:FULL")])
-    context = SimpleNamespace(
-        collection=collection,
-        mark_dirty=lambda: None,
-        collection_changed=SimpleNamespace(emit=lambda *_args: None),
-    )
+    monkeypatch.setattr("transbridge.ui.context.ParatranzConfig.create_or_load", lambda: SimpleNamespace(token=""))
+    project = CurrentEditingProject(collection)
+    context = project.context
     seen = []
 
     def review(dialog):
@@ -54,9 +53,13 @@ def test_real_dictionary_arbitration_and_review_keep_the_automatic_choice(layout
     try:
         panel._apply_btn.click()
         assert seen == [["优先译名", "其他译名"]]
-        assert collection.get("one").translation == ("其他译名" if choice == "alternative" else "优先译名")
+        expected = "其他译名" if choice == "alternative" else "优先译名"
+        assert context.collection.get("one").translation == expected
+        assert project.aggregate.snapshot().entries[0].translation == expected
+        assert context.dirty
     finally:
         panel.close()
+        project.close()
 
 
 @pytest.mark.parametrize("mode", [ThemeMode.LIGHT, ThemeMode.DARK])

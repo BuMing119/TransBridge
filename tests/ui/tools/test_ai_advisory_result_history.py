@@ -11,8 +11,8 @@ from tests.ui.tools.test_task_recovery_binding import setup_binding
 from transbridge.application.contracts import OperationOutcome
 from transbridge.application.translation.postprocess import PostProcessCandidate, ReportSnapshot
 from transbridge.application.translation.postprocess_report import ExcelReportRenderer
+from transbridge.application.translation.task_entry_results import TaskEntryResults
 from transbridge.application.translation.task_history import TaskHistoryStore, restore_report_snapshot
-from transbridge.ui.tools.ai_translator.task_entry_results import TaskEntryResults
 
 qapp = support.qapp
 make_task = support.make_task

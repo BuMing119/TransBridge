@@ -16,13 +16,13 @@ from transbridge.application.translation.entry_alias import ai_entry_key
 from transbridge.application.translation.polish_report import build_polish_report_snapshot
 from transbridge.application.translation.postprocess_report import ExcelReportRenderer
 from transbridge.application.translation.proofread_stage import ProofreadStage
+from transbridge.application.translation.task_entry_results import TaskEntryResults
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import STAGE_QUESTIONABLE, STAGE_TRANSLATED, TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.tools.ai_translator import source_reference_review
 from transbridge.ui.tools.ai_translator.source_execution import SourceOutcome
-from transbridge.ui.tools.ai_translator.task_entry_results import TaskEntryResults
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 from transbridge.ui.tools.ai_translator.task_term_closure import close_task_terms
 from transbridge.ui.tools.ai_translator.workflow_log_store import WorkflowLogStore
 

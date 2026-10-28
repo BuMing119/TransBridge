@@ -413,9 +413,6 @@ class AITranslatorWindow(QWidget):
         self._config_binding.close()
         self._embedding_connection.close()
         self._llm_connection.close()
-        session = getattr(self, "_version_snapshot_session", None)
-        if session is not None:
-            session.rollback_uncommitted()
         self._run_controller.close()
         self._theme_binding.close()
         super().closeEvent(event)

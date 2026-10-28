@@ -4,16 +4,29 @@ import json
 import pytest
 
 from tests.ui.tools import test_unified_task_progress as support
+from transbridge.application.translation.task_entry_results import TaskEntryResults
 from transbridge.application.translation.task_recovery import TaskRecoveryStore
-from transbridge.ui.tools.ai_translator.task_entry_results import TaskEntryResults
-from transbridge.ui.tools.ai_translator.task_result_recovery import (
+from transbridge.application.translation.task_result_recovery import (
     load_recovery_results,
     restore_recovery_results,
     save_recovery_results,
 )
 
 qapp = support.qapp
-make_window = support.make_window
+base_make_window = support.make_window
+
+
+@pytest.fixture
+def make_window(base_make_window, qapp):
+    def create(**options):
+        window, session, rendered = base_make_window(**options)
+        ready, errors = [], []
+        window.run.recovery.prepare(on_success=ready.append, on_error=errors.append)
+        support._wait_until(lambda: not window.run.recovery.busy)
+        assert ready and not errors
+        return window, session, rendered
+
+    return create
 
 
 def prepared(session, tmp_path, *, decision="pending"):
@@ -77,8 +90,12 @@ def test_user_edits_are_never_overwritten(tmp_path):
     session = support._Session()
     record = prepared(session, tmp_path, decision="accepted")
     session.tasks[0].translate_entries[0].translation = "用户的新译文"
-    with pytest.raises(ValueError, match="不能覆盖"):
-        restore_recovery_results(TaskEntryResults(session.tasks, "new-task"), session.tasks, record)
+    ledger, remaining, count = restore_recovery_results(
+        TaskEntryResults(session.tasks, "new-task"), session.tasks, record
+    )
+    assert count == 2 and not remaining
+    assert not next(iter(ledger.entries.values())).applied
+    assert session.tasks[0].translate_entries[0].translation == "用户的新译文"
 
 
 def test_restore_pending_preview_never_starts_model_worker(qapp, make_window, tmp_path):

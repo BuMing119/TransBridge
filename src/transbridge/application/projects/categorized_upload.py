@@ -122,7 +122,7 @@ class ProjectCategorizedUploadService:
                 ),
                 dirty=active.dirty,
             )
-            self._assert_current(snapshot, context)
+            self._assert_current(snapshot, context, require_revision=True)
             return OperationResult.completed(snapshot, run_id=context.run_id)
         except Exception as exc:  # noqa: BLE001 - retain source and repository domain diagnostics
             return OperationResult.from_exception(exc, run_id=context.run_id)
@@ -155,11 +155,12 @@ class ProjectCategorizedUploadService:
         used_namespaces.add(baseline.fingerprint.namespace)
         options = dict(source.format_options)
         options["source_namespace"] = baseline.fingerprint.namespace.value
-        prepared = self._hydrations.prepare(
+        prepared = self._hydrations.read_installed(
             self._source_preparer,
             ProjectSourceRequest(source.location, source.format_id, source.fingerprint, tuple(options.items())),
             context,
             scope_key=scope_key,
+            source=raw_source,
         )
         if prepared is None or prepared.fingerprint != baseline.fingerprint:
             _conflict("CATEGORIZED_SOURCE_CHANGED", f"来源内容已变化，请先更新工程来源：{source.location}")
@@ -199,6 +200,20 @@ class ProjectCategorizedUploadService:
         except Exception as exc:  # noqa: BLE001
             return OperationResult.from_exception(exc, run_id=context.run_id)
 
+    def result_source_texts(self, project, variant, keys, context):
+        """Read verified input text for just the sources containing result targets."""
+        from .result_sources import read_result_source_texts
+
+        return read_result_source_texts(
+            project,
+            variant,
+            keys,
+            context,
+            baselines=self._baselines,
+            preparer=self._source_preparer,
+            hydrations=self._hydrations,
+        )
+
     def _active(self, context):
         active = self._lifecycle.active
         if active is None or active.variant is None or active.formal_variant_ref is None:
@@ -209,14 +224,17 @@ class ProjectCategorizedUploadService:
             _conflict("VARIANT_CONTEXT_MISMATCH", "当前版本与分类上传请求不一致。")
         return active
 
-    def _assert_current(self, snapshot, context):
+    def _assert_current(self, snapshot, context, *, require_revision=False):
         active = self._active(context)
         if (
             active.project_ref.identity.value != snapshot.project_id
             or active.formal_variant_ref.identity.value != snapshot.variant_id
-            or active.project.envelope.revision != snapshot.project_revision
-            or active.variant.revision != snapshot.variant_revision
-            or self._lifecycle.generation != snapshot.generation
+            or require_revision
+            and (
+                active.project.envelope.revision != snapshot.project_revision
+                or active.variant.revision != snapshot.variant_revision
+                or self._lifecycle.generation != snapshot.generation
+            )
         ):
             _conflict("CATEGORIZED_UPLOAD_STALE", "工程、版本或译文已变化，需重新读取当前来源；可在此重试。")
         return active

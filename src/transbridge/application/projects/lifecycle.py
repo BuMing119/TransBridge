@@ -432,9 +432,25 @@ class ProjectLifecycleService:
         context: RequestContext,
         *,
         expected_active_signature: ActiveSignature | EllipsisType = ...,
+        expected_active_identity: tuple[str, str | None] | EllipsisType = ...,
     ) -> OperationResult[dict[str, Any] | None]:
         with self._lock:
             active = self._active
+            identity = (
+                None
+                if active is None
+                else (
+                    active.project_ref.identity.value,
+                    None if active.formal_variant_ref is None else active.formal_variant_ref.identity.value,
+                )
+            )
+            if expected_active_identity is not ... and identity != expected_active_identity:
+                return _failed(
+                    "ACTIVE_SAVE_TARGET_CHANGED",
+                    "The task's Project or Variant is no longer active; its results remain available.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
             if expected_active_signature is not ... and active_signature(active) != expected_active_signature:
                 return _failed(
                     "ACTIVE_SAVE_TARGET_CHANGED",
@@ -657,7 +673,29 @@ class ProjectLifecycleService:
                     ErrorCategory.CONFLICT,
                     context,
                 )
-            if project.envelope.revision == expected_project_revision and variant.revision == expected_variant_revision:
+            if (
+                project.envelope.revision == expected_project_revision
+                and variant.revision == expected_variant_revision
+                and not (persisted and active.dirty)
+            ):
+                if commit_mutation is not None:
+                    executed = False
+
+                    def accept_noop():
+                        nonlocal executed
+                        executed = True
+
+                    try:
+                        commit_mutation(accept_noop)
+                    except Exception as exc:
+                        return _from_exception(exc, "ACTIVE_CONTENT_CHANGE_FAILED", context)
+                    if not executed:
+                        return _failed(
+                            "ACTIVE_CONTENT_NOT_AUTHORIZED",
+                            "本次合入未获执行，成果已保留。",
+                            ErrorCategory.PERMISSION,
+                            context,
+                        )
                 return OperationResult.completed(active.summary(), run_id=context.run_id)
 
             old = active

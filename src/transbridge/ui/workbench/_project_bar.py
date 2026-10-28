@@ -154,7 +154,7 @@ class ProjectBar(QWidget):
         if index < 0:
             return
         variant_id = self._variant_combo.currentData()
-        active = self._ctx.active_variant_id if self._ctx.uses_authoritative_projection else self._ctx.active_variant
+        active = self._ctx.active_variant_id
         if variant_id and variant_id != active:
             self.variant_switch_requested.emit(variant_id)
 
@@ -197,34 +197,26 @@ class ProjectBar(QWidget):
     # ── 重命名项目 ────────────────────────────────────────────
 
     def _on_rename_project(self):
-        if self._ctx.uses_authoritative_projection:
-            name = self._ctx.project_name
-            if not name:
-                return
-            new_name, ok = QInputDialog.getText(self, "修改项目名称", "新名称:", text=name)
-            if ok and new_name.strip() and new_name.strip() != name:
-                self.project_rename_requested.emit(new_name.strip())
+        name = self._ctx.project_name
+        if not name:
             return
-        proj = self._ctx.active_project
-        if not proj:
-            return
-        name, ok = QInputDialog.getText(self, "修改项目名称", "新名称:", text=proj.name)
-        if ok and name.strip() and name.strip() != proj.name:
-            self.project_rename_requested.emit(name.strip())
+        new_name, ok = QInputDialog.getText(self, "修改项目名称", "新名称:", text=name)
+        if ok and new_name.strip() and new_name.strip() != name:
+            self.project_rename_requested.emit(new_name.strip())
+        return
 
     def _on_project_menu(self) -> None:
         menu = QMenu(self)
         menu.addAction("重命名工程…", self._on_rename_project)
-        if self._ctx.uses_authoritative_projection:
-            menu.addAction("更新源文件…", self.source_update_requested.emit)
-            project_id = self._ctx.active_project_id
-            name = self._ctx.project_name
-            if project_id and name:
-                menu.addSeparator()
-                menu.addAction(
-                    "删除本地工程…",
-                    lambda: self.project_delete_requested.emit(str(project_id), str(name)),
-                )
+        menu.addAction("更新源文件…", self.source_update_requested.emit)
+        project_id = self._ctx.active_project_id
+        name = self._ctx.project_name
+        if project_id and name:
+            menu.addSeparator()
+            menu.addAction(
+                "删除本地工程…",
+                lambda: self.project_delete_requested.emit(str(project_id), str(name)),
+            )
         menu.exec(self._rename_btn.mapToGlobal(self._rename_btn.rect().bottomLeft()))
 
     # ── 刷新 ──────────────────────────────────────────────────
@@ -240,19 +232,12 @@ class ProjectBar(QWidget):
     def _target(self) -> SaveTarget | None:
         project_id = getattr(self._ctx, "active_project_id", None)
         project_name = getattr(self._ctx, "project_name", None)
-        variant_id = (
-            getattr(self._ctx, "active_variant_id", None)
-            if self._ctx.uses_authoritative_projection
-            else getattr(self._ctx, "active_variant", None)
-        )
+        variant_id = self._ctx.active_variant_id
         variant_name = None
         for value in self._ctx.project_variants:
             if str(value["id"]) == str(variant_id):
                 variant_name = str(value["name"])
                 break
-        if not project_id and not self._ctx.uses_authoritative_projection:
-            project_id = getattr(getattr(self._ctx, "active_project", None), "project_dir", None)
-            project_id = str(project_id or project_name or "")
         if not all((project_id, project_name, variant_id)):
             return None
         return SaveTarget(str(project_id), str(project_name), str(variant_id), variant_name or str(variant_id))
@@ -286,15 +271,9 @@ class ProjectBar(QWidget):
         self._save_btn.setEnabled(state.target is not None and state.phase is not SavePhase.SAVING)
 
     def refresh(self):
-        if self._ctx.uses_authoritative_projection:
-            project_name = self._ctx.project_name
-            variants = self._ctx.project_variants
-            variant = self._ctx.active_variant_id
-        else:
-            proj = self._ctx.active_project
-            project_name = None if proj is None else proj.name
-            variants = self._ctx.project_variants
-            variant = self._ctx.active_variant
+        project_name = self._ctx.project_name
+        variants = self._ctx.project_variants
+        variant = self._ctx.active_variant_id
 
         variant_name = None
         for value in variants:

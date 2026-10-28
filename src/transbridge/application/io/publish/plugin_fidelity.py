@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from transbridge.application.io.contracts import WriteRequest
+from transbridge.application.io.plugin_bsa_output import bsa_output_enabled
 from transbridge.application.io.plugin_localized_sources import localized_entry_identity, localized_id_variants
 from transbridge.application.io.plugin_publication_source import prepared_plugin_source
 from transbridge.application.io.plugin_write import _snapshot_localized_sources
@@ -44,7 +45,11 @@ def validate_plugin_fidelity(request: WriteRequest, staging_path: str) -> Valida
                     "language", dict(request.source_snapshot.metadata).get("localized_language", "english")
                 )
             )
-            lookup = PluginStringsLookup.from_strings_dir(target.parent / "Strings", target.stem, language)
+            lookup = (
+                PluginStringsLookup.from_plugin(target, language)
+                if bsa_output_enabled(request.source_snapshot, request.options)
+                else PluginStringsLookup.from_strings_dir(target.parent / "Strings", target.stem, language)
+            )
             if lookup is None:
                 raise ValueError("staged localized strings are unavailable")
         actual = tuple(entry for entry, _subrecord in capture_plugin_write_source(plugin, lookup))

@@ -8,6 +8,7 @@ from PyQt6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QModelInde
 from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QTableView
 
 from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
 from transbridge.ui.project_labels import entry_label_key
@@ -113,7 +114,9 @@ class TranslationTable(QTableView):
         self.setMouseTracking(True)
 
     def set_editable_entry_keys(self, keys) -> None:
-        self._editable_entry_keys = frozenset(keys)
+        # A collection already supplies exact identity membership. Reuse it so
+        # enabling popup editing does not build another full set during restore.
+        self._editable_entry_keys = keys if isinstance(keys, TranslationEntryCollection) else frozenset(keys)
 
     def set_terminology_projection(
         self, values: Mapping[str, object], *, profile_label: str | None, pending: bool = False, error: str = ""

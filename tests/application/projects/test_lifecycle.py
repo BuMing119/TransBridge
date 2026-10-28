@@ -10,7 +10,6 @@ from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.projects import (
     ActiveProject,
     DirtyDecision,
-    LegacyProjectLifecycleAdapter,
     LifecycleLease,
     ProjectLifecycleService,
     TransitionTarget,
@@ -689,22 +688,3 @@ def test_multi_source_candidate_survives_prepare_commit_without_namespace_collap
 
     assert harness.service.active is not None and harness.service.active.variant is aggregate
     assert harness.service.active.variant.snapshot().source_fingerprints == fingerprints
-
-
-def test_legacy_adapter_refuses_gui_switch_until_s05_injects_authoritative_baseline() -> None:
-    project, variant = _refs("project", "variant")
-    builder_calls: list[object] = []
-    adapter = LegacyProjectLifecycleAdapter(
-        lambda _target, baseline, _context: builder_calls.append(baseline) or _active(project, variant)
-    )
-    service = ProjectLifecycleService(
-        adapter,
-        RepositoryLifecycleUnitOfWorkFactory(_TransactionStore(), lambda: "uow-token"),
-        token_factory=lambda: "prepare-token",
-    )
-
-    result = service.prepare_transition(TransitionTarget(project, variant), _context())
-
-    assert not adapter.authoritative
-    assert result.diagnostics[0].code == "LEGACY_SOURCE_BASELINE_REQUIRED"
-    assert builder_calls == []

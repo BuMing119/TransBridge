@@ -6,23 +6,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from transbridge.application.io.identity import EntryKey, EntryRevision, ExternalEntryRef, SourceNamespace
-from transbridge.application.io.publish import ImmediateCommitGuard
+from transbridge.application.io.identity import ExternalEntryRef
 from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError, ParaTranzEntry
-from transbridge.application.sync import (
-    AuthorizedSyncPlan,
-    CallbackLocalSyncUnitOfWork,
-    ConflictPolicy,
-    ExecuteSyncRequest,
-    LocalEntrySnapshot,
-    ParaTranzSyncExecutor,
-    SyncOperation,
-    SyncPlanner,
-)
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.service import ParaTranzService
-from transbridge.paratranz.sync_snapshot import ParaTranzRemoteSnapshotAdapter
 
 
 class StatefulStrings:
@@ -176,50 +164,3 @@ def test_bounded_entry_read_keeps_pagination_offsets_stable() -> None:
 
     assert [entry.remote_id for entry in entries] == list(range(1, 802))
     assert strings.pages == [(1, 800), (2, 800)]
-
-
-def test_sync_updates_planned_remote_ids_without_rescanning_per_entry() -> None:
-    strings = StatefulStrings(1601, allow_list=True)
-    before = deepcopy(strings.records)
-    service = _service(strings)
-    snapshots = ParaTranzRemoteSnapshotAdapter(service)
-    namespace = SourceNamespace("test:upsert")
-    changed_ids = (1, 801, 1601)
-    local = tuple(
-        LocalEntrySnapshot(
-            EntryKey(namespace, f"key-{remote_id}"),
-            EntryRevision(),
-            f"original-{remote_id}",
-            f"new-{remote_id}",
-            stage=1,
-        )
-        for remote_id in changed_ids
-    )
-    plan = SyncPlanner().plan(
-        local,
-        snapshots.fetch(7, namespace, limit=100_000),
-        operation=SyncOperation.UPLOAD,
-        conflict_policy=ConflictPolicy.PREFER_LOCAL,
-        scope=f"paratranz:project:7:source:{namespace.value}",
-    )
-    strings.pages.clear()
-    executor = ParaTranzSyncExecutor(service, snapshots, CallbackLocalSyncUnitOfWork(lambda: local, lambda _: None))
-
-    result = executor.execute(
-        ExecuteSyncRequest(
-            AuthorizedSyncPlan(plan, "owner", "CONFIRMED"),
-            7,
-            namespace,
-            local,
-            "run",
-            ImmediateCommitGuard("run"),
-        )
-    )
-
-    assert result.is_success
-    assert result.counts.succeeded == 3
-    for remote_id in changed_ids:
-        before[remote_id]["translation"] = f"new-{remote_id}"
-    assert strings.records == before
-    # The executor still refreshes the complete snapshot once before dispatch.
-    assert strings.pages == [(1, 800), (2, 800), (3, 800)]

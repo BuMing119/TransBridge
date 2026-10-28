@@ -11,10 +11,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.ui.tools.ai_runtime_support import frozen_ai_request
 from transbridge.ai_translator.project_terminology_runtime import ProjectTerminologyBinding
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
 from transbridge.application.translation.ai_request_budget import AiRequestBudget
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -22,7 +24,6 @@ from transbridge.ui.tools.ai_translator import source_execution, workflow_log_st
 from transbridge.ui.tools.ai_translator.source_execution import SourceExecutor
 from transbridge.ui.tools.ai_translator.source_reporting import build_source_snapshot
 from transbridge.ui.tools.ai_translator.task_consistency import TaskConsistency
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 
 
 class _Provider:
@@ -153,6 +154,7 @@ def closure_run(tmp_path, monkeypatch):
                 execution_profile=AiExecutionProfile.from_config("translate", config),
             ),
         )
+        request = frozen_ai_request(request)
         guard = TaskConsistency(request)
         pause = threading.Event()
         pause.set()

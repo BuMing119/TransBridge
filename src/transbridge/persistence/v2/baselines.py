@@ -98,41 +98,4 @@ class BaselineRegistry:
                     self._items[key] = baselines
 
 
-class LegacyIdentityRegistry:
-    """Explicit, process-scoped V1 display/path to V2 identity migration map."""
-
-    def __init__(self) -> None:
-        self._items: dict[tuple[str, str], tuple[ProjectRef, VariantRef]] = {}
-        self._lock = RLock()
-
-    def register(
-        self,
-        legacy_project_key: str,
-        legacy_variant_name: str,
-        project_ref: ProjectRef,
-        variant_ref: VariantRef,
-    ) -> None:
-        if not legacy_project_key.strip() or not legacy_variant_name.strip():
-            raise ValueError("legacy identity keys must not be empty")
-        if variant_ref.project_id != project_ref.identity:
-            raise ValueError("mapped Variant must belong to the mapped Project")
-        with self._lock:
-            self._items[(legacy_project_key, legacy_variant_name)] = (project_ref, variant_ref)
-
-    def resolve(self, legacy_project_key: str, legacy_variant_name: str) -> tuple[ProjectRef, VariantRef]:
-        with self._lock:
-            mapped = self._items.get((legacy_project_key, legacy_variant_name))
-        if mapped is None:
-            raise DomainError(
-                ErrorCategory.PREREQUISITE,
-                "LEGACY_ID_MAPPING_REQUIRED",
-                "The legacy Project and Variant require an explicit V1 to V2 identity mapping.",
-            )
-        return mapped
-
-    def close(self) -> None:
-        with self._lock:
-            self._items.clear()
-
-
-__all__ = ["BaselineRegistry", "LegacyIdentityRegistry"]
+__all__ = ["BaselineRegistry"]

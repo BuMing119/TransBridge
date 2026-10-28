@@ -13,17 +13,18 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 import pytest
 
+from tests.ui.tools.ai_runtime_support import frozen_ai_request
 from tests.ui.tools.test_ai_task_session import _Context, _Persistence
 from transbridge.ai_translator.translation_entry_outcomes import TranslationEntryOutcome
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.translation.task_history import TaskHistoryStore
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.tools.ai_translator import task_run, task_session
 from transbridge.ui.tools.ai_translator.source_execution import SourceOutcome
 from transbridge.ui.tools.ai_translator.task_consistency import TaskConsistency
 from transbridge.ui.tools.ai_translator.task_progress import AiTaskProgressWindow
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 
 
 class _Worker(QObject):
@@ -100,13 +101,15 @@ def make_task(qapp, monkeypatch, tmp_path):
         request = SimpleNamespace(run_id=spec.run_id, config=SimpleNamespace(model="model-one"), spec=spec)
         preferences = {"model": "model-one"}
         terms = SimpleNamespace(snapshot_identity="terms-v1")
-        consistency = TaskConsistency(
-            request,
-            config_provider=lambda: preferences,
-            terminology_provider=lambda: terms,
-        )
+        request = frozen_ai_request(request)
+        consistency = TaskConsistency(request)
         session = task_session.TaskSession(ctx, (source,), spec, project_dir=tmp_path / spec.run_id)
-        window = AiTaskProgressWindow(request, session, Mock(), consistency=consistency)
+        from tests.ui.tools.ai_runtime_support import admit_ai_request
+
+        request, activity = admit_ai_request(request, session.tasks, identity=session.version_identity)
+        consistency = TaskConsistency(request)
+        session.bind_run_identity(request.run_id)
+        window = AiTaskProgressWindow(request, session, activity, consistency=consistency)
         windows.append(window)
         window.prepare()
         _wait(qapp, lambda: window.run.worker is not None and not session.is_busy)
@@ -200,7 +203,7 @@ def test_questionable_success_persists_stage_without_changing_text_or_joining_re
     assert window.run.entries.failed_keys == {_key("failed")}
     _apply_rejecting_one(window)
     entry = window.session._ctx.collection.get(_key("polished"))
-    assert entry.translation == "旧 polished" and entry.stage == 2
+    assert entry.translation == "旧 polished" and entry.stage == 2, window.run.status
     _wait(qapp, lambda: not window.run.records.busy)
     record = TaskHistoryStore(window.session.history_dir).load(window.request.run_id)
     saved = next(
@@ -249,7 +252,6 @@ def test_partial_auto_save_then_retry_only_failed_and_auto_apply_again(qapp, mak
     _apply_rejecting_one(window)
     persistence = window.session._persistence
     assert window.session.saved
-    previous_snapshot = window.session.after_snapshot_name
     window.run.retry()
     _settle(window)
     retried = window.run.worker
@@ -262,8 +264,7 @@ def test_partial_auto_save_then_retry_only_failed_and_auto_apply_again(qapp, mak
     assert _live(window)["failed"] == "新 failed"
     assert _live(window)["rejected"] == "旧 rejected"
     assert window.session.completed and window.session.saved
-    assert window.session._persistence is not persistence
-    assert window.session.after_snapshot_name != previous_snapshot
+    assert window.session._persistence is persistence
     assert window.run.entries.entries[_key("failed")].attempt == 2
     assert window.run.entries.entries[_key("translated")].attempt == 1
     assert window.run.entries.entries[_key("rejected")].attempt == 1
@@ -295,7 +296,7 @@ def test_duplicate_actions_and_late_completed_signal_cannot_reapply_or_overwrite
     window.run.apply_results()
     _settle(window)
     retry_worker.completed.emit((SourceOutcome(retry_worker.tasks[0], error="late failure"),))
-    assert len(final_persistence.commits) == 1
+    assert len(final_persistence.commits) == 2
     assert _live(window)["failed"] == "新 failed"
     assert not window.run.entries.failed_keys
 
@@ -390,20 +391,20 @@ def test_automatic_save_failure_keeps_applied_results_and_retries_only_save(make
 
 
 def test_cancel_while_automatic_apply_is_preparing_never_commits_candidates(make_task, monkeypatch, qapp):
-    from transbridge.ui.tools.ai_translator.task_apply_preparation import DraftMergeInput
+    from transbridge.ui.tools.ai_translator import task_result_flow
 
     window, _, _ = make_task(preview_enabled=False)
     worker = window.run.worker
     entered, release = threading.Event(), threading.Event()
-    original = DraftMergeInput.prepare
+    original = task_result_flow.prepare_application
 
-    def blocked(merge):
+    def blocked(*args):
         entered.set()
         if not release.wait(5):
             raise TimeoutError("test did not release merge preparation")
-        return original(merge)
+        return original(*args)
 
-    monkeypatch.setattr(DraftMergeInput, "prepare", blocked)
+    monkeypatch.setattr(task_result_flow, "prepare_application", blocked)
     try:
         worker.publish(_outcome(worker))
         _wait(qapp, entered.is_set)
@@ -522,7 +523,7 @@ def test_cancel_retry_preserves_previously_applied_but_drops_late_success(make_t
 
 @pytest.mark.parametrize("operation", ["apply", "retry"])
 @pytest.mark.parametrize("change", ["input", "config"])
-def test_changed_inputs_or_execution_identity_block_partial_actions(make_task, change, operation):
+def test_changed_live_inputs_or_preferences_do_not_block_frozen_task_actions(make_task, change, operation):
     window, preferences, _ = make_task()
     worker = window.run.worker
     worker.publish(_outcome(worker))
@@ -532,14 +533,17 @@ def test_changed_inputs_or_execution_identity_block_partial_actions(make_task, c
     else:
         preferences["model"] = "different-model"
     if operation == "apply":
-        window.run.apply_results()
+        _apply_rejecting_one(window)
     else:
         window.run.retry()
     _settle(window)
-    assert window.run.blocked
-    assert not window.session.applied_keys and window.run.worker is None
-    assert not window.run.can_apply_success and not window.run.can_retry
-    assert _live(window)["translated"] == "旧 translated"
+    assert not window.run.blocked
+    if operation == "apply":
+        translated = window.run.entries.entries[_key("translated")]
+        assert translated.merge_status == ("pending" if change == "input" else "applied")
+        assert _live(window)["translated"] == ("旧 translated" if change == "input" else "新 translated")
+    else:
+        assert [entry.id for entry in window.run.worker.tasks[0].entries] == ["failed"]
 
 
 def test_changed_reference_does_not_block_partial_apply_saved_success_or_failed_only_retry(make_task):

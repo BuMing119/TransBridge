@@ -14,7 +14,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from tests.conftest import MockAppContext, make_entry, make_test_collection
+from tests.conftest import make_entry, make_test_collection
+from tests.smart_assistant.postprocess.project_support import project_context
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 
@@ -28,26 +29,26 @@ class TestRunPostprocessValidation(unittest.TestCase):
         self.func = _tool_run_postprocess
 
     def test_no_collection_fails(self):
-        ctx = MockAppContext()
+        ctx = project_context(self)
         r = self.func({}, ctx)
         self.assertFalse(r.success)
         self.assertIn("没有加载翻译集合", r.message)
 
     def test_invalid_phases_rejected(self):
-        ctx = MockAppContext(make_test_collection(5))
+        ctx = project_context(self, make_test_collection(5))
         r = self.func({"phases": ["invalid_phase", "nonsense"]}, ctx)
         self.assertFalse(r.success)
         self.assertIn("无效的阶段名", r.message)
 
     def test_empty_entry_ids_fails(self):
-        ctx = MockAppContext(make_test_collection(5))
+        ctx = project_context(self, make_test_collection(5))
         r = self.func({"entry_ids": ["nonexistent_key_1", "nonexistent_key_2"]}, ctx)
         self.assertFalse(r.success)
         self.assertIn("均无效", r.message)
 
     def test_valid_phases_accepted(self):
         """启动后处理应返回 task_id（不等待完成）。"""
-        ctx = MockAppContext(make_test_collection(3))
+        ctx = project_context(self, make_test_collection(3))
         with patch("transbridge.smart_assistant.tools.tool_proofreader.threading.Thread") as mock_thread:
             r = self.func({"phases": ["consistency", "format"]}, ctx)
             self.assertTrue(r.success)
@@ -55,14 +56,14 @@ class TestRunPostprocessValidation(unittest.TestCase):
             self.assertTrue(mock_thread.called)
 
     def test_max_workers_clamped(self):
-        ctx = MockAppContext(make_test_collection(3))
+        ctx = project_context(self, make_test_collection(3))
         with patch("transbridge.smart_assistant.tools.tool_proofreader.threading.Thread"):
             r = self.func({"max_workers": 999}, ctx)
             self.assertTrue(r.success)  # 不应崩溃，内部钳位到 8
 
     def test_default_phases_when_none(self):
         """无参数调用默认运行 Proofread 校对。"""
-        ctx = MockAppContext(make_test_collection(3))
+        ctx = project_context(self, make_test_collection(3))
         with patch("transbridge.smart_assistant.tools.tool_proofreader.threading.Thread"):
             r = self.func({}, ctx)
             self.assertTrue(r.success)
@@ -71,7 +72,7 @@ class TestRunPostprocessValidation(unittest.TestCase):
             self.assertEqual(r.data["profile"], "builtin:polish")
 
     def test_proofread_rejects_strict_phases_and_accepts_legacy_alias(self):
-        ctx = MockAppContext(make_test_collection(5))
+        ctx = project_context(self, make_test_collection(5))
 
         result = self.func({"strategy": "combined", "phases": ["polish"]}, ctx)
 
@@ -79,7 +80,7 @@ class TestRunPostprocessValidation(unittest.TestCase):
         self.assertIn("proofread", result.message)
 
     def test_runtime_limit_overrides_are_frozen_in_task_metadata(self):
-        ctx = MockAppContext(make_test_collection(5))
+        ctx = project_context(self, make_test_collection(5))
         with patch("transbridge.smart_assistant.tools.tool_proofreader.threading.Thread"):
             result = self.func(
                 {
@@ -134,7 +135,7 @@ class TestRunPostprocessValidation(unittest.TestCase):
         repository = SimpleNamespace(
             load=lambda: CustomWorkflowProfileDocument(profile.id, (profile,)),
         )
-        ctx = MockAppContext(make_test_collection(5))
+        ctx = project_context(self, make_test_collection(5))
         with (
             patch(
                 "transbridge.config.ai_workflow_profiles.AiWorkflowProfileRepository",
@@ -185,7 +186,7 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
         TaskManager.reset()
 
     def test_auto_fixed_counts_only_accepted_committed_candidates(self):
-        from transbridge.smart_assistant.tools.tool_proofreader import _count_committed_fixes
+        from transbridge.smart_assistant.tools._postprocess_tool_runtime import _count_committed_fixes
 
         candidates = (
             SimpleNamespace(accepted=True, before_text="old", text="new"),
@@ -230,7 +231,7 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
             make_entry("entry_001", original="One", translation="Old one", stage=1),
             make_entry("entry_002", original="Two", translation="Old two", stage=1),
         ])
-        ctx = MockAppContext(collection)
+        ctx = project_context(self, collection)
         config = LLMConfig(api_key="fixture", model="fixture-model", max_tokens_per_batch=10_000)
         with (
             tempfile.TemporaryDirectory() as data_dir,
@@ -256,13 +257,19 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
             deadline = time.monotonic() + 5
             while TaskManager().get_status(task_id)["status"] not in {"completed", "failed", "cancelled"}:
                 self.assertLess(time.monotonic(), deadline)
+                self.qt_app.processEvents()
                 time.sleep(0.01)
-            report = get_last_report()
+            report = get_last_report(ctx)
 
         self.assertEqual(TaskManager().get_status(task_id)["status"], "completed")
         self.assertEqual(client.calls, 1)
         self.assertEqual(client.max_tokens, [0])
-        self.assertTrue(all(entry.translation.startswith("fixed:") for entry in collection))
+        self.assertTrue(
+            all(entry.translation.startswith("fixed:") for entry in ctx.collection), TaskManager().get_status(task_id)
+        )
+        self.assertTrue(
+            all(entry.translation.startswith("fixed:") for entry in self.project.aggregate.snapshot().entries)
+        )
         self.assertEqual(report["profile"], "builtin:polish")
         self.assertEqual(report["strategy"], "proofread")
         self.assertEqual(report["stages"], ["proofread"])
@@ -288,7 +295,7 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
             make_entry("entry_001", original="One", translation="Old one", stage=1),
             make_entry("entry_002", original="Two", translation="Old two", stage=1),
         ])
-        ctx = MockAppContext(collection)
+        ctx = project_context(self, collection)
         config = LLMConfig(
             api_key="fixture",
             model="fixture-model",
@@ -340,11 +347,12 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
             deadline = time.monotonic() + 5
             while TaskManager().get_status(task_id)["status"] not in {"completed", "failed", "cancelled"}:
                 self.assertLess(time.monotonic(), deadline)
+                self.qt_app.processEvents()
                 time.sleep(0.01)
 
             from transbridge.smart_assistant.tools.tool_proofreader import get_last_report
 
-            report = get_last_report()
+            report = get_last_report(ctx)
             self.assertIsNotNone(report)
             self.assertTrue(report["report_file"].endswith(".xlsx"))
             self.assertEqual(
@@ -360,8 +368,11 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
 
         status = TaskManager().get_status(task_id)
         self.assertEqual(status["status"], "completed")
-        self.assertEqual(status["progress"]["outcome"], "completed")
-        self.assertTrue(all(entry.translation.startswith("polish:refine:") for entry in collection))
+        self.assertEqual(status["result"]["outcome"], "completed")
+        self.assertTrue(all(entry.translation.startswith("polish:refine:") for entry in ctx.collection))
+        self.assertTrue(
+            all(entry.translation.startswith("polish:refine:") for entry in self.project.aggregate.snapshot().entries)
+        )
 
 
 # ============================================================
@@ -372,12 +383,12 @@ class TestGetQualityReport(unittest.TestCase):
         from transbridge.smart_assistant.tools.tool_proofreader import _tool_get_quality_report
 
         self.func = _tool_get_quality_report
-        self.ctx = MockAppContext()
+        self.ctx = project_context(self, make_test_collection(1))
 
     def test_no_report_returns_empty(self):
         import transbridge.smart_assistant.tools.tool_proofreader as mod
 
-        mod._last_report = None
+        mod.set_last_report(None, self.ctx)
         r = self.func({}, self.ctx)
         self.assertTrue(r.success)
         self.assertEqual(r.data["reports"], [])
@@ -385,13 +396,16 @@ class TestGetQualityReport(unittest.TestCase):
     def test_postprocess_report_message(self):
         import transbridge.smart_assistant.tools.tool_proofreader as mod
 
-        mod._last_report = {
-            "phase": "postprocess",
-            "total_checked": 100,
-            "issue_count": 5,
-            "auto_fixed": 3,
-            "verdict_stats": {"passed": 95, "rejected": 3, "pending": 2},
-        }
+        mod.set_last_report(
+            {
+                "phase": "postprocess",
+                "total_checked": 100,
+                "issue_count": 5,
+                "auto_fixed": 3,
+                "verdict_stats": {"passed": 95, "rejected": 3, "pending": 2},
+            },
+            self.ctx,
+        )
         r = self.func({}, self.ctx)
         self.assertTrue(r.success)
         self.assertIn("100条", r.message)
@@ -400,13 +414,16 @@ class TestGetQualityReport(unittest.TestCase):
     def test_polish_report_message(self):
         import transbridge.smart_assistant.tools.tool_proofreader as mod
 
-        mod._last_report = {
-            "phase": "polish",
-            "entry_count": 50,
-            "polish_level": "moderate",
-            "scope": "all",
-            "total": 120,
-        }
+        mod.set_last_report(
+            {
+                "phase": "polish",
+                "entry_count": 50,
+                "polish_level": "moderate",
+                "scope": "all",
+                "total": 120,
+            },
+            self.ctx,
+        )
         r = self.func({}, self.ctx)
         self.assertTrue(r.success)
         self.assertIn("润色", r.message)
@@ -421,7 +438,7 @@ class TestListQualityReports(unittest.TestCase):
         from transbridge.smart_assistant.tools.tool_proofreader import _tool_list_quality_reports
 
         self.func = _tool_list_quality_reports
-        self.ctx = MockAppContext()
+        self.ctx = project_context(self)
 
     def test_no_esp_path_returns_empty(self):
         r = self.func({}, self.ctx)

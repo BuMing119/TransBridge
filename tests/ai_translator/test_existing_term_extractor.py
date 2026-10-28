@@ -650,7 +650,7 @@ def test_partial_project_detection_requires_existing_and_untranslated_entries() 
 
 def test_auto_translator_uses_seeded_name_term_in_the_same_run(monkeypatch) -> None:
     from transbridge.ai_translator import noun_extractor, prompt_builder, term_database
-    from transbridge.ai_translator.translator import AutoTranslator, ProgressCheckpoint, TranslatorConfig
+    from transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig
     from transbridge.application.translation import InMemoryTranslationCheckpointPort
     from transbridge.converter.translation_entry import TranslationEntry
     from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -661,13 +661,16 @@ def test_auto_translator_uses_seeded_name_term_in_the_same_run(monkeypatch) -> N
     class RuntimeTermManager(_TermManager):
         def __init__(self, *args, **kwargs) -> None:
             super().__init__()
+            self.dynamic._lock = threading.RLock()
+            self.dynamic._entries = self.dynamic.entries
+            self.dynamic._revision = 0
             runtime_managers.append(self)
 
     class RuntimeExtractor:
         def __init__(self, *args, **kwargs) -> None:
             pass
 
-        def extract(self, pairs):
+        def extract(self, pairs, **kwargs):
             return []
 
     class ConstructorOnlyPrompt:
@@ -678,8 +681,6 @@ def test_auto_translator_uses_seeded_name_term_in_the_same_run(monkeypatch) -> N
     monkeypatch.setattr(term_database, "TermDatabaseManager", RuntimeTermManager)
     monkeypatch.setattr(prompt_builder, "PromptBuilder", ConstructorOnlyPrompt)
     monkeypatch.setattr(noun_extractor, "NounExtractor", RuntimeExtractor)
-    monkeypatch.setattr(ProgressCheckpoint, "save", lambda self, esp_path: None)
-    monkeypatch.setattr(ProgressCheckpoint, "delete", lambda self, esp_path: None)
 
     config = SimpleNamespace(
         game_profile="fixture",

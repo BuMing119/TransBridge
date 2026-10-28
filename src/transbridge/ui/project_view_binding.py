@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-import json
 import logging
 from threading import Condition
 
 from PyQt6.QtCore import QThread
 
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
-from transbridge.application.io.identity import EntryKey
 from transbridge.application.projections.models import copy_projection_value
 from transbridge.ui.entry_projection import prepare_projected_entries, sync_projected_entries
 from transbridge.ui.project_labels import project_entry_labels
+from transbridge.ui.projection_consistency import ProjectionConsistency
 from transbridge.ui.projection_types import CollectionSlot
 
 _UNSET = object()
@@ -138,6 +137,7 @@ class ProjectViewBinding:
         self._applied_sequence = 0
         self._deliveries = 0
         self._closed = False
+        self._consistency = ProjectionConsistency()
 
     @property
     def opening(self):
@@ -313,6 +313,7 @@ class ProjectViewBinding:
             or context._entry_labels_exact != state.exact_labels
         )
         self.state = state
+        self._consistency.diverged(state.snapshot, tuple(context.slots.values()))
         context._label_library = state.label_library
         context._entry_labels = state.entry_labels
         context._entry_labels_exact = state.exact_labels
@@ -375,31 +376,4 @@ class ProjectViewBinding:
                     return diverged
 
     def _diverged_snapshot(self, snapshot):
-        if snapshot is None:
-            return any(slot.collection for slot in self.context.slots.values())
-        states = {
-            EntryKey.from_dict(item["entry_key"]): (
-                str(item.get("translation", "")),
-                int(item.get("stage", 0)),
-                _external_refs(copy_projection_value(value) for value in item.get("external_refs", ())),
-            )
-            for item in snapshot.values.get("entries", ())
-        }
-        visible = {}
-        for slot in self.context.slots.values():
-            for entry in slot.collection:
-                state = (
-                    entry.translation or "",
-                    entry.stage,
-                    _external_refs(value.to_dict() for value in entry.external_refs),
-                )
-                if entry.identity in visible and visible[entry.identity] != state:
-                    return True
-                visible[entry.identity] = state
-        return visible != states
-
-
-def _external_refs(values):
-    return tuple(
-        sorted(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) for value in values)
-    )
+        return self._consistency.diverged(snapshot, tuple(self.context.slots.values()))

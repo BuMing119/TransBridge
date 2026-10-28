@@ -278,7 +278,6 @@ class ParseCoordinator:
             for esp_path, slot, collection in results:
                 if slot:
                     self._host.context.add_slot(esp_path, slot)
-                    self._save_source_to_project(slot)
             if results:
                 for esp_path, slot, _ in reversed(results):
                     if slot:
@@ -386,7 +385,6 @@ class ParseCoordinator:
                 self._host.show_message("确认期间活动工程版本或修订已变化，未发布过期集合。")
                 return
         self._host.context.add_slot(key, slot)
-        self._save_source_to_project(slot)
         message = f"解析完成，共 {len(collection)} 条词条"
         if migration_failures:
             self._host.show_message(
@@ -404,23 +402,6 @@ class ParseCoordinator:
             return
         self._host.context.activate_slot(key)
         self.apply_migration()
-
-    def _save_source_to_project(self, slot: CollectionSlot) -> None:
-        """将解析的源文件路径保存到 project.json（下次启动自动恢复集合）。"""
-        if self._host.context.uses_authoritative_projection:
-            return
-        proj = self._host.context.active_project
-        if proj is None:
-            return
-        if slot.esp_path and not any(s.get("key") == slot.esp_path for s in proj.sources):
-            proj.add_source(slot.esp_path, "esp", slot.esp_path)
-        if slot.eet_path and not any(s.get("key") == slot.eet_path for s in proj.sources):
-            proj.add_source(slot.eet_path, "eet", slot.eet_path)
-        if slot.xt_path and not any(s.get("key") == slot.xt_path for s in proj.sources):
-            proj.add_source(slot.xt_path, "xt", slot.xt_path)
-        if slot.sst_path and not any(s.get("key") == slot.sst_path for s in proj.sources):
-            proj.add_source(slot.sst_path, "sst", slot.sst_path)
-        proj.save()
 
     def _commit_authoritative_source(
         self,

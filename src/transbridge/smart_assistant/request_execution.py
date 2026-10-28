@@ -123,7 +123,7 @@ class RequestExecutionGate:
             raise RequestError("REQUEST_PROTOCOL_INVALID", "model arguments cannot supply execution ownership")
         request = self.current_request()
         self._validate(request, tool_name)
-        self._validate_selection(request, execution_context)
+        self._validate_scope(request, execution_context, tool_name)
         captured = getattr(execution_context, "request_context", None)
         if captured is not None:
             for field in ("owner_id", "session_id", "project_id", "variant_id"):
@@ -292,7 +292,7 @@ class RequestExecutionGate:
     def attempt(self, handle, args, execution_context):
         def begin(request):
             self._validate(request, handle.tool_name)
-            self._validate_selection(request, execution_context)
+            self._validate_scope(request, execution_context, handle.tool_name)
             if self._step_handles.get(f"{handle.dispatch_id}:{handle.step_id}") is not handle:
                 raise RequestError("REQUEST_PROTOCOL_INVALID", "step handle was not issued by this gate")
             if handle.retry_allowed:
@@ -331,9 +331,14 @@ class RequestExecutionGate:
                 dispatch = next(d for d in self.current_request().dispatches if d.dispatch_id == self.dispatch_id)
                 self.service.step_receipts.interrupt(self.context, self.admission.request_id, dispatch)
 
-    def _validate_selection(self, request, execution_context) -> None:
+    def _validate_scope(self, request, execution_context, tool_name: str) -> None:
+        from .tool_registry import ToolRegistry
+
+        spec = ToolRegistry.get(tool_name)
+        if spec is None:
+            raise RequestError("REQUEST_PROTOCOL_INVALID", "tool is not registered")
         ingress = self.service.state(self.context).get("ingress", ())
-        apply_captured_scope(request, ingress, execution_context)
+        apply_captured_scope(request, ingress, execution_context, require_selection=spec.request_scope == "selection")
 
     def after(self, handle: EffectHandle, result) -> None:
         if not handle.effect_id:

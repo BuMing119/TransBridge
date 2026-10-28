@@ -22,8 +22,8 @@ from transbridge.application.translation.entry_alias import ai_entry_id, ai_entr
 from transbridge.application.translation.token_batching import StableContentBatcher
 from transbridge.infra.token_counting import TiktokenContentTokenCounter
 
+from ..activity import ActivityKind, ActivityMessage
 from .base import BaseChecker, PostProcessIssue, PostProcessResult
-from .checkpoint import PostProcessCheckpoint
 from .consistency_checker import ConsistencyChecker
 from .format_validator import FormatValidator
 from .quality_gate import QualityGateChecker
@@ -324,10 +324,8 @@ class PostProcessor:
         progress_callback=None,
         stop_event: threading.Event | None = None,
         pause_event: threading.Event | None = None,
-        checkpoint: PostProcessCheckpoint | None = None,
         max_workers: int = 1,
         log_callback: Callable[[str], None] | None = None,
-        esp_path: str | None = None,
         apply_changes: bool = True,
     ) -> PostProcessResult:
         """
@@ -338,10 +336,8 @@ class PostProcessor:
             progress_callback: 进度回调函数 (phase, current, total, message)
             stop_event: 停止事件
             pause_event: 暂停事件（clear=暂停，set=运行）
-            checkpoint: 后处理断点
             max_workers: 并发线程数
             log_callback: 日志回调
-            esp_path: ESP 路径（用于 checkpoint 持久化）
             apply_changes: 是否把裁决结果写入传入条目；候选预览应传 False
 
         Returns:
@@ -382,10 +378,6 @@ class PostProcessor:
                 _log("▶ 后处理已恢复")
             return _should_stop()
 
-        def _persist_checkpoint() -> None:
-            if checkpoint and esp_path:
-                checkpoint.save(esp_path)
-
         # 启动 LLM 监控线程（在 LLM 调用期间实时响应暂停/停止）
         monitor_done: threading.Event | None = None
         if self._llm_client and (stop_event is not None or pause_event is not None):
@@ -406,13 +398,7 @@ class PostProcessor:
             # ── 阶段1: 检测 ────────────────────────────────────────────────────
             _progress("detect", 0, len(entries), "开始检测...")
 
-            # 从 checkpoint 恢复已有 issues
             issues_by_entry: dict[str, list[PostProcessIssue]] = {}
-            if checkpoint and checkpoint.issues:
-                for issue_dict in checkpoint.issues:
-                    issue = PostProcessCheckpoint.issue_from_dict(issue_dict)
-                    result.add_issue(_canonical_issue(issue))
-                issues_by_entry = self._group_issues_by_entry(result.issues)
 
             # 先执行本地检查器（ConsistencyChecker、FormatValidator 等）
             for checker in self._checkers:
@@ -471,13 +457,6 @@ class PostProcessor:
                             break
 
                         batch = futures[future]
-                        fp = sorted(ai_entry_id(e) for e in batch)
-
-                        if checkpoint and checkpoint.is_batch_completed("detect_quality_gate", fp):
-                            qg_completed += len(batch)
-                            evidence.complete("quality_gate", batch)
-                            continue
-
                         if future.cancelled():
                             continue
 
@@ -488,17 +467,17 @@ class PostProcessor:
                                 for issue in batch_issues:
                                     result.add_issue(_canonical_issue(issue))
                                 qg_completed += len(batch)
-                                if checkpoint:
-                                    checkpoint.mark_batch_completed("detect_quality_gate", fp)
-                                    checkpoint.issues = [PostProcessCheckpoint.issue_to_dict(i) for i in result.issues]
-                                    _persist_checkpoint()
                             _progress("detect", qg_completed, len(entries), f"质量检测 {qg_completed}/{len(entries)}")
                         except Exception as e:
                             safe_error = client_diagnostic_redactor(
                                 getattr(qg_checker, "_llm", self._llm_client)
                             ).redact_text(diagnostic_exception_text(e))
                             evidence.fail("quality_gate", batch, safe_error)
-                            _log(f"⚠ QualityGate 批次异常: {safe_error}")
+                            _log(
+                                ActivityMessage(
+                                    "本批质量检查未完成；请在任务结果中查看需复核条目。", ActivityKind.WARNING
+                                )
+                            )
 
                 issues_by_entry = self._group_issues_by_entry(result.issues)
 
@@ -509,11 +488,6 @@ class PostProcessor:
 
             # ── 阶段2a: 修复 ────────────────────────────────────────────────────
             refine_results: dict[str, RefineResult] = {}
-
-            if checkpoint and checkpoint.refine_results:
-                for eid, rdict in checkpoint.refine_results.items():
-                    refine_results[eid] = PostProcessCheckpoint.refine_result_from_dict(rdict)
-                refine_results = _canonical_results(refine_results)
 
             if self._config.enable_refinement:
                 evidence.require("refine", [entry for entry in entries if ai_entry_id(entry) in issues_by_entry])
@@ -549,12 +523,6 @@ class PostProcessor:
                                 break
 
                             batch = futures[future]
-                            fp = sorted(ai_entry_id(e) for e in batch)
-
-                            if checkpoint and checkpoint.is_batch_completed("refine", fp):
-                                refined_count += len(batch)
-                                continue
-
                             if future.cancelled():
                                 continue
 
@@ -566,31 +534,23 @@ class PostProcessor:
                                         "refine", _canonical_results(batch_results), "refined_translation"
                                     )
                                     refined_count += len(batch)
-                                    if checkpoint:
-                                        checkpoint.mark_batch_completed("refine", fp)
-                                        checkpoint.refine_results = {
-                                            eid: PostProcessCheckpoint.refine_result_to_dict(r)
-                                            for eid, r in refine_results.items()
-                                        }
-                                        _persist_checkpoint()
                                 _progress("refine", refined_count, total, f"已修复 {refined_count}/{total}")
                             except Exception as e:
                                 safe_error = client_diagnostic_redactor(
                                     getattr(self._refiner, "_llm", self._llm_client)
                                 ).redact_text(diagnostic_exception_text(e))
                                 evidence.fail("refine", batch, safe_error)
-                                _log(f"⚠ Refine 批次异常: {safe_error}")
+                                _log(
+                                    ActivityMessage(
+                                        "本批精修未完成；请在任务结果中查看需复核条目。", ActivityKind.WARNING
+                                    )
+                                )
 
             if _should_stop():
                 return result
 
             # ── 阶段2b: 润色 ────────────────────────────────────────────────────
             polish_results: dict[str, PolishResult] = {}
-
-            if checkpoint and checkpoint.polish_results:
-                for eid, pdict in checkpoint.polish_results.items():
-                    polish_results[eid] = PostProcessCheckpoint.polish_result_from_dict(pdict)
-                polish_results = _canonical_results(polish_results)
 
             if self._config.enable_polish:
                 evidence.require("polish", self._select_entries_for_polish(entries, issues_by_entry, refine_results))
@@ -638,12 +598,6 @@ class PostProcessor:
                                 break
 
                             batch = futures[future]
-                            fp = sorted(ai_entry_id(e) for e in batch)
-
-                            if checkpoint and checkpoint.is_batch_completed("polish", fp):
-                                polished_count += len(batch)
-                                continue
-
                             if future.cancelled():
                                 continue
 
@@ -655,31 +609,23 @@ class PostProcessor:
                                         "polish", _canonical_results(batch_results), "polished_translation"
                                     )
                                     polished_count += len(batch)
-                                    if checkpoint:
-                                        checkpoint.mark_batch_completed("polish", fp)
-                                        checkpoint.polish_results = {
-                                            eid: PostProcessCheckpoint.polish_result_to_dict(p)
-                                            for eid, p in polish_results.items()
-                                        }
-                                        _persist_checkpoint()
                                 _progress("polish", polished_count, total, f"已润色 {polished_count}/{total}")
                             except Exception as e:
                                 safe_error = client_diagnostic_redactor(
                                     getattr(self._polisher, "_llm", self._llm_client)
                                 ).redact_text(diagnostic_exception_text(e))
                                 evidence.fail("polish", batch, safe_error)
-                                _log(f"⚠ Polish 批次异常: {safe_error}")
+                                _log(
+                                    ActivityMessage(
+                                        "本批润色未完成；请在任务结果中查看需复核条目。", ActivityKind.WARNING
+                                    )
+                                )
 
             if _should_stop():
                 return result
 
             # ── 阶段3: 裁决 ────────────────────────────────────────────────────
             decisions: dict[str, ArbiterDecision] = {}
-
-            if checkpoint and checkpoint.decisions:
-                for eid, ddict in checkpoint.decisions.items():
-                    decisions[eid] = PostProcessCheckpoint.decision_from_dict(ddict)
-                decisions = _canonical_results(decisions)
 
             if self._config.enable_llm_arbitration:
                 evidence.require("arbitrate", entries)
@@ -750,12 +696,6 @@ class PostProcessor:
                             break
 
                         batch = futures[future]
-                        fp = sorted(ai_entry_id(c.entry) for c in batch)
-
-                        if checkpoint and checkpoint.is_batch_completed("arbitrate", fp):
-                            arbitrate_count += len(batch)
-                            continue
-
                         if future.cancelled():
                             continue
 
@@ -765,19 +705,15 @@ class PostProcessor:
                                 decisions.update(_canonical_results(batch_decisions))
                                 evidence.accept_results("arbitrate", _canonical_results(batch_decisions))
                                 arbitrate_count += len(batch)
-                                if checkpoint:
-                                    checkpoint.mark_batch_completed("arbitrate", fp)
-                                    checkpoint.decisions = {
-                                        eid: PostProcessCheckpoint.decision_to_dict(d) for eid, d in decisions.items()
-                                    }
-                                    _persist_checkpoint()
                             _progress("arbitrate", arbitrate_count, total, f"已裁决 {arbitrate_count}/{total}")
                         except Exception as e:
                             safe_error = client_diagnostic_redactor(
                                 getattr(self._arbiter, "_llm", self._llm_client)
                             ).redact_text(diagnostic_exception_text(e))
                             evidence.fail("arbitrate", [context.entry for context in batch], safe_error)
-                            _log(f"⚠ Arbitrate 批次异常: {safe_error}")
+                            _log(
+                                ActivityMessage("本批裁决未完成；请在任务结果中查看需复核条目。", ActivityKind.WARNING)
+                            )
 
             else:
                 decisions = self._rule_based_decide(entries, issues_by_entry, refine_results, polish_results)

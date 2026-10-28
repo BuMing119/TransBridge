@@ -4,11 +4,11 @@ from types import SimpleNamespace
 
 from transbridge.ai_translator.shared_term_pool import SharedTermPool
 from transbridge.ai_translator.term_database import TermDatabaseManager
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import EmbeddingConfig, LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.tools.ai_translator import task_name_preparation
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 
 
 def _executor():

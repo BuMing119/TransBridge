@@ -40,7 +40,8 @@ def test_project_progress_is_one_total_and_legacy_substeps_cannot_replace_it(mak
     worker = progress_support._start(window, session)
     worker.project_name_progress.emit(_names())
     assert window.run.progress[:2] == (45, 8891)
-    window.activity.progress.assert_called_with(45, 8891, window.run.progress_view.summary)
+    activity = window.activity.activity
+    assert (activity.current, activity.total, activity.message) == (45, 8891, window.run.progress_view.summary)
     assert window.bar.maximum() == 8891
     assert "项目名称首批" in window.run.progress_view.summary
     first = window.run.progress_view.source_rows["first"]
@@ -61,7 +62,8 @@ def test_source_progress_does_not_steal_selection_or_replace_global_denominator(
     selected = window.sources.currentItem()
     worker.project_name_progress.emit(_names(8891, phase="done"))
     worker.source_started.emit("second")
-    window.activity.progress.assert_called_with(0, 2, window.run.progress_view.summary)
+    activity = window.activity.activity
+    assert (activity.current, activity.total, activity.message) == (0, 2, window.run.progress_view.summary)
     worker.progress.emit("second", "翻译", 3, 200, "[ 1%] 3/200 | 第一轮 | 物品名")
     worker.source_started.emit("first")
     worker.progress.emit("first", "proofread", 1, 7, "检查术语")

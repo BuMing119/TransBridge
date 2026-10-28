@@ -90,7 +90,7 @@ def authority(monkeypatch):
             return OperationResult.completed({"revision": revision})
 
     lifecycle = Lifecycle()
-    commands = GuiProjectCommandFacade(lifecycle, None, lambda: None)
+    commands = GuiProjectCommandFacade(lifecycle, lambda: None)
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: SimpleNamespace(token=""))
     context = context_module.AppContext(
         project_projection=store,

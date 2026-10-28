@@ -101,7 +101,7 @@ def test_all_reused_entries_skip_batch_workers(make_translator):
 
 
 @pytest.mark.parametrize("context", ["NPC_:FULL", "BOOK:DESC"], ids=["mixed-batch", "separate-batch"])
-def test_cancel_after_reuse_resumes_without_duplicate_candidates_or_count(make_translator, monkeypatch, context):
+def test_cancel_after_reuse_resumes_without_duplicate_candidates_or_count(make_translator, context):
     known = support._entry("known", context=context)
     pending = support._entry("pending", original="New name")
     port = InMemoryTranslationCheckpointPort()
@@ -110,8 +110,6 @@ def test_cancel_after_reuse_resumes_without_duplicate_candidates_or_count(make_t
     terms.exact[known.original] = "已有译文"
     collection = TranslationEntryCollection([pending, known])
     stop = Event()
-    checkpoints = []
-    monkeypatch.setattr(support.ProgressCheckpoint, "save", lambda checkpoint, _: checkpoints.append(checkpoint))
 
     def progress(phase, current, total, _message):
         if phase == "reuse" and current == total:
@@ -123,10 +121,15 @@ def test_cancel_after_reuse_resumes_without_duplicate_candidates_or_count(make_t
     assert cancelled.entry_outcomes[known.identity].status == "cancelled"
     assert len(port.load("resumed-reuse").candidates) == 1
 
-    resumed, provider, _ = make_translator(checkpoint=port)
-    result = resumed.translate(collection, None, lambda *_: None, Event(), checkpoint=checkpoints[-1])
+    saved = port.load("resumed-reuse")
+    recovered = {item.entry_key: PreparedName(known.original, known.context, item.text) for item in saved.candidates}
+    terms.exact.clear()
+    resumed, provider, _ = make_translator(checkpoint=port, prepared=recovered)
+    resumed._run_id_factory = lambda: "resumed-reuse-attempt-1"
+    result = resumed.translate(collection, None, lambda *_: None, Event())
     assert provider.translation_calls == [("pending",)]
-    assert len(port.load("resumed-reuse").candidates) == 2
+    assert len(port.load("resumed-reuse").candidates) == 1
+    assert len(port.load("resumed-reuse-attempt-1").candidates) == 2
     assert result.success_count == 2 and result.failed_count == 0
     assert all(item.status == "succeeded" for item in result.entry_outcomes.values())
     assert collection.get(known.identity).translation == "已有译文"
@@ -217,7 +220,7 @@ def test_committed_draft_is_not_rewritten_but_still_receives_configured_postproc
         assert collection.get(entry.identity).snapshot() == after
 
 
-def test_committed_draft_can_resume_after_cancel_without_recounting_or_reapplying(make_translator, monkeypatch):
+def test_committed_draft_can_resume_after_cancel_without_recounting_or_reapplying(make_translator):
     from transbridge.application.io.publish import ImmediateCommitGuard
     from transbridge.application.translation import TranslationInput
     from transbridge.application.translation.draft_reuse import commit_draft_reuse
@@ -236,8 +239,7 @@ def test_committed_draft_can_resume_after_cancel_without_recounting_or_reapplyin
     before = collection.get(known.identity).snapshot()
     port = InMemoryTranslationCheckpointPort()
     translator, provider, _ = make_translator(committed=receipt, checkpoint=port)
-    checkpoints, stop = [], Event()
-    monkeypatch.setattr(support.ProgressCheckpoint, "save", lambda checkpoint, _: checkpoints.append(checkpoint))
+    stop = Event()
 
     def progress(phase, current, total, _message):
         if phase == "reuse" and current == total:
@@ -246,7 +248,7 @@ def test_committed_draft_can_resume_after_cancel_without_recounting_or_reapplyin
     translator.translate(collection, None, lambda *_: None, stop, stage_progress_callback=progress)
     assert provider.translation_calls == []
     resumed, provider, _ = make_translator(committed=receipt, checkpoint=port)
-    result = resumed.translate(collection, None, lambda *_: None, Event(), checkpoint=checkpoints[-1])
+    result = resumed.translate(collection, None, lambda *_: None, Event())
     assert provider.translation_calls == [("pending",)]
     assert result.success_count == 2 and result.failed_count == 0
     assert collection.get(known.identity).snapshot() == before

@@ -204,40 +204,52 @@ def test_close_invalidates_pending_history_result_open(qapp, tmp_path, monkeypat
 
 
 def test_background_record_writer_freezes_translation_failure_reasons(qapp, tmp_path):
+    from transbridge.ai_translator.translation_entry_outcomes import TranslationEntryOutcome
     from transbridge.ai_translator.translator import TranslationResult
+    from transbridge.application.translation.task_entry_results import TaskEntryResults
+    from transbridge.application.translation.task_scope import SourceTask
     from transbridge.converter.translation_entry import TranslationEntry
     from transbridge.ui.tools.ai_translator.source_execution import SourceOutcome
     from transbridge.ui.tools.ai_translator.task_record_writer import TaskRecordWriter
-    from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 
     entry = TranslationEntry("failed-id", "key", "Hello", "", 0, "")
     result = TranslationResult(failed_count=1, failed_entries=["failed-id: provider failed"])
+    result.entry_outcomes = {
+        entry.identity: TranslationEntryOutcome(entry.identity, "failed", "", 0, "provider failed")
+    }
     task = SourceTask("source", "Source", None, None, (entry,), ())
     outcome = SourceOutcome(task, translation=result, failed_keys=(entry.key,), cancelled=True)
     request = SimpleNamespace(run_id="cancelled-translation", config=SimpleNamespace(mixed_execution_order="serial"))
-    session = SimpleNamespace(completed=False, saved=False, history_dir=tmp_path)
+    session = SimpleNamespace(
+        completed=False, applied_keys=frozenset(), saved=False, project_saved=False, history_dir=tmp_path
+    )
     writer = TaskRecordWriter(request, session)
+    ledger = TaskEntryResults((task,), request.run_id)
+    ledger.ingest((outcome,), set(ledger.entries), cancelled=True)
     try:
-        writer.write([outcome], state="cancelled")
+        writer.write([outcome], state="cancelled", frozen_entry_results=ledger.freeze())
         result.failed_entries.clear()
         _wait(qapp, lambda: not writer.busy)
         assert not writer.error
         record = TaskHistoryStore(tmp_path).load(request.run_id)
         assert record["counts"] == {"successful": 0, "failed": 1, "unprocessed": 0, "cancelled": 0}
         row = record["sources"][0]["snapshot"]["entries"][0]
-        assert row["report_details"]["note"] == "failed-id: provider failed"
+        assert row["report_details"]["note"] == "provider failed"
     finally:
         _wait(qapp, lambda: not writer.busy)
 
 
 def test_completed_task_with_no_applied_entries_is_not_recorded_as_applied(qapp, tmp_path):
+    from transbridge.application.translation.task_entry_results import TaskEntryResults
     from transbridge.ui.tools.ai_translator.task_record_writer import TaskRecordWriter
 
     writer = TaskRecordWriter(
         SimpleNamespace(run_id="all-rejected"),
-        SimpleNamespace(completed=True, applied_keys=frozenset(), saved=False, history_dir=tmp_path),
+        SimpleNamespace(
+            completed=True, applied_keys=frozenset(), saved=False, project_saved=False, history_dir=tmp_path
+        ),
     )
-    writer.write([], state="completed")
+    writer.write([], state="completed", frozen_entry_results=TaskEntryResults((), "all-rejected").freeze())
     _wait(qapp, lambda: not writer.busy)
     record = TaskHistoryStore(tmp_path).load("all-rejected")
     assert not record["applied"]
@@ -248,7 +260,9 @@ def test_history_reload_restores_cancelled_and_interrupted_results(qapp, tmp_pat
     store.save(_record())
     store.save(_record("interrupted-run", "running"))
     monkeypatch.setattr(task_history_dialog, "show_and_activate", lambda dialog: dialog.show())
-    registry = AiTaskRegistry(SimpleNamespace(), directory_provider=lambda: tmp_path)
+    registry = AiTaskRegistry(
+        SimpleNamespace(active_version_identity=("project", "variant")), directory_provider=lambda: tmp_path
+    )
     dialog = TaskHistoryDialog(registry)
     try:
         _wait(qapp, lambda: not dialog.busy)
@@ -378,7 +392,9 @@ def test_registry_shutdown_tracks_hidden_export_and_preserves_previous_file(qapp
         return original(self, snapshot, **kwargs)
 
     monkeypatch.setattr(CsvReportRenderer, "render", render)
-    registry = AiTaskRegistry(SimpleNamespace(), directory_provider=lambda: tmp_path)
+    registry = AiTaskRegistry(
+        SimpleNamespace(active_version_identity=("project", "variant")), directory_provider=lambda: tmp_path
+    )
     history = TaskHistoryDialog(registry)
     registry.history_windows.append(history)
     _wait(qapp, lambda: not history.busy)
@@ -412,7 +428,9 @@ def test_registry_shutdown_tracks_hidden_export_and_preserves_previous_file(qapp
 
 def test_registry_reopens_hidden_live_task_only_for_current_project(qapp, tmp_path, monkeypatch):
     current = [tmp_path / "first"]
-    registry = AiTaskRegistry(SimpleNamespace(), directory_provider=lambda: current[0])
+    registry = AiTaskRegistry(
+        SimpleNamespace(active_version_identity=("project", "variant")), directory_provider=lambda: current[0]
+    )
     opened = []
 
     def activate(window):
@@ -428,7 +446,7 @@ def test_registry_reopens_hidden_live_task_only_for_current_project(qapp, tmp_pa
         def __init__(self, run_id, directory):
             super().__init__()
             self.request = SimpleNamespace(run_id=run_id)
-            self.session = SimpleNamespace(project_dir=directory)
+            self.session = SimpleNamespace(project_dir=directory, version_identity=("project", "variant"))
             self.run = Run()
 
         def is_running(self):

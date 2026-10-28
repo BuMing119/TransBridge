@@ -26,7 +26,7 @@ def run_with_new_edit(case):
 
     outcome = run_download(
         tuple(source.source_id for source in case.sources),
-        "prefer_remote",
+        "defer",
         (),
         case.session.compare,
         save,
@@ -47,8 +47,9 @@ def test_new_target_edit_is_kept_while_other_source_is_automatically_saved(case)
     assert states(case)[edited] == ("下载期间的新编辑", 1)
     assert states(case)[reliable] == ("云端2", 3)
     assert not case.services.project_lifecycle.active.dirty
-    assert len(case.services.project_snapshots.list(case.context.runtime_context)) == 1
-    assert len(attempts) == 2  # Refreshed reliable work continued inside the same request.
+    assert not case.services.project_snapshots.list(case.context.runtime_context)
+    assert case.session.record["merges"]
+    assert len(attempts) == 1  # Independent targets are merged together in the first publication.
 
 
 @pytest.mark.parametrize("keep_local", [True, False])
@@ -62,7 +63,7 @@ def test_review_after_partial_automatic_save_preserves_explicit_choice_on_retry(
     for _ in range(2):
         run_download(
             tuple(source.source_id for source in case.sources),
-            "prefer_remote",
+            "defer",
             ((row.row_id, token),),
             case.session.compare,
             case.session.apply,

@@ -24,9 +24,10 @@ _APP = QApplication.instance() or QApplication([])
 def test_late_index_result_does_not_call_destroyed_controller_and_releases_worker(monkeypatch, fail):
     started, release = Event(), Event()
 
-    def build(*_args, **_kwargs):
+    def build(*_args, **kwargs):
         started.set()
         assert release.wait(5)
+        kwargs["on_preview"](build_dialogue_index(dialogue_entries()))
         if fail:
             raise ValueError("late index failure")
         return build_dialogue_index(dialogue_entries())
@@ -34,13 +35,13 @@ def test_late_index_result_does_not_call_destroyed_controller_and_releases_worke
     monkeypatch.setattr(DialogueIndexLoader, "build", build)
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: SimpleNamespace(token=""))
     context = context_module.AppContext()
-    context.variant_store = SimpleNamespace(dirty=False)
     collection = TranslationEntryCollection(dialogue_entries())
     context.add_slot("fixture.esp", context_module.CollectionSlot("Test", collection, esp_path="fixture.esp"))
     parent = QWidget()
     preview = Step2PreviewWidget(context, parent)
     workers, deliveries = [], []
     controller = DialogueEditorController(context, parent, preview, workers)
+    controller.open_entry(dialogue_entries()[2].identity)
     # Capture stale dispatch without touching deleted widgets (which can abort Qt).
     monkeypatch.setattr(controller, "_loaded", lambda *_args: deliveries.append("loaded"))
     monkeypatch.setattr(controller, "_failed", lambda *_args: deliveries.append("failed"))

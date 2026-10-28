@@ -40,7 +40,11 @@ def test_catalog_uses_only_registry_and_variant_counts_even_if_source_files_are_
     assert len({item.namespace for item in result.value}) == 2
 
 
-def test_repeated_selected_capture_parses_once_and_overlays_fresh_unsaved_state(project, monkeypatch):
+def test_repeated_selected_capture_reuses_saved_source_without_live_io_and_overlays_fresh_unsaved_state(
+    project, monkeypatch
+):
+    from transbridge.application.projects import source_hydration_cache
+
     services, service, context, *_ = project
     selected = service.catalog(context).value[0]
     calls = []
@@ -51,6 +55,11 @@ def test_repeated_selected_capture_parses_once_and_overlays_fresh_unsaved_state(
         return original(request, *args, **kwargs)
 
     monkeypatch.setattr(service._source_preparer, "prepare_source", prepare)
+    monkeypatch.setattr(
+        source_hydration_cache,
+        "source_input_signature",
+        lambda *_args, **_kwargs: pytest.fail("Saved source capture must not hash or inspect live input"),
+    )
     first = _snapshot(service, context, (selected.source_id,))
     assert first.is_success, first.diagnostics
     key = first.value.sources[0].entries[0].identity
@@ -62,7 +71,7 @@ def test_repeated_selected_capture_parses_once_and_overlays_fresh_unsaved_state(
     third = _snapshot(service, context, (selected.source_id,))
 
     assert second.is_success and third.is_success
-    assert len(calls) == 1
+    assert calls == []
     assert first.value.sources[0].entries[0].translation == ""
     assert second.value.sources[0].entries[0].translation == "New unsaved translation"
     assert second.value.sources[0].entries[0].stage == 3
@@ -70,10 +79,18 @@ def test_repeated_selected_capture_parses_once_and_overlays_fresh_unsaved_state(
     assert len(second.value.sources) == 1 and len(second.value.source_names) == 2
 
 
-def test_hash_verification_detects_source_change_with_identical_size_and_restored_mtime(project):
+def test_saved_source_ignores_external_change_with_identical_size_and_restored_mtime(project, monkeypatch):
+    from transbridge.application.projects import source_hydration_cache
+
     _services, service, context, first, _second = project
     selected = next(item for item in service.catalog(context).value if item.label == first.name)
-    assert _snapshot(service, context, (selected.source_id,)).is_success
+    monkeypatch.setattr(
+        source_hydration_cache,
+        "source_input_signature",
+        lambda *_args, **_kwargs: pytest.fail("Saved source capture must not hash or inspect live input"),
+    )
+    captured = _snapshot(service, context, (selected.source_id,))
+    assert captured.is_success, captured.diagnostics
     previous = first.stat()
     content = first.read_bytes()
     assert b"Alice" in content
@@ -83,8 +100,10 @@ def test_hash_verification_detects_source_change_with_identical_size_and_restore
 
     result = _snapshot(service, context, (selected.source_id,))
 
-    assert not result.is_success
-    assert result.diagnostics[0].code == "PROJECT_SOURCE_FINGERPRINT_MISMATCH"
+    assert result.is_success, result.diagnostics
+    assert result.value.sources == captured.value.sources
+    assert result.value.sources[0].entries[0].original == "Alice"
+    assert b"Other" in first.read_bytes()
 
 
 class CountingPreparer:
@@ -104,6 +123,36 @@ def _request(path, **options):
         hashlib.sha256(path.read_bytes()).hexdigest(),
         tuple({"source_namespace": "source:cache-test", **options}.items()),
     )
+
+
+def test_installed_result_text_reuses_verified_model_and_invalidates_on_installed_fingerprint(tmp_path, monkeypatch):
+    from transbridge.application.projects import source_hydration_cache
+
+    path = write_plugin(tmp_path / "installed.esp", [(0x800, "Npc", "Alice")])
+    cache, preparer, context = SourceHydrationCache(), CountingPreparer(), RequestContext("cache")
+    original_signature = source_hydration_cache.source_input_signature
+    reads = []
+
+    def signature(*args, **kwargs):
+        reads.append(args[0].expected_fingerprint)
+        return original_signature(*args, **kwargs)
+
+    monkeypatch.setattr(source_hydration_cache, "source_input_signature", signature)
+    request = _request(path)
+    first = cache.read_installed(preparer, request, context, scope_key="project")
+    assert len(reads) == 2 and preparer.calls == 1
+    reads.clear()
+    # Raw disk changes do not replace already-installed workbench source text.
+    write_plugin(path, [(0x800, "Npc", "Other")])
+    assert cache.read_installed(preparer, request, context, scope_key="project") is first
+    assert reads == [] and first.entries[0].original == "Alice"
+    installed = _request(path)
+    second = cache.read_installed(preparer, installed, context, scope_key="project")
+    assert len(reads) == 2 and preparer.calls == 2
+    assert second.entries[0].original == "Other"
+    assert second is not first
+    assert cache.read_installed(preparer, installed, context, scope_key="project") is second
+    assert len(reads) == 2
 
 
 def _localized(path):

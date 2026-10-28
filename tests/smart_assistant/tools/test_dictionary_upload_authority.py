@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 from PyQt6.QtWidgets import QApplication
 import pytest
 
 from tests.smart_assistant.tools.test_source_import_authority import load_source, project as project_fixture
 from transbridge.application.io import Stage
-from transbridge.application.ports.paratranz import ParaTranzEntry
+from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError, ParaTranzEntry
 from transbridge.smart_assistant.tools import _dictionary_application as dictionary_module
 from transbridge.smart_assistant.tools._project_tool_mutations import ProjectToolTarget
 from transbridge.smart_assistant.tools.tool_migrator import _tool_apply_dictionary
@@ -79,6 +80,36 @@ def test_dictionary_candidate_commits_to_v2_and_survives_save(project, monkeypat
     assert persisted["entries"][0]["translation"] == "Dictionary value"
 
 
+def test_dictionary_uses_captured_source_after_request_scope_hides_live_slot(project, monkeypatch):
+    from transbridge.smart_assistant.request_scope import apply_captured_scope
+
+    entry = load_source(project)
+    _install_dictionary(project, monkeypatch, entry)
+    context = ExecutionContext(app_context=project.ctx)
+    fingerprint = context._target_source_fingerprint
+    request = SimpleNamespace(source_message_ids=(), execution_version_json="")
+    apply_captured_scope(request, (), context)
+    assert context.active_slot is None
+    assert dictionary_module.dictionary_scope(_LOCALES, context, required=True)[2] == fingerprint
+
+    result = _tool_apply_dictionary(_LOCALES, context)
+
+    assert result.success, result.message
+    assert result.data["applied"] == 1
+    assert next(iter(project.ctx.collection)).translation == "Dictionary value"
+
+
+def test_dictionary_source_fingerprint_never_follows_later_slot_changes():
+    app = SimpleNamespace(active_slot=SimpleNamespace(source_snapshot=SimpleNamespace(sha256="original")))
+    context = ExecutionContext(app_context=app)
+    app.active_slot.source_snapshot = SimpleNamespace(sha256="later")
+    assert dictionary_module.dictionary_scope(_LOCALES, context, required=True)[2] == "original"
+    missing = ExecutionContext(app_context=SimpleNamespace(active_slot=None))
+    missing.app_context.active_slot = app.active_slot
+    with pytest.raises(ValueError, match="来源快照"):
+        dictionary_module.dictionary_scope(_LOCALES, missing, required=True)
+
+
 def test_dictionary_rejects_unknown_query_locale_without_mutating_v2(project, monkeypatch):
     entry = load_source(project)
     _install_dictionary(project, monkeypatch, entry)
@@ -107,7 +138,9 @@ def test_dictionary_late_revision_does_not_overwrite_newer_translation(project, 
     monkeypatch.setattr(dictionary_module.TranslationMemoryQueryService, "query", concurrent_query)
     result = _tool_apply_dictionary(_LOCALES, ExecutionContext(app_context=project.ctx))
 
-    assert not result.success
+    assert result.success, result.message
+    assert result.data["merge"]["kept_current_count"] == 1
+    assert result.data["applied"] == 0
     assert project.services.project_lifecycle.active.variant.snapshot().entries[0].translation == "Concurrent edit"
     assert next(iter(project.ctx.collection)).translation == "Concurrent edit"
     assert not project.ctx.authoritative_projection_diverged()
@@ -124,7 +157,7 @@ class _RemoteService:
         assert isinstance(entry, ParaTranzEntry)
         self.received.append((project_id, entry, force_overwrite))
         if len(self.received) in self.failed_indices:
-            raise RuntimeError("Remote service rejected this entry")
+            raise ExternalServiceError(ExternalServiceCategory.CONFLICT, "Remote service rejected this entry")
         if self.before_return is not None:
             self.before_return()
         return replace(entry, remote_id=entry.remote_id or 700 + len(self.received))
@@ -195,7 +228,7 @@ def test_upload_partial_and_all_failed_results_match_authoritative_commits(
     assert remote.closed
 
 
-def test_upload_late_revision_reports_remote_side_effect_without_overwriting_current_state(project, monkeypatch):
+def test_upload_late_translation_edit_preserves_new_content_and_associates_all_receipts(project, monkeypatch):
     entries = _two_entries(project)
 
     def concurrent_edit():
@@ -208,10 +241,9 @@ def test_upload_late_revision_reports_remote_side_effect_without_overwriting_cur
 
     result = _tool_upload_entries({"project_id": 7}, ExecutionContext(app_context=project.ctx))
 
-    assert not result.success and result.partial
-    assert result.failed_items[0]["remote_id"] == 701
-    assert len(remote.received) == 1
+    assert result.success and not result.partial, result
+    assert len(remote.received) == 2
     states = project.services.project_lifecycle.active.variant.snapshot().entries
     assert states[0].translation == "Concurrent edit"
-    assert not any(entry.external_refs for entry in states)
+    assert [entry.external_refs[0].opaque_id for entry in states] == [701, 702]
     assert not project.ctx.authoritative_projection_diverged()

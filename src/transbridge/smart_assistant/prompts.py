@@ -44,11 +44,17 @@ and retain important cross-session information.
 - Provide only concise, user-visible explanations. Do not reveal hidden reasoning.
 
 ## Important notes
-- `start_translation` and `start_polish` are asynchronous. Their tasks run in the background
+- `start_translation`, `start_polish`, and `run_postprocess` are asynchronous. Their tasks run in the background
   and report results automatically when complete,
   so polling is unnecessary. Use `get_task_status` when an explicit progress check is needed.
+- These tasks use their captured inputs. Later edits do not invalidate their saved results.
+  Use `get_task_result` to inspect retained candidates and `merge_task_result` to apply them locally.
+  Retrying a merge does not require restarting translation or polishing.
+  For confirmed uploads with pending local associations, use `recover_upload_associations`.
 - When a tool fails, use the error details to decide whether retrying is appropriate.
-  Network failures may be retried; permission and configuration errors must not be retried.
+  Retry only operations whose results establish that replay is safe. An interrupted upload may
+  already have changed the remote project: an unknown remote outcome must be checked before resending.
+  Permission and configuration errors must not be retried without resolving their cause.
 - A new message interrupts the previous model round; it does not prove a background task stopped.
   For an explicit cancellation request, call `stop_task` with the matching task_id.
   If the target is unclear, query `get_task_status`; never guess among multiple tasks.

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.ui.tools.ai_runtime_support import frozen_ai_request
 from transbridge.ai_translator.generated_term_writer import GeneratedTermWriter
 from transbridge.ai_translator.term_database import TermDatabaseManager
 from transbridge.ai_translator.term_formats import TermEntry
@@ -17,6 +18,7 @@ def term_task(tmp_path, monkeypatch):
     monkeypatch.setattr(LLMConfig, "get_ai_translator_dir", staticmethod(lambda stem: str(tmp_path / stem)))
     config = LLMConfig(term_priority=["dynamic"], enable_semantic_match=False)
     request = SimpleNamespace(run_id="term-transactions", spec=SimpleNamespace(mode="mixed"), config=config)
+    request = frozen_ai_request(request)
     guard = TaskConsistency(request)
 
     def load(source, esp_path="shared.esp", stage="translation"):
@@ -158,6 +160,7 @@ def test_updating_existing_dynamic_terms_refreshes_live_lookup_without_changing_
     request = SimpleNamespace(run_id="existing-term-update", spec=SimpleNamespace(mode="mixed"), config=config)
     manager = TermDatabaseManager(config, "shared.esp")
     manager.get_dynamic_db().add_many_and_save([("Name", "已有译名", origin, "NPC_:FULL")])
+    request = frozen_ai_request(request)
     guard = TaskConsistency(request)
     with guard.terminology_access():
         manager.load_all()

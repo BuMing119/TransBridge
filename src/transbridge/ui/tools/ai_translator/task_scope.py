@@ -2,27 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
 from transbridge.application.translation.entry_alias import ai_entry_id
+from transbridge.application.translation.task_scope import SourceTask
 
 from .scope_presenter import ScopePresenter
-
-
-@dataclass(frozen=True, slots=True)
-class SourceTask:
-    key: str
-    label: str
-    esp_path: str | None
-    collection: object
-    translate_entries: tuple
-    polish_entries: tuple
-
-    @property
-    def entries(self) -> tuple:
-        return self.translate_entries + self.polish_entries
 
 
 class SourceWorkbenchScope:

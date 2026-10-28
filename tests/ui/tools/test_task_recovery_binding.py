@@ -6,15 +6,15 @@ from unittest.mock import Mock
 import pytest
 
 from tests.ui.tools.test_ai_task_session import _Context
+from transbridge.application.translation.task_config_snapshot import execution_signature as signature
+from transbridge.application.translation.task_entry_results import TaskEntryResults
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
-from transbridge.ui.tools.ai_translator.task_entry_results import TaskEntryResults
 from transbridge.ui.tools.ai_translator.task_recovery_binding import (
     TaskRecoveryBinding,
     complete_empty_recovery,
     recovery_sources,
-    signature,
 )
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 
 
 def setup_binding(tmp_path):
@@ -117,8 +117,9 @@ def test_changed_original_cannot_be_mistaken_for_already_applied_result(tmp_path
         }
     ]
     entry.original = "Changed source"
-    with pytest.raises(ValueError, match="词条已修改"):
-        recovery_sources(window, request.config)
+    restored = recovery_sources(window, request.config)
+    assert restored[1].entries[0].original == "source"
+    assert entry.original == "Changed source"
 
 
 def test_empty_recovery_completes_without_claiming_project_was_saved(tmp_path):
@@ -245,14 +246,17 @@ def test_translation_has_complete_recovery_manifest(tmp_path):
 
 
 def test_update_does_not_swallow_storage_errors(tmp_path, monkeypatch):
-    binding, _, _, _ = setup_binding(tmp_path)
+    binding, request, session, _ = setup_binding(tmp_path)
 
     def failed(*args, **kwargs):
         raise OSError("磁盘写入失败")
 
-    monkeypatch.setattr(binding.store, "update", failed)
+    monkeypatch.setattr(binding.store, "mutate_metadata", failed)
     run = SimpleNamespace(
-        state="running", user_cancelled=False, shutting_down=False, entries=SimpleNamespace(applied_keys=set())
+        state="running",
+        user_cancelled=False,
+        shutting_down=False,
+        entries=TaskEntryResults(session.tasks, request.run_id),
     )
     with pytest.raises(OSError, match="磁盘写入失败"):
         binding.update(run)
@@ -303,8 +307,8 @@ def test_temporary_configuration_restores_with_current_secrets_without_global_wr
     import json
 
     from tests.ui.tools.test_unified_task_config import View
+    from transbridge.application.translation.task_config_snapshot import execution_snapshot
     from transbridge.ui.tools.ai_translator.config_presenter import ConfigPresenter
-    from transbridge.ui.tools.ai_translator.task_config_snapshot import execution_snapshot
 
     global_config = LLMConfig(model="global", api_key="old-secret")
     global_config.embedding.api_key = "old-embedding-secret"

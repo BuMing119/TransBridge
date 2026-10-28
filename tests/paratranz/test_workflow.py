@@ -1,5 +1,5 @@
 """
-WorkFlow 单元测试：ParaTranzUploader / ArtifactWorkflow
+WorkFlow 单元测试：ArtifactWorkflow
 
 所有测试均 mock API 层，不发出真实 HTTP 请求。
 """
@@ -11,11 +11,8 @@ import zipfile
 
 import pytest
 
-from transbridge.converter.translation_entry import TranslationEntry
-from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.config_manager import ParatranzConfig
 from transbridge.paratranz.workflow.artifact import ArtifactWorkflow
-from transbridge.paratranz.workflow.uploader import ParaTranzUploader
 
 # ─────────────────────────────────────────────────────────────
 # 测试辅助函数
@@ -24,106 +21,6 @@ from transbridge.paratranz.workflow.uploader import ParaTranzUploader
 
 def make_config() -> ParatranzConfig:
     return ParatranzConfig(token="test_token")
-
-
-def make_entry(
-    entry_id: str,
-    original: str = "original",
-    translation: str = "",
-    stage: int = 0,
-    context: str = "NPC_:FULL",
-) -> TranslationEntry:
-    return TranslationEntry(
-        id=entry_id,
-        key=entry_id,
-        original=original,
-        translation=translation,
-        stage=stage,
-        context=context,
-    )
-
-
-def make_collection(*entries: TranslationEntry) -> TranslationEntryCollection:
-    return TranslationEntryCollection(entries=entries)
-
-
-# ─────────────────────────────────────────────────────────────
-# ParaTranzUploader
-# ─────────────────────────────────────────────────────────────
-
-
-class TestParaTranzUploader:
-    def _make_uploader(self) -> tuple[ParaTranzUploader, MagicMock]:
-        uploader = ParaTranzUploader(make_config())
-        mock_api = MagicMock()
-        uploader._api = mock_api
-        return uploader, mock_api
-
-    def test_single_upload_new_file(self):
-        uploader, api = self._make_uploader()
-        api.list_files.return_value = []
-        payloads = []
-        api.upload_file.side_effect = lambda project_id, path: payloads.append(
-            json.loads(Path(path).read_text(encoding="utf-8"))
-        )
-
-        result = uploader.upload_collection_as_single(make_collection(make_entry("entry")), 1, "plugin.json")
-
-        assert result.created == 1 and result.updated == result.skipped == 0
-        assert result.files == ["plugin.json"]
-        assert payloads[0][0]["key"] == "entry"
-        api.reupload_file.assert_not_called()
-
-    def test_single_upload_updates_existing_root_file(self):
-        uploader, api = self._make_uploader()
-        api.list_files.return_value = [{"id": 101, "name": "plugin.json"}]
-        api.get_file_info.return_value = {"id": 101, "name": "plugin.json"}
-
-        result = uploader.upload_collection_as_single(make_collection(make_entry("entry")), 1, "plugin.json")
-
-        assert result.updated == 1 and result.created == result.skipped == 0
-        assert result.files == ["plugin.json"]
-        api.reupload_file.assert_called_once()
-        assert api.reupload_file.call_args.args[:2] == (1, 101)
-        api.upload_file.assert_not_called()
-
-    def test_single_upload_error_keeps_filename_and_cause(self):
-        uploader, api = self._make_uploader()
-        api.list_files.return_value = []
-        failure = RuntimeError("server error")
-        api.upload_file.side_effect = failure
-
-        with pytest.raises(RuntimeError, match="plugin.json.*server error") as error:
-            uploader.upload_collection_as_single(make_collection(make_entry("entry")), 1, "plugin.json")
-
-        assert error.value.__cause__ is failure
-        api.upload_file.assert_called_once()
-
-    def test_single_upload_progress_callback(self):
-        uploader, api = self._make_uploader()
-        api.list_files.return_value = []
-        calls = []
-
-        uploader.upload_collection_as_single(
-            make_collection(make_entry("entry")),
-            1,
-            "plugin.json",
-            progress_callback=lambda current, total, name: calls.append((current, total, name)),
-        )
-
-        assert calls[0][:2] == (0, 1)
-        assert calls[-1] == (1, 1, "完成")
-
-    def test_single_upload_raises_when_list_files_fails(self):
-        uploader, api = self._make_uploader()
-        failure = RuntimeError("network error")
-        api.list_files.side_effect = failure
-
-        with pytest.raises(RuntimeError, match="获取项目文件列表失败") as error:
-            uploader.upload_collection_as_single(make_collection(make_entry("entry")), 1, "plugin.json")
-
-        assert error.value.__cause__ is failure
-        api.upload_file.assert_not_called()
 
 
 # ─────────────────────────────────────────────────────────────

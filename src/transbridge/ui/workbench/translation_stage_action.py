@@ -58,31 +58,28 @@ class TranslationStageAction:
         ):
             QMessageBox.warning(self._parent, "翻译状态未修改", "翻译内容已变化，请重新选择词条后再试。")
             return ()
-        if context.uses_authoritative_projection:
-            commands = context.project_commands
-            runtime = context.runtime_context
-            if commands is None or runtime is None or self._version_identity is None:
-                QMessageBox.warning(
-                    self._parent, "翻译状态修改失败", "工程写入服务不可用，状态未改变。请重新打开工程后再试。"
-                )
-                return ()
-            project_id, variant_id = self._version_identity
-            result = commands.replace_entry_states(
-                {change.entry.identity: (change.entry.translation, self._stage) for change in self._changes},
-                runtime,
-                expected_project_revision=self._project_revision,
-                expected_variant_revision=self._variant_revision,
-                expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+        commands = context.project_commands
+        runtime = context.runtime_context
+        if commands is None or runtime is None or self._version_identity is None:
+            QMessageBox.warning(
+                self._parent, "翻译状态修改失败", "工程写入服务不可用，状态未改变。请重新打开工程后再试。"
             )
-            if not result.is_success:
-                detail = result.diagnostics[0].message if result.diagnostics else "工程提交失败"
-                QMessageBox.warning(self._parent, "翻译状态修改失败", f"{detail}\n\n状态未改变，请刷新后重试。")
-                return ()
+            return ()
+        project_id, variant_id = self._version_identity
+        result = commands.replace_entry_states(
+            {change.entry.identity: (change.entry.translation, self._stage) for change in self._changes},
+            runtime,
+            expected_project_revision=self._project_revision,
+            expected_variant_revision=self._variant_revision,
+            expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+        )
+        if not result.is_success:
+            detail = result.diagnostics[0].message if result.diagnostics else "工程提交失败"
+            QMessageBox.warning(self._parent, "翻译状态修改失败", f"{detail}\n\n状态未改变，请刷新后重试。")
+            return ()
 
         for change in self._changes:
             change.entry.stage = self._stage
-        if not context.uses_authoritative_projection:
-            context.mark_dirty()
         return self._changes
 
 

@@ -10,7 +10,9 @@ import pytest
 
 from tests.ui.tools import test_ai_project_name_preparation as support
 from transbridge.application.translation import FilesystemTranslationCheckpointPort, LegacyTranslationCandidateSession
+from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
 from transbridge.application.translation.entry_alias import ai_entry_key
+from transbridge.ui.tools.ai_translator.run_spec import FrozenExecutionConfig
 from transbridge.ui.tools.ai_translator.source_execution import SourceExecutor
 from transbridge.ui.tools.ai_translator.source_terms import source_run_id
 from transbridge.ui.tools.ai_translator.task_translation_resume import prepare_translation_recovery
@@ -18,7 +20,7 @@ from transbridge.ui.tools.ai_translator.task_translation_resume import prepare_t
 name_run = support.name_run
 
 
-def _record(run, task, candidates):
+def _record(run, task, candidates, *, config=None):
     root = Path(run.request.config.get_ai_translator_dir(Path(task.esp_path).stem)) / "runtime-v2"
     session = LegacyTranslationCandidateSession(
         run_id=source_run_id("old-task-attempt-1", task.key),
@@ -30,7 +32,7 @@ def _record(run, task, candidates):
         model="fixture",
     )
     session.accept({ai_entry_key(entry): text for entry, text in candidates}, task.collection)
-    run.request.recovery_record = {
+    record = {
         "task_id": "old-task",
         "execution_runs": ["old-task"],
         "sources": [
@@ -52,8 +54,23 @@ def _record(run, task, candidates):
             }
         ],
     }
-    run.request.recovery_task_id = "old-task"
-    run.request.recovery_directory = run.root / "p"
+    execution = (
+        {}
+        if config is None
+        else {
+            "spec": replace(run.request.spec, execution_profile=AiExecutionProfile.from_config("translate", config)),
+            "config_snapshot": FrozenExecutionConfig(config),
+        }
+    )
+    run.request = replace(
+        run.request,
+        **execution,
+        recovery_record=record,
+        recovery_task_id="old-task",
+        recovery_directory=run.root / "p",
+    )
+    run.executor.request = run.request
+    run.executor.config = run.request.config
     return root
 
 
@@ -118,10 +135,11 @@ def test_paused_recovery_can_be_cancelled_without_loading_or_mutating(name_run, 
 
 def test_completed_postprocess_is_restored_into_new_private_draft(name_run, monkeypatch):
     run = name_run
-    run.request.config.enable_post_process = True
+    config = run.request.config
+    config.enable_post_process = True
     run.executor.consistency = None
     task = run.task("A", [("known", "Whiterun", "LCTN:FULL")])
-    _record(run, task, [(task.entries[0], "恢复雪漫")])
+    _record(run, task, [(task.entries[0], "恢复雪漫")], config=config)
     run.executor.prepare_names((task,))
     first = run.executor.execute(task)
     assert first.successful, first.error
@@ -153,14 +171,15 @@ def test_completed_postprocess_is_restored_into_new_private_draft(name_run, monk
 
 def test_interrupted_comprehensive_review_reuses_completed_batches(name_run, monkeypatch):
     run = name_run
-    run.request.config.enable_post_process = True
-    run.request.config.pp_strategy = "proofread"
-    run.request.config.max_concurrent = 1
-    run.request.config.max_tokens_per_batch = 600
+    config = run.request.config
+    config.enable_post_process = True
+    config.pp_strategy = "proofread"
+    config.max_concurrent = 1
+    config.max_tokens_per_batch = 600
     run.executor.consistency = None
     rows = [(str(index), f"Sentence {index}: " + "word " * 180, "BOOK:DESC") for index in range(3)]
     task = run.task("A", rows)
-    _record(run, task, [(entry, f"已翻译 {index}") for index, entry in enumerate(task.entries)])
+    _record(run, task, [(entry, f"已翻译 {index}") for index, entry in enumerate(task.entries)], config=config)
     reviewed = []
     interrupt = True
 

@@ -72,7 +72,7 @@ class ConfigPresenter:
 
     def restore_task_config(self, snapshot: dict, mode: str) -> LLMConfig:
         """Restore a local recovery draft while preserving this session's credentials."""
-        from .task_config_snapshot import restore_execution_snapshot
+        from transbridge.application.translation.task_config_snapshot import restore_execution_snapshot
 
         if not self._task_draft:
             raise ValueError("任务恢复只能更新临时任务配置。")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSlot
 
+from .task_activity import ActivityBatch
 from .task_run_presentation import concise_event, source_label
 
 
@@ -79,13 +80,13 @@ class TaskWorkerBinding(QObject):
     def _logs(self, events):
         if not self._current or self.run.completion_received:
             return
-        lines = [
-            f"{self._labels.get(key, '处理来源')} · {event}"
+        events = [
+            (self._labels.get(key, "处理来源"), event)
             for key, text in events
             if (event := concise_event(text)) is not None
         ]
-        if lines:
-            self.run.logged.emit("\n".join(lines))
+        if events:
+            self.run.logged.emit(ActivityBatch(events))
 
     @pyqtSlot(str, str)
     def _log_ready(self, key, path):

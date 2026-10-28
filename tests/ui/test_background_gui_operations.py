@@ -22,7 +22,8 @@ from transbridge.application.io import FormatId
 from transbridge.application.io.identity import EntryKey, ExternalEntryRef, SourceNamespace
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.ui.coordinators.project_coordinator import ProjectCoordinator
-from transbridge.ui.main_window import MainWindow, _AutoSaveManager
+from transbridge.ui.main_window import MainWindow
+from transbridge.ui.shell.window_lifecycle import AutoSaveManager
 from transbridge.ui.paratranz import config_dialog as config_dialog_module
 from transbridge.ui.paratranz.config_dialog import ConfigDialog
 from transbridge.ui.paratranz.string_detail_dialog import StringDetailDialog
@@ -77,7 +78,7 @@ def test_visible_disk_task_runs_off_gui_thread_and_restores_progress() -> None:
         return "done"
 
     before = time.monotonic()
-    accepted = MainWindow._start_foreground_task(
+    accepted = MainWindow.start_foreground_task(
         harness,
         operation,
         message="正在读取…",
@@ -133,7 +134,9 @@ def test_authoritative_save_runs_off_gui_thread_and_reports_completion() -> None
             return SimpleNamespace(is_success=True)
 
     harness = SimpleNamespace(
-        _ctx=SimpleNamespace(uses_authoritative_projection=True, dirty=False),
+        _ctx=SimpleNamespace(
+            uses_authoritative_projection=True, dirty=False, active_version_identity=("project", "variant")
+        ),
         _project_commands=Commands(),
         _runtime_context=object(),
         _foreground_worker=None,
@@ -148,7 +151,7 @@ def test_authoritative_save_runs_off_gui_thread_and_reports_completion() -> None
     harness._save_current_project = MethodType(MainWindow._save_current_project, harness)
 
     before = time.monotonic()
-    queued = MainWindow._save_current_project_async(
+    queued = MainWindow.save_current_project_async(
         harness,
         on_finished=completions.append,
     )
@@ -211,7 +214,9 @@ def test_current_window_project_open_shows_and_clears_start_center_progress() ->
             })
 
     host = SimpleNamespace(
-        context=SimpleNamespace(uses_authoritative_projection=True, dirty=False),
+        context=SimpleNamespace(
+            uses_authoritative_projection=True, dirty=False, active_version_identity=("project", "variant")
+        ),
         current_project_opener=Opener(),
         runtime_context=object(),
         project_open_worker=None,
@@ -440,7 +445,9 @@ def test_automatic_save_is_silent_and_does_not_disable_workbench() -> None:
             return SimpleNamespace(is_success=True)
 
     harness = SimpleNamespace(
-        _ctx=SimpleNamespace(uses_authoritative_projection=True, dirty=False),
+        _ctx=SimpleNamespace(
+            uses_authoritative_projection=True, dirty=False, active_version_identity=("project", "variant")
+        ),
         _project_commands=Commands(),
         _runtime_context=object(),
         _foreground_worker=None,
@@ -454,7 +461,7 @@ def test_automatic_save_is_silent_and_does_not_disable_workbench() -> None:
     )
     harness._save_current_project = MethodType(MainWindow._save_current_project, harness)
 
-    queued = MainWindow._save_current_project_async(harness, automatic=True)
+    queued = MainWindow.save_current_project_async(harness, automatic=True)
 
     assert queued is True
     assert started.wait(1)
@@ -480,7 +487,7 @@ def test_autosave_debounce_restarts_after_each_dirty_edit() -> None:
         context=context,
         save_current_project_async=lambda **kwargs: saves.append(kwargs["automatic"]) or True,
     )
-    manager = _AutoSaveManager(window, debounce_ms=80)
+    manager = AutoSaveManager(window, debounce_ms=80)
 
     manager.trigger_debounce()
     deadline = time.monotonic() + 0.05
@@ -513,7 +520,7 @@ def test_autosave_requeues_when_project_is_still_dirty_after_save() -> None:
         context=context,
         save_current_project_async=lambda **kwargs: requests.append(kwargs) or True,
     )
-    manager = _AutoSaveManager(window, debounce_ms=80)
+    manager = AutoSaveManager(window, debounce_ms=80)
 
     manager._auto_save()
 
@@ -560,7 +567,9 @@ def test_authoritative_save_does_not_report_current_when_new_changes_remain() ->
             return SimpleNamespace(is_success=True)
 
     harness = SimpleNamespace(
-        _ctx=SimpleNamespace(uses_authoritative_projection=True, dirty=True),
+        _ctx=SimpleNamespace(
+            uses_authoritative_projection=True, dirty=True, active_version_identity=("project", "variant")
+        ),
         _project_commands=Commands(),
         _runtime_context=object(),
         _foreground_worker=None,
@@ -574,7 +583,7 @@ def test_authoritative_save_does_not_report_current_when_new_changes_remain() ->
     )
     harness._save_current_project = MethodType(MainWindow._save_current_project, harness)
 
-    queued = MainWindow._save_current_project_async(harness, on_finished=completions.append)
+    queued = MainWindow.save_current_project_async(harness, on_finished=completions.append)
 
     assert queued is True
     _wait_until(lambda: harness._save_worker is None)
@@ -668,7 +677,6 @@ def test_gui_close_handlers_do_not_block_on_thread_waits() -> None:
     targets = (
         root / "src/transbridge/ui/main_window.py",
         root / "src/transbridge/ui/paratranz/string_detail_dialog.py",
-        root / "src/transbridge/ui/tools/ai_translator/_translation_progress_window.py",
         root / "src/transbridge/ui/tools/ai_translator/task_progress.py",
     )
     offenders: list[str] = []
@@ -694,12 +702,12 @@ def test_project_import_has_no_fixed_500_mib_limit() -> None:
     source = "\n".join(
         path.read_text(encoding="utf-8")
         for path in (
-            ui_root / "main_window.py",
+            ui_root.parent / "persistence/project_archive.py",
             ui_root / "coordinators/project_transfer_coordinator.py",
         )
     )
     assert "500 * 1024 * 1024" not in source
-    assert "shutil.disk_usage(destination.parent).free" in source
+    assert "shutil.disk_usage(self._paths.root).free" in source
 
 
 def test_api_worker_can_report_auth_errors_to_owning_dialog() -> None:

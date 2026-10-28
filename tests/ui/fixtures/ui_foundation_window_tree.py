@@ -18,6 +18,7 @@ import os
 import platform
 import statistics
 import sys
+import tempfile
 import time
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -222,7 +223,15 @@ def build_representative_window_tree(
         from transbridge.ui.tools.smart_assistant.chat_widget import ChatWidget
 
         stack.enter_context(patch.object(ai_config_module.LLMConfig, "load_from_file", return_value=LLMConfig()))
-        main_window = MainWindow()
+        from pathlib import Path
+
+        from tests.ui.fixtures.project_runtime import project_window_dependencies
+
+        root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="tb-window-")))
+        dependencies = project_window_dependencies(root)
+        stack.callback(dependencies["runtime"].close)
+        stack.callback(dependencies["app_context"].close_projection)
+        main_window = MainWindow(**dependencies)
         collection = TranslationEntryCollection(
             TranslationEntry(str(index), f"key-{index:05d}", f"Original {index}", "", index % 4, "NPC_:FULL")
             for index in range(entry_count)

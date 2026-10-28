@@ -5,8 +5,9 @@ from __future__ import annotations
 from copy import copy
 from dataclasses import dataclass, replace
 
+from transbridge.application.translation.task_scope import SourceTask
+
 from .source_execution import SourceOutcome
-from .task_scope import SourceTask
 
 
 @dataclass(frozen=True)

@@ -17,7 +17,7 @@ drain = editor_tests.drain
 
 def ordinary_entries(editor):
     entries = tuple(dialogue_entry("MGEF", f"{number:08X}", index=number) for number in range(1, 4))
-    editor.context.collection = TranslationEntryCollection(entries)
+    editor._editing_project.install(entries, esp_path="fixture.esp")
     drain(editor)
     return entries
 
@@ -80,8 +80,8 @@ def test_close_permission_alone_does_not_discard_drafts(editor, monkeypatch):
 
 def test_ordinary_navigation_follows_opening_filter_and_sort(editor):
     entries = ordinary_entries(editor)
-    editor.context.collection = TranslationEntryCollection(
-        replace(entry, stage=1) if entry == entries[1] else entry for entry in entries
+    editor._editing_project.install(
+        (replace(entry, stage=1) if entry == entries[1] else entry for entry in entries), esp_path="fixture.esp"
     )
     editor.preview.apply_filter_state({"stage": [0]})
     header = editor.preview._table.horizontalHeader()
@@ -130,7 +130,7 @@ def test_translation_apply_keeps_relationship_index_and_scene_navigation(editor)
 
 def test_apply_synchronizes_matching_entries_before_returning(editor, monkeypatch):
     entries = ordinary_entries(editor)
-    editor.context.collection = TranslationEntryCollection(replace(entry, original="Same") for entry in entries)
+    editor._editing_project.install((replace(entry, original="Same") for entry in entries), esp_path="fixture.esp")
     monkeypatch.setattr("transbridge.ui.dialogue.sync_dialog.SyncTranslationDialog.exec", lambda self: 1)
     editor.open_entry(entries[0].identity)
     editor.view.translation.setPlainText("统一")

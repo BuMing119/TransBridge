@@ -12,13 +12,13 @@ import pytest
 from transbridge.ai_translator.name_preparation_plan import NameAuthority
 from transbridge.ai_translator.project_terminology_runtime import ProjectTerminologyBinding
 from transbridge.application.translation.ai_request_budget import AiRequestBudget
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.tools.ai_translator import task_name_preparation
 from transbridge.ui.tools.ai_translator.project_name_progress import ProjectNameProgressReporter
 from transbridge.ui.tools.ai_translator.source_execution import SourceExecutor, SourceOutcome
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 from transbridge.ui.tools.ai_translator.task_worker import AiTaskWorker
 
 

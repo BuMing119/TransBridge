@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import RLock
 from typing import Any
 
 from transbridge.application.projects import (
@@ -15,11 +16,16 @@ from transbridge.application.projects import (
 from transbridge.application.sessions import SessionLifecycleService, SessionSnapshot
 
 from .models import ProjectionSnapshot
+from .project_entries import ProjectEntryProjection
 from .store import ProjectionStore
 
 
-def project_projection(active: ActiveProject | None) -> ProjectionSnapshot | None:
+def project_projection(
+    active: ActiveProject | None, *, entry_projector: ProjectEntryProjection | None = None
+) -> ProjectionSnapshot | None:
     if active is None:
+        if entry_projector is not None:
+            entry_projector.rows(None)
         return None
     summary = active.summary()
     variant = None if active.variant is None else active.variant.snapshot()
@@ -31,7 +37,13 @@ def project_projection(active: ActiveProject | None) -> ProjectionSnapshot | Non
         "sources": [dict(value) for value in active.project.envelope.data.get("sources", ())],
         "active_variant_id": active.project.envelope.data.get("active_variant_id"),
         "variants": [item.to_dict() for item in variants],
-        "entries": [] if variant is None else [entry.to_dict() for entry in variant.entries],
+        "entries": (
+            entry_projector.frozen_rows(variant)
+            if entry_projector is not None
+            else []
+            if variant is None
+            else [entry.to_dict() for entry in variant.entries]
+        ),
         "label_library": {} if variant is None else variant.label_library_data(),
         "paratranz_binding": None if paratranz_binding is None else paratranz_binding.to_dict(),
     })
@@ -83,6 +95,28 @@ def session_projection(
 class ProjectProjectionPublisher:
     store: ProjectionStore
     lifecycle: ProjectLifecycleService | None = None
+    _entry_projector: ProjectEntryProjection = field(default_factory=ProjectEntryProjection, init=False, repr=False)
+    _prepared: tuple[ActiveProject | None, ProjectEntryProjection] | None = field(default=None, init=False, repr=False)
+    _lock: Any = field(default_factory=RLock, init=False, repr=False)
+
+    def prepare(self, candidate: ActiveProject | None) -> ProjectionSnapshot | None:
+        """Prepare one detached view; the caller must discard it in its operation's finally block.
+
+        Committing the exact candidate promotes its immutable entry rows. Project
+        metadata is still rebuilt from the committed document, including any
+        persistence acknowledgements or changes to its mutable JSON fields.
+        """
+        with self._lock:
+            self._prepared = None
+            projector = ProjectEntryProjection()
+            snapshot = project_projection(candidate, entry_projector=projector)
+            self._prepared = candidate, projector
+            return snapshot
+
+    def discard_prepared(self) -> None:
+        """Release any uncommitted candidate without disturbing the active row cache."""
+        with self._lock:
+            self._prepared = None
 
     def bind(self, lifecycle: ProjectLifecycleService) -> None:
         self.lifecycle = lifecycle
@@ -93,7 +127,21 @@ class ProjectProjectionPublisher:
 
     def rebuild(self) -> None:
         active = None if self.lifecycle is None else self.lifecycle.active
-        self.store.rebuild(project_projection(active))
+        with self._lock:
+            prepared = self._prepared
+            if prepared is not None:
+                candidate, projector = prepared
+                if (
+                    active is not None
+                    and candidate is not None
+                    and active.project is candidate.project
+                    and active.variant is candidate.variant
+                ):
+                    self._entry_projector = projector
+                    self._prepared = None
+            if active is None:
+                self._prepared = None
+            self.store.rebuild(project_projection(active, entry_projector=self._entry_projector))
 
 
 @dataclass(slots=True)

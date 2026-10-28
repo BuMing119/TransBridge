@@ -7,11 +7,11 @@ from types import SimpleNamespace
 import pytest
 
 from tests.ui.tools import test_ai_session_preparation as support
+from transbridge.application.translation.task_config_snapshot import execution_signature as signature
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.tools.ai_translator.scope_presenter import TranslationScope
 from transbridge.ui.tools.ai_translator.task_empty_recovery import EmptyRecoveryCompletion
-from transbridge.ui.tools.ai_translator.task_recovery_binding import signature
 from transbridge.ui.tools.ai_translator.task_scope import SourceWorkbenchScope, TaskScope
 from transbridge.ui.tools.ai_translator.task_session import TaskSession
 from transbridge.ui.tools.ai_translator.task_source_selection import SelectionIntent, capture_selection_intent

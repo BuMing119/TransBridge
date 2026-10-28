@@ -9,6 +9,7 @@ from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QApplication, QInputDialog, QMainWindow, QWidget
 import pytest
 
+from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
 from transbridge.config.ui_preferences import DEFAULT_THEME_ID, ThemeMode
 from transbridge.ui import context as context_module
 from transbridge.ui.foundation.adapters import ThemeView
@@ -24,15 +25,24 @@ _APP = QApplication.instance() or QApplication([])
 @pytest.mark.parametrize("width", [900, 1130, 1600])
 def test_themed_context_keeps_project_save_and_content_readable(monkeypatch, width):
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: SimpleNamespace(token=""))
-    context = context_module.AppContext()
-    context._active_project = SimpleNamespace(
-        name="这是一个包含非常长名称的翻译工程" * 4,
-        variants=[{"name": "default"}],
-        sources=[],
-        config_path="demo",
-        project_dir="demo",
+    project_name = "这是一个包含非常长名称的翻译工程" * 4
+    store = ProjectionStore(
+        ProjectionSnapshot(
+            "project:layout",
+            0,
+            0,
+            {
+                "project_id": "layout",
+                "project_name": project_name,
+                "variant_id": "default",
+                "variants": [{"id": "default", "name": "default"}],
+                "sources": [],
+                "entries": [],
+            },
+        )
     )
-    context._active_variant = "default"
+    context = context_module.AppContext(project_projection=store)
+    assert context.project_name == project_name
     original_style, original_palette = _APP.styleSheet(), QPalette(_APP.palette())
     preferences = SimpleNamespace(
         load=lambda: SimpleNamespace(
@@ -64,6 +74,8 @@ def test_themed_context_keeps_project_save_and_content_readable(monkeypatch, wid
         widget.close()
         theme_view.close()
         service.close()
+        context.close_projection()
+        store.close()
         _APP.setStyleSheet(original_style)
         _APP.setPalette(original_palette)
 

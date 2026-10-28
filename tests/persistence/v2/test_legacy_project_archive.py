@@ -93,7 +93,6 @@ def _xml_source(path: Path, *, original: str = "Hello", extra_entry: bool = Fals
 def _qualified_plugin_archive(tmp_path: Path):
     from tests.plugin_fixtures import write_plugin
     from transbridge.converter.translation_entry import TranslationEntry
-    from transbridge.persistence.variant_store import VariantStore
 
     path = write_plugin(
         tmp_path / "duplicate.esp", [(0x800, "Same", "First"), (0x800, "Same", "Second"), (0x801, "Other", "Plain")]
@@ -115,23 +114,28 @@ def _qualified_plugin_archive(tmp_path: Path):
         )
         for index, item in enumerate(prepared.hydration.entries)
     ]
-    # Use the real legacy writer, including independent labels and stage history.
-    store = VariantStore(tmp_path / "主版本" / "current.json")
-    labels = {
-        entry.identity.serialize() if entry.requires_original_match else entry.id: {f"label-{index}"}
-        for index, entry in enumerate(entries)
+    keys = [entry.identity.serialize() if entry.requires_original_match else entry.id for entry in entries]
+    current = {
+        "variant": "主版本",
+        "translations": {key: entry.translation for key, entry in zip(keys, entries, strict=True)},
+        "labels": {key: [f"label-{index}"] for index, key in enumerate(keys)},
+        "label_library": {},
+        "entry_states": {
+            key: {
+                "stage": entry.stage,
+                "revision": entry.revision.value,
+                "provenance": [item.to_dict() for item in entry.provenance],
+            }
+            for key, entry in zip(keys, entries, strict=True)
+        },
     }
-    store.collect_from(entries, labels, {})
-    store.save()
-    snapshot_path = store.save_snapshot(tmp_path / "主版本" / "snapshots", "Before")
     source = {"key": str(path), "path": str(path), "type": "esp"}
-    current = json.loads(store._path.read_text(encoding="utf-8"))
     archive = _write_archive(
         tmp_path / "qualified.transbridge",
         _project(source),
         {
             "主版本/current.json": current,
-            "主版本/snapshots/before.json": json.loads(snapshot_path.read_text(encoding="utf-8")),
+            "主版本/snapshots/before.json": {**current, "snapshot_name": "Before"},
         },
     )
     return path, archive, entries, current, source
@@ -183,6 +187,44 @@ def test_qualified_legacy_archive_keeps_identity_when_source_is_missing(tmp_path
         assert actual[entry.identity] == entry.translation
     assert project.envelope.data["legacy"]["archive_recovery"] == "source-baseline-required"
     assert all(fingerprint.sha256 is None for fingerprint in variants[0].source_fingerprints)
+
+
+def test_sparse_legacy_history_restores_complete_baseline_and_explicit_empty(tmp_path):
+    source, prepared = _xml_source(tmp_path / "source.xml", extra_entry=True)
+    saved_key = prepared.hydration.entries[0].legacy_id
+    records = {
+        "Main/current.json": {"variant": "Main", "translations": {saved_key: "current"}},
+        "Main/snapshots/old.json": {
+            "variant": "Main",
+            "snapshot_name": "old",
+            "translations": {saved_key: ""},
+            "entry_states": {saved_key: {"stage": 5}},
+        },
+    }
+    project = _project(source, names=("Main",))
+    path = _write_archive(tmp_path / "legacy.transbridge", project, records)
+    services = build_persistence_v2_services(
+        tmp_path / "imported", id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now"
+    )
+    try:
+        imported = services.project_archive.import_project(str(path), _context())
+        assert services.current_project_opener.open_path(imported, _context()).is_success
+        for entry in services.project_lifecycle.active.variant.snapshot().entries:
+            assert services.gui_project_commands.update_entry(
+                entry.entry_key, _context(), translation="later"
+            ).is_success
+        history = services.project_snapshots.list(_context())
+        restored = services.project_snapshots.restore(history[0].identity, _context())
+        assert restored.is_success, restored.diagnostics
+        actual = {entry.entry_key: entry for entry in services.project_lifecycle.active.variant.snapshot().entries}
+        assert len(actual) == 2
+        saved = actual[prepared.hydration.entries[0].entry_key]
+        assert saved.translation == "" and saved.stage.value == 5
+        other_key = prepared.hydration.entries[1].entry_key
+        baseline = next(entry for entry in prepared.baseline.entries if entry.entry_key == other_key)
+        assert actual[other_key].translation == baseline.translation
+    finally:
+        services.close()
 
 
 @pytest.mark.parametrize("key_kind", ["bare", "wrong_original"])

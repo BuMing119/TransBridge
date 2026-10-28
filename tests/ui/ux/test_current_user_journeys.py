@@ -4,11 +4,14 @@ import inspect
 import os
 from types import SimpleNamespace
 
+from tests.ui.tools.ai_runtime_support import ai_task_runtime
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QMainWindow
 
 from transbridge.application.history_search import HistorySearchPage, IndexStatus
+from transbridge.persistence import WorkspaceState
 from transbridge.ui.coordinators import project_coordinator as project_module
 from transbridge.ui.coordinators.operation_coordinator import OperationCoordinator
 from transbridge.ui.coordinators.parse_coordinator import ParseCoordinator
@@ -137,18 +140,28 @@ def test_v2_new_project_routes_to_start_center_without_legacy_creation() -> None
     assert calls == [("start", True)]
 
 
-def test_current_authoritative_startup_attempts_automatic_restore(monkeypatch) -> None:
-    workspace = SimpleNamespace()
-    monkeypatch.setattr(project_module.WorkspaceState, "load", lambda _path: workspace)
+def _startup_workspace(tmp_path, monkeypatch):
+    path = tmp_path / "workspace.json"
+    workspace = WorkspaceState(path)
+    workspace.last_session["filter_state"] = {"search_key": "saved filter"}
+    workspace.save()
+    monkeypatch.setattr(project_module, "workspace_path", lambda: path)
+    return workspace
+
+
+def test_current_authoritative_startup_attempts_automatic_restore(monkeypatch, tmp_path) -> None:
+    workspace = _startup_workspace(tmp_path, monkeypatch)
     runtime_context = object()
     prepare_calls: list[object] = []
     opener = SimpleNamespace(prepare_active=lambda context: prepare_calls.append(context) or "prepared")
     context = SimpleNamespace(uses_authoritative_projection=True, workspace=None)
+    restored_filters = []
     host = SimpleNamespace(
         context=context,
         current_project_opener=opener,
         runtime_context=runtime_context,
         show_message=lambda _message: None,
+        workbench=SimpleNamespace(preview=SimpleNamespace(apply_filter_state=restored_filters.append)),
     )
     captured: dict[str, object] = {}
     coordinator = ProjectCoordinator(host)
@@ -160,16 +173,18 @@ def test_current_authoritative_startup_attempts_automatic_restore(monkeypatch) -
     coordinator._start_current_project_open = capture  # type: ignore[method-assign]
     coordinator.init_workspace()
 
-    assert context.workspace is workspace
+    assert isinstance(context.workspace, WorkspaceState)
+    assert context.workspace.last_session == workspace.last_session
+    assert restored_filters == [workspace.last_session["filter_state"]]
     assert prepare_calls == [runtime_context]
     assert captured["result"] == "prepared"
     assert captured["success_verb"] == "已恢复"
     assert captured["show_error_dialog"] is False
 
 
-def test_explicit_startup_project_takes_precedence_over_active_reference(monkeypatch) -> None:
-    workspace = SimpleNamespace()
-    monkeypatch.setattr(project_module.WorkspaceState, "load", lambda _path: workspace)
+def test_explicit_startup_project_takes_precedence_over_active_reference(monkeypatch, tmp_path) -> None:
+    workspace = _startup_workspace(tmp_path, monkeypatch)
+    project_path = str(tmp_path / "selected.transbridge")
     runtime_context = object()
     prepare_paths: list[tuple[str, object]] = []
     opener = SimpleNamespace(
@@ -178,11 +193,13 @@ def test_explicit_startup_project_takes_precedence_over_active_reference(monkeyp
         prepare_active=lambda _context: (_ for _ in ()).throw(AssertionError("active pointer must be skipped")),
     )
     context = SimpleNamespace(uses_authoritative_projection=True, workspace=None)
+    restored_filters = []
     host = SimpleNamespace(
         context=context,
         current_project_opener=opener,
         runtime_context=runtime_context,
         show_message=lambda _message: None,
+        workbench=SimpleNamespace(preview=SimpleNamespace(apply_filter_state=restored_filters.append)),
     )
     captured: dict[str, object] = {}
     coordinator = ProjectCoordinator(host)
@@ -192,10 +209,12 @@ def test_explicit_startup_project_takes_precedence_over_active_reference(monkeyp
         captured.update(kwargs)
 
     coordinator._start_current_project_open = capture  # type: ignore[method-assign]
-    coordinator.init_workspace(initial_project_path="D:/projects/selected.json")
+    coordinator.init_workspace(initial_project_path=project_path)
 
-    assert context.workspace is workspace
-    assert prepare_paths == [("D:/projects/selected.json", runtime_context)]
+    assert isinstance(context.workspace, WorkspaceState)
+    assert context.workspace.last_session == workspace.last_session
+    assert restored_filters == [workspace.last_session["filter_state"]]
+    assert prepare_paths == [(project_path, runtime_context)]
     assert captured["result"] == "prepared-explicit"
     assert captured["success_verb"] == "已打开"
     assert captured["show_error_dialog"] is False
@@ -318,7 +337,7 @@ def test_history_search_menu_opens_independent_windows() -> None:
             return _Subscription()
 
     class _Tasks:
-        runtime = _TaskRuntime()
+        runtime = ai_task_runtime()
 
     class _Search:
         @staticmethod

@@ -26,6 +26,8 @@ class DownloadPreview:
     status: str = ""
     can_save: bool = False
     retryable: bool = False
+    source_ids: tuple[str, ...] = ()
+    policy: str = ""
 
 
 @dataclass(frozen=True, slots=True)

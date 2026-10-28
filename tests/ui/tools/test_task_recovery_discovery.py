@@ -90,6 +90,7 @@ def test_discovery_excludes_live_completed_cancelled_and_other_versions(setup_re
     requests = []
     registry.recovery_requested.connect(lambda item, restart: requests.append((item["task_id"], restart)))
     dialog.continue_button.click()
+    wait_until(app, lambda: not registry._recovery_workers)
     assert requests == [("resume", False)]
 
 
@@ -111,6 +112,7 @@ def test_later_keeps_manifest_and_switching_version_discovers_its_task(setup_reg
     registry.recovery.dialogs[0].continue_button.click()
     assert requests == []
     registry.recovery.dialogs[1].restart_button.click()
+    wait_until(app, lambda: not registry._recovery_workers)
     assert requests == [("second", True)]
 
 
@@ -133,6 +135,7 @@ def test_history_recovers_manifest_only_and_preserves_legacy_read_only(setup_reg
         else:
             assert not dialog.continue_button.isEnabled()
             assert not dialog.restart_button.isEnabled()
+    wait_until(app, lambda: not registry._recovery_workers)
     assert requests == [("partial", False)]
     assert registry.recovery.dialogs == []
 
@@ -164,6 +167,7 @@ def test_later_reappears_on_ai_button_without_opening_new_task(setup_registry):
     app.processEvents()
     assert len(registry.recovery.dialogs) == 3
     registry.recovery.dialogs[-1].continue_button.click()
+    wait_until(app, lambda: not registry._recovery_workers)
     assert len(requests) == 1
     assert not registry.recovery.reoffer_deferred(Mock())
 
@@ -335,25 +339,28 @@ def test_damaged_checkpoint_does_not_hide_other_recovery_records(tmp_path):
                 )
             ])
     records = {item["task_id"]: item for item in read_recovery_records(tmp_path)}
-    assert records["damaged"]["saved_count"] == 0
-    assert records["healthy"]["saved_count"] == 1
-    assert records["legacy"]["saved_count"] == 0
+    assert all("saved_count" not in value for value in records.values())
+    assert all(value["recovery_summary"] for value in records.values())
 
 
 @pytest.mark.parametrize("state", ["completed", "cancelled"])
-def test_finished_manifest_can_restart_but_cannot_continue(setup_registry, state):
+def test_finished_manifest_can_reopen_results_or_start_fresh(setup_registry, state):
     app, _ctx, registry, store = setup_registry
     store.create(record(state=state))
     dialog = TaskHistoryDialog(registry)
     registry.history_windows.append(dialog)
     wait_until(app, lambda: not dialog.busy and dialog.tasks.topLevelItemCount() == 1)
-    assert not dialog.continue_button.isEnabled()
+    assert dialog.continue_button.isEnabled()
     assert dialog.restart_button.isEnabled()
     requests = []
     registry.recovery_requested.connect(lambda item, restart: requests.append((item["task_id"], restart)))
-    assert not registry.request_recovery(record(state=state))
+    dialog.continue_button.click()
+    wait_until(app, lambda: not registry._recovery_workers)
+    assert requests == [("resume", False)]
+    registry.release_recovery_request("resume")
     dialog.restart_button.click()
-    assert requests == [("resume", True)]
+    wait_until(app, lambda: not registry._recovery_workers)
+    assert requests == [("resume", False), ("resume", True)]
     registry.windows["old-window"] = SimpleNamespace(
         request=SimpleNamespace(recovery_task_id="resume"), run=SimpleNamespace(state=state, shutdown=lambda: None)
     )

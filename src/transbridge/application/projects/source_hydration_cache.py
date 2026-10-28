@@ -60,6 +60,21 @@ class SourceHydrationCache:
         self._max_bytes = max_bytes
 
     def prepare(self, preparer, request, context, *, scope_key):
+        return self._prepare(preparer, request, context, scope_key=scope_key, installed=False)
+
+    def read_installed(self, preparer, request, context, *, scope_key, source=None):
+        """Reuse verified source text for an already-installed Project revision.
+
+        The request must carry the authoritative installed fingerprint. External
+        file changes are installed through source update, not through result
+        merging. Registered artifacts restore their captured content directly;
+        ``prepare`` remains the explicit live-input operation.
+        """
+        if request.expected_fingerprint is None:
+            raise ValueError("installed source text requires an authoritative fingerprint")
+        return self._prepare(preparer, request, context, scope_key=scope_key, installed=True, source=source)
+
+    def _prepare(self, preparer, request, context, *, scope_key, installed, source=None):
         authority = (
             context.owner_id,
             context.session_id,
@@ -69,8 +84,33 @@ class SourceHydrationCache:
             context.authorized_roots,
             context.metadata,
         )
-        key = (scope_key, authority, json.dumps(request.fingerprint_data(), ensure_ascii=False, sort_keys=True))
+        artifact_id = source.get("source_artifact_id") if installed and source is not None else None
+        key = (
+            scope_key,
+            authority,
+            json.dumps(request.fingerprint_data(), ensure_ascii=False, sort_keys=True),
+            artifact_id,
+        )
         with self._lock:
+            cached = self._items.get(key)
+            if installed and cached is not None:
+                self._items.move_to_end(key)
+                return cached.read_model
+            if artifact_id is not None:
+                loader = getattr(preparer, "load_saved_source", None)
+                if loader is None:
+                    raise DomainError(
+                        ErrorCategory.PREREQUISITE,
+                        "SOURCE_ARTIFACT_READER_REQUIRED",
+                        "当前服务未配置保存来源读取能力。",
+                    )
+                read_model = _read_model(loader(source))
+                if read_model is None or read_model.fingerprint.sha256 != request.expected_fingerprint:
+                    raise DomainError(
+                        ErrorCategory.CONFLICT, "PROJECT_SOURCE_FINGERPRINT_MISMATCH", "保存来源与当前工程身份不一致。"
+                    )
+                self._remember(key, ("artifact", artifact_id), read_model)
+                return read_model
             try:
                 signature = source_input_signature(request, context)
             except OSError:
@@ -97,24 +137,24 @@ class SourceHydrationCache:
                     "CATEGORIZED_SOURCE_CHANGED",
                     "工程来源或字符串依赖在读取期间变化，未采用不完整内容；可在当前窗口重试。",
                 )
-            if read_model is not None:
-                entry_count = len(read_model.entries)
-                estimated_bytes = _immutable_size(read_model, set())
-                if (
-                    entry_count <= self._max_entries
-                    and estimated_bytes is not None
-                    and estimated_bytes <= self._max_bytes
-                ):
-                    self._items[key] = _CachedHydration(signature, read_model, entry_count, estimated_bytes)
-                    self._entry_count += entry_count
-                    self._estimated_bytes += estimated_bytes
-                    while (
-                        len(self._items) > self._max_sources
-                        or self._entry_count > self._max_entries
-                        or self._estimated_bytes > self._max_bytes
-                    ):
-                        self._discard(next(iter(self._items)))
+            self._remember(key, signature, read_model)
             return read_model
+
+    def _remember(self, key, signature, read_model):
+        if read_model is None:
+            return
+        entry_count = len(read_model.entries)
+        estimated_bytes = _immutable_size(read_model, set())
+        if entry_count <= self._max_entries and estimated_bytes is not None and estimated_bytes <= self._max_bytes:
+            self._items[key] = _CachedHydration(signature, read_model, entry_count, estimated_bytes)
+            self._entry_count += entry_count
+            self._estimated_bytes += estimated_bytes
+            while (
+                len(self._items) > self._max_sources
+                or self._entry_count > self._max_entries
+                or self._estimated_bytes > self._max_bytes
+            ):
+                self._discard(next(iter(self._items)))
 
     def _discard(self, key):
         removed = self._items.pop(key)

@@ -13,7 +13,6 @@ from .preflight_view import (
     PreflightCheckState,
     PreflightCheckStatus,
 )
-from .sync_review_view import SyncReviewRow
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,8 +30,6 @@ class OperationPlanDraft:
     estimated_impact: tuple[tuple[str, int], ...]
     editable_fields: tuple[EditableFieldState, ...] = ()
     warnings: tuple[str, ...] = ()
-    credentials_ready: bool = True
-    permission_ready: bool = True
     input_ready: bool = True
     output_ready: bool = True
     locked_count: int = 0
@@ -79,7 +76,6 @@ class DomainPreflightPort(Protocol):
 class DomainPreflightResult:
     checks: tuple[PreflightCheckState, ...]
     estimated_impact: tuple[tuple[str, int], ...] = ()
-    sync_review: tuple[SyncReviewRow, ...] = ()
 
 
 class _OperationMapper:
@@ -125,7 +121,6 @@ class _OperationMapper:
             tuple(checks),
             value.expected_side_effects,
             estimated_impact=estimated_impact,
-            sync_review=domain.sync_review if isinstance(domain, DomainPreflightResult) else (),
         )
 
     @staticmethod
@@ -156,29 +151,6 @@ class _OperationMapper:
     def _specific_checks(self, value: OperationPlanDraft) -> tuple[PreflightCheckState, ...]:
         del value
         return ()
-
-
-class UploadOperationMapper(_OperationMapper):
-    kind = OperationKind.UPLOAD
-    title = "上传到 ParaTranz"
-
-    def _specific_checks(self, value: OperationPlanDraft) -> tuple[PreflightCheckState, ...]:
-        return (
-            _check("CREDENTIAL", "ParaTranz 凭据", value.credentials_ready, "未配置有效凭据", "settings.paratranz"),
-            _check("PERMISSION", "远端写入权限", value.permission_ready, "当前账号无上传权限"),
-            _stage_check(value),
-        )
-
-
-class DownloadOperationMapper(_OperationMapper):
-    kind = OperationKind.DOWNLOAD
-    title = "从 ParaTranz 更新工程译文"
-
-    def _specific_checks(self, value: OperationPlanDraft) -> tuple[PreflightCheckState, ...]:
-        return (
-            _check("CREDENTIAL", "ParaTranz 凭据", value.credentials_ready, "未配置有效凭据", "settings.paratranz"),
-            _check("PERMISSION", "远端读取权限", value.permission_ready, "当前账号无下载权限"),
-        )
 
 
 class WriteOperationMapper(_OperationMapper):

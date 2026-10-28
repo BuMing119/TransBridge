@@ -16,10 +16,11 @@ __all__ = ["launch", "qapp", "setup_registry"]
 
 
 @pytest.mark.parametrize("change", ["source", "key", "original", "translation", "stage", "context", "snapshot"])
-def test_new_recovery_never_silently_drops_changed_inputs(tmp_path, change):
+def test_recovery_preserves_frozen_scope_despite_live_changes(tmp_path, change):
     from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
     binding, request, _, window = setup_binding(tmp_path)
+    frozen = deepcopy(binding.record["sources"][0]["inputs"][0])
     entry = next(iter(window._ctx.slots["first"].collection))
     if change == "source":
         del window._ctx.slots["first"]
@@ -29,8 +30,15 @@ def test_new_recovery_never_silently_drops_changed_inputs(tmp_path, change):
         binding.record["sources"][0]["inputs"] = []
     else:
         object.__setattr__(entry, change, 9 if change == "stage" else "changed")
-    with pytest.raises(ValueError, match="已不存在|已修改|缺少词条"):
-        recovery_sources(window, request.config)
+    if change == "snapshot":
+        with pytest.raises(ValueError, match="缺少词条"):
+            recovery_sources(window, request.config)
+    else:
+        tasks = recovery_sources(window, request.config)
+        assert len(tasks) == 3
+        restored = tasks[0].entries[0]
+        assert restored.to_dict() == frozen["entry"]
+        assert restored is not entry
     assert binding.store.load("run")["state"] == "preparing"
 
 
@@ -53,10 +61,11 @@ def test_saved_after_content_can_recover_when_metadata_save_was_interrupted(tmp_
     }
     object.__setattr__(entry, "translation", "已写入项目的候选")
     object.__setattr__(entry, "stage", 1)
-    assert recovery_sources(window, request.config)[0].entries == (entry,)
+    restored = recovery_sources(window, request.config)[0].entries[0]
+    assert (restored.translation, restored.stage) == (before["translation"], before["stage"])
+    assert (entry.translation, entry.stage) == ("已写入项目的候选", 1)
     binding.record["results"]["rows"][0]["decision"] = "pending"
-    with pytest.raises(ValueError, match="词条已修改"):
-        recovery_sources(window, request.config)
+    assert recovery_sources(window, request.config)[0].entries[0].to_dict() == restored.to_dict()
 
 
 def test_mixed_recovery_preserves_both_actions_and_overwrite(tmp_path):
@@ -137,7 +146,31 @@ def test_saved_result_does_not_silently_skip_changed_context(tmp_path):
         }
     ]
     object.__setattr__(entry, "context", "A different speaker")
-    with pytest.raises(ValueError, match="词条已修改"):
+    restored = recovery_sources(window, request.config)[0].entries[0]
+    assert restored.context == "NPC_:FULL"
+    assert entry.context == "A different speaker"
+    from transbridge.application.translation.result_merge import ResultConflictPolicy, merge_result_entries
+    from transbridge.ui.tools.ai_translator.task_session_merge import entry_state
+
+    plan = merge_result_entries(
+        {restored.identity: entry_state(restored)},
+        {entry.identity: entry_state(entry)},
+        {restored.identity: replace(entry_state(restored), translation="AI result", stage=3)},
+        policy=ResultConflictPolicy.PREFER_INCOMING,
+    )
+    assert not plan.applied and plan.pending[0].reason == "source_changed_or_missing"
+
+
+@pytest.mark.parametrize("damage", ["identity", "duplicate_scope", "entry_envelope"])
+def test_fixed_recovery_still_rejects_wrong_identity_or_corrupt_input_structure(tmp_path, damage):
+    binding, request, _, window = setup_binding(tmp_path)
+    if damage == "identity":
+        window._ctx.active_version_identity = ("different-project", "variant")
+    elif damage == "duplicate_scope":
+        binding.record["sources"].append(deepcopy(binding.record["sources"][0]))
+    else:
+        binding.record["sources"][0]["inputs"][0]["entry"]["translation"] = "tampered"
+    with pytest.raises(ValueError, match="项目或版本已变化|重复条目身份|封套与固定输入不匹配"):
         recovery_sources(window, request.config)
 
 
@@ -241,7 +274,7 @@ def test_translation_discovery_does_not_present_proofread_zero_as_total_progress
 
 def test_damaged_result_isolated_and_explained_in_history(setup_registry, monkeypatch):
     from tests.ui.tools.test_task_recovery_discovery import wait_until
-    from transbridge.ui.tools.ai_translator import task_result_recovery
+    from transbridge.application.translation import task_result_recovery
     from transbridge.ui.tools.ai_translator.task_history_dialog import TaskHistoryDialog
 
     app, _, registry, store = setup_registry
@@ -263,6 +296,11 @@ def test_damaged_result_isolated_and_explained_in_history(setup_registry, monkey
         row = dialog.tasks.topLevelItem(index)
         dialog.tasks.setCurrentItem(row)
         if row.data(0, Qt.ItemDataRole.UserRole) == "damaged":
+            # Discovery only reads metadata; selected content is validated in a worker.
+            assert dialog.continue_button.isEnabled()
+            dialog.continue_button.click()
+            wait_until(app, lambda: not registry._recovery_workers)
+            dialog._populate()
             assert not dialog.continue_button.isEnabled()
             assert "候选校验链损坏" in dialog.status.text()
             assert "候选校验链损坏" in row.toolTip(2)

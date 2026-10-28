@@ -1,5 +1,4 @@
 from dataclasses import replace
-from types import SimpleNamespace
 
 import pytest
 
@@ -12,7 +11,7 @@ from transbridge.smart_assistant.tools._entry_upload import upload_entries
 from transbridge.smart_assistant.tools.types import ExecutionContext
 
 
-def _context():
+def _context(current_project_factory, tmp_path, monkeypatch):
     collection = TranslationEntryCollection(
         TranslationEntry(
             id=key,
@@ -24,8 +23,9 @@ def _context():
         )
         for key in ("first", "second", "third")
     )
-    app = SimpleNamespace(collection=collection, active_slot=SimpleNamespace(collection=collection))
-    return ExecutionContext(app_context=app), collection
+    project = current_project_factory(collection)
+    monkeypatch.setattr(project.commands, "task_result_directory", lambda _context: tmp_path)
+    return ExecutionContext(app_context=project.context), project
 
 
 class _RemoteService:
@@ -39,8 +39,11 @@ class _RemoteService:
         return replace(entry, remote_id=701)
 
 
-def test_cancel_after_upload_preserves_remote_identity_and_returns_partial_receipt():
-    context, collection = _context()
+def test_cancel_after_upload_preserves_remote_identity_and_returns_partial_receipt(
+    current_project_factory, tmp_path, monkeypatch
+):
+    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    collection = project.context.collection
     remote = _RemoteService()
     token = CancellationToken()
 
@@ -58,13 +61,15 @@ def test_cancel_after_upload_preserves_remote_identity_and_returns_partial_recei
     assert result.failed_items[0]["cancelled"] is True
     assert result.recovery_action
     assert [entry.key for _, entry, _ in remote.received] == ["first"]
+    collection = project.context.collection
     assert collection.get("first").external_refs == (ExternalEntryRef("paratranz", "project:7", 701),)
     assert not collection.get("second").external_refs
     assert not collection.get("third").external_refs
 
 
-def test_cancel_before_upload_raises_without_remote_or_local_changes():
-    context, collection = _context()
+def test_cancel_before_upload_raises_without_remote_or_local_changes(current_project_factory, tmp_path, monkeypatch):
+    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    collection = project.context.collection
     before = tuple(entry.snapshot() for entry in collection)
     remote = _RemoteService()
     token = CancellationToken()

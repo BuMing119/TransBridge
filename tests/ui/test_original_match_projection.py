@@ -8,12 +8,10 @@ from transbridge.application.projections import ProjectionSnapshot, ProjectionSt
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.smart_assistant.tools.base import filter_entries
-from transbridge.smart_assistant.tools.types import _projection_entry_states
 from transbridge.ui.context import AppContext, CollectionSlot
 from transbridge.ui.entry_projection import EntryProjectionUpdate
 from transbridge.ui.project_labels import entry_label_key, exact_label_key, project_entry_labels
 from transbridge.ui.tools.ai_translator.scope_presenter import ScopePresenter
-from transbridge.ui.tools.ai_translator.version_snapshot import AiVersionSnapshotSession
 from transbridge.ui.workbench.entry_action_scope import resolve_entry_action_scope
 from transbridge.ui.workbench.filters_presenter import FiltersPresenter, FilterState
 from transbridge.ui.workbench.table_presenter import RenderSession
@@ -111,21 +109,6 @@ def test_ai_scope_resolves_exact_selected_original() -> None:
     presenter = ScopePresenter(lambda: (first, second), lambda: {}, lambda _: "任务", workbench)
     presenter.select_preset("selection")
     assert presenter.candidates() == [first]
-
-
-def test_ai_and_assistant_rollback_use_full_identity() -> None:
-    entries = _entries()
-    snapshot = _projection(entries)
-    context = SimpleNamespace(
-        uses_authoritative_projection=True,
-        _project_projection=SimpleNamespace(snapshot=lambda: snapshot),
-    )
-    expected = {entry.identity: (f"translation-{index}", 1) for index, entry in enumerate(entries)}
-    assert _projection_entry_states(context, entries, None) == expected
-    session = AiVersionSnapshotSession.__new__(AiVersionSnapshotSession)
-    session._context = context
-    session._identity = ("project", "variant")
-    assert session._authoritative_entry_states(entries) == expected
 
 
 def test_authoritative_projection_divergence_checks_each_original(monkeypatch) -> None:

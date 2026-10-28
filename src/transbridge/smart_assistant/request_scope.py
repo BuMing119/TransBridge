@@ -1,4 +1,4 @@
-"""Freeze UI-dependent selection and advance versions only after this request's commits."""
+"""Restore captured selection without treating later content edits as a new target."""
 
 from copy import deepcopy
 import json
@@ -6,23 +6,21 @@ import json
 from transbridge.application.assistant_requests.models import RequestError
 from transbridge.application.translation.entry_alias import ai_entry_key
 
-_VERSION_FIELDS = (
-    ("active_version_identity", "_target_version_identity"),
-    ("project_revision", "_target_project_revision"),
-    ("variant_revision", "_target_variant_revision"),
-)
+_IDENTITY_FIELDS = (("active_version_identity", "_target_version_identity"),)
 
 
 def execution_version(context) -> str:
-    return json.dumps({public: getattr(context, private, None) for public, private in _VERSION_FIELDS})
+    # Older receipts also contain revisions. They remain readable, but content
+    # revisions belong to each actual commit's CAS, never request admission.
+    return json.dumps({public: getattr(context, private, None) for public, private in _IDENTITY_FIELDS})
 
 
-def apply_captured_scope(request, ingress, context) -> None:
+def apply_captured_scope(request, ingress, context, *, require_selection: bool = True) -> None:
     source = next((i for i in ingress if i["message_id"] in request.source_message_ids), None)
     selection = source.get("selection", {}) if source else {}
     baseline = json.loads(request.execution_version_json) if request.execution_version_json else selection
     app = getattr(context, "app_context", None)
-    for public, private in _VERSION_FIELDS:
+    for public, private in _IDENTITY_FIELDS:
         expected = baseline.get(public)
         actual = getattr(context, private, None)
         if isinstance(expected, list):
@@ -31,20 +29,14 @@ def apply_captured_scope(request, ingress, context) -> None:
         if expected is not None and projected != expected and (expected or projected):
             raise RequestError("REQUEST_SCOPE_MISMATCH", "原输入的项目或版本已变化，请核对原资源后继续")
         if expected is not None and expected != actual and (expected or actual):
-            if not request.execution_version_json or projected != expected:
-                raise RequestError("REQUEST_SCOPE_MISMATCH", "执行集合不符合已保存的原输入版本")
-            object.__setattr__(context, private, expected)
+            raise RequestError("REQUEST_SCOPE_MISMATCH", "执行集合不符合已保存的原输入版本")
     collection = getattr(context, "_target_collection", None)
     if collection is not None:
         # Never fall through __getattr__ to a later active UI slot/collection.
         object.__setattr__(context, "collection", collection)
         object.__setattr__(context, "active_slot", None)
-        if request.execution_version_json:
-            object.__setattr__(
-                context,
-                "_committed_entry_states",
-                {entry.identity: (entry.translation, entry.stage) for entry in collection},
-            )
+    if not require_selection:
+        return
     if "selected_entry_ids" in selection:
         selected = set(selection["selected_entry_ids"])
         entries = (

@@ -83,7 +83,7 @@ def _records(services):
     return project_ref, variant_ref, SourceBaseline(fingerprint, (entry,))
 
 
-def test_legacy_mapping_and_baseline_are_both_required_before_active_changes(tmp_path: Path) -> None:
+def test_authoritative_baseline_is_required_before_active_changes(tmp_path: Path) -> None:
     ids = _Ids()
     services = build_persistence_v2_services(
         tmp_path / "projects-v2",
@@ -93,13 +93,11 @@ def test_legacy_mapping_and_baseline_are_both_required_before_active_changes(tmp
     project_ref, variant_ref, baseline = _records(services)
     context = RequestContext("gui", run_id="run")
 
-    unmapped = services.gui_project_commands.switch_legacy("legacy/project.json", "Main", context)
-    services.legacy_identities.register("legacy/project.json", "Main", project_ref, variant_ref)
-    missing_baseline = services.gui_project_commands.switch_legacy("legacy/project.json", "Main", context)
+    missing_baseline = services.gui_project_commands.switch_v2(project_ref, variant_ref, context)
+    assert services.project_lifecycle.active is None
     services.baselines.register(project_ref, variant_ref, (baseline,))
-    activated = services.gui_project_commands.switch_legacy("legacy/project.json", "Main", context)
+    activated = services.gui_project_commands.switch_v2(project_ref, variant_ref, context)
 
-    assert unmapped.diagnostics[0].code == "LEGACY_ID_MAPPING_REQUIRED"
     assert missing_baseline.diagnostics[0].code == "LEGACY_SOURCE_BASELINE_REQUIRED"
     assert activated.is_success
     assert services.project_lifecycle.active is not None

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.ui.tools.ai_runtime_support import ai_task_runtime
 from transbridge.application.contracts import JobRef
 from transbridge.application.terminology.effective import EffectiveSnapshotStatus, EffectiveTerminologySnapshot
 from transbridge.ui.tools.ai_translator import run_controller, run_request_preparation
@@ -81,7 +82,7 @@ def test_capture_and_background_preparation_never_read_live_owner(monkeypatch):
         return original(**kwargs)
 
     monkeypatch.setattr(run_request_preparation, "build_run_spec", build)
-    controller = RunController("owner")
+    controller = RunController("owner", task_runtime=ai_task_runtime())
     with ThreadPoolExecutor(max_workers=1) as pool:
         value = pool.submit(
             prepare_run_request,
@@ -100,7 +101,7 @@ def test_capture_and_background_preparation_never_read_live_owner(monkeypatch):
 
 
 def test_prepared_admission_does_not_rebuild_or_refreeze(monkeypatch):
-    controller = RunController("owner")
+    controller = RunController("owner", task_runtime=ai_task_runtime())
     value = prepared(controller)
 
     def forbidden(*args, **kwargs):
@@ -112,7 +113,7 @@ def test_prepared_admission_does_not_rebuild_or_refreeze(monkeypatch):
     request = admit(controller, value)
     assert request.entries is value.entries
     assert request.spec.input_fingerprint == value.spec.input_fingerprint
-    assert request.run_id == "ai-captured"
+    assert request.run_id == request.runtime_ref.run_id
     assert request.config.model == "frozen-model"
     request.config.model = "edited copy"
     assert request.config.model == "frozen-model"
@@ -121,11 +122,11 @@ def test_prepared_admission_does_not_rebuild_or_refreeze(monkeypatch):
 
 @pytest.mark.parametrize("change", ["owner", "project", "variant", "path", "run_id", "revision", "entries"])
 def test_prepared_admission_rejects_mismatched_scope(change):
-    controller = RunController("owner")
+    controller = RunController("owner", task_runtime=ai_task_runtime())
     value = prepared(controller)
     options = {}
     if change == "owner":
-        controller = RunController("other-owner")
+        controller = RunController("other-owner", task_runtime=ai_task_runtime())
     elif change == "entries":
         with pytest.raises(ValueError, match="同一份"):
             controller.begin(
@@ -177,13 +178,14 @@ def test_prepared_runtime_admission_keeps_gui_ownership_and_reuses_fingerprints(
     second = admit(controller, value)
     assert second.generation == 2
     assert second.request_budget is not first.request_budget
+    controller.finish(second.run_id)
     controller.close()
     with pytest.raises(RuntimeError, match="closed"):
         admit(controller, value)
 
 
 def test_preparation_rejects_live_owner_or_other_terminology_scope():
-    controller = RunController("owner")
+    controller = RunController("owner", task_runtime=ai_task_runtime())
     live = SimpleNamespace(active_version_identity=("other", "variant"), effective_terminology_factory=None)
     with pytest.raises(TypeError, match="live UI"):
         prepared(controller, terminology_owner=live)

@@ -58,9 +58,8 @@ class SaveRecovery:
         context = self._context
         return (
             self._generation,
-            getattr(context, "active_project_id", None) or id(getattr(context, "active_project", None)),
+            getattr(context, "active_project_id", None),
             getattr(context, "active_variant_id", None),
-            getattr(context, "active_variant", None),
             getattr(context, "project_revision", None),
             getattr(context, "variant_revision", None),
             getattr(context, "active_key", None),

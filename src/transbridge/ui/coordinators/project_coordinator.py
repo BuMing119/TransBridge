@@ -1,14 +1,11 @@
 from pathlib import Path as PathLib
 
-from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from transbridge.application.projects.source_registry import plugin_source_location, select_workbench_source
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence import (
     PERSISTENCE_ROOT,
-    ProjectHandle,
-    VariantStore,
     WorkspaceState,
     workspace_path,
 )
@@ -28,93 +25,45 @@ class ProjectCoordinator:
         ws_path = workspace_path()
         ws = WorkspaceState.load(ws_path)
         self._host.context.workspace = ws
+        self._apply_saved_filter_state(ws.last_session.get("filter_state", {}))
 
-        if self._host.context.uses_authoritative_projection:
-            if self._host.current_project_opener is None or self._host.runtime_context is None:
-                self._show_start_center_failure(
-                    "PROJECT_OPENER_UNAVAILABLE",
-                    "当前工程打开服务不可用。",
-                )
-                return
-            if initial_project_path:
-                if hasattr(self._host, "show_start_center_restoring"):
-                    self._host.show_start_center_restoring()
-                self._start_current_project_open(
-                    lambda: self._host.current_project_opener.prepare_path(
-                        initial_project_path,
-                        self._host.runtime_context,
-                    ),
-                    dirty_decision=None,
-                    success_verb="已打开",
-                    show_error_dialog=False,
-                    on_success=lambda _opened: self._show_workbench(),
-                    on_failure=self._show_start_center_failure,
-                )
-                return
-            if not getattr(self._host.current_project_opener, "has_active_reference", True):
-                self._show_start_center_empty()
-                return
-            from transbridge.application.projects import DirtyDecision
-
+        if self._host.current_project_opener is None or self._host.runtime_context is None:
+            self._show_start_center_failure(
+                "PROJECT_OPENER_UNAVAILABLE",
+                "当前工程打开服务不可用。",
+            )
+            return
+        if initial_project_path:
             if hasattr(self._host, "show_start_center_restoring"):
                 self._host.show_start_center_restoring()
             self._start_current_project_open(
-                lambda: self._host.current_project_opener.prepare_active(self._host.runtime_context),
-                dirty_decision=DirtyDecision.SAVE,
-                success_verb="已恢复",
+                lambda: self._host.current_project_opener.prepare_path(
+                    initial_project_path,
+                    self._host.runtime_context,
+                ),
+                dirty_decision=None,
+                success_verb="已打开",
                 show_error_dialog=False,
                 on_success=lambda _opened: self._show_workbench(),
                 on_failure=self._show_start_center_failure,
             )
             return
-
-        if initial_project_path:
-            self.open_project_path(initial_project_path)
-            return
-
-        active = ws.active_project
-        if not active or active not in ws.projects:
-            self._host.show_message("就绪 — 无活跃项目，请新建或打开项目")
+        if not getattr(self._host.current_project_opener, "has_active_reference", True):
             self._show_start_center_empty()
             return
+        from transbridge.application.projects import DirtyDecision
 
-        proj_path = PathLib(ws.projects[active])
-        filter_state = ws.last_session.get("filter_state", {})
-
-        def _prepare_restore():
-            project = ProjectHandle.load(proj_path)
-            if not project.name:
-                raise ValueError(f"上次项目「{active}」的配置文件不存在或已损坏")
-            variant_store = None
-            variant_name = project.active_variant
-            if variant_name and project.has_variant(variant_name):
-                variant_store = VariantStore.load(project.variant_dir(variant_name) / "current.json")
-            return project, variant_store
-
-        def _activate_restore(result) -> None:
-            project, variant_store = result
-            self._host.context.active_project = project
-            self._host.context.active_variant = project.active_variant
-            self._host.context.variant_store = variant_store
-            if variant_store is not None and self._host.context.collection:
-                count = variant_store.apply_to(list(self._host.context.collection))
-                self._host.show_message(
-                    f"项目「{project.name}」已恢复，版本「{project.active_variant}」，恢复 {count} 条译文"
-                )
-            self._restore_plugin_sources(project.sources)
-            if filter_state:
-                QTimer.singleShot(3000, lambda: self._apply_saved_filter_state(filter_state))
-            self._show_workbench()
-
-        self._host.start_foreground_task(
-            _prepare_restore,
-            message="正在恢复上次项目…",
-            on_result=_activate_restore,
-            on_error=lambda error: self._show_start_center_failure(
-                "LEGACY_PROJECT_RESTORE_FAILED",
-                error,
-            ),
+        if hasattr(self._host, "show_start_center_restoring"):
+            self._host.show_start_center_restoring()
+        self._start_current_project_open(
+            lambda: self._host.current_project_opener.prepare_active(self._host.runtime_context),
+            dirty_decision=DirtyDecision.SAVE,
+            success_verb="已恢复",
+            show_error_dialog=False,
+            on_success=lambda _opened: self._show_workbench(),
+            on_failure=self._show_start_center_failure,
         )
+        return
 
     def save_workspace_session(self):
         """关闭前保存会话状态。"""
@@ -122,10 +71,6 @@ class ProjectCoordinator:
         ws = ctx.workspace
         if ws is None:
             return
-        if ctx.active_project:
-            ws.active_project = ctx.active_project.name
-            ws.last_session["project"] = ctx.active_project.name
-            ws.last_session["variant"] = ctx.active_variant
         # 保存筛选状态
         ws.last_session["filter_state"] = self._host.workbench.preview.get_filter_state()
 
@@ -136,45 +81,7 @@ class ProjectCoordinator:
 
     def new_project(self):
         """弹出新建项目对话框。"""
-        if self._host.context.uses_authoritative_projection:
-            if hasattr(self._host, "show_start_center"):
-                self._host.show_start_center(user_requested=True)
-            else:
-                self._host.show_message("Legacy Project creation is disabled under the V2 authority migration gate.")
-            return
-        from PyQt6.QtWidgets import QInputDialog
-
-        name, ok = QInputDialog.getText(self._host, "新建项目", "项目名称:")
-        if not ok or not name.strip():
-            return
-        name = name.strip()
-        proj_dir = PERSISTENCE_ROOT / name
-        if proj_dir.exists():
-            QMessageBox.warning(self._host, "冲突", f"项目「{name}」已存在")
-            return
-
-        proj = ProjectHandle.create(PERSISTENCE_ROOT, name)
-        proj.add_variant("默认")
-        proj.active_variant = "默认"
-        proj.save()
-
-        # 创建默认版本的 current.json
-        from transbridge.persistence import VariantStore
-
-        vs = VariantStore(proj.variant_dir("默认") / "current.json")
-        vs.save()
-
-        ws = self._host.context.workspace or WorkspaceState.load(workspace_path())
-        ws.add_project(name, proj.config_path)
-        ws.save()
-        self._host.context.workspace = ws
-        self._host.context.active_project = proj
-        self._host.context.active_variant = "默认"
-        self._host.context.variant_store = vs
-
-        QMessageBox.information(
-            self._host, "项目已创建", f"项目「{name}」已创建，默认版本「默认」。\n请通过文件菜单解析插件或导入 JSON。"
-        )
+        self._host.show_start_center(user_requested=True)
 
     def open_project(self):
         """弹出打开项目对话框。"""
@@ -204,57 +111,19 @@ class ProjectCoordinator:
         ):
             self._host.show_message("已有项目正在后台打开，请稍候。")
             return
-        if self._host.context.uses_authoritative_projection:
-            if self._host.current_project_opener is None or self._host.runtime_context is None:
-                self._host.show_message("当前项目打开服务不可用。")
-                return
-            accepted, dirty_decision = self.confirm_project_switch()
-            if not accepted:
-                return
-            self._start_current_project_open(
-                lambda: self._host.current_project_opener.prepare_path(path, self._host.runtime_context),
-                dirty_decision=dirty_decision,
-                success_verb="已打开",
-                on_success=lambda _opened: self._show_workbench(),
-            )
+        if self._host.current_project_opener is None or self._host.runtime_context is None:
+            self._host.show_message("当前项目打开服务不可用。")
             return
-
-        def _prepare_legacy_project():
-            project = ProjectHandle.load(PathLib(path))
-            variant_store = None
-            variant_name = project.active_variant
-            if variant_name and project.has_variant(variant_name):
-                variant_store = VariantStore.load(project.variant_dir(variant_name) / "current.json")
-            return project, variant_store
-
-        def _activate_legacy(result) -> None:
-            project, variant_store = result
-            workspace = self._host.context.workspace or WorkspaceState.load(workspace_path())
-            workspace.add_project(project.name, PathLib(path))
-            workspace.save()
-            self._host.context.workspace = workspace
-            self._host.context.active_project = project
-            self._host.context.active_variant = project.active_variant
-            self._host.context.variant_store = variant_store
-            if variant_store is not None and self._host.context.collection:
-                variant_store.apply_to(list(self._host.context.collection))
-            self._restore_plugin_sources(project.sources)
-            self._show_workbench()
-
-        def _start_legacy_open(saved: bool) -> None:
-            if saved:
-                self._host.start_foreground_task(
-                    _prepare_legacy_project,
-                    message="正在加载项目…",
-                    on_result=_activate_legacy,
-                    on_error=lambda error: QMessageBox.warning(
-                        self._host,
-                        "无法读取项目文件",
-                        error,
-                    ),
-                )
-
-        self._host.save_current_project_async(on_finished=_start_legacy_open)
+        accepted, dirty_decision = self.confirm_project_switch()
+        if not accepted:
+            return
+        self._start_current_project_open(
+            lambda: self._host.current_project_opener.prepare_path(path, self._host.runtime_context),
+            dirty_decision=dirty_decision,
+            success_verb="已打开",
+            on_success=lambda _opened: self._show_workbench(),
+        )
+        return
 
     def confirm_project_switch(self):
         """Use the same save/discard/cancel decision for every Project navigation."""
@@ -432,8 +301,6 @@ class ProjectCoordinator:
             collection, plugin = result
             try:
                 # 应用已缓存的翻译数据（必须在 add_slot 之前，否则 collection_changed 触发时表格仍为空）
-                if self._host.context.variant_store:
-                    self._host.context.variant_store.apply_to(list(collection))
                 label = PathLib(esp_path).stem
                 slot = CollectionSlot(
                     label=label,

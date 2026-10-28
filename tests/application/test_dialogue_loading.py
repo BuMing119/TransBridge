@@ -42,6 +42,28 @@ def test_snapshot_hydration_reads_captured_bytes_without_opening_the_source_path
     assert any(topic.label == "SCEN {TestScene} [00000012]" for topic in result.quests[0].topics)
 
 
+@pytest.mark.parametrize("source_kind", ["plugin", "snapshot"])
+def test_entry_relationships_are_delivered_before_reading_a_new_source_catalog(monkeypatch, source_kind):
+    previews = []
+    read = loading.read_dialogue_catalog
+    entries = dialogue_entries()
+
+    def read_after_preview(plugin):
+        assert len(previews) == 1
+        assert set(previews[0].locations) == {entry.identity for entry in entries}
+        assert all(topic.kind != "SCEN" for quest in previews[0].quests for topic in quest.topics)
+        return read(plugin)
+
+    monkeypatch.setattr(loading, "read_dialogue_catalog", read_after_preview)
+    loader = loading.DialogueIndexLoader()
+    source = dialogue_plugin() if source_kind == "plugin" else snapshot()
+    result = loader.build(iter(entries), on_preview=previews.append, **{source_kind: source})
+    assert set(result.locations) == set(previews[0].locations)
+    assert any(topic.kind == "SCEN" for quest in result.quests for topic in quest.topics)
+    assert loader.build(entries, on_preview=previews.append, **{source_kind: source}) == result
+    assert len(previews) == 1
+
+
 def test_broken_snapshot_reports_parser_failure_and_allows_a_later_valid_source():
     source = SourceSnapshot.from_bytes(SourceDescriptor("broken.esp"), FormatId.PLUGIN_SSE, b"invalid plugin")
     loader = loading.DialogueIndexLoader()

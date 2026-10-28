@@ -12,9 +12,7 @@ from transbridge.application.io.identity import (
     SourceNamespace,
 )
 from transbridge.application.ports.paratranz import ParaTranzEntry
-from transbridge.application.security.hitl import ConfirmationAuthority
 from transbridge.application.sync import (
-    AuthorizeSyncPlanRequest,
     ConflictPolicy,
     CreateSyncPlanRequest,
     DeletionPolicy,
@@ -23,9 +21,7 @@ from transbridge.application.sync import (
     RemoteEntrySnapshot,
     SyncAction,
     SyncOperation,
-    SyncPlanAuthorizationError,
     SyncPlanner,
-    SyncPlanStaleError,
 )
 from transbridge.paratranz.sync_snapshot import ParaTranzRemoteSnapshotAdapter
 
@@ -385,195 +381,6 @@ def test_remote_revision_fingerprint_is_stable_and_changes_with_remote_content()
 
     assert first.remote_revision == same.remote_revision
     assert first.remote_revision != changed.remote_revision
-
-
-def _destructive_use_case(*, clock=None):
-    remote = (_remote("key", "remote", remote_id=1),)
-    reader = _RemoteReader(remote)
-    authority = ConfirmationAuthority(
-        ttl_seconds=5,
-        clock=(clock or (lambda: 10.0)),
-        secret=b"s" * 32,
-    )
-    use_case = ParaTranzSyncPlanningUseCase(reader, confirmations=authority)
-    local = (_local("key", "local", remote_id=1),)
-    plan = use_case.create_plan(
-        CreateSyncPlanRequest(
-            7,
-            NS,
-            local,
-            SyncOperation.UPLOAD,
-            ConflictPolicy.PREFER_LOCAL,
-        )
-    )
-    return use_case, reader, local, plan
-
-
-def _authorization(plan, local, token, owner="owner") -> AuthorizeSyncPlanRequest:
-    return AuthorizeSyncPlanRequest(
-        plan,
-        owner,
-        7,
-        NS,
-        local,
-        token,
-    )
-
-
-@pytest.mark.parametrize("operation", [SyncOperation.DOWNLOAD, SyncOperation.UPLOAD])
-def test_default_sync_confirmation_survives_long_review_and_remote_check(operation) -> None:
-    local = (_local("key", "local", remote_id=1),)
-    reader = _RemoteReader((_remote("key", "remote", remote_id=1),))
-    use_case = ParaTranzSyncPlanningUseCase(reader)
-    plan = use_case.create_plan(
-        CreateSyncPlanRequest(
-            7,
-            NS,
-            local,
-            operation,
-            ConflictPolicy.PREFER_LOCAL if operation is SyncOperation.UPLOAD else ConflictPolicy.PREFER_REMOTE,
-        )
-    )
-    token = use_case.issue_confirmation(plan, owner_id="owner")
-    assert token.expires_at is None
-    # Neither a long human review nor the observed 118-second cloud fetch is
-    # evidence of a changed operation. Advance the authority's clock, not time.
-    use_case._confirmations._clock = lambda: 10**12
-
-    assert use_case.authorize(_authorization(plan, local, token)).confirmation_code == "CONFIRMED"
-    with pytest.raises(SyncPlanAuthorizationError) as replay:
-        use_case.authorize(_authorization(plan, local, token))
-    assert replay.value.code == "CONFIRMATION_REPLAYED"
-
-
-@pytest.mark.parametrize("changed_side", ["local", "remote"])
-def test_no_expiry_confirmation_still_rejects_changed_data(changed_side) -> None:
-    local = (_local("key", "local", remote_id=1),)
-    reader = _RemoteReader((_remote("key", "remote", remote_id=1),))
-    use_case = ParaTranzSyncPlanningUseCase(reader)
-    plan = use_case.create_plan(CreateSyncPlanRequest(7, NS, local, SyncOperation.UPLOAD, ConflictPolicy.PREFER_LOCAL))
-    token = use_case.issue_confirmation(plan, owner_id="owner")
-    if changed_side == "local":
-        local = (replace(local[0], translation="changed"),)
-    else:
-        reader.entries = (replace(reader.entries[0], translation="changed"),)
-
-    with pytest.raises(SyncPlanStaleError):
-        use_case.authorize(_authorization(plan, local, token))
-
-
-def test_confirmation_is_plan_hash_bound_owner_bound_and_one_use() -> None:
-    use_case, _, local, plan = _destructive_use_case()
-    token = use_case.issue_confirmation(plan, owner_id="owner")
-
-    with pytest.raises(SyncPlanAuthorizationError) as wrong_owner:
-        use_case.authorize(_authorization(plan, local, token, owner="other"))
-    assert wrong_owner.value.code == "CONFIRMATION_OWNER_CHANGED"
-
-    replay_token = use_case.issue_confirmation(plan, owner_id="owner")
-    assert use_case.authorize(_authorization(plan, local, replay_token)).confirmation_code == "CONFIRMED"
-    with pytest.raises(SyncPlanAuthorizationError) as replay:
-        use_case.authorize(_authorization(plan, local, replay_token))
-    assert replay.value.code == "CONFIRMATION_REPLAYED"
-
-
-def test_destructive_overwrite_or_delete_without_confirmation_is_blocked() -> None:
-    use_case, reader, local, overwrite_plan = _destructive_use_case()
-    with pytest.raises(SyncPlanAuthorizationError) as missing_overwrite:
-        use_case.authorize(_authorization(overwrite_plan, local, None))
-    assert missing_overwrite.value.code == "CONFIRMATION_REQUIRED"
-
-    deleted_local = (_local("key", "", deleted=True, remote_id=1),)
-    delete_plan = use_case.create_plan(
-        CreateSyncPlanRequest(
-            7,
-            NS,
-            deleted_local,
-            SyncOperation.UPLOAD,
-            ConflictPolicy.ABORT,
-        )
-    )
-    assert delete_plan.items[0].action is SyncAction.DELETE_REMOTE
-    with pytest.raises(SyncPlanAuthorizationError) as missing_delete:
-        use_case.authorize(_authorization(delete_plan, deleted_local, None))
-    assert missing_delete.value.code == "CONFIRMATION_REQUIRED"
-    assert reader.fetches == 4
-
-
-def test_confirmation_expires_and_operation_or_plan_change_is_rejected() -> None:
-    now = [10.0]
-    use_case, _, local, plan = _destructive_use_case(clock=lambda: now[0])
-    token = use_case.issue_confirmation(plan, owner_id="owner")
-    now[0] = 16.0
-    with pytest.raises(SyncPlanAuthorizationError) as expired:
-        use_case.authorize(_authorization(plan, local, token))
-    assert expired.value.code == "CONFIRMATION_EXPIRED"
-
-    with pytest.raises(ValueError, match="hash"):
-        replace(plan, operation=SyncOperation.DOWNLOAD)
-
-    other_plan = SyncPlanner().plan(
-        local,
-        (_remote("key", "remote", remote_id=1),),
-        operation=SyncOperation.BIDIRECTIONAL,
-        conflict_policy=ConflictPolicy.PREFER_LOCAL,
-        scope=plan.scope,
-    )
-    fresh_use_case, _, _, original_plan = _destructive_use_case()
-    wrong_plan_token = fresh_use_case.issue_confirmation(original_plan, owner_id="owner")
-    with pytest.raises(SyncPlanAuthorizationError) as changed_plan:
-        fresh_use_case.authorize(_authorization(other_plan, local, wrong_plan_token))
-    assert changed_plan.value.code == "CONFIRMATION_REQUEST_CHANGED"
-
-
-@pytest.mark.parametrize("changed_side", ["local", "remote"])
-def test_local_or_remote_revision_change_invalidates_plan_before_token_consumption(changed_side: str) -> None:
-    use_case, reader, local, plan = _destructive_use_case()
-    token = use_case.issue_confirmation(plan, owner_id="owner")
-    current_local = local
-    if changed_side == "local":
-        current_local = (replace(local[0], revision=EntryRevision(2)),)
-    else:
-        reader.entries = (replace(reader.entries[0], remote_revision="remote-2"),)
-
-    with pytest.raises(SyncPlanStaleError) as stale:
-        use_case.authorize(_authorization(plan, current_local, token))
-    assert stale.value.code == "STALE_PLAN"
-
-    if changed_side == "local":
-        # Restore freshness to prove stale validation did not consume confirmation.
-        assert use_case.authorize(_authorization(plan, local, token)).confirmation_code == "CONFIRMED"
-
-
-def test_non_destructive_create_plan_needs_no_confirmation_but_is_still_freshness_checked() -> None:
-    reader = _RemoteReader(())
-    use_case = ParaTranzSyncPlanningUseCase(reader)
-    local = (_local("new", "translation"),)
-    plan = use_case.create_plan(CreateSyncPlanRequest(7, NS, local, SyncOperation.UPLOAD))
-
-    authorized = use_case.authorize(_authorization(plan, local, None))
-
-    assert not plan.destructive
-    assert authorized.confirmation_code == "NOT_REQUIRED"
-
-
-def test_plan_and_confirmation_cannot_cross_project_scope() -> None:
-    use_case, _, local, plan = _destructive_use_case()
-    token = use_case.issue_confirmation(plan, owner_id="owner")
-
-    with pytest.raises(SyncPlanAuthorizationError) as changed_scope:
-        use_case.authorize(
-            AuthorizeSyncPlanRequest(
-                plan,
-                "owner",
-                8,
-                NS,
-                local,
-                token,
-            )
-        )
-
-    assert changed_scope.value.code == "PLAN_SCOPE_CHANGED"
 
 
 def test_snapshot_dto_and_projection_do_not_expose_mutable_external_metadata() -> None:

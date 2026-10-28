@@ -1,7 +1,8 @@
+from pathlib import Path
+
 import pytest
 
 from tests.application.projects.test_categorized_upload import project as project_fixture
-from tests.plugin_fixtures import write_plugin
 from transbridge.application.io.identity import ExternalEntryRef
 from transbridge.application.projects.variant_commands import EntryStatePatch
 
@@ -13,11 +14,27 @@ def snapshot(project, **options):
     return service.snapshot(context, endpoint="https://paratranz.cn", remote_project_id=42, **options)
 
 
+def unavailable_saved_source(project, source_path, *, missing=False):
+    services, *_ = project
+    registration = next(
+        source
+        for source in services.project_lifecycle.active.project.envelope.data["sources"]
+        if source["location"] == str(source_path.resolve())
+    )
+    artifact = Path(services.root) / "source_artifacts" / "manifests" / f"{registration['source_artifact_id']}.json"
+    assert artifact.is_file()
+    if missing:
+        artifact.unlink()
+    else:
+        artifact.write_bytes(b'{"corrupt":true}')
+
+
 def test_selected_source_never_hydrates_or_gets_blocked_by_an_unselected_broken_source(project, monkeypatch):
     _services, service, _context, first, second = project
-    initial = snapshot(project).value
+    selected_id = next(source.source_id for source in service.catalog(_context).value if source.label == first.name)
+    initial = snapshot(project, source_ids=(selected_id,)).value
     selected = next(source for source in initial.sources if source.label == first.name)
-    second.unlink()
+    unavailable_saved_source(project, second)
     prepared = []
     original = service._source_preparer.prepare_source
 
@@ -35,11 +52,11 @@ def test_selected_source_never_hydrates_or_gets_blocked_by_an_unselected_broken_
     assert prepared == []  # The complete selected source was already cached by the initial capture.
 
 
-def test_tolerant_snapshot_keeps_complete_sources_and_reports_the_specific_failed_source(project):
-    _services, _service, _context, _first, second = project
-    initial = snapshot(project).value
-    failed = next(source for source in initial.sources if source.label == second.name)
-    write_plugin(second, [(0x800, "Shared", "Changed source content")])
+@pytest.mark.parametrize("missing", [False, True])
+def test_tolerant_snapshot_keeps_complete_sources_and_reports_the_specific_failed_source(project, missing):
+    _services, service, context, _first, second = project
+    failed = next(source for source in service.catalog(context).value if source.label == second.name)
+    unavailable_saved_source(project, second, missing=missing)
 
     result = snapshot(project, tolerate_failures=True)
 
@@ -49,18 +66,18 @@ def test_tolerant_snapshot_keeps_complete_sources_and_reports_the_specific_faile
     assert len(result.value.failures) == 1
     source_id, label, error = result.value.failures[0]
     assert (source_id, label) == (failed.source_id, second.name)
-    assert "指纹" in error
+    assert "保存的来源成果不可用" in error
 
 
 def test_default_upload_snapshot_still_rejects_an_incomplete_source(project):
     _services, _service, _context, _first, second = project
-    write_plugin(second, [(0x800, "Shared", "Changed source content")])
+    unavailable_saved_source(project, second)
 
     result = snapshot(project)
 
     assert not result.is_success
     assert result.value is None
-    assert result.diagnostics[0].code == "PROJECT_SOURCE_FINGERPRINT_MISMATCH"
+    assert result.diagnostics[0].code == "PROJECT_SOURCE_ARTIFACT_UNAVAILABLE"
 
 
 def test_download_snapshot_keeps_unsaved_translations_and_other_system_and_project_references(project):
@@ -93,7 +110,7 @@ def test_download_snapshot_keeps_unsaved_translations_and_other_system_and_proje
 
 def test_file_source_facade_keeps_complete_sources_when_another_selected_source_fails(project):
     services, _service, context, _first, second = project
-    second.unlink()
+    unavailable_saved_source(project, second, missing=True)
 
     result = services.gui_project_commands.file_sources_snapshot(
         context, endpoint="https://paratranz.cn", remote_project_id=42

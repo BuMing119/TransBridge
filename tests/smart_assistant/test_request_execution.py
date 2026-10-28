@@ -44,7 +44,7 @@ def setup(tmp_path, monkeypatch):
     service.transact(context, apply)
     service.scheduler.activate(session_id, "view")
     selected = service.scheduler.select_next_turn(
-        session_id, "view", (request,), allowed_tools=("request_test_write", "request_test_read")
+        session_id, "view", (request,), allowed_tools=("request_test_write", "request_test_read", "get_task_result")
     )
     gate = RequestExecutionGate(service, context, selected.admission)
     ctx = ExecutionContext(request_context=context, assistant_gate=gate, assistant_required=True)
@@ -385,7 +385,7 @@ def test_confirmation_staged_steps_are_not_running_and_read_exception_settles_st
     assert not request.unsettled and request.status == RequestStatus.OPEN
 
 
-def test_request_owned_commits_advance_scope_version_for_next_leaf_but_external_change_rejects(setup):
+def test_request_admission_survives_owned_and_unrelated_content_revisions(setup):
     from types import SimpleNamespace
 
     service, context, gate, ctx, _ = setup
@@ -420,9 +420,162 @@ def test_request_owned_commits_advance_scope_version_for_next_leaf_but_external_
     spec = register(write)
     assert execute_with_guardrails(spec, {}, ctx, middlewares=[]).success
     assert execute_with_guardrails(spec, {}, ctx, middlewares=[]).success
-    assert observed == [1, 2]
+    assert observed == [1, 1]
     app.variant_revision += 1
-    assert execute_with_guardrails(spec, {}, ctx, middlewares=[]).error_code == "REQUEST_SCOPE_MISMATCH"
+    app.project_revision += 1
+    assert execute_with_guardrails(spec, {}, ctx, middlewares=[]).success
+    assert observed == [1, 1, 1]
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_result_read_survives_content_changes_and_preserves_captured_input(setup, prepared, monkeypatch):
+    from types import SimpleNamespace
+
+    from transbridge.application.assistant_requests.models import RequestError
+    from transbridge.converter.translation_entry import TranslationEntry
+    from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+    from transbridge.smart_assistant.tools.tool_translator import _register_translator_tools
+
+    service, context, gate, ctx, _ = setup
+    captured = TranslationEntryCollection([TranslationEntry("a", "a", "Original", "Before", 1, "")])
+    identity = ("project", "variant")
+    app = SimpleNamespace(collection=captured, active_version_identity=identity, project_revision=1, variant_revision=1)
+    ctx.app_context = app
+    ctx.__post_init__()
+
+    def select_version(state):
+        state["ingress"][0]["selection"] = {
+            "active_version_identity": list(identity),
+            "project_revision": 1,
+            "variant_revision": 1,
+            "selected_entry_ids": ["a"],
+        }
+
+    service.transact(context, select_version)
+    # Restored receipts from before the lifecycle change must ignore old revisions too.
+    service.update_request(
+        context,
+        "request",
+        lambda request: replace(
+            request,
+            execution_version_json='{"active_version_identity": ["project", "variant"], '
+            '"project_revision": 1, "variant_revision": 1}',
+        ),
+    )
+    app.collection = TranslationEntryCollection([replace(captured.get("a"), translation="Later")])
+    app.project_revision = 9
+    app.variant_revision = 11
+
+    def inspect(execution, result_id):
+        assert execution.collection is captured
+        assert execution.collection.get("a").translation == "Before"
+        assert result_id == "saved-result"
+        return {"result_id": result_id, "state": "completed"}
+
+    monkeypatch.setattr("transbridge.smart_assistant.tools.translation_task_results.result_view", inspect)
+    if ToolRegistry.get("get_task_result") is None:
+        _register_translator_tools()
+    read = ToolRegistry.get("get_task_result")
+    args = {"result_id": "saved-result"}
+    if prepared:
+        gate.prepare_steps([{"tool": read.name, "args": args}])
+    result = execute_with_guardrails(read, args, ctx, middlewares=[])
+    assert result.success and result.data["result_id"] == "saved-result"
+    other_capture = replace(ctx)
+    other_capture._target_version_identity = ("project", "different-variant")
+    with pytest.raises(RequestError, match="REQUEST_SCOPE_MISMATCH"):
+        gate.before(read.name, args, other_capture)
+    assert other_capture._target_version_identity == ("project", "different-variant")
+    app.active_version_identity = ("project", "different-variant")
+    if prepared:
+        gate.prepare_steps([{"tool": read.name, "args": args}])
+    assert execute_with_guardrails(read, args, ctx, middlewares=[]).error_code == "REQUEST_SCOPE_MISMATCH"
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+@pytest.mark.parametrize("change", ["switch_source", "delete_entry"])
+def test_saved_result_query_ignores_missing_selection_but_keeps_authorization(setup, tmp_path, prepared, change):
+    from types import SimpleNamespace
+
+    from transbridge.converter.translation_entry import TranslationEntry
+    from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+    from transbridge.smart_assistant.tools.entry_task_results import EntryResultStore
+    from transbridge.smart_assistant.tools.tool_translator import _register_translator_tools
+
+    service, context, gate, ctx, _ = setup
+    collection = TranslationEntryCollection([TranslationEntry("a", "a", "Original", "Before", 1, "")])
+    identity = ("project", "variant")
+    app = SimpleNamespace(
+        collection=collection,
+        active_key="original-source",
+        active_version_identity=identity,
+        project_commands=SimpleNamespace(task_result_directory=lambda _: tmp_path / "results"),
+    )
+    ctx.app_context = app
+    ctx.__post_init__()
+
+    def select_entries(state):
+        state["ingress"][0]["selection"] = {"active_version_identity": list(identity), "selected_entry_ids": ["a"]}
+
+    service.transact(context, select_entries)
+    store = EntryResultStore(tmp_path / "results" / "ai-task-recovery")
+    result_id = uuid4().hex
+    store.create({
+        "task_id": result_id,
+        "origin": "smart-assistant",
+        "owner_id": context.owner_id,
+        "session_id": context.session_id,
+        "project_id": identity[0],
+        "variant_id": identity[1],
+        "mode": "download",
+        "result_kind": "download",
+        "results_only": True,
+        "config_digest": "fixed-entry-inputs",
+        "state": "completed",
+        "created_at": "2026-10-26T00:00:00+00:00",
+        "sources": [],
+        "candidate_rows": [{"text": "Saved result"}],
+    })
+    if change == "switch_source":
+        app.collection = TranslationEntryCollection()
+        app.active_key = "other-source"
+        ctx.__post_init__()
+    else:
+        collection.remove("a")
+    if ToolRegistry.get("get_task_result") is None:
+        _register_translator_tools()
+    read = ToolRegistry.get("get_task_result")
+    args = {"result_id": result_id}
+
+    def query():
+        if prepared:
+            gate.prepare_steps([{"tool": read.name, "args": args}])
+        return execute_with_guardrails(read, args, ctx, middlewares=[])
+
+    result = query()
+    assert result.success and result.data["results"] == [{"text": "Saved result"}]
+    for spec in (
+        ToolSpec("request_test_read", "read", "read", {}, execute=lambda *_: pytest.fail("selection read ran")),
+        register(lambda *_: pytest.fail("write ran")),
+    ):
+        if ToolRegistry.get(spec.name) is None:
+            ToolRegistry.register(spec)
+        if prepared:
+            gate.prepare_steps([{"tool": spec.name, "args": {}}])
+        assert execute_with_guardrails(spec, {}, ctx, middlewares=[]).error_code == "REQUEST_SCOPE_MISMATCH"
+    store.update(result_id, owner_id="another-owner")
+    assert query().error_code == "TASK_RESULT_UNAVAILABLE"
+    store.update(result_id, owner_id=context.owner_id, session_id="another-session")
+    assert query().error_code == "TASK_RESULT_UNAVAILABLE"
+    service.scheduler.release(gate.admission)
+    assert query().error_code == "TURN_LEASE_STALE"
+
+
+def test_tool_request_scope_contract_cannot_exempt_modifying_tools():
+    with pytest.raises(ValueError, match="read-only"):
+        ToolSpec("invalid", "invalid", "invalid", {}, permission="write", request_scope="target")
+    with pytest.raises(ValueError, match="Invalid tool request scope"):
+        ToolSpec("invalid", "invalid", "invalid", {}, request_scope="unknown")
 
 
 def test_task_center_pause_records_wait_and_stopping_request_cannot_resume(setup):

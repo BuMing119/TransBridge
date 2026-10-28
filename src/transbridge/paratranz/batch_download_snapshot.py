@@ -64,7 +64,7 @@ class BatchDownloadSnapshotReader:
         self.config = config
         self.gateway_factory = gateway_factory or FilePublicationGateway
 
-    def fetch(self, project_id, scopes, *, cancellation=None, progress=None, limit=100_000):
+    def fetch(self, project_id, scopes, *, cancellation=None, progress=None, limit=100_000, on_source=None):
         scopes = tuple(scopes)
         if type(project_id) is not int or project_id < 1 or type(limit) is not int or limit < 1:
             raise ValueError("下载项目或完整快照上限无效。")
@@ -107,9 +107,13 @@ class BatchDownloadSnapshotReader:
                         gateway, project_id, scope, scopes, inventory, cancellation, limit - consumed
                     )
                 except Exception as exc:
+                    if isinstance(exc, _PartialReadFailure):
+                        if on_source is not None:
+                            on_source(scope, exc.read)
+                        exc = exc.cause
                     _check_cancelled(cancellation)
                     if _global_failure(exc):
-                        raise
+                        raise exc
                     _logger.warning("Batch download source failed: source_id=%s", scope.source_id, exc_info=True)
                     results.append(BatchDownloadRead(scope.source_id, error=str(exc)))
                     continue
@@ -119,36 +123,59 @@ class BatchDownloadSnapshotReader:
                         collided.update((previous, scope.source_id))
                 consumed += len(read.entries)
                 results.append(read)
+                if on_source is not None:
+                    on_source(scope, read)
             _check_cancelled(cancellation)
             if progress:
                 progress(len(scopes), len(scopes), "当前文件读取完成。")
-            return tuple(
+            completed = tuple(
                 replace(item, entries=(), error="云端不同插件返回了重复词条 ID，本次未采用这些插件的内容。")
                 if item.source_id in collided
                 else item
                 for item in results
             )
+            if on_source is not None:
+                for scope, read in zip(scopes, completed, strict=True):
+                    if read.source_id in collided:
+                        on_source(scope, read)
+            return completed
         finally:
             gateway.close()
 
 
 def _read_source(gateway, project_id, scope, scopes, inventory, cancellation, remaining):
-    """Never expose the successful prefix of a source with an unreadable file."""
+    """Keep failed-source file results as evidence, never as a complete snapshot."""
     selected_paths = preferred_download_paths(inventory, scope.paths, scope.legacy_paths)
     if selected_paths:
         # A read-time 404 may refresh IDs/partitions, never switch generations.
         scope = replace(scope, paths=selected_paths, legacy_paths=())
     cache = {}
-    for attempt in range(2):
-        try:
-            return _read_source_files(
-                gateway, project_id, scope, scopes, inventory, cancellation, remaining, cache, attempt == 0
+    try:
+        for attempt in range(2):
+            try:
+                return _read_source_files(
+                    gateway, project_id, scope, scopes, inventory, cancellation, remaining, cache, attempt == 0
+                )
+            except _SourceInventoryRefreshed:
+                # Rebuild current partitions; unchanged file IDs reuse parsed results.
+                continue
+        raise RuntimeError("云端文件持续变化，本次未采用该插件的部分内容。")
+    except Exception as exc:
+        if cache:
+            read = BatchDownloadRead(
+                scope.source_id,
+                tuple(entry for entries in cache.values() for entry in entries),
+                tuple(dict.fromkeys(path for path, _file_id in cache)),
+                f"来源未完整读取，仅保留已下载文件：{exc}",
             )
-        except _SourceInventoryRefreshed:
-            # Rebuild the entire current source, including new digital parts.
-            # Successfully read unchanged file IDs need no second HTTP request.
-            continue
-    raise RuntimeError("云端文件持续变化，本次未采用该插件的部分内容。")
+            raise _PartialReadFailure(read, exc) from exc
+        raise
+
+
+class _PartialReadFailure(RuntimeError):
+    def __init__(self, read, cause):
+        super().__init__(str(cause))
+        self.read, self.cause = read, cause
 
 
 class _SourceInventoryRefreshed(RuntimeError):

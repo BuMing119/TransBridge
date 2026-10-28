@@ -74,7 +74,7 @@ class AiTaskWorker(QThread):
         # Existing consumers can keep their two-argument signal. New windows
         # subscribe only to log_batch and receive one event for many log lines.
         for key, text in batch:
-            self.log.emit(key, text)
+            self.log.emit(key, str(text))
 
     @property
     def was_cancelled(self):

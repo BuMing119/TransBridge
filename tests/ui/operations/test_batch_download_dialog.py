@@ -98,6 +98,66 @@ def review_row():
     return SyncReviewRow("row", "key", "Original", "Local", "", "选择译文", (candidate,))
 
 
+def test_saved_result_reopens_in_worker_and_export_success_is_shown(qapp, workers, monkeypatch):
+    from transbridge.ui.operations import batch_download_recovery as recovery
+
+    calls = []
+    record = {"created_at": "2026-10-26", "sources": {"one": "one.json"}, "result_id": "saved"}
+    subject = make_dialog(
+        saved_results=lambda: (record,),
+        restore=lambda result_id, *_: calls.append(result_id) or DownloadPreview(1, 0, 1, source_ids=("one",)),
+        export_results=lambda path: calls.append(path),
+    )
+    subject.show()
+    qapp.processEvents()
+    workers[-1].complete()
+    monkeypatch.setattr(
+        recovery.QInputDialog, "getItem", lambda *_args, **_kwargs: ("2026-10-26 · 1 个来源 · saved", True)
+    )
+    subject._recovery_controls.reopen.click()
+    assert calls == []
+    workers[-1].complete()
+    workers[-1].complete()
+    assert calls == ["saved"] and subject.selection() == ("one",)
+    monkeypatch.setattr(recovery.QFileDialog, "getSaveFileName", lambda *_: ("export.json", "JSON"))
+    subject._recovery_controls.save_as.click()
+    workers[-1].complete()
+    assert calls[-1] == "export.json" and "已另存" in subject._status.text()
+    assert subject._worker is None
+    subject.close()
+
+
+@pytest.mark.parametrize("has_healthy", [False, True])
+def test_saved_result_damage_warning_keeps_healthy_selection_available(qapp, workers, monkeypatch, has_healthy):
+    from transbridge.application.sync.download_results import DownloadResultRecords
+    from transbridge.ui.operations import batch_download_recovery as recovery
+
+    calls, warnings = [], []
+    record = {"created_at": "2026-10-26", "sources": {"one": "one.json"}, "result_id": "saved"}
+    diagnostic = "损坏记录：result.json；原文件保留"
+    records = DownloadResultRecords((record,) if has_healthy else (), diagnostics=(diagnostic,))
+    subject = make_dialog(
+        saved_results=lambda: records,
+        restore=lambda result_id, *_: calls.append(result_id) or DownloadPreview(1, 0, 1, source_ids=("one",)),
+        export_results=lambda *_: None,
+    )
+    monkeypatch.setattr(recovery.QMessageBox, "warning", lambda *_args: warnings.append(_args[-1]))
+    monkeypatch.setattr(recovery.QMessageBox, "information", lambda *_args: None)
+    monkeypatch.setattr(
+        recovery.QInputDialog, "getItem", lambda *_args, **_kwargs: ("2026-10-26 · 1 个来源 · saved", True)
+    )
+    subject.show()
+    qapp.processEvents()
+    workers[-1].complete()
+    subject._recovery_controls.reopen.click()
+    workers[-1].complete()
+    if has_healthy:
+        workers[-1].complete()
+    assert warnings == [diagnostic]
+    assert calls == (["saved"] if has_healthy else [])
+    subject.close()
+
+
 def test_one_click_compares_and_saves_in_one_worker_without_another_confirmation(qapp, workers):
     calls = []
 
@@ -123,7 +183,7 @@ def test_one_click_compares_and_saves_in_one_worker_without_another_confirmation
     assert calls == []
     cancel = subject._cancel_event
     workers[-1].complete()
-    assert calls == [("compare", ("one", "two"), "prefer_remote", (), cancel), ("apply", cancel)]
+    assert calls == [("compare", ("one", "two"), "keep_current", (), cancel), ("apply", cancel)]
     assert subject._cancel_event is cancel
     assert len(workers) == 2
     assert "已更新 4 条" in subject._status.text()
@@ -160,7 +220,7 @@ def test_selection_and_policy_changes_do_not_run_until_the_next_download_click(d
     dialog._primary_button.click()
     workers[-1].complete()
     assert len(workers) == before + 1
-    assert calls == [(("two",), "prefer_remote", ()) if change == "source" else (("one", "two"), "prefer_local", ())]
+    assert calls == [(("two",), "keep_current", ()) if change == "source" else (("one", "two"), "prefer_incoming", ())]
 
 
 def test_no_selection_cannot_start_a_download(dialog, workers):
@@ -436,7 +496,7 @@ def test_review_applies_and_saves_choices_automatically_without_another_main_but
     if accept:
         assert len(workers) == before + 1
         workers[-1].complete()
-        assert calls[-2:] == [("compare", ("one", "two"), "prefer_remote", (("row", "remote-choice"),)), ("apply",)]
+        assert calls[-2:] == [("compare", ("one", "two"), "keep_current", (("row", "remote-choice"),)), ("apply",)]
         assert "保存到当前本地版本" in dialog._status.text()
         assert dialog._decisions == (("row", "remote-choice"),)
         assert dialog._primary_button.text() == "已保存"

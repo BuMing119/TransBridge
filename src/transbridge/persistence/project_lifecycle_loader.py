@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
+from dataclasses import replace
 from typing import Protocol
 
 from transbridge.application.contracts import DomainError, ErrorCategory, RequestContext
 from transbridge.application.projects.models import ActiveProject, TransitionTarget
 
+from .prepared_project_read import prepared_project_sources, prepared_variant, verify_prepared_project
 from .v2.ids import ProjectRef, VariantRef
 from .v2.models import LoadedRecord, ProjectDto, VariantDto
 from .v2.variant import (
@@ -53,12 +56,19 @@ class V2ProjectCandidateLoader:
                 ErrorCategory.PREREQUISITE, "PROJECT_RECORD_UNAVAILABLE", "Project record is unavailable."
             )
         project = project_record.value
+        verify_prepared_project(self._projects, project_record)
+        persisted_project_revision = project.envelope.revision
+        bound_sources = prepared_project_sources()
+        if bound_sources is not None and list(bound_sources) != project.envelope.data["sources"]:
+            data = deepcopy(project.envelope.data)
+            data["sources"] = list(deepcopy(bound_sources))
+            project = ProjectDto(replace(project.envelope, revision=persisted_project_revision + 1, data=data))
         if target.variant_ref is None:
             return ActiveProject(
                 project=project,
                 variant=None,
                 formal_variant_ref=None,
-                persisted_project_revision=project.envelope.revision,
+                persisted_project_revision=persisted_project_revision,
                 persisted_variant_revision=None,
                 source_project_hash=project_record.source_hash,
             )
@@ -76,7 +86,7 @@ class V2ProjectCandidateLoader:
             project=project,
             variant=VariantAggregate(materialized),
             formal_variant_ref=target.variant_ref,
-            persisted_project_revision=project.envelope.revision,
+            persisted_project_revision=persisted_project_revision,
             persisted_variant_revision=persisted_variant_revision,
             source_ref=target.snapshot_ref,
             source_project_hash=project_record.source_hash,
@@ -112,7 +122,9 @@ class V2ProjectCandidateLoader:
         # records. Keep the exact loaded record's digest for commit-time stale
         # checks instead of comparing its DTO with a normalized round-trip.
         if snapshot is None:
-            snapshot = VariantSnapshot.from_dto(result.value, target.variant_ref)
+            snapshot = prepared_variant(self._variants, result)
+            if snapshot is None:
+                snapshot = VariantSnapshot.from_dto(result.value, target.variant_ref)
         return snapshot, result
 
     def _materialize(

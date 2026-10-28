@@ -11,6 +11,7 @@ import sys
 import pytest
 
 from tests.plugin_fixtures import _field, _record
+from tests.smart_assistant.tools import test_source_import_authority as source_support
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import (
     EetXmlAdapter,
@@ -28,9 +29,11 @@ from transbridge.application.tasks.controls import CancellationToken as TaskCanc
 from transbridge.entrypoints.agent import parse_translation_source as agent_parse
 from transbridge.entrypoints.gui import parse_translation_source as gui_parse
 from transbridge.smart_assistant.tools.tool_parser import _tool_parse_eet
+from transbridge.smart_assistant.tools.types import ExecutionContext
 
 FIXTURES = Path(__file__).with_name("fixtures")
 ESP_FIXTURE = Path("tests/parser/data/sample.esp")
+project = source_support.project
 
 
 def _request(path: Path, format_id: FormatId, *, namespace=None) -> ParseRequest:
@@ -313,26 +316,12 @@ def test_xml_write_rejects_entry_from_another_source_namespace(tmp_path: Path) -
     assert not target.exists()
 
 
-def test_agent_eet_tool_preserves_source_snapshot_in_created_slot(tmp_path: Path) -> None:
-    source = tmp_path / "source.xml"
-    shutil.copyfile(FIXTURES / "eet-small.xml", source)
-
-    class Context:
-        def __init__(self) -> None:
-            self.slots = {}
-            self.active_slot = None
-
-        def add_slot(self, key, slot) -> None:
-            self.slots[key] = slot
-
-        def activate_slot(self, key) -> None:
-            self.active_slot = self.slots[key]
-
-    context = Context()
-
-    result = _tool_parse_eet({"path": str(source)}, context)
+def test_agent_eet_tool_preserves_source_snapshot_in_created_slot(project) -> None:
+    context = project.ctx
+    result = _tool_parse_eet({"path": str(project.source)}, ExecutionContext(app_context=context))
 
     assert result.success
     assert context.active_slot.source_snapshot is not None
     assert context.active_slot.format_id is FormatId.XML_EET
     assert len(context.active_slot.collection) == 1
+    assert not context.authoritative_projection_diverged()

@@ -77,6 +77,7 @@ def navigation(tmp_path, monkeypatch):
     host = SimpleNamespace(
         context=context,
         runtime_context=runtime_context,
+        project_commands=services.gui_project_commands,
         current_project_opener=services.current_project_opener,
         app_runtime=SimpleNamespace(
             use_cases=SimpleNamespace(resolve=dependencies.__getitem__, names=lambda: tuple(dependencies))

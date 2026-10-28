@@ -80,6 +80,7 @@ class SettingsDialog(QDialog):
         paratranz_config: object | None = None,
         reload_llm: Callable[[], object] | None = None,
         on_paratranz_saved: Callable[[object], None] | None = None,
+        task_result_preferences=None,
     ) -> None:
         super().__init__(parent)
         configure_dialog(self)
@@ -91,6 +92,7 @@ class SettingsDialog(QDialog):
         self._persist_failure_resolver = persist_failure_resolver or self._ask_persist_failure
         self._initial_section = SettingsSection.parse(initial_section)
         self._paratranz_config = paratranz_config
+        self._task_result_preferences = task_result_preferences
         self._config_draft = SettingsConfigDraft(
             llm_config,
             paratranz_config,
@@ -166,6 +168,14 @@ class SettingsDialog(QDialog):
             return False
 
         previous_active = self._active_preference()
+        results_page = self._settings_pages[SettingsSection.TASK_RESULTS]
+        save_results = getattr(results_page, "save", None)
+        if callable(save_results):
+            try:
+                save_results()
+            except Exception as exc:
+                self._show_notice(f"无法保存冲突处理设置：{exc}。请重试。", error=True)
+                return False
         result = self._theme_service.set_preference(preference, persist=True)
         if result.status is ThemeApplyStatus.FAILED:
             message = _safe_apply_message(result, self._gettext)
@@ -246,6 +256,7 @@ class SettingsDialog(QDialog):
             or preference != self._state.active_preference
             or self._config_draft.has_llm
             or self._config_draft.has_paratranz
+            or self._task_result_preferences is not None
         )
 
     def _refresh_preview(self) -> None:

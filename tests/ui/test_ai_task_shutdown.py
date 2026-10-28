@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 from PyQt6.QtCore import QObject
 from PyQt6.QtGui import QCloseEvent
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 import pytest
 
 from transbridge.ui.shell import window_lifecycle
 from transbridge.ui.shell.window_lifecycle import WindowLifecycle
+from transbridge.ui.worker_registry import get_api_worker_registry
 
 
 @pytest.fixture(scope="session")
@@ -19,6 +22,13 @@ def qapp():
 
 @pytest.fixture
 def shutdown_host(qapp, monkeypatch):
+    # Previous UI tests may have delivered finished but not the registry's
+    # queued native-release signal. This fixture starts with a drained app.
+    deadline = time.monotonic() + 3
+    while get_api_worker_registry().busy and time.monotonic() < deadline:
+        QTest.qWait(10)
+        qapp.processEvents()
+    assert not get_api_worker_registry().busy
     host = QObject()
     host.close_pending = host.close_ready = False
     host.project_open_worker = host.foreground_worker = None

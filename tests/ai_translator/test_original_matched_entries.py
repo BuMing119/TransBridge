@@ -17,7 +17,7 @@ from transbridge.ai_translator.post_processor.proofread_pipeline import Proofrea
 from transbridge.ai_translator.post_processor.refinement_response import parse_batch_refinement_response
 from transbridge.ai_translator.prompt_builder import PromptBuilder
 from transbridge.ai_translator.structured_schemas import PROOFREAD_OUTPUT_SCHEMA
-from transbridge.ai_translator.translator import AutoTranslator, ProgressCheckpoint, TranslatorConfig
+from transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig
 from transbridge.application.translation import InMemoryTranslationCheckpointPort, ProofreadStage
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
@@ -89,8 +89,6 @@ def test_auto_translator_commits_each_duplicate_independently(monkeypatch, selec
 
     monkeypatch.setattr(term_database, "TermDatabaseManager", lambda **_kwargs: Terms())
     monkeypatch.setattr(noun_extractor, "NounExtractor", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(ProgressCheckpoint, "save", lambda *_args: None)
-    monkeypatch.setattr(ProgressCheckpoint, "delete", lambda *_args: None)
     config = LLMConfig()
     config.enable_post_process = False
     config.retrieval_enabled = False
@@ -325,16 +323,19 @@ def test_polish_apply_and_report_keep_individual_preview_decisions() -> None:
 
 def test_legacy_task_session_and_run_identity_accept_distinct_originals() -> None:
     from transbridge.ui.tools.ai_translator.run_spec import _entry_key
-    from transbridge.ui.tools.ai_translator.task_session import TaskSession
+    from transbridge.ui.tools.ai_translator.task_session_preparation import SessionCapture
 
     entries = _entries()
-    session = object.__new__(TaskSession)
-    session._ctx = SimpleNamespace(
+    ctx = SimpleNamespace(
+        active_version_identity=("project", "variant"),
         slots={"source": SimpleNamespace(collection=TranslationEntryCollection(entries))},
         uses_authoritative_projection=False,
     )
 
-    states = session._read_states()
+    capture = SessionCapture(ctx, (), SimpleNamespace(run_id="originals"))
+    for _ in capture.steps():
+        pass
+    states = capture.prepare().states
 
     assert len(states["source"].entries) == 2
     assert tuple(_entry_key(entry) for entry in entries) == tuple(entry.identity.serialize() for entry in entries)

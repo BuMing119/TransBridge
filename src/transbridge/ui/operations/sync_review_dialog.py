@@ -24,9 +24,8 @@ from PyQt6.QtWidgets import (
 from transbridge.ui.foundation.accessibility import configure_accessible_widget
 from transbridge.ui.foundation.components import configure_dialog
 
-from .plan_view import OperationKind
 from .sync_review_detail import SyncReviewDetail
-from .sync_review_direction import sync_review_direction
+from .sync_review_direction import DOWNLOAD_REVIEW
 from .sync_review_list import SyncReviewListDelegate
 from .sync_review_model import SyncReviewFilter, SyncReviewModel
 from .sync_review_view import SyncReviewRow
@@ -40,15 +39,14 @@ class SyncReviewDialog(QDialog):
         rows: tuple[SyncReviewRow, ...],
         parent=None,
         *,
-        kind=OperationKind.DOWNLOAD,
         submit_on_accept: bool = False,
     ) -> None:
         super().__init__(parent)
         configure_dialog(self)
         self.setWindowTitle("确认这几条翻译")
         self.resize(1120, 820)
-        self._direction = sync_review_direction(kind)
-        self._model = SyncReviewModel(rows, self, kind=kind)
+        self._direction = DOWNLOAD_REVIEW
+        self._model = SyncReviewModel(rows, self)
         self._proxy = SyncReviewFilter(self)
         self._proxy.setSourceModel(self._model)
         root = QVBoxLayout(self)

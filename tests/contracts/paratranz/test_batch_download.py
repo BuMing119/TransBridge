@@ -2,11 +2,11 @@ from dataclasses import replace
 
 import pytest
 
+from tests.contracts.paratranz.download_result_support import merge_download
 from transbridge.application.io.identity import EntryKey, EntryRevision, ExternalEntryRef, SourceNamespace
 from transbridge.application.sync.batch_download import (
     BatchDownloadSource,
     plan_batch_download,
-    rebased_candidates,
     snapshots_from_entries,
 )
 from transbridge.application.sync.download_review import DownloadDecision
@@ -52,33 +52,31 @@ def test_same_key_across_sources_updates_only_its_own_translation():
     b_entry = local("b")
     b = source("b", entries=(b_entry,), remotes=(remote(b_entry, translation="Other cloud"),))
     preview = plan_batch_download((a, b))
-    candidate = rebased_candidates(preview, (a, b))
+    candidate = merge_download(preview, (a, b))
 
     assert preview.updated_count == 2
-    assert [entry.translation for entry in candidate.entries] == ["Cloud", "Other cloud"]
-    assert candidate.updated_keys == (a.local_entries[0].entry_key, b_entry.entry_key)
-    assert all(entry.external_ref is None for entry in candidate.entries)
+    assert [entry.translation for entry in candidate.applied] == ["Cloud", "Other cloud"]
+    assert tuple(entry.entry_key for entry in candidate.applied) == (a.local_entries[0].entry_key, b_entry.entry_key)
 
 
 def test_equivalent_duplicates_apply_without_choosing_or_persisting_an_id():
     entry = local()
     current = source(entries=(entry,), remotes=(remote(entry), remote(entry, remote_id=2)))
     preview = plan_batch_download((current,))
-    candidate = rebased_candidates(preview, (current,))
+    candidate = merge_download(preview, (current,))
 
     assert preview.deferred_count == 0
     assert preview.updated_count == 1
-    assert candidate.entries[0].translation == "Cloud"
-    assert candidate.entries[0].external_ref is None
+    assert candidate.applied[0].translation == "Cloud"
 
 
 def test_distinct_translations_require_review_while_other_source_continues():
     a, b = ambiguous(), source("b")
     preview = plan_batch_download((a, b))
-    candidate = rebased_candidates(preview, (a, b))
+    candidate = merge_download(preview, (a, b))
 
     assert preview.deferred_count == 1 and preview.updated_count == 1
-    assert [entry.translation for entry in candidate.entries] == ["Local", "Cloud"]
+    assert [entry.translation for entry in candidate.applied] == ["Cloud"]
     assert len(preview.plans[0].download_review[0].candidates) == 2
 
 
@@ -87,15 +85,15 @@ def test_concurrent_edit_requires_an_explicit_choice_while_other_items_can_apply
     certain = local(key="certain")
     current = source(entries=(edited, certain), remotes=(remote(edited), remote(certain, remote_id=2)))
     preview = plan_batch_download((current,), review_keys=(edited.entry_key,))
-    candidate = rebased_candidates(preview, (current,))
+    candidate = merge_download(preview, (current,))
 
     assert preview.updated_count == preview.deferred_count == 1
     row = preview.plans[0].download_review[0]
     assert row.reason == "local_content_changed"
     assert row.local.entry_key == edited.entry_key
     assert len(row.candidates) == 1 and row.allow_remote_choice
-    assert [entry.translation for entry in candidate.entries] == ["New local edit", "Cloud"]
-    assert candidate.updated_keys == (certain.entry_key,)
+    assert [entry.translation for entry in candidate.applied] == ["Cloud"]
+    assert tuple(entry.entry_key for entry in candidate.applied) == (certain.entry_key,)
 
 
 @pytest.mark.parametrize("choice", ["keep_local", "remote"])
@@ -107,12 +105,12 @@ def test_explicit_concurrent_edit_choice_resolves_and_survives_replanning(choice
     decision = DownloadDecision(row.row_id, "keep_local" if choice == "keep_local" else row.candidates[0].token)
 
     chosen = plan_batch_download((current,), decisions=(decision,), review_keys=(key,))
-    candidate = rebased_candidates(chosen, (current,))
+    candidate = merge_download(chosen, (current,))
     repeated = plan_batch_download((current,), decisions=(decision,), review_keys=(key,))
 
     assert chosen.deferred_count == 0
     assert chosen.updated_count == (0 if choice == "keep_local" else 1)
-    assert candidate.entries[0].translation == ("Local" if choice == "keep_local" else "Cloud")
+    assert [entry.translation for entry in candidate.applied] == ([] if choice == "keep_local" else ["Cloud"])
     assert chosen.plans[0].download_review[0].resolved
     assert chosen.cleared_decisions == repeated.cleared_decisions == ()
     assert repeated.plans[0].plan_hash == chosen.plans[0].plan_hash
@@ -181,11 +179,11 @@ def test_local_policy_preserves_local_and_cloud_only_entries_are_never_added():
     outside = remote(local(key="cloud-only"), remote_id=2)
     current = replace(current, remote_entries=(*current.remote_entries, outside))
     preview = plan_batch_download((current,), policy=ConflictPolicy.PREFER_LOCAL)
-    candidate = rebased_candidates(preview, (current,))
+    candidate = merge_download(preview, (current,))
 
     assert preview.updated_count == 0
-    assert candidate.entries == current.local_entries
-    assert candidate.updated_keys == ()
+    assert candidate.applied == ()
+    assert tuple(entry.entry_key for entry in candidate.applied) == ()
 
 
 def test_concurrent_target_edit_defers_only_target_and_preserves_other_edits():
@@ -201,40 +199,17 @@ def test_concurrent_target_edit_defers_only_target_and_preserves_other_edits():
         ),
     )
     other = source("other")
-    candidate = rebased_candidates(preview, (fresh, other))
+    candidate = merge_download(preview, (fresh, other))
 
-    assert [entry.translation for entry in candidate.entries] == ["User edit", "Cloud", "Unrelated edit", "Local"]
-    assert candidate.updated_keys == (second.entry_key,)
-    assert candidate.deferred_keys == (first.entry_key,)
-    assert candidate.replan_source_ids == ()
-
-
-def test_revision_only_changes_do_not_falsely_block_a_download():
-    current = source()
-    preview = plan_batch_download((current,))
-    changed = replace(current, local_entries=(replace(current.local_entries[0], revision=EntryRevision(9)),))
-    candidate = rebased_candidates(preview, (changed,))
-
-    assert candidate.entries[0].translation == "Cloud"
-    assert candidate.entries[0].revision == EntryRevision(10)
-    assert candidate.deferred_keys == ()
-
-
-def test_repeated_apply_of_the_same_preview_is_idempotent_and_not_a_local_conflict():
-    current = source()
-    preview = plan_batch_download((current,))
-    first = rebased_candidates(preview, (current,))
-    already_applied = replace(current, local_entries=first.entries)
-    repeated = rebased_candidates(preview, (already_applied,))
-
-    assert repeated.entries == first.entries
-    assert repeated.updated_keys == ()
-    assert repeated.deferred_keys == ()
-    assert repeated.replan_source_ids == ()
+    assert [entry.translation for entry in candidate.applied] == ["Cloud"]
+    assert candidate.pending[0].current.translation == "User edit"
+    assert fresh.local_entries[2].translation == "Unrelated edit"
+    assert tuple(entry.entry_key for entry in candidate.applied) == (second.entry_key,)
+    assert tuple(row.entry_key for row in candidate.pending) == (first.entry_key,)
 
 
 @pytest.mark.parametrize("change", ["original", "context", "namespace", "membership", "order"])
-def test_source_changes_request_replanning_instead_of_applying_an_old_plan(change):
+def test_source_changes_defer_only_affected_targets(change):
     first, second = local(key="first"), local(key="second")
     current = source(entries=(first, second), remotes=(remote(first),))
     preview = plan_batch_download((current,))
@@ -246,20 +221,30 @@ def test_source_changes_request_replanning_instead_of_applying_an_old_plan(chang
         fresh = replace(current, local_entries=(second, first))
     else:
         fresh = replace(current, local_entries=(replace(first, **{change: "Changed"}), second))
-    candidate = rebased_candidates(preview, (fresh,))
+    candidate = merge_download(preview, (fresh,))
 
-    assert candidate.entries == fresh.local_entries
-    assert candidate.updated_keys == ()
-    assert candidate.replan_source_ids == ("a",)
+    if change == "namespace":
+        assert candidate.applied == ()
+        assert tuple(entry.entry_key for entry in candidate.applied) == ()
+        assert set(tuple(row.entry_key for row in candidate.pending)) == {first.entry_key, second.entry_key}
+    elif change in {"original", "context"}:
+        assert tuple(entry.entry_key for entry in candidate.applied) == (second.entry_key,)
+        assert tuple(row.entry_key for row in candidate.pending) == (first.entry_key,)
+    elif change == "membership":
+        assert tuple(entry.entry_key for entry in candidate.applied) == (first.entry_key,)
+        assert tuple(row.entry_key for row in candidate.pending) == (second.entry_key,)
+    else:
+        assert set(tuple(entry.entry_key for entry in candidate.applied)) == {first.entry_key, second.entry_key}
+        assert tuple(row.entry_key for row in candidate.pending) == ()
 
 
 def test_missing_source_does_not_block_unchanged_remaining_source():
     a, b = source(), source("b")
-    candidate = rebased_candidates(plan_batch_download((a, b)), (b,))
+    candidate = merge_download(plan_batch_download((a, b)), (b,))
 
-    assert candidate.replan_source_ids == ("a",)
-    assert candidate.updated_keys == (b.local_entries[0].entry_key,)
-    assert candidate.entries[0].translation == "Cloud"
+    assert tuple(row.entry_key for row in candidate.pending) == (a.local_entries[0].entry_key,)
+    assert tuple(entry.entry_key for entry in candidate.applied) == (b.local_entries[0].entry_key,)
+    assert candidate.applied[0].translation == "Cloud"
 
 
 def test_snapshot_capture_preserves_identity_order_context_and_ignores_old_cloud_refs():

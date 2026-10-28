@@ -3,55 +3,20 @@
 from __future__ import annotations
 
 import logging
-import weakref
 
-from PyQt6 import sip
-from PyQt6.QtCore import QEvent, QObject, pyqtSlot
+from PyQt6.QtCore import QEvent, QObject
 from PyQt6.QtWidgets import QMessageBox
 
 from transbridge.application.dialogue.index import DialogueIndex, source_unavailable_reason
 from transbridge.application.dialogue.loading import DialogueIndexLoader
 from transbridge.ui.windowing import show_and_activate
-from transbridge.ui.workers import ApiWorker
 
 from .consistency import synchronize_translation
 from .dialog import EntryEditorDialog
 from .editing import EntryDraft, content_scope
+from .index_delivery import IndexDelivery
 from .index_state import IndexStructure
 from .projection_sync import EditorProjectionSync
-
-
-class _IndexDelivery(QObject):
-    """Keep worker cleanup independent of the window's lifetime."""
-
-    def __init__(self, worker, controller, workers, generation, scope):
-        super().__init__(worker)
-        self._worker = worker
-        self._controller = weakref.ref(controller)
-        self._workers = workers
-        self._generation, self._scope = generation, scope
-        worker.result.connect(self._loaded)
-        worker.error.connect(self._failed)
-        worker.finished.connect(self._finished)
-
-    def _owner(self):
-        owner = self._controller()
-        return owner if owner is not None and not sip.isdeleted(owner) and not owner._closed else None
-
-    @pyqtSlot(object)
-    def _loaded(self, index):
-        if (owner := self._owner()) is not None:
-            owner._loaded(self._generation, self._scope, index)
-
-    @pyqtSlot(str)
-    def _failed(self, message):
-        if (owner := self._owner()) is not None:
-            owner._failed(self._generation, message)
-
-    @pyqtSlot()
-    def _finished(self):
-        self._workers.remove(self._worker)
-        self._worker.deleteLater()
 
 
 def unavailable_reason(context) -> str | None:
@@ -137,44 +102,74 @@ class DialogueEditorController(QObject):
             self._clear_selection("内容已切换，请双击要编辑的词条。")
         self._scope = scope
         collection = self.context.collection
-        entries = () if collection is None else tuple(collection)
         slot = self.context.active_slot
         reason = unavailable_reason(self.context)
-        rebuild = self._index_structure.changed(scope, slot, entries, reason)
+        if self._index_structure.source_changed(scope, slot, reason):
+            self._generation += 1
+            self._index = DialogueIndex((), {})
+            self._entry_keys = ()
+            self._context_reason = reason or "正在建立任务与话题索引…"
+        self.preview.set_editable_entry_keys(() if collection is None else collection)
+        self.view.source_label.setText("" if slot is None else f"当前内容：{slot.label}")
+        self.dialog.setWindowTitle("词条编辑" if slot is None else f"词条编辑 — {slot.label}")
+        if not collection:
+            self._clear_selection("当前内容没有可编辑的词条。")
+        # Popup activation only needs identity membership. Defer relationship
+        # snapshots, navigation keys and model population until the editor is used.
+        if not self.dialog.isVisible():
+            return
+        self._prepare_context()
+
+    def _prepare_context(self) -> None:
+        collection = self.context.collection
+        reason = unavailable_reason(self.context)
+        rebuild = collection is not None and self._index_structure.changed(collection)
         if rebuild:
             self._generation += 1
             self._index = DialogueIndex((), {})
             self._context_reason = reason or "正在建立任务与话题索引…"
-        generation = self._generation
-        self._entry_keys = tuple(entry.identity for entry in entries)
-        if rebuild and self._session_keys:
-            available = frozenset(self._entry_keys)
-            self._session_keys = tuple(key for key in self._session_keys if key in available)
-        self.preview.set_editable_entry_keys(self._entry_keys)
-        self.view.source_label.setText("" if slot is None else f"当前内容：{slot.label}")
-        self.dialog.setWindowTitle("词条编辑" if slot is None else f"词条编辑 — {slot.label}")
-        if self._selected_key in self._entry_keys:
+            self._entry_keys = self._index_structure.keys
+            self._session_keys = tuple(key for key in self._session_keys if key in collection)
+        if collection is not None and self._selected_key is not None and collection.get(self._selected_key) is not None:
             self._display_entry(self._selected_key)
-        elif entries and self._node_identity is not None:
+        elif collection and self._node_identity is not None:
             location = self._selected_location()
             if not rebuild and location is not None:
                 self._show_context(location)
             else:
                 self.view.set_context_available(False, self._context_reason)
         else:
-            self._clear_selection("请双击要编辑的词条。" if entries else "当前内容没有可编辑的词条。")
-        if not rebuild or not entries or reason:
+            self._clear_selection("请双击要编辑的词条。" if collection else "当前内容没有可编辑的词条。")
+        if not rebuild or not collection or reason:
             return
-        worker = ApiWorker(self._loader.build, entries, plugin=slot.plugin, snapshot=slot.source_snapshot)
-        _IndexDelivery(worker, self, self._workers, generation, scope)
-        self._workers.append(worker)
-        worker.start()
+        generation, scope = self._generation, self._scope
+        slot = self.context.active_slot
+        entries = tuple(collection)
+        IndexDelivery(
+            self._loader,
+            entries,
+            self,
+            self._workers,
+            generation,
+            scope,
+            plugin=slot.plugin,
+            snapshot=slot.source_snapshot,
+        )
 
-    def _loaded(self, generation, scope, index) -> None:
+    def _loaded(self, generation, scope, index, *, complete=True) -> None:
         if self._closed or generation != self._generation or scope != content_scope(self.context):
             return
+        if not complete and self._node_identity is not None:
+            # A metadata preview cannot replace a selected scene from the full catalog.
+            return
         self._index = index
-        self._context_reason = "" if index.quests else "当前插件没有可浏览的任务或对话词条。"
+        self._context_reason = (
+            "正在补全话题与场景记录，可先浏览已有任务并编辑译文。"
+            if not complete
+            else ""
+            if index.quests
+            else "当前插件没有可浏览的任务或对话词条。"
+        )
         if self._selected_key is not None:
             self._display_entry(self._selected_key)
         elif (location := self._selected_location()) is not None:
@@ -185,6 +180,9 @@ class DialogueEditorController(QObject):
     def _failed(self, generation, message) -> None:
         if not self._closed and generation == self._generation:
             self._index_structure = IndexStructure()
+            self._index_structure.source_changed(
+                self._scope, self.context.active_slot, unavailable_reason(self.context)
+            )
             self._context_reason = f"任务索引建立失败：{message}。可继续编辑译文，重新选择内容后重试任务树。"
             if self._selected_key is not None:
                 self._display_entry(self._selected_key)
@@ -201,7 +199,7 @@ class DialogueEditorController(QObject):
         self._selected_key = key
         self._sync_projection()
         self._session_keys = self.preview.editor_navigation_keys()
-        self._display_entry(key)
+        self._prepare_context()
         show_and_activate(self.dialog)
         self.view.translation.setFocus()
 
@@ -237,7 +235,7 @@ class DialogueEditorController(QObject):
     def _show_context(self, location) -> None:
         quest, topic, row = location
         self.view.body.setEnabled(True)
-        self.view.set_context_available(True)
+        self.view.set_context_available(True, self._context_reason)
         self.view.show_quests(self._index, quest)
         self.select_quest(quest, topic, row)
 

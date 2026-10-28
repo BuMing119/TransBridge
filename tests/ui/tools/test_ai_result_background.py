@@ -61,7 +61,7 @@ def test_cancel_and_close_remain_responsive_during_result_preparation(qapp, make
 def test_version_change_after_commit_keeps_applied_evidence_and_reports_error(qapp, make_window, monkeypatch):
     window, session, _ = make_window()
     entered, release = threading.Event(), threading.Event()
-    operation = task_result_flow.prepare_applied
+    operation = task_result_flow.prepare_merge_receipt
 
     def blocked(*args):
         entered.set()
@@ -69,7 +69,7 @@ def test_version_change_after_commit_keeps_applied_evidence_and_reports_error(qa
             raise TimeoutError("applied projection test did not release worker")
         return operation(*args)
 
-    monkeypatch.setattr(task_result_flow, "prepare_applied", blocked)
+    monkeypatch.setattr(task_result_flow, "prepare_merge_receipt", blocked)
     try:
         worker = _start(window, session)
         worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
@@ -86,3 +86,14 @@ def test_version_change_after_commit_keeps_applied_evidence_and_reports_error(qa
     assert window.run.state == "failed" and "活动版本已变化" in window.status.text()
     assert len(window.run.entries.applied_keys) == 2
     assert TaskHistoryStore(session.history_dir).load(window.request.run_id)["applied"]
+
+
+def test_missing_merge_receipt_cannot_mark_requested_results_applied(qapp, make_window, monkeypatch):
+    window, session, _ = make_window()
+    monkeypatch.setattr(session, "apply_entries_async", lambda _keys, **callbacks: callbacks["on_success"](None))
+    worker = _start(window, session)
+    worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
+    _wait_reports(qapp, window)
+    assert not window.run.entries.applied_keys
+    assert window.run.can_apply_success
+    assert "合入未返回有效回执" in window.run.status

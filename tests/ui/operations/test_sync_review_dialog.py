@@ -10,9 +10,8 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QComboBox, QDialog, QDialogButtonBox
 import pytest
 
-from transbridge.ui.operations.plan_view import OperationKind
 from transbridge.ui.operations.sync_review_dialog import SyncReviewDialog
-from transbridge.ui.operations.sync_review_view import KEEP_LOCAL, KEEP_REMOTE, SyncReviewCandidate, SyncReviewRow
+from transbridge.ui.operations.sync_review_view import KEEP_LOCAL, SyncReviewCandidate, SyncReviewRow
 
 
 @pytest.fixture(scope="module")
@@ -127,9 +126,8 @@ def test_candidate_requires_explicit_selection_and_apply_click(dialog):
     assert detail.undo.isEnabled()
 
 
-@pytest.mark.parametrize("kind", [OperationKind.DOWNLOAD, OperationKind.UPLOAD])
-def test_previewing_another_cloud_entry_keeps_and_names_the_existing_choice(qapp, kind):
-    subject = SyncReviewDialog(_rows(), kind=kind)
+def test_previewing_another_cloud_entry_keeps_and_names_the_existing_choice(qapp):
+    subject = SyncReviewDialog(_rows())
     detail = subject._detail
     detail.candidates.setCurrentIndex(1)
     detail.use_remote.click()
@@ -320,117 +318,44 @@ def test_unavailable_previous_choice_is_not_restored(qapp):
     subject.close()
 
 
-def test_upload_review_chooses_target_without_implicitly_overwriting_cloud(qapp):
-    subject = SyncReviewDialog(_rows(), kind=OperationKind.UPLOAD)
-    detail = subject._detail
-    assert detail.candidates.currentData() == ""
-    assert not detail.use_remote.isEnabled()
-    assert detail.use_remote.text() == "用我的译文更新这条"
-    assert "ParaTranz 的原文和补充说明保持原样" in detail.consequence.text()
-    assert subject._model.data(subject._model.index(0, 4)) == "还没决定"
-    detail.candidates.setCurrentIndex(2)
-    assert subject.decisions() == {}
-    detail.use_remote.click()
-    assert subject.decisions() == {"local-a": "a2"}
-    assert subject._model.data(subject._model.index(0, 4)) == "已选择上传我的译文"
-    assert "确认上传才会生效" in subject._footer_note.text()
-    subject.close()
-
-
-def test_upload_bulk_keep_remote_only_applies_to_filtered_rows_and_can_be_deferred(qapp):
-    subject = SyncReviewDialog(_rows(), kind=OperationKind.UPLOAD)
-    subject._reason_filter.setCurrentIndex(subject._reason_filter.findData("多个云端候选"))
-    subject._state_filter.setCurrentIndex(subject._state_filter.findData("pending"))
-    subject._select_all.click()
-    assert subject._detail.keep.text() == "这 2 条都先不上传"
-    subject._detail.keep.click()
-    assert subject.decisions() == {"local-a": KEEP_REMOTE, "local-c": KEEP_REMOTE}
-    assert subject._proxy.rowCount() == 0
-    subject._state_filter.setCurrentIndex(subject._state_filter.findData("decided"))
-    subject._select_all.click()
-    subject._detail.undo.click()
-    assert subject.decisions() == {}
-    subject.close()
-
-
-def test_upload_rejects_download_retention_and_disabled_cloud_targets(qapp):
-    row = replace(_rows()[1], decision=KEEP_LOCAL)
-    subject = SyncReviewDialog((row,), kind=OperationKind.UPLOAD)
-    assert subject.decisions() == {}
-    with pytest.raises(ValueError, match="not available"):
-        subject._model.set_decision((0,), KEEP_LOCAL)
-    subject._detail.candidates.setCurrentIndex(1)
-    assert not subject._detail.use_remote.isEnabled()
-    subject._detail.keep.click()
-    assert subject.decisions() == {"local-b": KEEP_REMOTE}
-    subject.close()
-
-
-@pytest.mark.parametrize(
-    ("kind", "choice", "verb"),
-    [(OperationKind.DOWNLOAD, KEEP_LOCAL, "更新"), (OperationKind.UPLOAD, KEEP_REMOTE, "上传")],
-)
-def test_missing_cloud_content_explains_the_gap_and_still_allows_skip(qapp, kind, choice, verb):
+def test_missing_cloud_content_explains_the_gap_and_still_allows_skip(qapp):
     row = replace(_rows()[0], candidates=(), reason="没有找到原来关联的云端内容。")
-    subject = SyncReviewDialog((row,), kind=kind)
+    subject = SyncReviewDialog((row,))
     detail = subject._detail
     assert "没有找到" in detail.heading.text()
     assert detail.candidates.currentText() == "没有可选内容"
     assert not detail.candidates.isEnabled()
     assert not detail.use_remote.isEnabled()
-    assert f"无法{verb}" in detail.consequence.text()
+    assert "无法更新" in detail.consequence.text()
     assert detail.remote.original.placeholderText() == "找不到对应内容"
-    assert detail.keep.text() == f"这条先不{verb}"
+    assert detail.keep.text() == "这条先不更新"
     detail.keep.click()
-    assert subject.decisions() == {row.row_id: choice}
+    assert subject.decisions() == {row.row_id: KEEP_LOCAL}
     detail.undo.click()
     assert subject.decisions() == {}
     subject.close()
 
 
-@pytest.mark.parametrize(
-    ("kind", "choice", "verb"),
-    [(OperationKind.DOWNLOAD, KEEP_LOCAL, "更新"), (OperationKind.UPLOAD, KEEP_REMOTE, "上传")],
-)
-def test_all_cloud_entries_unavailable_explains_inability_to_sync_but_allows_skip(qapp, kind, choice, verb):
+def test_all_cloud_entries_unavailable_explains_inability_to_sync_but_allows_skip(qapp):
     row = _rows()[0]
     unavailable = tuple(
         replace(candidate, selectable=False, disabled_reason="这条云端内容已经用于另一条翻译。")
         for candidate in row.candidates
     )
-    subject = SyncReviewDialog((replace(row, candidates=unavailable),), kind=kind)
+    subject = SyncReviewDialog((replace(row, candidates=unavailable),))
     detail = subject._detail
     assert detail.heading.text() == "这些云端内容暂时不能使用"
     assert "哪一条" not in detail.heading.text()
-    assert f"无法{verb}" in detail.consequence.text()
+    assert "无法更新" in detail.consequence.text()
     assert not detail.use_remote.isEnabled()
     assert detail.keep.isEnabled()
     detail.candidates.setCurrentIndex(1)
     assert detail.remote.translation.toPlainText() == "云端 A1"
-    assert f"无法{verb}" in detail.consequence.text()
+    assert "无法更新" in detail.consequence.text()
     assert not detail.use_remote.isEnabled()
     assert "已经用于另一条翻译" in detail.reason.text()
     detail.keep.click()
-    assert subject.decisions() == {row.row_id: choice}
-    subject.close()
-
-
-@pytest.mark.parametrize(
-    ("kind", "preserves_local_source", "expected"),
-    [
-        (OperationKind.DOWNLOAD, True, "原文和补充说明保持原样，不会写回 ESM/ESP"),
-        (OperationKind.DOWNLOAD, False, "原文和补充说明保持原样，不会写回 ESM/ESP"),
-        (OperationKind.UPLOAD, True, "ParaTranz 的原文和补充说明保持原样"),
-        (OperationKind.UPLOAD, False, "ParaTranz 的原文和补充说明保持原样"),
-    ],
-)
-def test_consequence_matches_operation_and_local_source_preservation(qapp, kind, preserves_local_source, expected):
-    row = replace(_rows()[0], preserves_local_source=preserves_local_source)
-    subject = SyncReviewDialog((row,), kind=kind)
-    assert expected in subject._detail.consequence.text()
-    subject._detail.candidates.setCurrentIndex(2)
-    assert expected in subject._detail.consequence.text()
-    assert subject.decisions() == {}
+    assert subject.decisions() == {row.row_id: KEEP_LOCAL}
     subject.close()
 
 

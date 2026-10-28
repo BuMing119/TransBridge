@@ -68,6 +68,52 @@ class ProjectSourceMutationService:
         expected_variant_revision: int | None = None,
         expected_variant_ref: VariantRef | None = None,
     ) -> OperationResult[SourceMutationResult]:
+        try:
+            source_request, initial_states = _split_initial_entry_states(request)
+            parsed = self._preparer.prepare_source(source_request, context, role="primary", common_options=())
+            prepared = _apply_initial_entry_states(parsed, initial_states)
+        except Exception as exc:
+            return OperationResult.from_exception(exc, run_id=context.run_id)
+        return self._publish_prepared_source(
+            prepared,
+            context,
+            persist=prepared is not parsed,
+            expected_project_revision=expected_project_revision,
+            expected_variant_revision=expected_variant_revision,
+            expected_variant_ref=expected_variant_ref,
+        )
+
+    def add_prepared_source(
+        self,
+        prepared,
+        context,
+        *,
+        expected_project_revision=None,
+        expected_variant_revision=None,
+        expected_variant_ref=None,
+    ):
+        """Publish a frozen parsed candidate against the latest local structure."""
+        # External callers may have changed metadata or baseline values while
+        # retaining an earlier artifact identifier. Always capture their final input.
+        return self._publish_prepared_source(
+            prepared,
+            context,
+            persist=True,
+            expected_project_revision=expected_project_revision,
+            expected_variant_revision=expected_variant_revision,
+            expected_variant_ref=expected_variant_ref,
+        )
+
+    def _publish_prepared_source(
+        self,
+        prepared,
+        context,
+        *,
+        persist,
+        expected_project_revision=None,
+        expected_variant_revision=None,
+        expected_variant_ref=None,
+    ):
         active = self._lifecycle.active
         if active is None or active.variant is None or active.formal_variant_ref is None:
             return _failed("ACTIVE_VARIANT_REQUIRED", "请先打开一个工程版本。", context)
@@ -84,9 +130,9 @@ class ProjectSourceMutationService:
             active.variant.revision if expected_variant_revision is None else expected_variant_revision
         )
         try:
-            source_request, initial_states = _split_initial_entry_states(request)
-            prepared = self._preparer.prepare_source(source_request, context, role="primary", common_options=())
-            prepared = _apply_initial_entry_states(prepared, initial_states)
+            persist_prepared = getattr(self._preparer, "persist_prepared_source", None)
+            if persist and persist_prepared is not None:
+                prepared = persist_prepared(prepared)
             registry = _source_registry(active.project)
             registration = migrate_legacy_source_registry(
                 active.project_ref.identity.value,

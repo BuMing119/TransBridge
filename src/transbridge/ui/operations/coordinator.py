@@ -50,12 +50,6 @@ class OperationPlanCoordinator:
     def active_window_count(self) -> int:
         return len(self._owned_windows)
 
-    def begin_upload(self, context, *, batch: bool = False, **values):
-        return self._begin(OperationKind.UPLOAD, context, batch=batch, values=values)
-
-    def begin_download(self, context, *, batch: bool = False, **values):
-        return self._begin(OperationKind.DOWNLOAD, context, batch=batch, values=values)
-
     def begin_write(self, context, *, batch: bool = False, **values):
         return self._begin(OperationKind.WRITE, context, batch=batch, values=values)
 
@@ -116,9 +110,7 @@ class OperationPlanCoordinator:
             except (RuntimeError, TypeError, ValueError) as exc:
                 show_error("预检失败", str(exc))
                 return
-            if kind not in {OperationKind.UPLOAD, OperationKind.DOWNLOAD} and not bool(
-                getattr(dialog, "requires_async_preflight", False)
-            ):
+            if not bool(getattr(dialog, "requires_async_preflight", False)):
                 try:
                     dialog.render_preflight(self._presenter.preflight(plan.session_id, owner_id=owner_id))
                 except (RuntimeError, TypeError, ValueError) as exc:
@@ -211,8 +203,6 @@ class OperationPlanCoordinator:
                     execution_running = False
                     running(False)
                 show_error("无法开始操作", str(exc))
-                if kind in {OperationKind.UPLOAD, OperationKind.DOWNLOAD}:
-                    preflight(plan.session_id, dialog.edited_values())
                 return
             if retain_session:
                 self._execution_observer(ref, owner_id, dialog)

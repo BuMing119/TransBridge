@@ -6,13 +6,12 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QApplication, QDialog, QPushButton
+from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton
 import pytest
 
 from transbridge.ui.coordinators.operation_coordinator import OperationCoordinator
 from transbridge.ui.operations import categorized_upload_bridge
 from transbridge.ui.operations.upload_mode_dialog import UploadModeDialog
-from transbridge.ui.workbench.cards import upload_views
 from transbridge.ui.workbench.cards.upload_card import UploadCard
 
 
@@ -63,57 +62,49 @@ def test_upload_mode_is_chosen_once_for_both_entrypoints_and_scopes(qapp, monkey
     card.deleteLater()
 
 
-def test_plain_batch_keeps_plugin_selection_and_translation_settings(qapp, monkeypatch):
-    calls = []
-    slots = {name: SimpleNamespace(label=name) for name in ("a", "b")}
-    context = SimpleNamespace(collection=[object()], slots=slots)
-    project = {"id": 42, "name": "Remote"}
-    monkeypatch.setattr("transbridge.ui.paratranz.target_context.bound_paratranz_project", lambda _ctx: project)
-    monkeypatch.setattr(UploadModeDialog, "exec", lambda self: QDialog.DialogCode.Accepted)
-
-    def select(dialog):
-        dialog._checkboxes["b"].setChecked(False)
-        return QDialog.DialogCode.Accepted
-
-    def configure(dialog):
-        dialog._rb_trans_only.setChecked(True)
-        dialog._rb_trans_force.setChecked(True)
-        return QDialog.DialogCode.Accepted
-
-    monkeypatch.setattr(upload_views.SlotSelectDialog, "exec", select)
-    monkeypatch.setattr(upload_views.BatchUploadModeDialog, "exec", configure)
-    card = UploadCard(context, lambda **_kwargs: pytest.fail("Unexpected worker"))
-    card.bind_operation_plan_facade(SimpleNamespace(supports=lambda *_args, **_kwargs: False))
-    card.do_batch_upload = lambda selected, project, mode: calls.append((selected, project, mode))
-
-    card.batch_upload()
-
-    assert calls == [([slots["a"]], project, "trans_force")]
-    card.close()
-
-
 @pytest.mark.parametrize("batch", [False, True])
 def test_category_launch_captures_current_source_only_for_single_upload(qapp, monkeypatch, batch):
     captured = []
     namespace = object()
     context = SimpleNamespace(
         collection=[SimpleNamespace(identity=SimpleNamespace(namespace=namespace))],
+        uses_authoritative_projection=True,
         project_name="Project",
         active_variant="Variant",
     )
+    monkeypatch.setattr(QMessageBox, "warning", lambda *_args: pytest.fail("Unexpected upload prerequisite warning"))
 
     def session(_context, *, source_namespace, categorized):
         assert categorized
         captured.append(source_namespace)
-        return SimpleNamespace(target=SimpleNamespace(project_name="Remote"), load_preview=object(), upload=object())
+        return SimpleNamespace(
+            target=SimpleNamespace(project_name="Remote"), load_preview=object(), upload=object(), retry_upload=object()
+        )
 
     monkeypatch.setattr(categorized_upload_bridge, "CategorizedUploadSession", session)
     monkeypatch.setattr(
         categorized_upload_bridge,
         "CategorizedUploadDialog",
-        lambda *_args, **kwargs: SimpleNamespace(show=lambda: captured.append(kwargs["batch"])),
+        lambda *_args, **kwargs: SimpleNamespace(
+            show=lambda: captured.append((kwargs["batch"], kwargs["retry_upload"]))
+        ),
     )
 
     categorized_upload_bridge.open_categorized_upload(context, batch=batch)
 
-    assert captured == [None if batch else namespace, batch]
+    assert captured[0] == (None if batch else namespace)
+    assert captured[1][0] == batch and captured[1][1] is not None
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_missing_upload_facade_reports_unavailable_without_starting_another_flow(qapp, monkeypatch, batch):
+    context = SimpleNamespace(collection=[object()], slots={"a": object(), "b": object()})
+    messages = []
+    monkeypatch.setattr(UploadModeDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *_args: messages.append(_args[1]))
+    card = UploadCard(context, lambda **_kwargs: pytest.fail("A missing facade must not start another upload"))
+    try:
+        card.batch_upload() if batch else card.upload()
+        assert messages == ["上传入口不可用"]
+    finally:
+        card.close()

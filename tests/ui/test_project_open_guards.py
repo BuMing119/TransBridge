@@ -76,6 +76,7 @@ def test_close_waits_until_gui_installation_finishes(monkeypatch):
         "transbridge.ui.shell.window_lifecycle.QTimer.singleShot", lambda interval, callback: scheduled.append(interval)
     )
     lifecycle = WindowLifecycle.__new__(WindowLifecycle)
+    lifecycle._attempt_id = 1
     lifecycle._close_pending = True
     lifecycle._check_inline_drafts = lambda: True
     lifecycle._check_runtime_tasks = lambda: True
@@ -93,6 +94,8 @@ def test_close_waits_until_gui_installation_finishes(monkeypatch):
 def test_cancelling_close_does_not_unlock_a_busy_or_failed_project_view(state):
     enabled = []
     lifecycle = WindowLifecycle.__new__(WindowLifecycle)
+    lifecycle._attempt_id = 1
+    lifecycle._progress = SimpleNamespace(hide=lambda: None)
     lifecycle._task_close = None
     lifecycle._recovery = SimpleNamespace(reset=lambda: None)
     lifecycle._input_guard = SimpleNamespace(resume=lambda: None)

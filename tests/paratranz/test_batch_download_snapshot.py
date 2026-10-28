@@ -7,7 +7,7 @@ import pytest
 from transbridge.application.io.identity import SourceNamespace
 from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError
 from transbridge.paratranz.batch_download_snapshot import BatchDownloadScope, BatchDownloadSnapshotReader
-from transbridge.paratranz.categorized_upload import UploadCancellation
+from transbridge.paratranz.file_transport import UploadCancellation
 
 
 class Gateway:
@@ -97,6 +97,41 @@ def test_source_with_failed_second_file_has_no_partial_entries_but_other_source_
     assert first.entries == () and first.error
     assert second.entries[0].translation == "B译文" and not second.error
     assert gateway.closed == 1
+
+
+@pytest.mark.parametrize("failure", ["file", "authorization", "cancel"])
+def test_failed_source_retains_file_prefix_as_explicitly_incomplete_evidence(failure):
+    cancel, retained = Event(), []
+
+    def first_file():
+        if failure == "cancel":
+            cancel.set()
+        return [row(remote_id=1)]
+
+    error = (
+        ExternalServiceError(ExternalServiceCategory.AUTHORIZATION, "revoked", status=403)
+        if failure == "authorization"
+        else ValueError("second file unavailable")
+    )
+    gateway = Gateway({"a.esp.json": 1, "a.esp_1.json": 2}, {1: first_file, 2: error})
+
+    def fetch():
+        return reader(gateway).fetch(
+            7,
+            (scope("a"),),
+            cancellation=UploadCancellation(cancel),
+            on_source=lambda source, read: retained.append((source, read)),
+        )
+
+    if failure == "file":
+        assert fetch()[0].entries == ()
+    else:
+        with pytest.raises(Exception):
+            fetch()
+    assert len(retained) == 1
+    assert retained[0][1].paths == ("a.esp.json",)
+    assert retained[0][1].entries[0].translation == "译文"
+    assert "未完整读取" in retained[0][1].error
 
 
 def test_missing_file_is_an_empty_source_not_a_read_error():

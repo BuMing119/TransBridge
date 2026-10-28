@@ -28,7 +28,9 @@ from .write_batch import (
     _write_batch_plan,
     _WriteBatchFailure,
     batch_output_conflicts,
+    batch_write_target,
     isolate_batch_output_conflicts,
+    retarget_write_batch,
 )
 from .write_plan import _write_plan
 
@@ -120,6 +122,8 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         if batch:
             drafts = []
             failures = []
+            output_directory = str(values.get("output_directory") or "").strip()
+            pack_bsa = bool(values.get("pack_bsa", False))
             overwrite = bool(values.get("overwrite_confirmed", False))
             request_context = context_factory(context)
             for slot_key, slot in getattr(context, "slots", {}).items():
@@ -132,16 +136,22 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
                 )
                 try:
                     source = Path(source_ref)
-                    target = source.with_name(f"{source.stem}_translated{source.suffix}")
+                    target = batch_write_target(source, output_directory)
                 except (TypeError, ValueError) as exc:
                     failures.append(
-                        _WriteBatchFailure(str(source_ref), str(slot_key), "WRITE_SOURCE_INVALID", str(exc))
+                        _WriteBatchFailure(
+                            str(source_ref), str(slot_key), "WRITE_SOURCE_INVALID", str(exc), str(source_ref)
+                        )
                     )
                     continue
                 if any(getattr(slot, name, None) is None for name in ("source_snapshot", "format_id", "collection")):
                     failures.append(
                         _WriteBatchFailure(
-                            str(target), source.name, "WRITE_SOURCE_INCOMPLETE", "来源快照、格式或译文集合不完整。"
+                            str(target),
+                            source.name,
+                            "WRITE_SOURCE_INCOMPLETE",
+                            "来源快照、格式或译文集合不完整。",
+                            str(source),
                         )
                     )
                     continue
@@ -158,13 +168,16 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
                                 PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL
                             ),
                             backup_policy=BackupPolicy.REQUIRED_IF_EXISTS,
+                            options=(("pack_bsa", pack_bsa),),
                         )
                     )
                 except (TypeError, ValueError) as exc:
-                    failures.append(_WriteBatchFailure(str(target), source.name, "WRITE_SOURCE_INVALID", str(exc)))
+                    failures.append(
+                        _WriteBatchFailure(str(target), source.name, "WRITE_SOURCE_INVALID", str(exc), str(source))
+                    )
             if len(drafts) + len(failures) < 2:
                 raise OperationCompositionError("批量写回至少需要两个已载入的来源文件")
-            return _write_batch_plan(_HydratedWriteBatch(tuple(drafts), tuple(failures)))
+            return _write_batch_plan(_HydratedWriteBatch(tuple(drafts), tuple(failures), output_directory))
         slot = getattr(context, "active_slot", None)
         if slot is None or any(
             getattr(slot, name, None) is None for name in ("source_snapshot", "format_id", "collection")
@@ -174,7 +187,7 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         entries = tuple(item.snapshot() for item in collection)
         plugin_path = str(values.get("plugin_path") or "").strip()
         source = Path(plugin_path or getattr(slot, "esp_path", None) or slot.source_snapshot.source.uri)
-        target = str(values.get("target_path") or source.with_name(f"{source.stem}_translated{source.suffix}"))
+        target = str(values.get("target_path") or source)
         request_context = context_factory(context)
         overwrite = bool(values.get("overwrite_confirmed", False))
         request = HydratedWriteDraft(
@@ -186,40 +199,37 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
             request_context,
             conflict_policy=(PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL),
             backup_policy=BackupPolicy.REQUIRED_IF_EXISTS,
+            options=(("pack_bsa", bool(values.get("pack_bsa", False))),),
         )
         return _write_plan(PluginTransferDraft(request, plugin_path) if plugin_path else request)
 
     def edit_write(draft, fields):
         if isinstance(draft, OperationPlanDraft) and isinstance(draft.request, _HydratedWriteBatch):
             edits = dict(fields)
-            overwrite = edits.get("overwrite_confirmed", "false").strip().casefold() in {
-                "1",
-                "true",
-                "yes",
-                "是",
-            }
-            request = _HydratedWriteBatch(
-                tuple(
-                    replace(
-                        item,
-                        conflict_policy=(
-                            PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL
-                        ),
-                    )
-                    for item in draft.request.drafts
-                ),
-                draft.request.failures,
+            overwrite = _edited_flag(edits, "overwrite_confirmed")
+            packed = any(dict(item.options).get("pack_bsa", False) for item in draft.request.drafts)
+            request = retarget_write_batch(
+                draft.request,
+                edits.get("output_directory", draft.request.output_directory).strip(),
+                overwrite=overwrite,
+                pack_bsa=_edited_flag(edits, "pack_bsa", packed),
             )
             return _write_batch_plan(request)
         value = _write_request(draft)
         request = value.write if isinstance(value, PluginTransferDraft) else value
         edits = dict(fields)
         target = edits.get("target_path", request.target_path).strip()
-        overwrite = edits.get("overwrite_confirmed", "false").strip().casefold() in {"1", "true", "yes", "是"}
+        overwrite = _edited_flag(edits, "overwrite_confirmed")
         edited = replace(
             request,
             target_path=target,
             conflict_policy=(PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL),
+            options=tuple(
+                {
+                    **dict(request.options),
+                    "pack_bsa": _edited_flag(edits, "pack_bsa", dict(request.options).get("pack_bsa", False)),
+                }.items()
+            ),
         )
         plugin_path = edits.get(
             "plugin_path", value.plugin_path if isinstance(value, PluginTransferDraft) else ""
@@ -368,8 +378,14 @@ def _check_label(code: str) -> str:
         "SOURCE_SNAPSHOT_UNCHANGED": "来源文件未变化",
         "TARGET_CONFLICT_POLICY": "覆盖策略",
         "ENTRY_STAGE_POLICY": "条目状态",
+        "BSA_LOOSE_OUTPUT_CONFLICT": "散装资源冲突",
+        "SOURCE_ARCHIVE_PROTECTED": "来源 BSA 保护",
         "TRANSLATION_FIDELITY": "内容一致性",
     }.get(code, "写回检查")
+
+
+def _edited_flag(edits, name: str, default: bool = False) -> bool:
+    return edits.get(name, str(default)).strip().casefold() in {"1", "true", "yes", "是"}
 
 
 def _write_request(draft):

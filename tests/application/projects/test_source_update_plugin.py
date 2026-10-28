@@ -138,13 +138,20 @@ def test_real_plugin_updates_all_variants_and_preserves_reordered_reviewed_entri
         assert len(snapshot.entries) == 3
 
 
-def test_folded_plugin_pair_keeps_registration_scope_and_reopens_after_namespace_change(services, tmp_path):
+@pytest.mark.parametrize("remove_target", ["primary", "migration"])
+@pytest.mark.parametrize("legacy_unmarked_fold", [False, True])
+def test_folded_plugin_pair_keeps_registration_scope_and_reopens_after_namespace_change(
+    services, tmp_path, remove_target, legacy_unmarked_fold
+):
     source, translated, replacement = (tmp_path / name for name in ("old.esp", "translated.esp", "new.esp"))
     _plugin(source, [(0x800, "One")])
     _plugin(translated, [(0x800, "Existing translation")])
     context, path = _create(services, source, translated=translated)
     active = services.project_lifecycle.active
     old_data = deepcopy(active.project.envelope.data)
+    if legacy_unmarked_fold:
+        for relation in old_data["source_relations"]:
+            relation.pop("folded_into_baseline", None)
     primary = next(item for item in old_data["sources"] if item["legacy"]["role"] == "primary")
     primary["plugin_scope"] = "my-mod"
     scoped = ProjectDto(replace(active.project.envelope, data=old_data, revision=active.project.envelope.revision + 1))
@@ -163,16 +170,33 @@ def test_folded_plugin_pair_keeps_registration_scope_and_reopens_after_namespace
     assert len(opened.value["hydrations"]) == 1
     active = services.project_lifecycle.active
     data = active.project.envelope.data
-    assert data["source_relations"] == old_data["source_relations"]
+    assert data["source_relations"] == [
+        {**relation, "folded_into_baseline": True} for relation in old_data["source_relations"]
+    ]
     current_primary = next(item for item in data["sources"] if item["legacy"]["role"] == "primary")
     assert current_primary["source_id"] == primary["source_id"]
     assert current_primary["plugin_scope"] == "my-mod"
-    namespaces = {source_content_identity(item) for item in data["sources"]}
-    assert len(namespaces) == 1 and old_namespace not in namespaces
+    current_translation = next(item for item in data["sources"] if item["legacy"]["role"] == "migration")
+    previous_translation = next(item for item in old_data["sources"] if item["legacy"]["role"] == "migration")
+    assert source_content_identity(current_primary) != old_namespace
+    assert current_translation == previous_translation
     assert any(item.translation == "Existing translation" for item in active.variant.snapshot().entries)
+    # Archive all original inputs from their captured artifacts after the fold
+    # target moves to a new namespace and its live inputs disappear.
+    source.unlink()
+    replacement.unlink()
+    bundle = tmp_path / "updated.zip"
+    services.project_archive.export_project(str(bundle), context)
+    assert bundle.is_file()
+    removed = services.gui_project_commands.remove_source(
+        current_primary["source_id"] if remove_target == "primary" else current_translation["source_id"], context
+    )
+    assert removed.is_success, removed.diagnostics
+    remaining = services.project_lifecycle.active.project.envelope.data["sources"]
+    assert remaining == ([] if remove_target == "primary" else [current_primary])
 
 
-def test_overwritten_localized_strings_cannot_be_verified_by_unchanged_plugin_hash(services, tmp_path):
+def test_overwritten_localized_strings_compare_saved_companion_despite_unchanged_plugin_hash(services, tmp_path):
     source = tmp_path / "localized.esp"
     strings = tmp_path / "Strings" / "localized_English.strings"
     _plugin(source, [(0x800, 1)], localized=True)
@@ -185,15 +209,33 @@ def test_overwritten_localized_strings_cannot_be_verified_by_unchanged_plugin_ha
     ).is_success
     assert services.gui_project_commands.save(context).is_success
     previous_plugin = source.read_bytes()
+    old_artifact_id = active.project.envelope.data["sources"][0]["source_artifact_id"]
     _strings(strings, "Changed original")
     preview = _preview(services, path, source, context)
     assert source.read_bytes() == previous_plugin
-    assert preview.unverified == 1 and preview.unchanged == 0 and preview.warnings
+    assert preview.unverified == 0 and preview.changed == 1 and not preview.warnings
     committed = services.project_source_updates.commit(preview.token, context)
     assert committed.is_success, committed.diagnostics
+    updated_source = services.project_lifecycle.active.project.envelope.data["sources"][0]
+    assert updated_source["source_artifact_id"] != old_artifact_id
     opened = services.current_project_opener.open_path(path, context)
     assert opened.is_success, opened.diagnostics
     assert "recovery" not in opened.value
     assert opened.value["hydrations"][0].entries[0].original == "Changed original"
     item = services.project_lifecycle.active.variant.snapshot().entries[0]
     assert item.translation == "译文" and item.stage is Stage.QUESTIONABLE
+
+
+def test_independent_migration_plugin_relation_does_not_fold_an_unmerged_baseline(services, tmp_path):
+    source, translated = tmp_path / "primary.esp", tmp_path / "independent.esp"
+    _plugin(source, [(0x800, "One")])
+    _plugin(translated, [(0x801, "Other")])
+    context, path = _create(services, source, translated=translated)
+    active = services.project_lifecycle.active
+    assert len(active.variant.snapshot().source_fingerprints) == 2
+    assert not active.project.envelope.data["source_relations"][0].get("folded_into_baseline", False)
+    prepared = services.current_project_opener.prepare_path(path, context)
+    assert prepared.is_success, prepared.diagnostics
+    assert prepared.value.recovery is None
+    assert len(prepared.value.baselines) == 2
+    assert services.current_project_opener.activate(prepared.value, context).is_success

@@ -12,6 +12,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QLineEdit
 import pytest
 
+from tests.ui.fixtures.current_editing import CurrentEditingProject
 from transbridge.converter.translation_entry import STAGE_TRANSLATED, TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui import context as context_module
@@ -265,9 +266,10 @@ def test_new_selection_supersedes_restored_selection(table, clear_only):
 
 def test_sort_only_changes_view_and_edit_targets_correct_entry(monkeypatch):
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: SimpleNamespace(token=""))
-    context = context_module.AppContext()
+    project = CurrentEditingProject(_entries(12))
+    context = project.context
     widget = Step2PreviewWidget(context)
-    collection = TranslationEntryCollection(_entries(12))
+    collection = context.collection
     widget.refresh(collection)
     before = tuple(collection)
     filtered = widget.filtered_entries()
@@ -284,6 +286,7 @@ def test_sort_only_changes_view_and_edit_targets_correct_entry(monkeypatch):
         assert widget._table.model().index(0, COL_KEY).data(Qt.ItemDataRole.UserRole) is before[-1]
     finally:
         widget.close()
+        project.close()
         widget.deleteLater()
         _APP.processEvents()
 
@@ -304,8 +307,9 @@ def test_large_sort_keeps_event_loop_responsive_and_closes_without_late_rows(tab
 
 def test_clicking_header_commits_the_active_editor_before_reordering(monkeypatch):
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: SimpleNamespace(token=""))
-    widget = Step2PreviewWidget(context_module.AppContext())
     entries = _entries(3)
+    project = CurrentEditingProject(entries)
+    widget = Step2PreviewWidget(project.context)
     widget.resize(1_200, 700)
     widget.show()
     widget.refresh(TranslationEntryCollection(entries))
@@ -324,5 +328,6 @@ def test_clicking_header_commits_the_active_editor_before_reordering(monkeypatch
         assert table.model().index(2, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "Edited before sort"
     finally:
         widget.close()
+        project.close()
         widget.deleteLater()
         _APP.processEvents()

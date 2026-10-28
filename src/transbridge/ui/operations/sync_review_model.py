@@ -4,18 +4,17 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
 
-from .plan_view import OperationKind
-from .sync_review_direction import sync_review_direction
+from .sync_review_direction import DOWNLOAD_REVIEW
 from .sync_review_view import SyncReviewRow
 
 
 class SyncReviewModel(QAbstractTableModel):
     HEADERS = ("本地标识", "本地原文", "本地译文", "待处理原因", "本次处理")
 
-    def __init__(self, rows: tuple[SyncReviewRow, ...], parent=None, *, kind=OperationKind.DOWNLOAD) -> None:
+    def __init__(self, rows: tuple[SyncReviewRow, ...], parent=None) -> None:
         super().__init__(parent)
         self.rows = rows
-        self._direction = sync_review_direction(kind)
+        self._direction = DOWNLOAD_REVIEW
         self._decisions = {
             row.row_id: row.decision
             for row in rows

@@ -13,10 +13,8 @@ def _source(relative: str) -> str:
 _MUTATION_FILES = (
     "smart_assistant/tools/tool_editor.py",
     "smart_assistant/tools/types.py",
-    "smart_assistant/tools/projection_restore.py",
-    "ui/operations/production_support.py",
+    "ui/operations/batch_download_results.py",
     "ui/tools/ai_translator/task_session.py",
-    "ui/tools/ai_translator/version_snapshot.py",
     "ui/tools/dictionary_panel.py",
     "ui/workbench/step2.py",
     "ui/workbench/inline_edit.py",
@@ -25,18 +23,7 @@ _MUTATION_FILES = (
 )
 
 _ALLOWED_PROJECTION_WRITES = {
-    ("smart_assistant/tools/tool_editor.py", "edit_translation", "translation"),
-    ("smart_assistant/tools/tool_editor.py", "edit_translation", "stage"),
-    ("smart_assistant/tools/tool_editor.py", "set_stage", "stage"),
-    ("smart_assistant/tools/projection_restore.py", "restore_entry_projection.restore", "translation"),
-    ("smart_assistant/tools/projection_restore.py", "restore_entry_projection.restore", "stage"),
-    ("ui/operations/production_support.py", "replace_local_snapshots", "collection"),
-    ("ui/tools/ai_translator/task_session.py", "_commit_entries", "collection"),
-    ("ui/tools/ai_translator/version_snapshot.py", "_restore_before_entries", "translation"),
-    ("ui/tools/ai_translator/version_snapshot.py", "_restore_before_entries", "stage"),
     ("ui/tools/dictionary_panel.py", "_on_apply_dict", "translation"),
-    ("ui/tools/dictionary_panel.py", "_restore_collection_states", "translation"),
-    ("ui/tools/dictionary_panel.py", "_restore_collection_states", "stage"),
     ("ui/workbench/inline_edit.py", "_commit", "translation"),
     ("ui/workbench/inline_edit.py", "_commit", "stage"),
     ("ui/workbench/translation_reset.py", "run", "translation"),
@@ -83,27 +70,27 @@ class _ProjectionWriteVisitor(ast.NodeVisitor):
 
 def test_known_translation_adapters_commit_or_fail_closed_for_v2_projects() -> None:
     assert "commands.replace_entry_states(" in _source("ui/tools/dictionary_panel.py")
-    assert "commands.replace_entry_states(" in _source("ui/version_persistence.py")
-    assert "publish_collection_modified(" in _source("smart_assistant/tools/tool_translator.py")
-    assert "commands.replace_entry_records(" in _source("ui/operations/production_support.py")
+    assert "commands.merge_entry_states(" in _source("smart_assistant/tools/translation_task_results.py")
+    assert "commands.merge_entry_states(" in _source("ui/operations/batch_download_results.py")
     assert "commands.replace_entry_states(" in _source("ui/workbench/translation_stage_action.py")
 
-    task_ai = _source("ui/tools/ai_translator/task_session.py")
-    assert "uses_authoritative_projection" in task_ai
-    assert "persistence.commit_translation(entries, **commit_options)" in task_ai
-    assert '"commit_mutation": self.commit_mutation' in task_ai
+    task_ai = _source("ui/tools/ai_translator/task_session_merge.py")
+    assert "persistence.freeze_merge_translation(" in task_ai
+    assert "commit_mutation=session.commit_mutation" in task_ai
+    assert "commands.merge_entry_states(" in _source("ui/version_persistence.py")
 
 
 def test_download_card_requires_the_shared_plan_without_direct_projection_writes() -> None:
     download_card = _source("ui/workbench/cards/download_card.py")
     assert 'self._dispatch_planned("download", self._ctx)' in download_card
-    assert 'self._dispatch_planned("download", self._ctx, batch=True)' in download_card
+    assert "return self.download()" in download_card
     assert "download_to_collection" not in download_card
     assert "collection_changed.emit" not in download_card
 
 
 def test_projection_divergence_guard_compares_complete_visible_and_authoritative_sets() -> None:
-    context = _source("ui/context.py")
+    assert "return self._project_view.diverged()" in _source("ui/context.py")
+    context = _source("ui/project_view_binding.py")
     assert "return visible != states" in context
     assert "external_refs" in context
 

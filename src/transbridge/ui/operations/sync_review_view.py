@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 KEEP_LOCAL = "keep_local"
-KEEP_REMOTE = "keep_remote"
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,5 +32,4 @@ class SyncReviewRow:
     decision: str = ""
     can_select_remote: bool = True
     selection_disabled_reason: str = ""
-    preserves_local_source: bool = True
     stage: int = 0

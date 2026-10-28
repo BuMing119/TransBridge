@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from PyQt6.QtWidgets import QApplication, QMessageBox
 import pytest
 
+from tests.ui.tools.ai_runtime_support import ai_task_runtime, frozen_ai_request
 from transbridge.config.llm import EmbeddingConfig, LLMConfig
 from transbridge.ui.tools.ai_translator import _window_actions, config_presenter
 from transbridge.ui.tools.ai_translator.ai_translator_window import AITranslatorWindow
@@ -78,12 +79,13 @@ def test_ignore_creates_only_one_run_fallback_with_consistent_identity(monkeypat
     assert _preflight(execution).ready
     assert _config_digest(config) == before
 
-    controller = RunController()
+    controller = RunController(task_runtime=ai_task_runtime())
     request = controller.begin("translate", execution, [SimpleNamespace(id="one")], esp_path="source.esp")
     assert request.spec.config_digest == _config_digest(execution)
     assert request.spec.config_digest != before
     assert not request.config.enable_semantic_match
-    consistency = TaskConsistency(request, config_provider=lambda: config)
+    request = frozen_ai_request(request)
+    consistency = TaskConsistency(request)
     consistency.require_current(request)
     controller.close()
 

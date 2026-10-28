@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from time import perf_counter
 from types import SimpleNamespace
 
+from tests.ui.tools.ai_runtime_support import ai_task_runtime
 from transbridge.ui.tools.ai_translator.run_controller import RunController
 
 
@@ -15,7 +16,7 @@ class Entry:
 def test_10k_scope_freeze_stays_off_the_interactive_hot_path() -> None:
     entries = [Entry(str(index)) for index in range(10_000)]
     config = SimpleNamespace(api_key="secret", model="model", provider="openai_compatible", max_concurrent=3)
-    controller = RunController(owner_id="performance")
+    controller = RunController(task_runtime=ai_task_runtime(), owner_id="performance")
 
     started = perf_counter()
     request = controller.begin("translate", config, entries, esp_path="plugin.esp")
@@ -29,7 +30,7 @@ def test_100_run_owner_lifecycles_are_bounded() -> None:
     config = SimpleNamespace(api_key="secret", model="model", max_concurrent=3)
     started = perf_counter()
     for index in range(100):
-        controller = RunController(owner_id=f"owner-{index}")
+        controller = RunController(task_runtime=ai_task_runtime(), owner_id=f"owner-{index}")
         request = controller.begin("polish", config, [Entry(str(index))])
         controller.finish(request.run_id)
         controller.close()

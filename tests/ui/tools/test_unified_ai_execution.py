@@ -9,6 +9,7 @@ import pytest
 
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.translation.ai_request_budget import AiRequestBudget
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import STAGE_HIDDEN, STAGE_LOCKED, TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -16,7 +17,7 @@ from transbridge.paratranz.config_manager import ActionRule
 from transbridge.ui.tools.ai_translator import source_execution
 from transbridge.ui.tools.ai_translator.scope_presenter import TranslationScope
 from transbridge.ui.tools.ai_translator.source_execution import SourceExecutor, SourceOutcome
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask, SourceWorkbenchScope, TaskScope
+from transbridge.ui.tools.ai_translator.task_scope import SourceWorkbenchScope, TaskScope
 from transbridge.ui.tools.ai_translator.task_worker import AiTaskWorker
 
 

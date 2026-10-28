@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState, configure_dialog
 from transbridge.ui.workers import ApiWorker
 
+from .batch_download_recovery import DownloadRecoveryControls
 from .batch_download_view import DownloadPreview, DownloadReceipt, DownloadSourceOption
 from .categorized_upload_progress import LatestProgress
 from .download_run import run_download
@@ -40,6 +41,11 @@ class BatchDownloadDialog(QDialog):
         load_sources: Callable,
         compare: Callable,
         apply: Callable,
+        saved_results=None,
+        restore=None,
+        export_results=None,
+        restore_previous=None,
+        default_policy="keep_current",
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -51,6 +57,10 @@ class BatchDownloadDialog(QDialog):
         self._load_sources_callback = load_sources
         self._compare = compare
         self._apply = apply
+        self._recovery_callbacks = (saved_results, restore, export_results)
+        self._restore_previous = restore_previous
+        self._default_policy = default_policy
+        self._recovery_controls = None
         self._sources: tuple[DownloadSourceOption, ...] | None = None
         self._preview: DownloadPreview | None = None
         self._completed_label: str | None = None
@@ -78,7 +88,7 @@ class BatchDownloadDialog(QDialog):
         scope.setTextFormat(Qt.TextFormat.PlainText)
         scope.setWordWrap(True)
         root.addWidget(scope)
-        notice = QLabel("选择插件后下载并保存译文。只更新已有译文和状态，下载前自动保留历史还原点。", self)
+        notice = QLabel("选择插件后下载并保存译文。成功成果独立保留，分歧可在本轮处理或关闭后重开。", self)
         notice.setWordWrap(True)
         root.addWidget(notice)
         sources_header = QHBoxLayout()
@@ -98,8 +108,10 @@ class BatchDownloadDialog(QDialog):
         self._source_list.itemChanged.connect(self._invalidate)
         root.addWidget(self._source_list, 1)
         self._policy = QComboBox(self)
-        self._policy.addItem("使用 ParaTranz 译文更新工程（推荐）", "prefer_remote")
-        self._policy.addItem("保留本地已有译文", "prefer_local")
+        self._policy.addItem("遇到本轮新编辑时保留当前译文", "keep_current")
+        self._policy.addItem("遇到本轮新编辑时采用下载成果", "prefer_incoming")
+        self._policy.addItem("遇到本轮新编辑时暂缓处理", "defer")
+        self._policy.setCurrentIndex(max(0, self._policy.findData(self._default_policy)))
         self._policy.setAccessibleName("下载译文更新策略")
         self._policy.currentIndexChanged.connect(self._invalidate)
         root.addWidget(self._policy)
@@ -126,6 +138,16 @@ class BatchDownloadDialog(QDialog):
         self._review_button.setAutoDefault(False)
         ComponentStyle.apply_static(self._review_button, ComponentKind.BUTTON)
         auxiliary.addWidget(self._review_button)
+        if all(self._recovery_callbacks):
+            saved, restore, export = self._recovery_callbacks
+            self._recovery_controls = DownloadRecoveryControls(
+                self,
+                auxiliary,
+                list_results=saved,
+                restore=restore,
+                export=export,
+                restore_previous=self._restore_previous,
+            )
         auxiliary.addStretch()
         root.addLayout(auxiliary)
         footer = QHBoxLayout()
@@ -271,9 +293,13 @@ class BatchDownloadDialog(QDialog):
         elif self._error is not None:
             self._retry_available = True
             self._set_status(f"{self._error}。本次选择已保留，可在此重试。", SemanticState.ERROR)
+        elif phase == "export_results":
+            self._set_status("下载成果已另存，可独立保留。", SemanticState.SUCCESS)
         elif outcome is None:
             self._retry_available = True
             self._set_status("未收到处理结果，本次选择已保留，可在此重试。", SemanticState.ERROR)
+        elif phase == "saved_results":
+            self._recovery_controls.choose(outcome)
         elif phase == "load":
             self._render_sources(tuple(outcome))
         elif self._run_generation != self._generation and not isinstance(outcome, DownloadReceipt):
@@ -292,6 +318,18 @@ class BatchDownloadDialog(QDialog):
 
     def _render_preview(self, preview: DownloadPreview) -> None:
         self._preview = preview
+        if preview.source_ids:
+            with QSignalBlocker(self._source_list):
+                for index in range(self._source_list.count()):
+                    item = self._source_list.item(index)
+                    item.setCheckState(
+                        Qt.CheckState.Checked
+                        if item.data(Qt.ItemDataRole.UserRole) in preview.source_ids
+                        else Qt.CheckState.Unchecked
+                    )
+        if preview.policy:
+            with QSignalBlocker(self._policy):
+                self._policy.setCurrentIndex(max(0, self._policy.findData(preview.policy)))
         self._retry_available = (
             preview.retryable
             or preview.updates > 0
@@ -348,7 +386,7 @@ class BatchDownloadDialog(QDialog):
                 self._set_status(
                     f"已更新 {receipt.updated:,} 条工程译文，并保存到当前本地版本。", SemanticState.SUCCESS
                 )
-                self._summary.setText("本次更新与保存已完成，下载前还原点已保留。")
+                self._summary.setText("本次更新与保存已完成，下载成果与覆盖前内容已保留。")
         preview = receipt.preview
         self._retry_available = (
             receipt.retryable
@@ -397,6 +435,8 @@ class BatchDownloadDialog(QDialog):
         self._reload_button.setEnabled(not busy)
         self._review_button.setVisible(self._preview is not None and bool(self._preview.review_rows))
         self._review_button.setEnabled(not busy)
+        if self._recovery_controls is not None:
+            self._recovery_controls.set_enabled(not busy)
         self._primary_button.setText(
             self._completed_label or ("重试未完成项" if self._retry_available else "下载并保存")
         )

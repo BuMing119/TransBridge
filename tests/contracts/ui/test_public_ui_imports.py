@@ -1,6 +1,7 @@
 from transbridge.ui.context import AppContext, CollectionSlot
-from transbridge.ui.main_window import MainWindow, _AutoSaveManager
+from transbridge.ui.main_window import MainWindow
 from transbridge.ui.projection_types import CollectionSlot as ProjectionCollectionSlot
+from transbridge.ui.shell.window_lifecycle import AutoSaveManager
 from transbridge.ui.tools.ai_translator.ai_translator_window import AITranslatorWindow
 from transbridge.ui.tools.smart_assistant.chat_widget import ChatWidget
 from transbridge.ui.workbench.step2 import Step2PreviewWidget
@@ -9,7 +10,7 @@ from transbridge.ui.workbench.step2 import Step2PreviewWidget
 def test_fr25_public_ui_imports_remain_available() -> None:
     assert AppContext.__name__ == "AppContext"
     assert MainWindow.__name__ == "MainWindow"
-    assert _AutoSaveManager.__name__ == "_AutoSaveManager"
+    assert AutoSaveManager.__name__ == "AutoSaveManager"
     assert Step2PreviewWidget.__name__ == "Step2PreviewWidget"
     assert AITranslatorWindow.__name__ == "AITranslatorWindow"
     assert ChatWidget.__name__ == "ChatWidget"

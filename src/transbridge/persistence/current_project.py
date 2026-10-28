@@ -48,6 +48,11 @@ from transbridge.persistence.v2 import (
 from transbridge.persistence.v2.baselines import BaselineRegistry
 from transbridge.persistence.v2.models import PersistenceV2Error
 from transbridge.persistence.v2.schema import parse_json_bytes, version_of
+from transbridge.persistence.v2.validated_reads import reuse_validated_reads
+
+from .prepared_project_read import PreparedProjectRead, use_prepared_project
+from .saved_project_sources import SavedProjectSourcePreparer, load_saved_project_source
+from .source_artifact_store import ProjectSourceArtifactStore
 
 PROJECT_FILE_FILTER = "项目 JSON (*.json);;所有文件 (*)"
 BaselineLoader = Callable[[dict, RequestContext], SourceBaseline | PreparedProjectSource]
@@ -63,6 +68,7 @@ class PreparedCurrentProject:
     sources: tuple[dict, ...]
     hydrations: tuple[PreparedSourceHydration, ...] = ()
     recovery: ProjectRecoverySnapshot | None = None
+    prepared_read: PreparedProjectRead | None = None
 
 
 class CurrentProjectOpener:
@@ -76,6 +82,9 @@ class CurrentProjectOpener:
         *,
         baseline_loader: BaselineLoader | None = None,
         source_preparer=None,
+        prepare_projection=None,
+        discard_prepared_projection=None,
+        source_artifacts=None,
     ) -> None:
         self._active_pointer = Path(root) / "active-project.json"
         self._projects = projects
@@ -83,7 +92,16 @@ class CurrentProjectOpener:
         self._baselines = baselines
         self._commands = commands
         self._baseline_loader = baseline_loader
-        self._source_preparer = source_preparer
+        self._source_artifacts = source_artifacts or ProjectSourceArtifactStore(root)
+        self._source_preparer = (
+            source_preparer
+            if isinstance(source_preparer, SavedProjectSourcePreparer)
+            else SavedProjectSourcePreparer(
+                source_preparer or TranslationIoProjectSourcePreparer(), self._source_artifacts
+            )
+        )
+        self._prepare_projection = prepare_projection
+        self._discard_prepared_projection = discard_prepared_projection
 
     @property
     def directory(self) -> str:
@@ -121,6 +139,11 @@ class CurrentProjectOpener:
     ) -> OperationResult[PreparedCurrentProject]:
         """Perform file I/O and source parsing without mutating active GUI state."""
 
+        with reuse_validated_reads() as evidence:
+            return self._prepare_path(path, context, target_variant_id=target_variant_id, evidence=evidence)
+
+    def _prepare_path(self, path, context, *, target_variant_id, evidence):
+
         try:
             selected = Path(path).resolve(strict=True)
             document = parse_json_bytes(selected.read_bytes())
@@ -139,7 +162,8 @@ class CurrentProjectOpener:
                     "所选项目不属于当前数据目录。",
                 )
             try:
-                project = self._projects.read_snapshot(project_ref)
+                project_record = self._projects.read_snapshot_record(project_ref)
+                project = project_record.value
             except (OSError, PersistenceV2Error) as exc:
                 raise DomainError(
                     ErrorCategory.PREREQUISITE,
@@ -161,6 +185,7 @@ class CurrentProjectOpener:
                     "此对话绑定的版本已不存在或不属于该工程，请选择仍可用的工程版本。",
                 )
             variant_ref = VariantRef(VariantId(variant_id), project_ref.identity)
+            validate_recovery_context(variant_ref, context)
             if not Path(self._variants.path_for(variant_ref)).exists():
                 raise DomainError(
                     ErrorCategory.PREREQUISITE,
@@ -168,7 +193,8 @@ class CurrentProjectOpener:
                     "项目的活动版本记录不存在。",
                 )
             try:
-                stored = VariantSnapshot.from_dto(self._variants.read_snapshot(variant_ref), variant_ref)
+                variant_record = self._variants.read_snapshot_record(variant_ref)
+                stored = VariantSnapshot.from_dto(variant_record.value, variant_ref)
             except (OSError, PersistenceV2Error, ValueError) as exc:
                 raise DomainError(
                     ErrorCategory.PREREQUISITE,
@@ -181,11 +207,14 @@ class CurrentProjectOpener:
                 sources, tuple(project.envelope.data.get("source_relations", ()))
             )
             loaded_sources = []
+            bound_sources = [dict(source) for source in sources]
             source_diagnostics = []
             for source in baseline_sources:
                 try:
-                    loaded_sources.append(
-                        self._baseline_loader(source, context)
+                    loaded = (
+                        load_saved_project_source(self._source_artifacts, source, stored.source_fingerprints)
+                        if source.get("source_artifact_id")
+                        else self._baseline_loader(source, context)
                         if self._baseline_loader is not None
                         else _load_baseline(
                             source,
@@ -194,6 +223,17 @@ class CurrentProjectOpener:
                             source_fingerprints=stored.source_fingerprints,
                         )
                     )
+                    loaded_sources.append(loaded)
+                    if isinstance(loaded, PreparedProjectSource):
+                        artifact_id = loaded.to_dict().get("source_artifact_id")
+                        if artifact_id:
+                            index = next(index for index, item in enumerate(sources) if item is source)
+                            bound_sources[index]["source_artifact_id"] = artifact_id
+                            bound_sources[index]["fingerprint"] = loaded.baseline.fingerprint.sha256
+                            if source_content_identity(source) != loaded.baseline.fingerprint.namespace.value:
+                                legacy = dict(source.get("legacy") or {})
+                                legacy["namespace"] = loaded.baseline.fingerprint.namespace.value
+                                bound_sources[index]["legacy"] = legacy
                 except (OSError, DomainError) as exc:
                     source_diagnostics.append(source_recovery_diagnostic(source, exc))
                     # Recovery only needs persisted translations, not more source diagnostics.
@@ -267,9 +307,19 @@ class CurrentProjectOpener:
                     variant_refs,
                     baselines,
                     str(project.envelope.data["name"]),
-                    sources,
+                    tuple(bound_sources),
                     hydrations,
                     recovery,
+                    PreparedProjectRead.capture(
+                        self._projects,
+                        project_record,
+                        self._variants,
+                        variant_record,
+                        stored,
+                        evidence,
+                        bound_sources=tuple(bound_sources) if not source_diagnostics else None,
+                        source_baselines=baselines,
+                    ),
                 ),
                 diagnostics=tuple(source_diagnostics),
                 run_id=context.run_id,
@@ -356,16 +406,20 @@ class CurrentProjectOpener:
                 if prepare_view is not None:
                     from transbridge.application.projections.adapters import project_projection
 
-                    view_payload = prepare_view(project_projection(candidate))
+                    project_view = self._prepare_projection or project_projection
+                    view_payload = prepare_view(project_view(candidate))
 
-            switched = self._commands.switch_v2(
-                prepared.project_ref,
-                prepared.variant_ref,
-                context,
-                dirty_decision=dirty_decision,
-                prepare_candidate=prepare_candidate,
-                expected_active_signature=expected_active_signature,
-            )
+            if prepared.prepared_read is None:
+                raise ValueError("Opening requires its prepared input evidence")
+            with use_prepared_project(prepared.prepared_read):
+                switched = self._commands.switch_v2(
+                    prepared.project_ref,
+                    prepared.variant_ref,
+                    context,
+                    dirty_decision=dirty_decision,
+                    prepare_candidate=prepare_candidate,
+                    expected_active_signature=expected_active_signature,
+                )
             if not switched.is_success:
                 return switched
             committed = True
@@ -383,6 +437,8 @@ class CurrentProjectOpener:
         except Exception as exc:
             return OperationResult.from_exception(exc, run_id=context.run_id)
         finally:
+            if self._discard_prepared_projection is not None:
+                self._discard_prepared_projection()
             if captured is not None and not committed:
                 self._baselines.restore_catalog(prepared.project_ref, captured, expected_baselines=prepared.baselines)
 

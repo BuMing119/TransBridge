@@ -42,7 +42,7 @@ def test_long_preflight_keeps_plan_footer_geometry_stable(qapp) -> None:
     plan = OperationPlanViewState(
         "session",
         1,
-        OperationKind.UPLOAD,
+        OperationKind.WRITE,
         "上传计划",
         "project",
         "当前文件",
@@ -70,7 +70,7 @@ def test_long_preflight_keeps_plan_footer_geometry_stable(qapp) -> None:
         )
         for index in range(12)
     )
-    dialog.render_preflight(OperationPreflightResult(OperationKind.UPLOAD, digest, "revision", checks, ()))
+    dialog.render_preflight(OperationPreflightResult(OperationKind.WRITE, digest, "revision", checks, ()))
     qapp.processEvents()
 
     assert (

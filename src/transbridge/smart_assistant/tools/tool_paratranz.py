@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
+from copy import deepcopy
 from datetime import datetime
 from functools import wraps
 import logging
+from types import SimpleNamespace
 
 from transbridge.application.io.identity import EntryRevision, SourceNamespace
 from transbridge.application.io.paratranz_context_order import context_orders
@@ -356,7 +358,19 @@ def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
     对于大批量条目（>100条），逐个 API 调用可能导致耗时较长且易触发限流。
     已知限制，后续可优化为批量上传接口。
     """
-    client, pid, target_error = _get_paratranz_client(ctx, args.get("project_id"))
+    from ._project_tool_mutations import ProjectToolTarget
+
+    target = ProjectToolTarget.capture(ctx)
+    config = ctx.config
+    copy_config = getattr(config, "copy_for_execution", None)
+    captured_config = copy_config() if callable(copy_config) else deepcopy(config)
+    captured = SimpleNamespace(
+        config=captured_config,
+        current_user=deepcopy(getattr(ctx, "current_user", None)),
+        paratranz_binding=deepcopy(getattr(ctx, "paratranz_binding", None)),
+        project_revision=target.project_revision,
+    )
+    client, pid, target_error = _get_paratranz_client(captured, args.get("project_id"))
     if target_error:
         return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
     if not pid:
@@ -364,7 +378,17 @@ def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
     from ._entry_upload import upload_entries
 
     try:
-        return upload_entries(args, ctx, collection, client, pid, _cancellation(ctx))
+        return upload_entries(
+            args,
+            ctx,
+            collection,
+            client,
+            pid,
+            _cancellation(ctx),
+            captured_target=target,
+            captured_config=captured_config,
+            captured_user=captured.current_user,
+        )
     except TaskCancelled:
         raise
     except Exception as exc:
@@ -372,61 +396,74 @@ def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
         return ToolResult.fail(f"上传失败: {technical_error(exc)}")
 
 
+def _tool_recover_upload_associations(args: dict, ctx) -> ToolResult:
+    """Retry only local remote-ID association from a retained upload receipt."""
+    from ._entry_upload_recovery import recover_upload_associations
+
+    try:
+        return recover_upload_associations(ctx, result_id=args["result_id"])
+    except Exception as exc:
+        return ToolResult.fail(
+            f"恢复上传关联失败，未发送远端请求: {technical_error(exc)}", error_code="UPLOAD_ASSOCIATION_RECOVERY_FAILED"
+        )
+
+
 @_close_paratranz_clients
 def _tool_download_entries(args: dict, ctx) -> ToolResult:
-    """下载条目（单阶段 O7: 下载完成后自动附加对比摘要）。"""
-    client, pid, target_error = _get_paratranz_client(ctx, args.get("project_id"))
+    """Capture remote inputs and retain results without changing local entries."""
+    from .entry_task_results import EntryTaskResults
+
+    config = ctx.config
+    copy_config = getattr(config, "copy_for_execution", None)
+    captured_config = copy_config() if callable(copy_config) else deepcopy(config)
+    captured = SimpleNamespace(
+        config=captured_config,
+        current_user=deepcopy(getattr(ctx, "current_user", None)),
+        paratranz_binding=deepcopy(getattr(ctx, "paratranz_binding", None)),
+        project_revision=getattr(ctx, "project_revision", None),
+    )
+    client, pid, target_error = _get_paratranz_client(captured, args.get("project_id"))
     if target_error:
         return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
     if not pid:
         return ToolResult.fail("请指定 project_id")
+    task = EntryTaskResults(
+        ctx,
+        getattr(ctx, "collection", None),
+        kind="download",
+        policy_section="download_policy",
+        inputs={
+            "project_id": args.get("project_id"),
+            "limit": args.get("limit", 2000),
+            "endpoint": _config_endpoint(captured),
+            "account_user_id": _account_user_id(captured),
+        },
+    )
+    downloaded = []
+    error = ""
+    task.record["fixed_inputs"]["project_id"] = int(pid)
     try:
-        from transbridge.converter.translation_entry import TranslationEntry
-        from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-
-        limit = args.get("limit", 2000)
-        remote_entries = client.list_entries(pid, limit=limit, cancellation=_cancellation(ctx))
-        downloaded = TranslationEntryCollection()
+        remote_entries = client.iter_entries(
+            pid, limit=task.record["fixed_inputs"]["limit"], cancellation=_cancellation(ctx)
+        )
         for remote in remote_entries:
             if isinstance(remote, ParaTranzEntry):
                 data = remote.to_remote_payload()
             else:
                 data = remote
-            e = TranslationEntry(
-                id=data.get("key", ""),
-                key=data.get("key", ""),
-                original=data.get("original", ""),
-                translation=data.get("translation", ""),
-                context=data.get("context", ""),
-                stage=data.get("stage", 0),
-            )
-            downloaded.add(e, overwrite=True)
-        # O7: 自动附加对比摘要
-        collection = ctx.collection
-        diff_summary = None
-        if collection:
-            local_keys = {e.key for e in collection}
-            remote_keys = {e.key for e in downloaded}
-            diff_summary = {
-                "new_from_remote": len(remote_keys - local_keys),
-                "updated": len([
-                    k
-                    for k in (local_keys & remote_keys)
-                    if collection.get_by_key(k)
-                    and downloaded.get_by_key(k)
-                    and collection.get_by_key(k).translation != downloaded.get_by_key(k).translation
-                ]),
-            }
-        suffix = f"（新增{diff_summary['new_from_remote']} 更新{diff_summary['updated']}）" if diff_summary else ""
-        return ToolResult.ok(
-            f"已下载 {len(downloaded)} 条{suffix}",
-            data={"downloaded_count": len(downloaded), "diff_summary": diff_summary},
-        )
-    except TaskCancelled:
-        raise
+            downloaded.append(deepcopy(data))
     except Exception as exc:
-        logger.error("下载条目失败")
-        return ToolResult.fail(f"下载失败: {technical_error(exc)}")
+        error = f"下载未完成: {technical_error(exc)}"
+    task.candidates(downloaded, remote=True)
+    result = task.finish(auto_merge=False, error=error)
+    result.data.update(
+        downloaded_count=len(downloaded),
+        diff_summary={
+            "new_from_remote": len(task.record["unmapped"]),
+            "updated": sum(row["before"]["translation"] != row["text"] for row in task.record["candidate_rows"]),
+        },
+    )
+    return result
 
 
 @_close_paratranz_clients
@@ -742,15 +779,31 @@ def _register_paratranz_tools():
                 "parameters": _PARAM_SCHEMAS.get("upload_entries", {}),
             },
             {
+                "name": "recover_upload_associations",
+                "display_name": "恢复上传关联",
+                "description": (
+                    "Retry local remote-ID associations from a retained upload result. Requires result_id returned by "
+                    "upload_entries. Makes no remote request; confirmed receipts preserve current translation, stage "
+                    "and unrelated references. Unknown remote outcomes require remote inspection first."
+                ),
+                "execute": _tool_recover_upload_associations,
+                "permission": "write",
+                "require_confirmation": True,
+                "parameters": {
+                    "result_id": {"type": "str", "required": True, "description": "Retained upload result ID"}
+                },
+            },
+            {
                 "name": "download_entries",
                 "display_name": "下载条目",
                 "description": (
                     "①Download translation entries from the remote project. ②Parameters: project_id (optional). Write "
                     "permission, long-running, and confirmation required. ③Returns: "
-                    "{downloaded_count,entries:[{key,original,translation,stage,context}],"
+                    "{result_id,downloaded_count,entries:[{key,original,translation,stage,context}],"
                     "diff_summary}. Rules: this does not "
                     "automatically modify the local collection, so entries must be handled "
-                    "explicitly; diff_summary is "
+                    "explicitly using translator.get_task_result/merge_task_result without downloading again; "
+                    "diff_summary is "
                     "null when no local collection is loaded."
                 ),
                 "execute": _tool_download_entries,

@@ -18,11 +18,11 @@ import pytest
 
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.translation.task_history import TaskHistoryStore
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.tools.ai_translator import task_progress, task_run
 from transbridge.ui.tools.ai_translator.source_execution import SourceOutcome
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 
 
 class _Worker(QObject):
@@ -109,6 +109,10 @@ class _Session:
             )
         self.tasks = tuple(tasks)
         self._before = {task.key: deepcopy(tuple(task.collection)) for task in tasks}
+        self.version_identity = ("progress-project", "progress-variant")
+        from transbridge.application.translation.task_entry_results import TaskEntryResults
+
+        self.initial_entry_results = TaskEntryResults(self.tasks, "run")
         self.completed = self.saved = self.is_busy = self.discarded = False
         self.project_saved = self.snapshot_saved = False
         self.external_project_saved = False
@@ -121,17 +125,14 @@ class _Session:
     def can_save(self):
         return bool(self.applied_keys) and not self.saved
 
-    def capture_before(self, *, on_success, on_error):
+    def capture_before(self, *, on_success, on_error, background_validate=None):
         self.is_busy = True
         self.success_callback, self.error_callback = on_success, on_error
 
     def ready(self):
+        _wait_until(lambda: hasattr(self, "success_callback"))
         self.is_busy = False
         self.success_callback({})
-
-    def mark_completed(self):
-        self.commits += 1
-        self.completed = True
 
     def require_current(self):
         if self.discarded:
@@ -144,11 +145,13 @@ class _Session:
             self.applied_keys.update(keys)
             self.saved = self.project_saved = self.snapshot_saved = False
 
-    def apply_entries_async(self, keys, *, on_success, on_error, validate=None):
+    def apply_entries_async(self, keys, *, on_success, on_error, validate=None, background_validate=None):
+        from transbridge.application.translation.result_merge import ResultMergePlan
+
         if validate:
             validate()
         self.apply_entries(keys)
-        on_success(None)
+        on_success(ResultMergePlan(unchanged_keys=tuple(keys)))
 
     def finish(self):
         self.completed = True
@@ -166,10 +169,13 @@ class _Session:
             if task.key in sources
         )
 
+    def retry_entries_async(self, keys, *, on_success, on_error):
+        on_success(self.retry_entries(keys))
+
     def rollback_uncommitted(self):
         self.discarded = not self.completed
 
-    def save_translation(self, *, on_success, on_error):
+    def save_translation(self, *, on_success, on_error, background_validate=None):
         self.saved = self.project_saved = self.snapshot_saved = True
         on_success({})
 
@@ -249,7 +255,11 @@ def make_window(qapp, monkeypatch, tmp_path):
             config=SimpleNamespace(mixed_execution_order="sequential"),
             spec=SimpleNamespace(execution_profile=SimpleNamespace(summary="翻译 → 校对", preview_enabled=preview)),
         )
-        window = task_progress.AiTaskProgressWindow(request, session, Mock())
+        session.initial_entry_results.run_id = request.run_id
+        from tests.ui.tools.ai_runtime_support import admit_ai_request
+
+        request, activity = admit_ai_request(request, session.tasks, identity=session.version_identity)
+        window = task_progress.AiTaskProgressWindow(request, session, activity)
         windows.append(window)
         return window, session, rendered
 
@@ -324,7 +334,7 @@ def test_cancel_during_execution_never_commits_late_success(qapp, make_window):
     _wait_reports(qapp, window)
     assert session.commits == 0
     assert not window.retry_button.isEnabled()
-    window.activity.finish.assert_called_with(cancelled=True)
+    assert window.activity.activity.state.value == "cancelled"
     assert window.stop_button.text() == "关闭"
     assert all(row.text(1) == "已取消" for row in window.rows.values())
 
@@ -344,18 +354,19 @@ def test_step_progress_and_finished_close_do_not_cancel_success(qapp, make_windo
     assert window.stop_button.text() == "关闭"
     window.stop_button.click()
     assert session.completed and not window.run.cancelled
-    window.activity.request_cancel.assert_not_called()
+    assert window.activity.activity.state.value == "completed"
 
 
 def test_cancel_before_snapshot_completion_cannot_start_worker(make_window):
     window, session, _ = make_window()
     window.prepare()
+    _wait_until(lambda: hasattr(session, "error_callback"))
     window.stop_button.click()
     session.is_busy = False
     session.error_callback("AI 任务已取消")
     assert window.run.worker is None and session.commits == 0
-    window.activity.fail.assert_not_called()
-    window.activity.finish.assert_called_with(cancelled=True)
+    assert window.activity.activity.state.value != "failed"
+    assert window.activity.activity.state.value == "cancelled"
     assert not window.is_running()
 
 
@@ -499,23 +510,16 @@ def test_real_qthread_completion_is_delivered_on_gui_thread_and_released(qapp, m
     assert any(state == "completed" for state, _thread in rendered)
 
 
-@pytest.mark.parametrize("runtime_backed", [False, True])
 @pytest.mark.parametrize("exit_path", ["cancel_preview", "abandon_failed_task"])
-def test_real_activity_adapter_reaches_cancelled_terminal_state(
-    qapp, make_window, monkeypatch, runtime_backed, exit_path
-):
+def test_real_activity_adapter_reaches_cancelled_terminal_state(qapp, make_window, monkeypatch, exit_path):
     from transbridge.application.tasks import TaskRuntime
     from transbridge.config.llm import LLMConfig
     from transbridge.ui.tools.ai_translator.run_controller import RunController
-    from transbridge.ui.tools.ai_translator.task_adapter import AiLegacyRunState
+    from transbridge.ui.tools.ai_translator.task_adapter import AiRunState
 
-    runtime = (
-        TaskRuntime(
-            id_generator=SimpleNamespace(new_id=lambda: "terminal-test"),
-            clock=SimpleNamespace(now=lambda: datetime.now(UTC)),
-        )
-        if runtime_backed
-        else None
+    runtime = TaskRuntime(
+        id_generator=SimpleNamespace(new_id=lambda: "terminal-test"),
+        clock=SimpleNamespace(now=lambda: datetime.now(UTC)),
     )
     window, session, _ = make_window(polish=exit_path == "cancel_preview", preview=exit_path == "cancel_preview")
     controller = RunController(task_runtime=runtime)
@@ -539,28 +543,23 @@ def test_real_activity_adapter_reaches_cancelled_terminal_state(
         assert not activity.activity.is_terminal
         window.run.cancel()
         _wait_reports(qapp, window)
-    assert activity.activity.state is AiLegacyRunState.CANCELLED
+    assert activity.activity.state is AiRunState.CANCELLED
     assert activity.activity.is_terminal and not session.completed
     controller.finish(request.run_id)
     activity.close()
 
 
-@pytest.mark.parametrize("runtime_backed", [False, True])
 def test_visible_preview_rejection_finishes_activity_and_persists_cancellation_reentrantly(
-    qapp, make_window, monkeypatch, runtime_backed
+    qapp, make_window, monkeypatch
 ):
     from transbridge.application.tasks import TaskRuntime
     from transbridge.config.llm import LLMConfig
     from transbridge.ui.tools.ai_translator.run_controller import RunController
-    from transbridge.ui.tools.ai_translator.task_adapter import AiLegacyRunState
+    from transbridge.ui.tools.ai_translator.task_adapter import AiRunState
 
-    runtime = (
-        TaskRuntime(
-            id_generator=SimpleNamespace(new_id=lambda: "visible-preview-test"),
-            clock=SimpleNamespace(now=lambda: datetime.now(UTC)),
-        )
-        if runtime_backed
-        else None
+    runtime = TaskRuntime(
+        id_generator=SimpleNamespace(new_id=lambda: "visible-preview-test"),
+        clock=SimpleNamespace(now=lambda: datetime.now(UTC)),
     )
     window, session, _ = make_window(polish=True, preview=True)
     controller = RunController(task_runtime=runtime)
@@ -587,7 +586,7 @@ def test_visible_preview_rejection_finishes_activity_and_persists_cancellation_r
     _wait_reports(qapp, window)
 
     assert shown == [True]
-    assert activity.activity.state is AiLegacyRunState.CANCELLED
+    assert activity.activity.state is AiRunState.CANCELLED
     assert activity.activity.is_terminal
     assert window.run.state == "cancelled" and window.run.cancelled
     assert window.run.worker is None
@@ -672,7 +671,7 @@ def test_closing_during_project_save_keeps_callback_and_result(qapp, make_window
     window, session, _ = make_window()
     callbacks = {}
 
-    def delayed_save(*, on_success, on_error):
+    def delayed_save(*, on_success, on_error, background_validate=None):
         session.is_busy = True
         callbacks["success"] = on_success
 
@@ -694,10 +693,10 @@ def test_closing_during_project_save_keeps_callback_and_result(qapp, make_window
     assert TaskHistoryStore(session.history_dir).load(window.request.run_id)["saved"]
 
 
-def test_snapshot_failure_offers_snapshot_retry_without_losing_saved_project(qapp, make_window, monkeypatch):
+def test_save_failure_offers_retry_without_losing_applied_result(qapp, make_window, monkeypatch):
     window, session, _ = make_window()
 
-    def fail_snapshot(*, on_success, on_error):
+    def fail_snapshot(*, on_success, on_error, background_validate=None):
         session.project_saved = True
         on_error("snapshot unavailable")
 
@@ -705,9 +704,9 @@ def test_snapshot_failure_offers_snapshot_retry_without_losing_saved_project(qap
     worker = _start(window, session)
     worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
     _wait_reports(qapp, window)
-    assert window.save_button.text() == "重试快照"
+    assert window.save_button.text() == "保存项目"
     assert window.save_button.isEnabled()
-    assert "项目已保存" in window.save_status.text()
+    assert "项目保存失败" in window.save_status.text()
     assert "snapshot unavailable" in window.save_status.text()
     assert session.commits == 1 and not session.discarded
     record = TaskHistoryStore(session.history_dir).load(window.request.run_id)
@@ -748,7 +747,7 @@ def test_close_and_reopen_remain_available_during_slow_history_write(qapp, make_
     assert TaskHistoryStore(session.history_dir).load(window.request.run_id)["state"] == "completed"
 
 
-def test_external_autosave_refreshes_task_history_and_offers_first_snapshot(qapp, make_window, monkeypatch):
+def test_external_autosave_refreshes_task_history_and_preserves_save_action(qapp, make_window, monkeypatch):
     window, session, writes = make_window()
     monkeypatch.setattr(session, "save_translation", lambda **callbacks: callbacks["on_error"]("save unavailable"))
     worker = _start(window, session)
@@ -760,7 +759,7 @@ def test_external_autosave_refreshes_task_history_and_offers_first_snapshot(qapp
     _wait_reports(qapp, window)
     assert window.status.text() == "已完成"
     assert "项目已保存" in window.save_status.text()
-    assert window.save_button.text() == "创建快照"
+    assert window.save_button.text() == "保存项目"
     assert window.save_button.isEnabled() and not session.saved
     record = TaskHistoryStore(session.history_dir).load(window.request.run_id)
     assert record["project_saved"] and not record["snapshot_saved"]

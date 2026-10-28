@@ -127,7 +127,13 @@ class AgentRegistry:
                     "and perform LLM post-processing when requested."
                 ),
                 namespace="proofreader",
-                tools=["proofreader:*", "translator:get_task_status", "translator:stop_task"],
+                tools=[
+                    "proofreader:*",
+                    "translator:get_task_status",
+                    "translator:stop_task",
+                    "translator:get_task_result",
+                    "translator:merge_task_result",
+                ],
                 skills=[],
                 system_prompt=(
                     "You are the TransBridge proofreading engine. Check translation quality "

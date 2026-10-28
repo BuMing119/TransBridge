@@ -47,7 +47,11 @@ class PreparedProjectSources:
             migration_id = source_ids[normalize_source_location(migration_location).casefold()]
             kind = SourceRelationKind.TRANSLATION_FOR
             relations[migration_id] = SourceRelation(
-                stable_relation_id(kind, migration_id, primary_id), kind, migration_id, primary_id
+                stable_relation_id(kind, migration_id, primary_id),
+                kind,
+                migration_id,
+                primary_id,
+                folded_into_baseline=True,
             )
             resolved_ids.add(migration_id)
         return replace(
@@ -91,6 +95,7 @@ def prepare_project_sources(
     primary_count = len(request.sources)
     translation_pairs = []
     folded_migrations = set()
+    persist_prepared = getattr(sources, "persist_prepared_source", None)
     for indices in groups.values():
         if len(indices) == 1:
             continue
@@ -107,6 +112,10 @@ def prepare_project_sources(
         registrations[primary_index] = _merge_plugin_translation(
             registrations[primary_index], registrations[migration_index]
         )
+        # Only folding changes the already-persisted parser result. Bind that
+        # final baseline and hydration without rebuilding unchanged sources.
+        if persist_prepared is not None:
+            registrations[primary_index] = persist_prepared(registrations[primary_index])
         translation_pairs.append((primary_index, migration_index))
         folded_migrations.add(migration_index)
 

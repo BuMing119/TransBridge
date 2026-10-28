@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from transbridge.ui.main_window import MainWindow, _AutoSaveManager
+from transbridge.ui.main_window import MainWindow
+from transbridge.ui.shell.window_lifecycle import AutoSaveManager
 from transbridge.ui.tools.ai_translator.ai_translator_window import AITranslatorWindow
 from transbridge.ui.tools.smart_assistant.chat_widget import ChatWidget
 from transbridge.ui.workbench.step1 import Step1SourceWidget
@@ -9,7 +10,7 @@ from transbridge.ui.workbench.step2 import Step2PreviewWidget
 
 def test_historical_ui_facades_remain_importable_with_public_intents() -> None:
     assert MainWindow.__name__ == "MainWindow"
-    assert _AutoSaveManager.__name__ == "_AutoSaveManager"
+    assert AutoSaveManager.__name__ == "AutoSaveManager"
     assert Step1SourceWidget.__name__ == "Step1SourceWidget"
     assert Step2PreviewWidget.__name__ == "Step2PreviewWidget"
     assert AITranslatorWindow.__name__ == "AITranslatorWindow"

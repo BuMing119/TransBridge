@@ -33,7 +33,8 @@ class TaskCompletion(QObject):
             run.state, run.status = "partial", "处理结束 · 有失败条目"
         else:
             run.session.finish()
-            run.state, run.status = "completed", "处理结束"
+            pending = sum(row.merge_status == "pending" for row in run.entries.entries.values())
+            run.state, run.status = "completed", f"处理结束 · {pending} 条待合入" if pending else "处理结束"
             run.activity.finish(cancelled=False)
             run.runtime_binding.synchronize()
             if run.worker is None:
@@ -53,26 +54,29 @@ class TaskCompletion(QObject):
         run.changed.emit()
 
         def saved(_):
-            run.snapshot_failed = False
-            run.save_status = "项目及快照已保存"
+            run.save_status = "项目已保存"
             if not run.cancelled:
-                run.status = "已完成 · 项目已保存" if run.session.completed else "成功结果已保存 · 可重试失败条目"
+                pending = run.entries.index.summary.unapplied
+                run.status = (
+                    f"项目已保存 · {pending} 条结果待合入"
+                    if pending
+                    else "已完成 · 项目已保存"
+                    if run.session.completed
+                    else "成功结果已保存 · 可重试失败条目"
+                )
             run._record()
             run.changed.emit()
             self.notify()
 
         def failed(error):
-            run.snapshot_failed = bool(getattr(run.session, "project_saved", False))
-            prefix = "项目已保存 · 快照失败" if run.snapshot_failed else "项目保存失败"
-            run.save_status = f"{prefix}：{error}"
+            run.save_status = f"项目保存失败：{error}"
             run._record()
             run.changed.emit()
             self.notify(error=str(error))
 
         try:
             options = dict(on_success=saved, on_error=failed)
-            if getattr(run.session, "supports_background_validation", False):
-                options["background_validate"] = run.result_flow._validate_background
+            options["background_validate"] = run.result_flow._validate_background
             run.session.save_translation(**options)
         except Exception as exc:
             failed(str(exc))
@@ -83,6 +87,10 @@ class TaskCompletion(QObject):
 
     def _deliver(self):
         run = self.run
+        if run.shutting_down:
+            self.reset()
+            run.changed.emit()
+            return
         if (
             run.session.is_busy
             or run.worker is not None
@@ -102,7 +110,7 @@ class TaskCompletion(QObject):
         if error:
             title = "项目已保存，但快照创建失败" if saved else "项目保存失败"
         elif saved:
-            title = "处理结束，成功结果已保存" if summary.failed else "任务已完成，项目已保存"
+            title = "处理结束，成功结果已保存" if summary.failed or summary.unapplied else "任务已完成，项目已保存"
         else:
             title = "处理结束，没有应用新结果"
         review = run.entries.index.applied_review
@@ -113,6 +121,8 @@ class TaskCompletion(QObject):
             text += f"\n失败 {summary.failed} 条：" + "；".join(
                 f"{reason} {count} 条" for reason, count in summary.reasons
             )
+        if summary.unapplied:
+            text += f"\n待合入 {summary.unapplied} 条，AI 成果已保留；可在查看结果中逐条处理。"
         if error:
             text += f"\n{error}"
         notice = (run._attempt, title, text)

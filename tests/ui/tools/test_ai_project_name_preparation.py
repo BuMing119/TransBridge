@@ -13,17 +13,18 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.ui.tools.ai_runtime_support import frozen_ai_request
 from transbridge.ai_translator.project_terminology_runtime import ProjectTerminologyBinding
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
 from transbridge.application.translation.ai_request_budget import AiRequestBudget
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.tools.ai_translator import source_execution, workflow_log_store
 from transbridge.ui.tools.ai_translator.source_execution import SourceExecutor
 from transbridge.ui.tools.ai_translator.task_consistency import TaskConsistency
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 
 
 class _Provider:
@@ -112,6 +113,7 @@ def name_run(tmp_path, monkeypatch, request):
     pause = threading.Event()
     pause.set()
     events = []
+    request = frozen_ai_request(request)
     guard = TaskConsistency(request)
     executor = SourceExecutor(
         request,
@@ -305,9 +307,14 @@ def test_published_plugin_override_remains_distinct_without_model_calls(name_run
         SnapshotEffectiveTerminologyPort(SimpleNamespace(snapshot=lambda *_: snapshot)),
         EnabledEffectiveTerminologyGate(),
     )
-    run.request.terminology_binding = ProjectTerminologyBinding(
-        adapter=adapter, context=TerminologyLookupContext("names-project", "variant")
+    run.request = replace(
+        run.request,
+        terminology_binding=ProjectTerminologyBinding(
+            adapter=adapter, context=TerminologyLookupContext("names-project", "variant")
+        ),
     )
+    run.executor.request = run.request
+    run.request = frozen_ai_request(run.request)
     run.executor.consistency = TaskConsistency(run.request)
     first = run.task("A", [("place", "Whiterun", "LCTN:FULL")])
     second = run.task("B", [("place", "Whiterun", "LCTN:FULL")])

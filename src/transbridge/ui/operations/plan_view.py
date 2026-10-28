@@ -17,7 +17,6 @@ class EditableControl(StrEnum):
     TEXT = "text"
     BOOLEAN = "boolean"
     CHOICE = "choice"
-    REMOTE_PROJECT = "remote_project"
 
 
 @dataclass(frozen=True, slots=True)

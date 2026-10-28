@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QApplication
 
 from transbridge.config.paratranz_credentials import UnavailableCredentialStore
 from transbridge.config.repository import ConfigRepository
+from transbridge.config.task_results import TaskResultPreferences
 from transbridge.config.ui_preferences import (
     DEFAULT_THEME_ID,
     GuidanceMode,
@@ -64,6 +65,8 @@ class _UseCases:
     def resolve(self, name: str):
         if name == "ui_preferences":
             return self.preferences
+        if name == "task_result_preferences":
+            return SimpleNamespace(load=TaskResultPreferences)
         return object()
 
 

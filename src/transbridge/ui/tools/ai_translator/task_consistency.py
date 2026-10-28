@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import fields, is_dataclass
-from hashlib import sha256
-import json
 from pathlib import Path
 from threading import RLock
 
@@ -13,56 +10,29 @@ from transbridge.ai_translator.term_formats import load_terms_json
 from transbridge.ai_translator.term_publication_conflict import TermPublicationConflict
 
 
-def _value(value):
-    if is_dataclass(value):
-        return _value({
-            field.name: getattr(value, field.name) for field in fields(value) if not field.name.startswith("_")
-        })
-    if isinstance(value, dict):
-        return {str(key): _value(item) for key, item in value.items() if key != "config_revision"}
-    if isinstance(value, (tuple, list)):
-        return [_value(item) for item in value]
-    if hasattr(value, "to_dict"):
-        return _value(value.to_dict())
-    if hasattr(value, "__dict__"):
-        return _value({key: item for key, item in vars(value).items() if not key.startswith("_")})
-    return value
-
-
-def _digest(value):
-    # Only the digest stays in memory; credentials and terms never enter records.
-    return sha256(json.dumps(_value(value), sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
-
-
 class TaskConsistency:
-    def __init__(self, request, *, config_provider=None, terminology_provider=None):
+    def __init__(self, request):
         from .task_references import reference_store_for_request
 
-        self._config_provider = config_provider
         self._request = self._request_identity(request)
-        self._preferences = _digest(config_provider()) if config_provider else None
         self.reference_store = reference_store_for_request(request)
         self._dynamic_files = {}
         self._lock = RLock()
         self.error = ""
-        # Kept as an optional compatibility argument. Live reference providers
-        # must never be queried as a task validity or application condition.
 
     @classmethod
     def capture(cls, request, ctx):
-        from transbridge.paratranz.config_manager import LLMConfig
-
-        return cls(request, config_provider=LLMConfig.load_from_file)
+        return cls(request)
 
     @staticmethod
     def _request_identity(request):
-        return _digest((
-            request.run_id,
-            request.config,
-            request.spec,
-            getattr(request, "terminology_binding", None)
-            and getattr(request.terminology_binding, "snapshot_ref", None),
-        ))
+        from .run_controller import TranslationRunRequest
+
+        reference = getattr(request, "terminology_binding", None)
+        snapshot = None if reference is None else getattr(reference, "snapshot_ref", None)
+        if not isinstance(request, TranslationRunRequest):
+            raise TypeError("Task consistency requires the frozen admitted AI request")
+        return request.spec, request.config_snapshot, snapshot
 
     @staticmethod
     def _file_version(path):
@@ -76,8 +46,6 @@ class TaskConsistency:
             if not self.error:
                 if self._request_identity(request) != self._request:
                     self.error = "任务配置已变化，请新建任务"
-                elif self._config_provider and _digest(self._config_provider()) != self._preferences:
-                    self.error = "AI 配置已变化，请新建任务"
             if self.error:
                 raise RuntimeError(self.error)
 

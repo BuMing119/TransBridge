@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from transbridge.application.translation.task_history import TaskHistoryStore
+from transbridge.application.translation.imported_task_history import ProjectTaskHistoryReader
 from transbridge.ui.windowing import show_and_activate
 from transbridge.ui.workers import ApiWorker
 
@@ -41,8 +41,10 @@ class TaskHistoryDialog(QDialog):
     def __init__(self, registry, *, theme_view=None, run_id=None):
         super().__init__()
         self.registry = registry
+        identity = registry.ctx.active_version_identity
+        self.project_id = identity[0] if identity is not None else None
         directory = registry.directory_provider()
-        self.store = TaskHistoryStore(directory / "ai-task-history") if directory else None
+        self.store = ProjectTaskHistoryReader(directory, self.project_id) if directory else None
         self.project_dir = directory
         self._theme_view = theme_view
         self._dialogs = []
@@ -127,9 +129,14 @@ class TaskHistoryDialog(QDialog):
             self._populate()
 
         def read():
-            records = self.store.list_records()
+            records = tuple(
+                record
+                for record in self.store.list_records()
+                if not record.get("project_id")
+                or (self.project_id is not None and str(record["project_id"]) == str(self.project_id))
+            )
             try:
-                recovery_records = read_recovery_records(self.project_dir)
+                recovery_records = read_recovery_records(self.project_dir, project_id=self.project_id)
             except (OSError, ValueError, RuntimeError) as exc:
                 return records, (), f"读取恢复信息失败：{exc}"
             return records, recovery_records, ""
@@ -140,7 +147,9 @@ class TaskHistoryDialog(QDialog):
         selected = self.tasks.currentItem()
         key = selected.data(0, Qt.ItemDataRole.UserRole) if selected else self._requested_run_id
         live = {
-            run_id: win for run_id, win in self.registry.windows.items() if win.session.project_dir == self.project_dir
+            run_id: win
+            for run_id, win in self.registry.windows.items()
+            if win.session.project_dir == self.project_dir and win.session.version_identity[0] == self.project_id
         }
         records = {item["run_id"]: item for item in self._records}
         for run_id, record in self._recovery_records.items():
@@ -149,6 +158,8 @@ class TaskHistoryDialog(QDialog):
             records[run_id] = window.run.records.record or {
                 "run_id": run_id,
                 "created_at": window.run.records.created_at,
+                "project_id": window.session.version_identity[0],
+                "variant_id": window.session.version_identity[1],
                 "sources": [{"label": task.label} for task in window.session.tasks],
             }
         existing = {
@@ -199,7 +210,9 @@ class TaskHistoryDialog(QDialog):
                 state,
                 summary,
                 project_state,
-                str(record.get("version_label") or record.get("variant_id") or ""),
+                str(record.get("version_label") or record.get("variant_id") or "")
+                if record.get("project_id")
+                else "未知归属（仅供查看）",
             ]
             row = existing.pop(run_id, None)
             if row is None:
@@ -276,7 +289,7 @@ class TaskHistoryDialog(QDialog):
             return
         run_id = row.data(0, Qt.ItemDataRole.UserRole)
         live = self.registry.windows.get(run_id)
-        if live is not None:
+        if live is not None and live.session.version_identity[0] == self.project_id:
             show_and_activate(live)
             return
         if run_id in self._recovery_records and not any(record["run_id"] == run_id for record in self._records):
@@ -291,7 +304,28 @@ class TaskHistoryDialog(QDialog):
             return
         from .task_result_dialog import TaskResultDialog
 
-        dialog = TaskResultDialog(record, theme_view=self._theme_view)
+        task_id = next(
+            (
+                key
+                for key, recovery in self._recovery_records.items()
+                if record["run_id"] in recovery.get("execution_runs", (key,))
+            ),
+            None,
+        )
+        dialog = TaskResultDialog(
+            record,
+            theme_view=self._theme_view,
+            review_results=(lambda: self._open_merge_review(task_id))
+            if task_id is not None and record.get("project_id") == self.project_id
+            else None,
+        )
+        self._dialogs.append(dialog)
+        show_and_activate(dialog)
+
+    def _open_merge_review(self, task_id):
+        from .task_merge_dialog import TaskMergeDialog
+
+        dialog = TaskMergeDialog(self.registry.ctx, self.project_dir, task_id, theme_view=self._theme_view)
         self._dialogs.append(dialog)
         show_and_activate(dialog)
 

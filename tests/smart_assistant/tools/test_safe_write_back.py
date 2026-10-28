@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
 from time import monotonic
 from types import SimpleNamespace
@@ -13,6 +14,11 @@ from tests.contracts.io.test_localized_hydrated_publication import localized as 
 from tests.smart_assistant.tools.test_source_import_authority import load_source, project as project_fixture
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import FormatId, ParseRequest, SourceDescriptor, TranslationIoUseCase
+from transbridge.application.projects.prepared_source_results import (
+    decode_prepared_source,
+    encode_prepared_source,
+    prepare_parsed_source,
+)
 from transbridge.application.tasks import TaskRuntime
 from transbridge.smart_assistant.tools.task_manager import TaskManager
 from transbridge.smart_assistant.tools.tool_parser import _tool_parse_esp, _tool_parse_xt
@@ -88,6 +94,54 @@ def _load_localized_translated(project, localized):
     assert next(iter(project.ctx.collection)).string_id == 1
     assert project.ctx.active_slot.source_snapshot is not None
     _translate_active(project)
+
+
+def test_localized_prepared_source_roundtrip_preserves_binary_companions_and_metadata(localized):
+    snapshot = replace(
+        localized.parsed.source_snapshot,
+        metadata=(
+            *localized.parsed.source_snapshot.metadata,
+            ("custom", {"tuple": (1, b"\x00"), "list": [b"\xff"], "literal_tag": {"$bytes": "business"}}),
+        ),
+    )
+    entries = tuple(
+        replace(entry, metadata=(*entry.metadata, ("binary", (b"\x00\xff", ["text"]))))
+        for entry in localized.parsed.entries
+    )
+    prepared = prepare_parsed_source(str(localized.source), entries, snapshot, FormatId.PLUGIN_SSE)
+    payload = json.loads(json.dumps(encode_prepared_source(prepared, entries)))
+    for path in localized.source.parent.rglob("*"):
+        if path.is_file():
+            path.unlink()
+    restored = decode_prepared_source(payload)
+    assert restored.hydration.source_snapshot == snapshot
+    assert restored.hydration.entries == tuple(entry.snapshot() for entry in entries)
+    companions = dict(restored.hydration.source_snapshot.metadata)["localized_sources"]
+    assert isinstance(companions, tuple) and len(companions) == 3
+    assert all(isinstance(rows, tuple) and companion.content for companion, rows in companions)
+
+
+def test_localized_source_save_retry_never_rereads_plugin_or_strings(project, localized, monkeypatch):
+    from transbridge.smart_assistant.tools.entry_task_results import EntryResultStore
+    from transbridge.smart_assistant.tools.tool_translator import _tool_merge_task_result
+
+    create = EntryResultStore.create
+    monkeypatch.setattr(EntryResultStore, "create", lambda *args: (_ for _ in ()).throw(OSError("disk full")))
+    context = ExecutionContext(app_context=project.ctx)
+    result = _tool_parse_esp({"path": str(localized.source)}, context)
+    assert result.partial and not result.success
+    for path in localized.source.parent.rglob("*"):
+        if path.is_file():
+            path.unlink()
+    monkeypatch.setattr(EntryResultStore, "create", create)
+    recovered = _tool_merge_task_result({"result_id": result.data["result_id"]}, context)
+    assert recovered.success, recovered.message
+    snapshot = project.ctx.active_slot.source_snapshot
+    assert snapshot.content == localized.parsed.source_snapshot.content
+    assert (
+        dict(snapshot.metadata)["localized_sources"]
+        == dict(localized.parsed.source_snapshot.metadata)["localized_sources"]
+    )
 
 
 def _read_translation(path, format_id):

@@ -131,7 +131,13 @@ def test_second_invalid_plugin_leaves_existing_project_and_disk_unchanged(tmp_pa
         assert dict(failed.diagnostics[0].details)["source_location"] == str(invalid)
         assert services.project_lifecycle.active is previous
         assert services.project_lifecycle.generation == 1
-        assert {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*.json")} == persisted_before
+        # Preparation may retain immutable, unreferenced source artifacts;
+        # authoritative Project/Variant records and pointers stay untouched.
+        assert {
+            str(path.relative_to(root)): path.read_bytes()
+            for path in root.rglob("*.json")
+            if "source_artifacts" not in path.relative_to(root).parts
+        } == persisted_before
         assert first.exists() and invalid.read_bytes() == b"not a plugin"
     finally:
         services.close()

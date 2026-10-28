@@ -8,6 +8,7 @@ import pytest
 
 from transbridge.application.contracts import Diagnostic, ErrorCategory, OperationOutcome
 from transbridge.application.translation.task_history import TaskHistoryStore, restore_report_snapshot
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.ui.tools.ai_translator.source_execution import (
     SourceOutcome,
@@ -15,7 +16,6 @@ from transbridge.ui.tools.ai_translator.source_execution import (
     build_source_snapshot,
     build_task_record,
 )
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 
 
 def _outcome():
@@ -26,6 +26,42 @@ def _outcome():
 
 def _request():
     return SimpleNamespace(run_id="../untrusted/run", config=SimpleNamespace(mixed_execution_order="serial"))
+
+
+def test_metadata_update_cannot_republish_a_deleted_generation(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    record = build_task_record([_outcome()], _request(), state="partial")
+    store, updater = TaskHistoryStore(tmp_path), TaskHistoryStore(tmp_path)
+    first = store.save(record)
+    read, release, saving = Event(), Event(), Event()
+    original_read = updater._read
+
+    def paused_read(path):
+        value = original_read(path)
+        read.set()
+        assert release.wait(5)
+        return value
+
+    monkeypatch.setattr(updater, "_read", paused_read)
+    next_record = {**record, "state": "completed"}
+
+    def save_next():
+        saving.set()
+        return store.save(next_record)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        updated = pool.submit(updater.update_metadata, record["run_id"], state="failed")
+        assert read.wait(5)
+        saved = pool.submit(save_next)
+        assert saving.wait(5)
+        release.set()
+        updated.result(timeout=5)
+        latest = saved.result(timeout=5)
+    assert not first.exists() and latest.exists()
+    assert store.load(record["run_id"])["state"] == "completed"
+    assert len(list(latest.parent.glob("record-*.json"))) == 1
 
 
 def test_unstarted_cancelled_record_keeps_inputs_and_correct_counts():

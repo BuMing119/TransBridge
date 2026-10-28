@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections import Counter
 from copy import copy
 from dataclasses import replace
-from datetime import datetime
 import logging
 from threading import Lock
 from uuid import uuid4
@@ -18,21 +17,34 @@ from transbridge.application.sync import ConflictPolicy, SyncAction
 from transbridge.application.sync.batch_download import (
     BatchDownloadSource,
     plan_batch_download,
-    rebased_candidates,
     snapshots_from_entries,
 )
+from transbridge.application.sync.download_results import DownloadResultStore
 from transbridge.application.sync.download_review import DownloadDecision
 from transbridge.application.tasks import TaskCancelled
+from transbridge.application.translation.result_merge import (
+    ResultConflictPolicy,
+    merge_result_entries,
+)
+from transbridge.config.task_results import TaskResultPreferences
 from transbridge.paratranz.batch_download_snapshot import BatchDownloadScope, BatchDownloadSnapshotReader
-from transbridge.paratranz.categorized_upload import UploadCancellation
 from transbridge.paratranz.download_paths import legacy_plugin_paths, unambiguous_legacy_paths
+from transbridge.paratranz.file_transport import UploadCancellation
 from transbridge.paratranz.path_snapshot import current_category_paths
 from transbridge.paratranz.service import ParaTranzService
 from transbridge.paratranz.sync_diagnostics import log_sync_diagnostics
 
-from .batch_download_commit import publish_download, run_download_task
+from .batch_download_access import export_result, partial_review_rows, restore_previous, restore_result
+from .batch_download_commit import run_download_task
 from .batch_download_dialog import BatchDownloadDialog
-from .batch_download_view import DownloadPreview, DownloadReceipt, DownloadSourceOption
+from .batch_download_results import (
+    merge_options,
+    merge_review_rows,
+    preview_entry_states,
+    publish_results,
+    result_changes,
+)
+from .batch_download_view import DownloadPreview, DownloadSourceOption
 from .sync_review_projection import review_rows
 
 _logger = logging.getLogger(__name__)
@@ -68,6 +80,8 @@ class BatchDownloadSession:
         self.reader_factory = reader_factory
         self.service_factory = service_factory or ParaTranzService.from_config
         self._reads, self._verified = {}, False
+        self._unsaved_reads = {}
+        self._partial_reads = {}
         self._scopes = {}
         self._lock = Lock()
         self.plan = self.snapshot = None
@@ -76,7 +90,15 @@ class BatchDownloadSession:
         self.review_keys = ()
         self.details = ()
         self._retryable = False
-        self._recovery = None
+        provider = getattr(context, "task_result_preferences_provider", None)
+        self.merge_policy = (provider() if provider else TaskResultPreferences()).download_policy
+        self.default_policy = self.merge_policy.value
+        self.result_store = DownloadResultStore(context.project_commands.task_result_directory(self.request_context))
+        self.record = None
+        self._bases = {}
+        self.merge_result = None
+        self._override_changes = None
+        self.review_states = {}
 
     def _target_stamp(self):
         target = self.context.resolve_paratranz_target()
@@ -84,7 +106,6 @@ class BatchDownloadSession:
             target.endpoint,
             target.project_id,
             target.account_user_id,
-            getattr(self.context.config, "config_revision", 0),
             self.context.active_project_id,
             self.context.active_variant_id,
         )
@@ -92,9 +113,8 @@ class BatchDownloadSession:
     def _check_target(self):
         if self._target_stamp() != self.stamp:
             raise ValueError("当前工程、翻译版本或云端账号已切换，本轮未修改译文；请切回原目标后重试。")
-        current = self.context.resolve_paratranz_target()
-        if current.status.value not in {"available", "unverified"}:
-            raise ValueError(current.reason or "当前账号无法访问所选 ParaTranz 项目。")
+        if self.context.resolve_paratranz_target().status.value in {"account_mismatch", "endpoint_mismatch", "unbound"}:
+            raise ValueError("当前云端账号或服务身份已变化；下载成果保留，可切回原目标后处理。")
 
     def _capture(self, source_ids=None):
         self._check_target()
@@ -162,7 +182,9 @@ class BatchDownloadSession:
         if not source_ids:
             raise ValueError("请至少选择一个插件。")
         self._check_target()
-        self._verify(cancel)
+        self.merge_policy = _merge_policy(policy)
+        if self.record is None:
+            self.record = self.result_store.create(self.stamp, self.merge_policy)
         snapshot = self._capture(source_ids)
         scopes, sources, details = [], {}, []
         retryable = False
@@ -173,13 +195,17 @@ class BatchDownloadSession:
                 details.append(f"{source.label}：当前来源没有可更新词条，已跳过。")
                 continue
             try:
-                scope = self._scope(snapshot, source, names, legacy_roots)
+                scope = self._scopes.get(source.source_id) or self._scope(snapshot, source, names, legacy_roots)
             except (IndexError, ValueError) as exc:
                 details.append(f"{source.label}：未采用，{exc}")
                 retryable = True
                 continue
             scopes.append(scope)
             sources[source.source_id] = source
+            self._bases.setdefault(
+                source.source_id,
+                BatchDownloadSource(source.source_id, source.label, snapshots_from_entries(source.entries), ()),
+            )
         for _source_id, label, error in snapshot.failures:
             details.append(f"{label}：本地来源读取失败，未修改；{error}")
             retryable = True
@@ -191,12 +217,31 @@ class BatchDownloadSession:
             f"来源 {source_id} 已移除或停用，本次跳过。" for source_id in source_ids if source_id not in known
         )
         missing = [scope for scope in scopes if scope not in self._reads]
+        for scope, read in tuple(self._unsaved_reads.items()):
+            self.result_store.save_source(self.record, scope, read, self._bases[scope.source_id])
+            self._unsaved_reads.pop(scope)
         if missing:
+            self._verify(cancel)
+
+            def retain(scope, read):
+                if not read.error and read.paths:
+                    self._reads[scope] = read
+                    self._partial_reads.pop(scope, None)
+                else:
+                    self._reads.pop(scope, None)
+                    if read.paths:
+                        self._partial_reads[scope] = read
+                self._unsaved_reads[scope] = read
+                self.result_store.save_source(self.record, scope, read, self._bases[scope.source_id])
+                self._unsaved_reads.pop(scope)
+                self._scopes[scope.source_id] = scope
+
             reads = self.reader_factory(self.config).fetch(
                 self.target.project_id,
                 missing,
                 cancellation=UploadCancellation(cancel),
                 progress=progress,
+                on_source=retain,
             )
             for scope, read in zip(missing, reads, strict=True):
                 if not read.error and read.paths:
@@ -222,6 +267,12 @@ class BatchDownloadSession:
                 retryable = True
                 details.append(f"{source.label}：文件或云端条目与其他所选来源重叠，已排除该来源。")
                 self._reads.pop(scope, None)
+                self.result_store.save_source(
+                    self.record,
+                    scope,
+                    replace(read, entries=(), error="来源归属重叠，暂不可合入。"),
+                    self._bases[scope.source_id],
+                )
                 continue
             if cached_count + len(read.entries) > 100_000:
                 retryable = True
@@ -237,24 +288,49 @@ class BatchDownloadSession:
                 BatchDownloadSource(
                     source.source_id,
                     source.label,
-                    snapshots_from_entries(source.entries),
+                    self._bases[source.source_id].local_entries,
                     read.entries,
                 )
             )
+        present_ids = {source.source_id for source in complete}
+        for source_id in source_ids:
+            if source_id in present_ids or source_id in sources:
+                continue
+            scope = self._scopes.get(source_id)
+            read = self._reads.get(scope)
+            if read is not None and not read.error and source_id in self._bases:
+                complete.append(replace(self._bases[source_id], remote_entries=read.entries))
         if cancel.is_set():
             raise TaskCancelled("下载已取消，本地译文未修改。")
         progress(0, 0, "正在按原文和译文自动匹配…")
         self.plan = plan_batch_download(
             tuple(complete),
-            policy=ConflictPolicy(policy),
-            decisions=tuple(DownloadDecision(*decision) for decision in decisions),
+            policy=ConflictPolicy.PREFER_REMOTE,
+            decisions=tuple(
+                DownloadDecision(*decision) for decision in decisions if not decision[0].startswith("merge:")
+            ),
             review_keys=self.review_keys,
         )
         self.snapshot, self.source_ids, self.policy, self.decisions = snapshot, source_ids, policy, decisions
         self._retryable = retryable
         self._scopes = {scope.source_id: scope for scope in scopes}
         self.details = self._plan_details(details)
+        self.record["decisions"] = list(decisions)
+        self.record["policy"] = self.merge_policy.value
+        self.result_store.save(self.record)
         return self._preview()
+
+    def saved_results(self):
+        return self.result_store.list_records(self.stamp)
+
+    def restore(self, result_id, progress, cancel):
+        return restore_result(self, result_id, progress, cancel)
+
+    def export_results(self, path):
+        return export_result(self, path)
+
+    def restore_previous(self, progress, cancel):
+        return restore_previous(self, progress, cancel)
 
     def _source_names(self, snapshot):
         return source_directory_names(
@@ -321,16 +397,41 @@ class BatchDownloadSession:
         for source, plan in zip(self.plan.sources, self.plan.plans, strict=True):
             keys = {entry.entry_key for entry in source.local_entries}
             unchanged += sum(item.action is SyncAction.SKIP and item.entry_key in keys for item in plan.items)
+        candidates = result_changes(self.plan)
+        policies, reviewed = merge_options(self, candidates)
+        current = (
+            {row.base.entry_key: row.base for row in candidates}
+            if self.snapshot is None
+            else preview_entry_states(
+                self.snapshot, self.context.project_sources, {row.base.entry_key for row in candidates}
+            )
+        )
+        merge = merge_result_entries(
+            {row.base.entry_key: row.base for row in candidates},
+            current,
+            {row.incoming.entry_key: row.incoming for row in candidates},
+            policy=self.merge_policy,
+            policies=policies,
+            decision_states=reviewed,
+        )
         return DownloadPreview(
-            self.plan.updated_count,
-            unchanged,
-            self.plan.deferred_count,
+            len(merge.applied),
+            unchanged + len(merge.unchanged_keys) + len(merge.kept_current_keys),
+            self.plan.deferred_count
+            + len(merge.pending)
+            + sum(len(read.entries) for read in self._partial_reads.values()),
             self.details,
-            tuple(row for plan in self.plan.plans for row in review_rows(plan)),
+            (
+                *tuple(row for plan in self.plan.plans for row in review_rows(plan)),
+                *merge_review_rows(self, merge),
+                *partial_review_rows(self._partial_reads),
+            ),
             bool(self.plan.sources),
             status,
-            can_save=bool(self.plan.sources) and self.snapshot.dirty,
+            can_save=bool(self.plan.sources) and self.snapshot is not None and self.snapshot.dirty,
             retryable=self._retryable,
+            source_ids=self.source_ids,
+            policy=self.merge_policy.value,
         )
 
     def apply(self, progress, cancel):
@@ -339,7 +440,7 @@ class BatchDownloadSession:
         try:
             if self.plan is None:
                 raise ValueError("请先开始对照。")
-            fingerprint = ":".join(plan.plan_hash for plan in self.plan.plans) or "empty"
+            fingerprint = (":".join(plan.plan_hash for plan in self.plan.plans) or "empty") + ":" + uuid4().hex
             return run_download_task(
                 self.runtime.tasks,
                 self.request_context,
@@ -357,82 +458,7 @@ class BatchDownloadSession:
             self._lock.release()
 
     def _apply(self, progress, cancel, task_context, commit, cancellation):
-        for attempt in range(2):
-            cancellation.raise_if_cancelled()
-            if cancel.is_set():
-                raise TaskCancelled("下载已取消，本地译文未修改。")
-            current = self._capture(self.source_ids)
-            available = {source.source_id: source for source in current.sources}
-            current_sources = tuple(
-                replace(source, local_entries=snapshots_from_entries(available[source.source_id].entries))
-                for source in self.plan.sources
-                if source.source_id in available
-            )
-            candidate = rebased_candidates(self.plan, current_sources)
-            missing = {source.source_id for source in self.plan.sources} - set(available)
-            names = self._source_names(current)
-            legacy_roots = self._legacy_roots(names)
-            paths_changed = any(
-                self._scope(current, source, names, legacy_roots) != self._scopes.get(source.source_id)
-                for source in available.values()
-                if source.entries
-            )
-            if candidate.deferred_keys or candidate.replan_source_ids or missing or paths_changed:
-                self.review_keys = tuple(set(self.review_keys) | set(candidate.deferred_keys))
-                preview = self._compare(self.source_ids, self.policy, self.decisions, progress, cancel)
-                preview = replace(preview, status="内容已变化，已自动重新对照；新编辑可逐条复核，其他确定项可先更新。")
-                return DownloadReceipt(0, preview.details, True, preview, retryable=preview.retryable)
-            signature = (current.project_id, current.variant_id, current.project_revision, current.variant_revision)
-            if self._recovery is None or self._recovery[0] != signature:
-                recovery_name = f"ParaTranz-批量下载前-{datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:8]}"
-                progress(0, 1, "正在创建下载前历史还原点…")
-                snapshot_result = self.context.project_commands.save_snapshot(recovery_name, task_context)
-                _require_success(snapshot_result, "无法创建历史还原点，本地译文未修改。")
-                self._recovery = (signature, recovery_name)
-            recovery_name = self._recovery[1]
-
-            def guarded_commit(mutation):
-                def publish():
-                    self._check_target()
-                    mutation()
-
-                commit(publish)
-
-            progress(0, 1, "正在更新并保存当前本地版本…")
-            result = publish_download(
-                self.context,
-                current,
-                candidate.entries,
-                candidate.updated_keys,
-                self.target.project_id,
-                task_context,
-                guarded_commit,
-            )
-            if result.is_success:
-                count = len(candidate.updated_keys)
-                self.plan = None
-                updated_keys = frozenset(candidate.updated_keys)
-                self.review_keys = tuple(key for key in self.review_keys if key not in updated_keys)
-                try:
-                    progress(1, 1, "译文已保存到当前本地版本。")
-                except Exception:
-                    _logger.exception("Batch download committed but progress presentation failed")
-                return DownloadReceipt(
-                    count,
-                    (*self.details, f"已更新并保存 {count} 条译文到当前本地版本；下载前历史还原点：{recovery_name}"),
-                    retryable=self._retryable,
-                )
-            stale = any(
-                item.code
-                in {"ACTIVE_PROJECT_REVISION_CHANGED", "ACTIVE_VARIANT_REVISION_CHANGED", "SOURCE_UPDATE_STALE"}
-                for item in result.diagnostics
-            )
-            if not stale:
-                _require_success(result, "更新并保存失败，原工作内容和下载前还原点已保留，可在此重试。")
-            if attempt:
-                preview = self._compare(self.source_ids, self.policy, self.decisions, progress, cancel)
-                preview = replace(preview, status="本地内容持续变化，已保留选择并重新对照；可确认后重试。")
-                return DownloadReceipt(0, preview.details, True, preview, retryable=preview.retryable)
+        return publish_results(self, task_context, commit, progress, cancel, cancellation)
 
 
 def _require_success(result, message):
@@ -441,8 +467,17 @@ def _require_success(result, message):
         raise RuntimeError(f"{message} {detail}")
 
 
-def open_batch_download(context, runtime, parent=None):
+def _merge_policy(value):
+    aliases = {"prefer_remote": "prefer_incoming", "prefer_local": "keep_current", "skip": "defer"}
+    return ResultConflictPolicy(aliases.get(value, value))
+
+
+def open_batch_download(context, runtime, parent=None, *, values=None):
     try:
+        if values:
+            from .download_context import DownloadContext
+
+            context = DownloadContext(context, values)
         session = BatchDownloadSession(context, runtime)
     except (ValueError, RuntimeError, AttributeError) as exc:
         QMessageBox.warning(parent, "无法开始下载", str(exc))
@@ -454,6 +489,11 @@ def open_batch_download(context, runtime, parent=None):
         load_sources=session.load_sources,
         compare=session.compare,
         apply=session.apply,
+        saved_results=getattr(session, "saved_results", None),
+        restore=getattr(session, "restore", None),
+        export_results=getattr(session, "export_results", None),
+        restore_previous=getattr(session, "restore_previous", None),
+        default_policy=getattr(session, "default_policy", "keep_current"),
         parent=parent,
     )
     dialog.show()

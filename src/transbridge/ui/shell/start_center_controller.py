@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from PyQt6.QtWidgets import QFileDialog
 
@@ -258,24 +257,7 @@ class StartCenterController:
                 )
                 for item in snapshot.projects
             )
-        workspace = self._host.context.workspace
-        if workspace is None:
-            return ()
-        active = workspace.active_project
-        output = []
-        for name, raw_path in workspace.projects.items():
-            available = Path(raw_path).is_file()
-            output.append(
-                RecentProjectViewState(
-                    project_key=name,
-                    name=name,
-                    path=str(raw_path),
-                    available=available,
-                    reason="" if available else "工程记录不存在或不可访问",
-                    active=name == active,
-                )
-            )
-        return tuple(output)
+        return ()
 
     def _recovery_projection(self) -> tuple[RecoveryItemViewState, ...]:
         runtime = self._host.app_runtime

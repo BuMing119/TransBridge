@@ -98,10 +98,8 @@ RuntimeContextFactory = Callable[[object], RequestContext]
 class OperationPlanFacade:
     """Real upload/download/write/FOMOD intent facade.
 
-    Construction requires all four feature adapters. Current-project upload
-    and download use their feature windows; other operations and explicit
-    custom plans use shared preflight and request-bound confirmation before
-    calling the feature task port.
+    Upload and download always use their feature launchers. Write and FOMOD
+    use shared preflight and request-bound confirmation.
     """
 
     def __init__(
@@ -110,11 +108,11 @@ class OperationPlanFacade:
         runtime_context: RuntimeContextFactory,
         features: tuple[OperationPlanFeature, ...],
         *,
+        upload_launcher: Callable,
+        download_launcher: Callable,
         dialog_factory=OperationPlanDialog,
         dialog_factories: Mapping[OperationKind, Callable[[object, object, object | None], object]] | None = None,
         execution_result_reader: Callable[[JobRef, OwnerRef], OperationResult | None] | None = None,
-        upload_launcher: Callable | None = None,
-        download_launcher: Callable | None = None,
     ) -> None:
         self._runtime = runtime
         self._runtime_context = runtime_context
@@ -125,7 +123,9 @@ class OperationPlanFacade:
         self._download_windows = {}
         self._pending_results: dict[str, Callable[[], None]] = {}
         self._features = {feature.kind: feature for feature in features}
-        required = frozenset(OperationKind)
+        if not callable(upload_launcher) or not callable(download_launcher):
+            raise TypeError("upload and download launchers are required")
+        required = frozenset((OperationKind.WRITE, OperationKind.FOMOD))
         registered = frozenset(self._features)
         if registered != required or len(features) != len(required):
             missing = ", ".join(sorted(item.value for item in required - registered)) or "none"
@@ -156,28 +156,20 @@ class OperationPlanFacade:
         return self._coordinator.active_window_count + len(self._upload_windows) + len(self._download_windows)
 
     def begin_upload(self, context, *, batch: bool = False, **values):
-        if self._upload_launcher is not None and not values:
-            window = self._upload_launcher(context, batch=batch)
-            if window is not None:
-                key = id(window)
-                self._upload_windows[key] = window
-                window.destroyed.connect(lambda: self._upload_windows.pop(key, None))
-            return window
-        return self._coordinator.begin_upload(context, batch=batch, **values)
+        window = self._upload_launcher(context, batch=batch, **values)
+        if window is not None:
+            key = id(window)
+            self._upload_windows[key] = window
+            window.destroyed.connect(lambda: self._upload_windows.pop(key, None))
+        return window
 
     def begin_download(self, context, *, batch: bool = False, **values):
-        if (
-            self._download_launcher is not None
-            and not values
-            and bool(getattr(context, "uses_authoritative_projection", False))
-        ):
-            window = self._download_launcher(context)
-            if window is not None:
-                key = id(window)
-                self._download_windows[key] = window
-                window.destroyed.connect(lambda: self._download_windows.pop(key, None))
-            return window
-        return self._coordinator.begin_download(context, batch=batch, **values)
+        window = self._download_launcher(context, **values)
+        if window is not None:
+            key = id(window)
+            self._download_windows[key] = window
+            window.destroyed.connect(lambda: self._download_windows.pop(key, None))
+        return window
 
     def begin_write(self, context, *, batch: bool = False, **values):
         return self._coordinator.begin_write(context, batch=batch, **values)
@@ -187,13 +179,9 @@ class OperationPlanFacade:
 
     def supports(self, kind: OperationKind | str, context: object, *, batch: bool = False) -> bool:
         """Return whether this facade can preserve parity for the requested scope."""
-        if OperationKind(kind) is OperationKind.UPLOAD and self._upload_launcher is not None:
+        if OperationKind(kind) is OperationKind.UPLOAD:
             return True
-        if (
-            OperationKind(kind) is OperationKind.DOWNLOAD
-            and self._download_launcher is not None
-            and bool(getattr(context, "uses_authoritative_projection", False))
-        ):
+        if OperationKind(kind) is OperationKind.DOWNLOAD:
             return True
         feature = self._features.get(OperationKind(kind))
         return feature is not None and feature.supports(context, batch)

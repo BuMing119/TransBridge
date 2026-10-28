@@ -11,6 +11,7 @@ from transbridge.smart_assistant.guardrails.input_validator import InputValidati
 from transbridge.smart_assistant.tool_registry import ToolRegistry
 from transbridge.smart_assistant.tools import tool_editor  # noqa: F401 - register the real editor tools
 from transbridge.smart_assistant.tools.base import ExecutionContext, execute_with_guardrails
+from transbridge.smart_assistant.tools.tool_editor import EditorController
 
 
 @pytest.mark.parametrize(
@@ -25,9 +26,10 @@ from transbridge.smart_assistant.tools.base import ExecutionContext, execute_wit
         "The javascript: protocol is mentioned here.",
     ],
 )
-def test_plain_translation_text_reaches_the_real_editor_unchanged(text):
+def test_plain_translation_text_reaches_the_real_editor_unchanged(text, current_project_factory):
     collection = make_test_collection(1)
-    context = ExecutionContext(app_context=MockAppContext(collection))
+    project = current_project_factory(collection)
+    context = ExecutionContext(app_context=project.context)
 
     result = execute_with_guardrails(
         ToolRegistry.get("edit_translation"),
@@ -36,7 +38,8 @@ def test_plain_translation_text_reaches_the_real_editor_unchanged(text):
     )
 
     assert result.success
-    assert collection.get("entry_000").translation == text
+    assert project.context.collection.get("entry_000").translation == text
+    assert project.aggregate.snapshot().entries[0].translation == text
 
 
 def test_plain_search_text_reaches_the_real_filter_unchanged():
@@ -51,6 +54,27 @@ def test_plain_search_text_reaches_the_real_filter_unchanged():
 
     assert result.success
     assert app_context.filter_state["search_query"] == text
+
+
+@pytest.mark.parametrize("reason", ["invalid-stage", "missing-identity"])
+def test_rejected_editor_candidate_never_mutates_live_entries(reason, monkeypatch, current_project_factory):
+    project = current_project_factory(make_test_collection(1))
+    context = project.context
+    collection = context.collection
+    before = tuple(entry.snapshot() for entry in collection)
+    stored = project.aggregate.snapshot()
+    arguments = {"entry_id": "entry_000", "new_translation": "Must remain detached"}
+    if reason == "invalid-stage":
+        arguments["new_stage"] = 17
+    else:
+        monkeypatch.setattr(type(context), "active_version_identity", property(lambda _: None))
+
+    result = EditorController().edit_translation(arguments, context, collection)
+
+    assert not result.success
+    assert context.collection is collection
+    assert tuple(entry.snapshot() for entry in collection) == before
+    assert project.aggregate.snapshot() == stored
 
 
 def test_translation_schema_still_rejects_a_non_string_before_editing():

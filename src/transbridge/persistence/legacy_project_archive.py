@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 from zipfile import ZipFile
@@ -14,6 +14,8 @@ from transbridge.application.io.identity import EntryKey, Provenance
 from transbridge.application.projects import ProjectSourceRequest
 from transbridge.application.projects.source_content import authoritative_baseline_sources
 
+from .legacy_project_records import LegacyArchiveRecords, LegacyProjectRecords
+from .legacy_project_tasks import is_legacy_task_member
 from .v2.ids import ProjectId, ProjectRef, VariantId, VariantRef
 from .v2.migration import migrate_to_current
 from .v2.models import ProjectDto, SchemaValidationError, VariantDto
@@ -36,7 +38,21 @@ def decode_legacy_archive(
     source_preparer,
     context: RequestContext,
 ) -> tuple[ProjectDto, tuple[VariantSnapshot, ...], tuple[dict, ...]]:
-    """Decode a path/size-validated ZIP; missing sources retain unverified state.
+    """Decode a path/size-validated ZIP through the shared migration boundary."""
+
+    return decode_legacy_records(
+        LegacyArchiveRecords(archive), project_id=project_id, source_preparer=source_preparer, context=context
+    )
+
+
+def decode_legacy_records(
+    archive: LegacyProjectRecords,
+    *,
+    project_id: ProjectId,
+    source_preparer,
+    context: RequestContext,
+) -> tuple[ProjectDto, tuple[VariantSnapshot, ...], tuple[dict, ...]]:
+    """Decode validated legacy records; missing sources retain unverified state.
 
     Legacy packages contain JSON records, not source files. Qualified cache keys
     retain their complete identity; bare IDs require a unique verified source.
@@ -52,7 +68,7 @@ def decode_legacy_archive(
     if not isinstance(project, ProjectDto):
         raise ValueError("旧项目包缺少有效工程记录")
     mapping = project.envelope.data["legacy"]["variant_name_map"]
-    members = {item.filename for item in archive.infolist() if not item.is_dir()}
+    members = archive.members
     expected = {"project.json"}
     for name in mapping:
         if name in {".", ".."} or "/" in name or "\\" in name:
@@ -61,9 +77,12 @@ def decode_legacy_archive(
     snapshots = []
     for member in sorted(members - expected):
         parts = PurePosixPath(member).parts
-        if len(parts) != 3 or parts[0] not in mapping or parts[1] != "snapshots" or not member.endswith(".json"):
-            raise ValueError(f"旧项目包包含无法迁移的记录，未导入以免丢失数据：{member}")
-        snapshots.append(member)
+        if len(parts) == 3 and parts[0] in mapping and parts[1] == "snapshots" and member.endswith(".json"):
+            snapshots.append(member)
+            continue
+        if is_legacy_task_member(member):
+            continue
+        raise ValueError(f"旧项目包包含无法迁移的记录，未导入以免丢失数据：{member}")
     missing = expected - members
     if missing:
         raise ValueError(f"旧项目包缺少版本记录：{', '.join(sorted(missing))}")
@@ -79,6 +98,13 @@ def decode_legacy_archive(
         ref = VariantRef(VariantId(mapping[PurePosixPath(member).parts[0]]), project_id)
         raw = _read_document(archive, member)
         snapshot = _decode_variant(archive, member, ref, identity, raw=raw)
+        if identity.verified:
+            # Historical V1 caches may omit unchanged rows. Current history is
+            # a complete restore point, so fill only absent rows from the proven
+            # source baseline; explicit saved empty translations remain present.
+            entries = dict(identity.entries)
+            entries.update((entry.entry_key, entry) for entry in snapshot.entries)
+            snapshot = replace(snapshot, entries=tuple(entries.values()))
         name = raw.get("snapshot_name", PurePosixPath(member).stem)
         if not isinstance(name, str) or not name.strip():
             raise ValueError(f"旧项目包快照名称无效：{member}")
@@ -104,7 +130,7 @@ def decode_legacy_archive(
     return project, variants, tuple(documents)
 
 
-def _read_document(archive: ZipFile, member: str) -> dict[str, Any]:
+def _read_document(archive: LegacyProjectRecords, member: str) -> dict[str, Any]:
     try:
         document = parse_json_bytes(archive.read(member))
     except (KeyError, ValueError, SchemaValidationError) as exc:
@@ -184,15 +210,19 @@ def _prepare_identity(data: dict[str, Any], preparer, context: RequestContext) -
                 raise ValueError(f"旧项目包来源包含冲突的条目：{location}")
             entries[key] = entry
         source["fingerprint"] = fingerprint.sha256
-        # Keep the original content identity for retained primary/import pairs.
-        source.setdefault("legacy", {}).setdefault("namespace", fingerprint.namespace.value)
+        artifact_id = prepared.to_dict().get("source_artifact_id")
+        if artifact_id is not None:
+            source["source_artifact_id"] = artifact_id
+        # A legacy path alias is not the parsed EntryKey namespace. Publish the
+        # same verified identity used to migrate the saved Variant entries.
+        source.setdefault("legacy", {})["namespace"] = fingerprint.namespace.value
     return _SourceIdentity(
         tuple(fingerprints.values()), entries, {key: frozenset(value) for key, value in keys.items()}, verified
     )
 
 
 def _decode_variant(
-    archive: ZipFile,
+    archive: LegacyProjectRecords,
     member: str,
     ref: VariantRef,
     identity: _SourceIdentity,
@@ -200,6 +230,21 @@ def _decode_variant(
     raw: dict[str, Any] | None = None,
 ) -> VariantSnapshot:
     source = raw if raw is not None else _read_document(archive, member)
+    supported = {
+        "schema_version",
+        "id",
+        "variant_id",
+        "variant",
+        "updated",
+        "translations",
+        "labels",
+        "label_library",
+        "revision",
+        "entry_states",
+        "snapshot_name",
+    }
+    if set(source) - supported:
+        raise ValueError(f"旧项目包版本包含无法迁移的字段：{member}，{', '.join(sorted(set(source) - supported))}")
     document = migrate_to_current(source, ref).document
     data = document["data"]
     states = source.get("entry_states", {})
@@ -292,4 +337,4 @@ def _validate_entry_state(state: dict[str, Any], member: str, key: str) -> None:
         Provenance.from_dict(value)
 
 
-__all__ = ["decode_legacy_archive"]
+__all__ = ["decode_legacy_archive", "decode_legacy_records"]

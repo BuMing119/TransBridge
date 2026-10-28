@@ -22,9 +22,9 @@ from transbridge.application.io.identity import Provenance
 from transbridge.application.io.mutation import ChangeSet, EntryPatch, MutationStatus
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.application.translation.protected_syntax import protected_syntax_matches
+from transbridge.application.translation.task_scope import SourceTask
 
 from .source_execution import SourceOutcome
-from .task_scope import SourceTask
 
 if TYPE_CHECKING:
     from transbridge.application.translation.ai_request_budget import EventState

@@ -41,9 +41,16 @@ def validate_archive(archive: zipfile.ZipFile) -> None:
             raise ValueError("项目包解压后超过 2 GiB 安全限制")
 
 
-def capture_sources(archive: zipfile.ZipFile, sources: list[dict]) -> list[dict]:
+def capture_sources(archive: zipfile.ZipFile, sources: list[dict], *, source_artifacts=None) -> list[dict]:
     locations = []
     for index, source in enumerate(sources):
+        if source.get("source_artifact_id") is not None:
+            if source_artifacts is None:
+                raise ValueError("当前服务无法读取工程引用的来源成果")
+            from .source_artifact_archive import capture_saved_source
+
+            locations.append(capture_saved_source(archive, source, index, source_artifacts))
+            continue
         path = Path(source["location"]).resolve(strict=True)
         if not path.is_file():
             raise ValueError(f"工程来源不是文件: {path}")

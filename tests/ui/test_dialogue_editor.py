@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QApplication, QLineEdit, QMessageBox, QWidget
 import pytest
 
 from tests.dialogue_support import dialogue_entries, dialogue_entry
+from tests.ui.fixtures.current_editing import CurrentEditingProject
 from transbridge.application.dialogue.index import build_dialogue_index
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui import context as context_module
@@ -48,26 +49,31 @@ def drain(controller):
 def editor(monkeypatch):
     monkeypatch.setattr("transbridge.ui.dialogue.sync_dialog.SyncTranslationDialog.exec", lambda self: 0)
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: SimpleNamespace(token=""))
-    context = context_module.AppContext()
-    context.variant_store = SimpleNamespace(dirty=False)
-    collection = TranslationEntryCollection(dialogue_entries())
-    context.add_slot("fixture.esp", context_module.CollectionSlot("测试插件", collection, esp_path="fixture.esp"))
+    project = CurrentEditingProject(dialogue_entries(), esp_path="fixture.esp")
+    context = project.context
+    collection = context.collection
     shell = WorkspaceShell()
     preview = Step2PreviewWidget(context)
     preview.refresh(collection)
     shell.addTab(preview, "工作台")
     shell.addTab(QWidget(), "ParaTranz")
     shell.addTab(QWidget(), "开始")
-    controller = DialogueEditorController(context, shell, preview, [])
+    controller = DialogueEditorController(context, shell, preview, [], projection=project.store)
+    controller._editing_project = project
     shell.resize(1200, 800)
     shell.show()
+    # Most editor tests exercise navigation after first-use index preparation.
+    # Startup deferral itself is covered separately by test_dialogue_lazy_index.
+    controller.open_entry(dialogue_entries()[2].identity)
     drain(controller)
+    controller.dialog.close()
     yield controller
     drain(controller)
     controller.close()
     preview.close()
     shell.close()
     shell.deleteLater()
+    project.close()
     _APP.processEvents()
 
 
@@ -183,7 +189,7 @@ def test_popup_opens_while_index_loads_and_does_not_reopen_after_closing(editor)
 def test_popup_can_apply_and_advance_between_ordinary_entries(editor):
     first = dialogue_entry(kind="MGEF")
     second = dialogue_entry(kind="SPEL", form="00000021")
-    editor.context.collection = TranslationEntryCollection((first, second))
+    editor._editing_project.install((first, second), esp_path="fixture.esp")
     drain(editor)
     editor.open_entry(first.identity)
     dialog = editor.dialog
@@ -241,8 +247,8 @@ def test_plugin_with_eet_overlay_reenables_and_late_worker_cannot_reenable_eet(e
     assert not editor.view.context_panel.isEnabled()
     context.slots["fixture.esp"].eet_path = "translated.xml"
     context.activate_slot("fixture.esp")
-    drain(editor)
     editor.open_entry(dialogue_entries()[2].identity)
+    drain(editor)
     assert editor.view.context_panel.isEnabled()
 
 
@@ -259,7 +265,11 @@ def test_multiline_draft_survives_topic_switch_and_applies_to_main_table(editor)
     drain(editor)
     assert editor.context.collection.get(target).translation == text
     assert editor.context.collection.get(target).stage == 1
+    assert editor.context.active_project_id == "project"
     assert editor.context.dirty
+    assert {entry.entry_key: entry for entry in editor._editing_project.aggregate.snapshot().entries}[
+        target
+    ].translation == text
     assert editor._current.before.entry_key == dialogue_entries()[3].identity
     assert not editor._drafts
     table = editor.preview._table
@@ -292,10 +302,9 @@ def test_external_change_rejects_stale_draft_without_losing_it(editor):
     target = dialogue_entries()[2].identity
     editor.open_entry(target)
     editor.view.translation.setPlainText("旧页面草稿")
-    collection = editor.context.collection
-    editor.context.collection = TranslationEntryCollection(
-        replace(e, translation="外部新译文") if e.identity == target else e for e in collection
-    )
+    assert editor.context.project_commands.update_entry(
+        target, editor.context.runtime_context, translation="外部新译文"
+    ).is_success
     drain(editor)
     editor.open_entry(target)
     editor.apply()
@@ -322,7 +331,7 @@ def test_navigation_crosses_topic_boundary_and_f2_remains_inline(editor):
 
 def test_ordinary_entry_opens_popup_without_task_tree_and_empty_content_clears_editor(editor):
     ordinary = dialogue_entry(kind="MGEF")
-    editor.context.collection = TranslationEntryCollection((ordinary,))
+    editor._editing_project.install((ordinary,), esp_path="fixture.esp")
     drain(editor)
     assert not editor.dialog.isVisible()
     table = editor.preview._table
@@ -355,7 +364,7 @@ def test_foreground_and_close_save_lock_also_disables_dialogue_editor(editor):
 
 def test_unchanged_apply_and_empty_translation_preserve_existing_stage(editor):
     entry = dialogue_entries()[2]
-    editor.context.collection = TranslationEntryCollection([replace(entry, translation="已有", stage=3)])
+    editor._editing_project.install([replace(entry, translation="已有", stage=3)], esp_path="fixture.esp")
     drain(editor)
     editor.open_entry(entry.identity)
     draft = EntryDraft.capture(editor.context, editor.context.collection.get(entry.identity))
@@ -367,7 +376,8 @@ def test_unchanged_apply_and_empty_translation_preserve_existing_stage(editor):
     assert editor.context.collection.get(entry.identity).stage == 3
 
 
-def test_main_window_double_click_opens_child_window_without_adding_navigation(monkeypatch):
+def test_main_window_double_click_opens_child_window_without_adding_navigation(monkeypatch, tmp_path):
+    from tests.ui.fixtures.project_runtime import project_window_dependencies
     from transbridge.ui.main_window import MainWindow
 
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: SimpleNamespace(token=""))
@@ -377,7 +387,8 @@ def test_main_window_double_click_opens_child_window_without_adding_navigation(m
     monkeypatch.setattr(
         "transbridge.ui.coordinators.project_coordinator.ProjectCoordinator.init_workspace", lambda *_args, **_kw: None
     )
-    window = MainWindow()
+    dependencies = project_window_dependencies(tmp_path)
+    window = MainWindow(**dependencies)
     entry = dialogue_entry(kind="MGEF")
     try:
         window.context.add_slot(
@@ -402,6 +413,8 @@ def test_main_window_double_click_opens_child_window_without_adding_navigation(m
         assert table.currentIndex().row() == 0
     finally:
         drain(window._dialogue_editor)
+        window.context.close_projection()
         window.close()
         window.deleteLater()
         _APP.processEvents()
+        dependencies["runtime"].close()

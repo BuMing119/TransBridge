@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 import pytest
 
+from tests.ui.fixtures.current_editing import CurrentEditingProject
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -22,20 +23,22 @@ _APP = QApplication.instance() or QApplication([])
 @pytest.fixture
 def editing(monkeypatch):
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: SimpleNamespace(token=""))
-    context = context_module.AppContext()
     entries = [TranslationEntry("1", "key", "Original", "Old", 1, "NPC_:FULL")]
+    project = CurrentEditingProject(entries, key="demo", esp_path="Demo.esp")
+    context = project.context
     widget = Step2PreviewWidget(context)
-    context.add_slot(
-        "demo",
-        context_module.CollectionSlot(
-            label="Demo", collection=TranslationEntryCollection(entries), esp_path="Demo.esp"
-        ),
-    )
-    monkeypatch.setattr(type(context), "uses_authoritative_projection", property(lambda _: True))
+    widget.refresh(context.collection)
+    widget._editing_project = project
     response = SimpleNamespace(is_success=False, diagnostics=[SimpleNamespace(message="文件暂时不可写")])
-    monkeypatch.setattr(context, "update_projected_entry", lambda *_args, **_kwargs: response)
+    update = context.update_projected_entry
+    monkeypatch.setattr(
+        context,
+        "update_projected_entry",
+        lambda *args, **kwargs: update(*args, **kwargs) if response.is_success else response,
+    )
     yield widget, context, entries[0], response
     widget.close()
+    project.close()
 
 
 def test_failed_edit_retains_complete_input_then_retries(editing):
@@ -118,7 +121,7 @@ def test_multiple_original_qualified_entries_keep_independent_drafts(editing):
         )
         for original in ("First", "Second")
     ]
-    context.collection = TranslationEntryCollection(entries)
+    widget._editing_project.install(entries)
     widget._table.model().setData(
         widget._table.model().index(0, COL_TRANSLATION), "Draft first", Qt.ItemDataRole.EditRole
     )

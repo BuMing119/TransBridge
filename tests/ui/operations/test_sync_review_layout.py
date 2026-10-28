@@ -11,7 +11,6 @@ from tests.ui.responsive_layout_support import apply_layout_font, settle_layout,
 from transbridge.config.ui_preferences import DEFAULT_THEME_ID, ThemeMode
 from transbridge.ui.foundation.builtins import create_builtin_registry
 from transbridge.ui.foundation.theme_service import ThemeService
-from transbridge.ui.operations.plan_view import OperationKind
 from transbridge.ui.operations.sync_review_dialog import SyncReviewDialog
 from transbridge.ui.operations.sync_review_view import SyncReviewCandidate, SyncReviewRow
 
@@ -27,7 +26,7 @@ def test_small_window_keeps_footer_reachable_and_long_text_scrollable(layout_app
     assert result.snapshot is not None
     candidate = SyncReviewCandidate("cloud", "x" * 3000, "原文很长\n" * 200, "译文很长\n" * 200, "场景\n" * 200)
     row = SyncReviewRow("local", "key" * 1000, candidate.original, candidate.translation, candidate.context, "原文不同")
-    subject = SyncReviewDialog((replace(row, candidates=(candidate,)),), kind=OperationKind.UPLOAD)
+    subject = SyncReviewDialog((replace(row, candidates=(candidate,)),))
     apply_layout_font(subject, result.snapshot, point_size)
     subject.resize(900, 620)
     subject.show()

@@ -18,6 +18,7 @@ from transbridge.ui.settings.draft import ParaTranzSettingsDraft
 from transbridge.ui.settings.paratranz_page import ParaTranzSettingsPage
 from transbridge.ui.settings.sections import SettingsSection
 from transbridge.ui.tools.ai_translator.config_presenter import ConnectionTestResult
+from transbridge.ui.worker_registry import get_api_worker_registry
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -87,7 +88,7 @@ def test_background_result_and_retry_have_accurate_visible_and_accessible_states
     finally:
         release.set()
         controller.close()
-        _wait(layout_app, lambda: not connection_checks._ACTIVE_WORKERS)
+        _wait(layout_app, lambda: not connection_checks._ACTIVE_WORKERS and not get_api_worker_registry().busy)
         button.close()
         status.close()
 
@@ -243,5 +244,5 @@ def test_editing_connection_fields_invalidates_results_and_ignores_late_replies(
     finally:
         release.set()
         dialog.reject()
-        _wait(layout_app, lambda: not connection_checks._ACTIVE_WORKERS)
+        _wait(layout_app, lambda: not connection_checks._ACTIVE_WORKERS and not get_api_worker_registry().busy)
         service.close()

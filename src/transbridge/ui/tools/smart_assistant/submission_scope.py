@@ -11,8 +11,7 @@ from .theme_support import BUTTON_STRUCTURE_STYLE, QUIET_BUTTON_STYLE
 
 
 def capture_display_context(context) -> dict:
-    project = getattr(context, "active_project", None)
-    name = getattr(context, "project_name", "") or getattr(project, "name", "")
+    name = getattr(context, "project_name", "")
     path = getattr(context, "esp_path", "")
     if not name and isinstance(path, (str, Path)) and path:
         name = Path(path).name

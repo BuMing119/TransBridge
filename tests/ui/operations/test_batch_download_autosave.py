@@ -18,7 +18,7 @@ def disk_snapshot(case):
     return VariantSnapshot.from_dto(repository.read_snapshot(active.formal_variant_ref), active.formal_variant_ref)
 
 
-def test_download_automatically_saves_current_version_and_retains_unsaved_recovery_point(case):
+def test_download_automatically_saves_current_version_and_can_restore_unsaved_previous_content(case):
     key = case.sources[0].entries[0].identity
     assert case.context.project_commands.update_entry(
         key,
@@ -39,8 +39,9 @@ def test_download_automatically_saves_current_version_and_retains_unsaved_recove
     assert disk_snapshot(case) == active.variant.snapshot()
     assert {entry.translation for entry in disk_snapshot(case).entries} == {"云端1", "云端2"}
     snapshots = case.services.project_snapshots.list(case.context.runtime_context)
-    assert len(snapshots) == 1 and "批量下载前" in snapshots[0].name
-    assert snapshots[0].revision == before.revision
+    assert not snapshots
+    assert case.session.restore_previous(lambda *_: None, case.cancel).updated == 2
+    assert states(case)[key] == ("下载前未保存的编辑", 1)
     assert any("已更新并保存" in detail for detail in receipt.details)
 
 
@@ -78,7 +79,7 @@ def test_disk_failure_preserves_original_state_and_retries_same_download_and_rec
     assert disk_snapshot(case) == persisted_before
     assert case.services.project_projection.snapshot() == projection_before
     snapshots_before_retry = case.services.project_snapshots.list(case.context.runtime_context)
-    assert len(snapshots_before_retry) == 1
+    assert not snapshots_before_retry
     reads_before_retry = tuple(case.gateway.calls)
 
     receipt = case.session.apply(lambda *_: None, case.cancel)
@@ -109,18 +110,17 @@ def test_autosave_preserves_and_saves_unselected_edits_in_same_version(case):
 def test_cancel_before_durable_write_leaves_disk_unchanged(case, monkeypatch):
     compare(case)
     before = disk_snapshot(case)
-    original = case.context.project_commands.save_snapshot
+    original = case.context.project_commands.merge_entry_states
 
-    def cancel_after_snapshot(*args):
-        result = original(*args)
+    def cancel_before_commit(*args, **kwargs):
         case.cancel.set()
-        return result
+        return original(*args, **kwargs)
 
-    monkeypatch.setattr(case.context.project_commands, "save_snapshot", cancel_after_snapshot)
+    monkeypatch.setattr(case.context.project_commands, "merge_entry_states", cancel_before_commit)
     with pytest.raises(RuntimeError):
         case.session.apply(lambda *_: None, case.cancel)
     assert disk_snapshot(case) == before
-    assert len(case.services.project_snapshots.list(case.context.runtime_context)) == 1
+    assert not case.services.project_snapshots.list(case.context.runtime_context)
 
 
 def test_matching_concurrent_edit_is_still_automatically_saved_on_success(case):

@@ -34,7 +34,7 @@ def test_explicit_concurrency_and_execution_copy_are_preserved(tmp_path, value):
     config.max_concurrent = 1
     assert execution.max_concurrent == value
 
-    from transbridge.ui.tools.ai_translator.task_config_snapshot import execution_snapshot, restore_execution_snapshot
+    from transbridge.application.translation.task_config_snapshot import execution_snapshot, restore_execution_snapshot
 
     restored = restore_execution_snapshot(LLMConfig(), execution_snapshot(execution))
     assert restored.max_concurrent == value

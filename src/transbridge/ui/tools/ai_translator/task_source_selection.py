@@ -7,9 +7,10 @@ from types import SimpleNamespace
 
 from transbridge.application.io.identity import EntryKey
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
-from .task_scope import SourceTask, SourceWorkbenchScope, TaskScope
+from .task_scope import SourceWorkbenchScope, TaskScope
 
 
 def _copy_json_steps(value):
@@ -145,15 +146,21 @@ def capture_selection_intent(window, config):
 
 def recover_task_sources(selection, identity, mode, config, slots):
     """Shared recovery selection core; callers may provide live or frozen sources."""
-    from .task_recovery_binding import signature
+    from transbridge.application.translation.task_config_snapshot import execution_signature as signature
 
     record, restart = selection
+    if record.get("origin") == "smart-assistant" or record.get("results_only"):
+        raise ValueError("助手任务只恢复已保存成果，请使用 get_task_result 查询、merge_task_result 合入。")
     if identity is None or tuple(map(str, identity)) != (record["project_id"], record["variant_id"]):
         raise ValueError("恢复任务的项目或版本已变化，请重新打开原版本。")
     if mode != record["mode"]:
         raise ValueError("原任务模式已变化，请新建任务。")
     if not restart and not record.get("legacy") and signature(config) != record["config_digest"]:
         raise ValueError("AI 配置已变化，不能继续原任务；请选择重新开始。")
+    if not restart and record.get("recovery_contract") == 2:
+        from transbridge.application.translation.task_recovery_inputs import frozen_recovery_sources
+
+        return frozen_recovery_sources(record, slots)
     applied = {}
     if not restart:
         for row in record.get("applied_entries", ()):

@@ -176,6 +176,15 @@ class TestUploadEntries(unittest.TestCase):
 
     @patch(_PT_PROJECT_API_PATH)
     def test_upload_all_entries(self, mock_api):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from tests.smart_assistant.current_project_support import bind_current_project
+
+        bind_current_project(self, make_test_collection(3))
+        temporary = TemporaryDirectory(prefix=".tmp-au-", dir=Path.cwd())
+        self.addCleanup(temporary.cleanup)
+        self.ctx.project_commands.task_result_directory = lambda _context: Path(temporary.name)
         mock_client = MagicMock()
 
         def uploaded(project_id, entry, **kwargs):
@@ -205,7 +214,15 @@ class TestDownloadEntries(unittest.TestCase):
         from transbridge.smart_assistant.tools.tool_paratranz import _tool_download_entries
 
         self.func = _tool_download_entries
-        self.ctx = MockAppContext(make_test_collection(3))
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from tests.smart_assistant.current_project_support import bind_current_project
+
+        bind_current_project(self, make_test_collection(3))
+        temporary = TemporaryDirectory(prefix=".tmp-ad-", dir=Path.cwd())
+        self.addCleanup(temporary.cleanup)
+        self.ctx.project_commands.task_result_directory = lambda _context: Path(temporary.name)
 
     def test_download_no_project_id(self):
         r = self.func({}, self.ctx)
@@ -214,7 +231,7 @@ class TestDownloadEntries(unittest.TestCase):
     @patch(_PT_PROJECT_API_PATH)
     def test_download_entries(self, mock_api):
         mock_client = MagicMock()
-        mock_client.list_entries.return_value = [
+        mock_client.iter_entries.return_value = [
             {"key": "NPC_:0001", "original": "Hello", "translation": "你好", "context": "NPC_:FULL", "stage": 1},
         ]
         mock_api.return_value = mock_client
@@ -361,7 +378,7 @@ class TestSwitchParatranzProject(unittest.TestCase):
 class TestTranslatorParaTranzTarget(unittest.TestCase):
     def test_term_source_rejects_mismatched_binding_status(self):
         from transbridge.application.projects import ParaTranzTargetStatus
-        from transbridge.smart_assistant.tools.tool_translator import _paratranz_term_project_id
+        from transbridge.smart_assistant.tools.translation_task_run import paratranz_term_project_id
 
         ctx = SimpleNamespace(
             resolve_paratranz_target=lambda: SimpleNamespace(
@@ -370,11 +387,11 @@ class TestTranslatorParaTranzTarget(unittest.TestCase):
             )
         )
 
-        self.assertIsNone(_paratranz_term_project_id(ctx))
+        self.assertIsNone(paratranz_term_project_id(ctx))
 
     def test_term_source_accepts_available_binding_status(self):
         from transbridge.application.projects import ParaTranzTargetStatus
-        from transbridge.smart_assistant.tools.tool_translator import _paratranz_term_project_id
+        from transbridge.smart_assistant.tools.translation_task_run import paratranz_term_project_id
 
         ctx = SimpleNamespace(
             resolve_paratranz_target=lambda: SimpleNamespace(
@@ -383,7 +400,7 @@ class TestTranslatorParaTranzTarget(unittest.TestCase):
             )
         )
 
-        self.assertEqual(_paratranz_term_project_id(ctx), 42)
+        self.assertEqual(paratranz_term_project_id(ctx), 42)
 
 
 if __name__ == "__main__":

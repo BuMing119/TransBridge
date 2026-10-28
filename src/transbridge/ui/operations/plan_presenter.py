@@ -62,7 +62,6 @@ class OperationPlanPresenter:
             raise ValueError("one mapper is allowed for each operation kind")
         self._submitter = submitter
         self._confirmations = confirmations or ConfirmationAuthority()
-        self._sync_confirmations = confirmations or ConfirmationAuthority(ttl_seconds=None)
         self._sessions: dict[str, _Session] = {}
         self._lock = RLock()
 
@@ -111,9 +110,7 @@ class OperationPlanPresenter:
                 raise OperationPlanError("PREFLIGHT_IDENTITY_MISMATCH", "preflight does not match the edited plan")
             token = None
             if result.ready:
-                token = self._authority(session).issue(
-                    owner_id=owner_id, request_hash=self._request_hash(session, result)
-                )
+                token = self._confirmations.issue(owner_id=owner_id, request_hash=self._request_hash(session, result))
             result = replace(result, confirmation_token=token)
             session.preflight = result
             session.plan = replace(
@@ -131,7 +128,7 @@ class OperationPlanPresenter:
             preflight = session.preflight
             if preflight is None or not preflight.ready:
                 raise OperationPlanError("PREFLIGHT_REQUIRED", "operation must pass preflight before confirmation")
-            decision = self._authority(session).consume(
+            decision = self._confirmations.consume(
                 token,
                 owner_id=owner_id,
                 request_hash=self._request_hash(session, preflight),
@@ -172,14 +169,9 @@ class OperationPlanPresenter:
             raise OperationPlanError("PLAN_OWNER_MISMATCH", "operation plan belongs to another owner")
         return session
 
-    def _authority(self, session: _Session) -> ConfirmationAuthority:
-        if session.mapper.kind in {OperationKind.UPLOAD, OperationKind.DOWNLOAD}:
-            return self._sync_confirmations
-        return self._confirmations
-
     def _discard_confirmation(self, session: _Session) -> None:
         if session.preflight is not None:
-            self._authority(session).discard(session.preflight.confirmation_token)
+            self._confirmations.discard(session.preflight.confirmation_token)
 
     @staticmethod
     def _validate_plan(mapper: OperationPlanMapper, plan: OperationPlanViewState) -> None:

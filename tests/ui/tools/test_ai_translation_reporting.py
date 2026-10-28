@@ -3,27 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from PyQt6.QtCore import QThread
-from PyQt6.QtTest import QSignalSpy
 from PyQt6.QtWidgets import QApplication
 import pytest
 
 from transbridge.ai_translator.translator import TranslationResult
 from transbridge.application.translation import (
-    build_mixed_report_snapshot,
     build_polish_report_snapshot,
     build_translation_report_snapshot,
 )
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.paratranz.config_manager import LLMConfig
 from transbridge.ui.tools.ai_translator._report_history_dialog import _parse_report_filename
-from transbridge.ui.tools.ai_translator._report_render_worker import _ReportRenderWorker
-from transbridge.ui.tools.ai_translator._translation_progress_window import _TranslationProgressWindow
 from transbridge.ui.tools.ai_translator._translation_report_dialog import _TranslationReportDialog
-from transbridge.ui.tools.ai_translator._translation_worker import _TranslationWorker
 from transbridge.ui.tools.ai_translator.reporting import TranslationReportArtifacts, render_translation_report
 from transbridge.ui.tools.ai_translator.result_presenter import PolishApplySummary, ResultPresenter
-from transbridge.ui.tools.ai_translator.result_view import show_window_mixed_report
 
 
 def _result_with_snapshot() -> TranslationResult:
@@ -143,91 +136,6 @@ def test_polish_dialog_consumes_canonical_snapshot_details() -> None:
     app.processEvents()
 
 
-def test_mixed_completion_opens_the_canonical_report_dialog(tmp_path) -> None:
-    source = _result_with_snapshot().post_process_result
-    snapshot = build_mixed_report_snapshot(
-        source,
-        None,
-        run_id="ui-report-run",
-        execution_order="serial",
-    )
-    excel_path = tmp_path / "mixed-report.xlsx"
-    excel_path.touch()
-    artifacts = TranslationReportArtifacts((str(excel_path),), str(excel_path), ())
-    activated: list[str] = []
-    window = SimpleNamespace(
-        _theme_view=None,
-        _scope_presenter=SimpleNamespace(locate_entry=activated.append),
-    )
-    app = QApplication.instance() or QApplication([])
-
-    dialog = show_window_mixed_report(window, {"snapshot": snapshot, "artifacts": artifacts})
-
-    assert dialog.windowTitle() == "混合运行报告"
-    assert dialog._report_path == str(excel_path)
-    assert dialog._btn_excel.isEnabled()
-    app.processEvents()
-    assert dialog.isVisible()
-    dialog.close()
-    app.processEvents()
-
-
-def test_mixed_preview_report_registers_artifact_after_background_render(tmp_path, monkeypatch) -> None:
-    from transbridge.ui.tools.ai_translator import _report_render_worker, run_controller
-
-    source = _result_with_snapshot().post_process_result
-    snapshot = build_mixed_report_snapshot(
-        source,
-        None,
-        run_id="ui-report-run",
-        execution_order="serial",
-    )
-    excel_path = tmp_path / "mixed-preview-report.xlsx"
-    excel_path.touch()
-    artifacts = TranslationReportArtifacts((str(excel_path),), str(excel_path), ("partial diagnostic",))
-    callbacks = {}
-    registrations = []
-
-    def start_report_render(_snapshot, _esp_stem, *, on_completed, on_failed):
-        callbacks.update(completed=on_completed, failed=on_failed)
-        return SimpleNamespace()
-
-    class Progress:
-        def __init__(self) -> None:
-            self.diagnostics = ()
-
-        def set_report_diagnostics(self, diagnostics) -> None:
-            self.diagnostics = diagnostics
-
-    progress = Progress()
-    spec = SimpleNamespace(run_id="ui-report-run")
-    window = SimpleNamespace(
-        _theme_view=None,
-        _scope_presenter=SimpleNamespace(locate_entry=lambda _entry_id: None),
-        _active_mixed_progress=progress,
-        _active_mixed_spec=spec,
-        _ctx=SimpleNamespace(esp_path="fixture.esp"),
-    )
-    monkeypatch.setattr(_report_render_worker, "start_report_render", start_report_render)
-    monkeypatch.setattr(
-        run_controller,
-        "register_mixed_result_actions",
-        lambda target, run_spec, result: registrations.append((target, run_spec, result["artifacts"])),
-    )
-    app = QApplication.instance() or QApplication([])
-    result = {"snapshot": snapshot, "artifacts": None}
-
-    dialog = show_window_mixed_report(window, result)
-    callbacks["completed"](artifacts)
-
-    assert result["artifacts"] is artifacts
-    assert dialog._report_path == str(excel_path)
-    assert registrations == [(progress, spec, artifacts)]
-    assert progress.diagnostics == ("partial diagnostic",)
-    dialog.close()
-    app.processEvents()
-
-
 def test_background_renderer_persists_all_formats_from_one_snapshot(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(LLMConfig, "get_ai_translator_dir", staticmethod(lambda _stem: str(tmp_path)))
     snapshot = _result_with_snapshot().post_process_result
@@ -269,35 +177,6 @@ def test_polish_presenter_builds_snapshot_with_explicit_decisions() -> None:
     assert report.snapshot.schema == "transbridge.polish-report.v1"
     assert report.snapshot.run_spec_summary["polish_counts"] == {"accepted": 0, "rejected": 1, "failed": 0}
     assert dict(report.snapshot.candidates[0].report_details)["result_status"] == "rejected"
-
-
-def test_polish_report_worker_renders_off_qt_main_thread(monkeypatch) -> None:
-    import transbridge.ui.tools.ai_translator._report_render_worker as worker_module
-
-    app = QApplication.instance() or QApplication([])
-    observed = {}
-    expected = TranslationReportArtifacts(("report.json", "report.csv", "report.xlsx"), "report.xlsx", ())
-
-    def render(snapshot, esp_stem):
-        observed["thread"] = QThread.currentThread()
-        observed["snapshot"] = snapshot
-        observed["esp_stem"] = esp_stem
-        return expected
-
-    monkeypatch.setattr(worker_module, "render_snapshot_report", render)
-    snapshot = _result_with_snapshot().post_process_result
-    worker = _ReportRenderWorker(snapshot, "Plugin")
-    completed = QSignalSpy(worker.completed)
-
-    worker.start()
-    assert worker.wait(5000)
-    app.processEvents()
-
-    assert observed == {"thread": observed["thread"], "snapshot": snapshot, "esp_stem": "Plugin"}
-    assert observed["thread"] is not app.thread()
-    assert len(completed) == 1
-    assert completed[0][0] == expected
-    worker.deleteLater()
 
 
 def test_dialog_exposes_partial_render_diagnostics_and_successful_paths(tmp_path) -> None:
@@ -349,30 +228,3 @@ def test_polish_presenter_does_not_swallow_snapshot_errors(monkeypatch) -> None:
             polish_level="moderate",
             esp_path=None,
         )
-
-
-def test_translation_completion_callback_accepts_canonical_snapshot() -> None:
-    class CollectionChanged:
-        emitted = 0
-
-        def emit(self, _collection) -> None:
-            self.emitted += 1
-
-    app = QApplication.instance() or QApplication([])
-    worker = _TranslationWorker(None, [], None, esp_path="Plugin.esp")
-    changed = CollectionChanged()
-    window = _TranslationProgressWindow(
-        worker,
-        SimpleNamespace(collection=[], collection_changed=changed),
-    )
-    window._background_mode = True
-
-    window._on_result(_result_with_snapshot())
-
-    assert changed.emitted == 1
-    assert "运行报告：1 条" in window._round_log.toPlainText()
-    assert window._collection_synced is True
-
-    window.close()
-    worker.deleteLater()
-    app.processEvents()

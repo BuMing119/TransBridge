@@ -7,10 +7,10 @@ import pytest
 
 from tests.ui.tools import test_ai_task_session as support
 from tests.ui.tools.test_task_recovery_binding import setup_binding
+from transbridge.application.translation.task_entry_results import TaskEntryResults
 from transbridge.application.translation.task_history import TaskHistoryStore
 from transbridge.application.translation.task_recovery import TaskRecoveryStore
 from transbridge.ui.tools.ai_translator.source_execution import SourceOutcome
-from transbridge.ui.tools.ai_translator.task_entry_results import TaskEntryResults
 from transbridge.ui.tools.ai_translator.task_record_writer import TaskRecordWriter
 from transbridge.ui.tools.ai_translator.task_recovery_binding import TaskRecoveryBinding
 
@@ -90,17 +90,17 @@ def test_recovery_latest_update_keeps_saved_evidence_and_detached_rows(qapp, tmp
     prepare(qapp, binding)
     entered, release = Event(), Event()
     states, threads = [], []
-    original = binding.store.update
+    original = binding.store.mutate_metadata
 
-    def update(task_id, **fields):
-        states.append(fields["state"])
+    def update(task_id, change, **options):
+        states.append(run.state)
         threads.append(get_ident())
         if len(states) == 1:
             entered.set()
             assert release.wait(5)
-        return original(task_id, **fields)
+        return original(task_id, change, **options)
 
-    monkeypatch.setattr(binding.store, "update", update)
+    monkeypatch.setattr(binding.store, "mutate_metadata", update)
     run.state = "running"
     binding.update(run)
     try:
@@ -161,7 +161,7 @@ def test_recovery_deferred_write_error_is_delivered(qapp, tmp_path, monkeypatch)
     def failed(*args, **kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(binding.store, "update", failed)
+    monkeypatch.setattr(binding.store, "mutate_metadata", failed)
     run.state = "running"
     binding.update(run)
     wait_until(qapp, lambda: not binding.busy)
@@ -197,11 +197,11 @@ def test_record_uses_frozen_ledger_without_copying_source_entries(qapp, tmp_path
     def reject_copy(*args):
         pytest.fail("ledger reporting must not copy mutable source entries")
 
-    monkeypatch.setattr(writer, "_legacy_inputs", reject_copy)
+    monkeypatch.setattr(type(outcomes[0].task.entries[0]), "__copy__", reject_copy, raising=False)
     monkeypatch.setattr(TaskHistoryStore, "save", save)
     key = next(iter(ledger.entries))
     ledger.entries[key] = replace(ledger.entries[key], status="succeeded", text="冻结候选", stage=1)
-    writer.write(outcomes, state="partial", entry_results=ledger)
+    writer.write(outcomes, state="partial", frozen_entry_results=ledger.freeze())
     try:
         wait_until(qapp, entered.is_set)
         ledger.entries[key] = replace(ledger.entries[key], text="之后的改动")
@@ -229,15 +229,16 @@ def test_record_serial_coalescing_never_delivers_superseded_generation(qapp, tmp
 
     monkeypatch.setattr(TaskHistoryStore, "save", save)
     writer.ready.connect(lambda record: ready.append(record["state"]))
-    writer.write(outcomes, state="running", entry_results=ledger)
+    writer.write(outcomes, state="running", frozen_entry_results=ledger.freeze())
     try:
         wait_until(qapp, entered.is_set)
-        writer.write(outcomes, state="partial", entry_results=ledger)
+        writer.write(outcomes, state="partial", frozen_entry_results=ledger.freeze())
         session.saved = session.project_saved = session.snapshot_saved = True
-        writer.write(outcomes, state="completed", entry_results=ledger)
+        writer.write(outcomes, state="completed", frozen_entry_results=ledger.freeze())
     finally:
         release.set()
         wait_until(qapp, lambda: not writer.busy)
-    assert states == ["running", "completed"]
+    assert states == ["running"]
     assert ready == ["completed"]
     assert writer.record["saved"] and writer.record["project_saved"]
+    assert TaskHistoryStore(session.history_dir).load(writer.request.run_id)["state"] == "completed"

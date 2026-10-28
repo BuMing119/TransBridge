@@ -5,7 +5,6 @@ from PyQt6.QtWidgets import QMainWindow, QMessageBox
 
 from transbridge import __version__
 
-from .context import AppContext
 from .coordinators import (
     OperationCoordinator,
     ParseCoordinator,
@@ -24,8 +23,8 @@ from .shell.navigation_rail import WorkspaceShell
 from .shell.progressive_menu_bar import ProgressiveMenuBar
 from .shell.start_center import StartCenterWidget
 from .shell.start_center_controller import StartCenterController
-from .shell.status_presenter import ApiStatusIndicator, StatusPresenter
-from .shell.window_lifecycle import AutoSaveManager, WindowLifecycle
+from .shell.status_presenter import StatusPresenter
+from .shell.window_lifecycle import WindowLifecycle
 from .workbench.widget import WorkbenchWidget
 from .workers import ApiWorker, get_http_error_bus
 
@@ -37,14 +36,6 @@ def _composition_port(field: str) -> property:
         lambda instance: getattr(instance, field),
         lambda instance, value: setattr(instance, field, value),
     )
-
-
-class _ApiStatusIndicator(ApiStatusIndicator):
-    """Compatibility export; new code uses shell.ApiStatusIndicator."""
-
-
-class _AutoSaveManager(AutoSaveManager):
-    """Compatibility export retained for existing tests/callers."""
 
 
 class MainWindow(QMainWindow):
@@ -66,7 +57,6 @@ class MainWindow(QMainWindow):
     foreground_worker = _composition_port("_foreground_worker")
     project_open_worker = _composition_port("_project_open_worker")
     save_worker = _composition_port("_save_worker")
-    legacy_mapping_key = _composition_port("_legacy_mapping_key")
     project_coordinator = _composition_port("_project_coordinator")
     project_management_coordinator = _composition_port("_project_management_coordinator")
     source_update_coordinator = _composition_port("_source_update_coordinator")
@@ -99,10 +89,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("TransBridge")
         self.resize(1280, 820)
 
-        # ``ui.app`` is the authoritative path and injects the projection/runtime.
-        # The fallback preserves direct historical/test construction until its
-        # callers pass the deletion gate.
-        self._ctx = app_context if app_context is not None else AppContext(self)
+        if app_context is None or not app_context.uses_authoritative_projection:
+            raise ValueError("MainWindow requires the current project projection")
+        if runtime is None or runtime_context is None:
+            raise ValueError("MainWindow requires the application runtime and request context")
+        self._ctx = app_context
         if (
             app_context is not None
             and hasattr(app_context, "parent")
@@ -125,7 +116,6 @@ class MainWindow(QMainWindow):
         self._terminology_profile_factory = None
         if runtime is not None and "terminology_profile_service_factory" in runtime.use_cases.names():
             self._terminology_profile_factory = runtime.use_cases.resolve("terminology_profile_service_factory")
-        self._legacy_mapping_key: str | None = None
         self._workers: list[ApiWorker] = []
         self._foreground_worker: ApiWorker | None = None
         self._project_open_worker: ApiWorker | None = None
@@ -207,6 +197,9 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         if self._window_lifecycle.close_event(event):
+            project_saves = getattr(self, "_project_save_coordinator", None)
+            if project_saves is not None:
+                project_saves.close()
             self._dialogue_editor.close()
             self._intent_composition.close()
             if self._theme_view is not None:
@@ -449,142 +442,30 @@ class MainWindow(QMainWindow):
 
     def _save_current_project(self):
         """同步保存实现；仅允许从后台 worker 调用。"""
-        if self._ctx.uses_authoritative_projection:
-            projection_diverged = getattr(self._ctx, "authoritative_projection_diverged", None)
-            if callable(projection_diverged) and projection_diverged():
-                from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
+        projection_diverged = getattr(self._ctx, "authoritative_projection_diverged", None)
+        if callable(projection_diverged) and projection_diverged():
+            from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
 
-                return OperationResult.failed(
-                    DomainError(
-                        ErrorCategory.CONFLICT,
-                        "PROJECTION_AUTHORITY_DIVERGED",
-                        "工作台内容尚未提交到当前工程版本；已拒绝显示为保存成功。请重试刚才的操作。",
-                    ),
-                    run_id=None if self._runtime_context is None else self._runtime_context.run_id,
-                )
-            if self._project_commands is not None and self._runtime_context is not None:
-                return self._project_commands.save(self._runtime_context)
-            return None
-        ctx = self._ctx
-        if ctx.variant_store and ctx.variant_store.dirty:
-            ctx.variant_store.save()
-        if ctx.active_project:
-            ctx.active_project.save()
-        return ctx.variant_store
+            return OperationResult.failed(
+                DomainError(
+                    ErrorCategory.CONFLICT,
+                    "PROJECTION_AUTHORITY_DIVERGED",
+                    "工作台内容尚未提交到当前工程版本；已拒绝显示为保存成功。请重试刚才的操作。",
+                ),
+                run_id=None if self._runtime_context is None else self._runtime_context.run_id,
+            )
+        if self._project_commands is not None and self._runtime_context is not None:
+            return self._project_commands.save(self._runtime_context)
+        return None
 
     def save_current_project_async(self, *, automatic: bool = False, on_finished=None) -> bool:
         """Queue one Project save and coalesce callers while it is active."""
+        from .shell.project_save import ProjectSaveCoordinator
 
-        if getattr(self._ctx, "project_view_failed", False):
-            safe_to_close = getattr(self, "_close_pending", False) and not self._ctx.dirty
-            if not automatic and not safe_to_close:
-                self.show_message("工作台未能加载，请重新打开工程后再保存。")
-            if on_finished is not None:
-                QTimer.singleShot(0, lambda: on_finished(safe_to_close))
-            return True
-        if self._foreground_worker is not None and self._foreground_worker.isRunning():
-            if not automatic:
-                self.show_message("另一项后台操作仍在进行，请稍候。")
-            return False
-        if self._project_open_worker is not None or getattr(self._ctx, "project_opening", False):
-            if not automatic:
-                self.show_message("项目仍在打开，请稍候。")
-            return False
-        if on_finished is not None:
-            self._save_callbacks.append(on_finished)
-        if self._save_worker is not None:
-            return True
-
-        ctx = self._ctx
-        save_fn = self._save_current_project
-        if not ctx.uses_authoritative_projection and ctx.variant_store is not None and ctx.collection:
-            variant_store = ctx.variant_store
-            labels, label_library = self._workbench.collect_labels()
-            entries = list(ctx.collection)
-            active_project = ctx.active_project
-
-            def save_fn():
-                variant_store.collect_from(entries, labels, label_library)
-                variant_store.save()
-                if active_project is not None:
-                    active_project.save()
-                return variant_store
-
-        if not automatic:
-            self._workbench.show_step2_progress(0, "正在保存项目…")
-            self._workbench.setEnabled(False)
-        set_save_saving = getattr(self._workbench.project_bar, "set_save_saving", None)
-        if set_save_saving is not None:
-            set_save_saving()
-        worker = None
-        save_succeeded = False
-
-        def _on_saved(result) -> None:
-            nonlocal save_succeeded
-            if hasattr(result, "is_success") and not result.is_success:
-                diagnostic = result.diagnostics[0]
-                set_save_failed = getattr(self._workbench.project_bar, "set_save_failed", None)
-                if set_save_failed is not None:
-                    set_save_failed(diagnostic.message)
-                self.show_message(f"{diagnostic.code}: {diagnostic.message}", error=True)
-                return
-            save_succeeded = True
-
-        def _on_error(error: str) -> None:
-            set_save_failed = getattr(self._workbench.project_bar, "set_save_failed", None)
-            if set_save_failed is not None:
-                set_save_failed(error)
-            self.show_message(f"保存失败：{error}", error=True)
-
-        def _on_done() -> None:
-            if self._save_worker is worker:
-                self._save_worker = None
-            final_dirty = bool(ctx.dirty)
-            persistence_is_current = save_succeeded and not final_dirty
-            auto_saver = getattr(self, "_auto_saver", None)
-            if auto_saver is not None:
-                auto_saver.record_save_result(save_succeeded)
-            if save_succeeded:
-                self._workbench.project_bar.set_save_completed(dirty=final_dirty)
-                if not automatic and persistence_is_current:
-                    self._workbench.project_bar.flash_saved()
-                    self.show_message("项目已保存")
-                elif not automatic:
-                    self.show_message("保存完成，但仍有新的更改待保存")
-            if not automatic and self._foreground_worker is None:
-                self._workbench.hide_step2_progress()
-            if not automatic and not self._close_pending:
-                self._workbench.setEnabled(True)
-            callbacks, self._save_callbacks = self._save_callbacks, []
-            for callback in callbacks:
-                callback(persistence_is_current)
-
-        try:
-            worker = ApiWorker(save_fn, route_http_errors=False)
-            self._save_worker = worker
-            worker.result.connect(_on_saved)
-            worker.error.connect(_on_error)
-            worker.finished.connect(_on_done)
-            worker.start()
-        except Exception as exc:
-            logging.getLogger(__name__).exception("Cannot start project save worker")
-            _on_error(f"无法开始保存：{exc}")
-            _on_done()
-            if worker is not None:
-                worker.deleteLater()
-            return True
-        self._workers.append(worker)
-        return True
-
-    # Historical test/plugin compatibility; coordinators use public ports.
-    _start_foreground_task = start_foreground_task
-    _save_current_project_async = save_current_project_async
-
-    # ── 持久化：版本管理（S04） ─────────────────────────────
-
-    # ── 持久化：快照（S06） ──────────────────────────────────
-
-    # ── 持久化：.transbridge 导出导入（S07） ──────────────────
+        coordinator = getattr(self, "_project_save_coordinator", None)
+        if coordinator is None:
+            coordinator = self._project_save_coordinator = ProjectSaveCoordinator(self)
+        return coordinator.request(automatic=automatic, on_finished=on_finished, worker_factory=ApiWorker)
 
     def show_about(self):
         QMessageBox.about(
@@ -592,5 +473,3 @@ class MainWindow(QMainWindow):
             "关于 TransBridge",
             f"TransBridge v{__version__}\n\nESP 插件翻译辅助工具，对接 ParaTranz 平台。",
         )
-
-    _show_about = show_about

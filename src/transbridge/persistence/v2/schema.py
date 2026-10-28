@@ -8,7 +8,7 @@ import json
 from typing import Any
 from urllib.parse import urlsplit
 
-from jsonschema import Draft202012Validator, validators
+from jsonschema import Draft202012Validator
 
 from transbridge.application.projects.source_registry import SourceRegistrySnapshot
 
@@ -22,6 +22,8 @@ from .models import (
     SessionDto,
     VariantDto,
 )
+from .schema_execution import local_schema_validator, schema_execution
+from .variant_validation import variant_validation_view
 
 _COMMON_PROPERTIES = {
     "schema_version": {"const": SCHEMA_VERSION},
@@ -49,6 +51,7 @@ _SOURCE_REGISTRATION_SCHEMA: dict[str, Any] = {
         "kind": {"enum": ["plugin", "translation", "localized_strings", "bilingual", "other"]},
         "bilingual_capability": {"enum": ["none", "self_contained", "requires_relation"]},
         "fingerprint": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "source_artifact_id": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
         "display_name": {"type": ["string", "null"], "minLength": 1},
         "plugin_scope": {"type": ["string", "null"], "minLength": 1},
         "format_options": {"type": "object"},
@@ -74,6 +77,7 @@ _SOURCE_RELATION_SCHEMA: dict[str, Any] = {
         "to_source_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
         "alignment_policy": {"type": "string", "minLength": 1},
         "alignment_version": {"type": "string", "minLength": 1},
+        "folded_into_baseline": {"type": "boolean"},
     },
     "additionalProperties": False,
 }
@@ -282,15 +286,19 @@ def _object_items(validator, schema, instance, parent_schema):
     yield from Draft202012Validator.VALIDATORS["items"](validator, schema, instance, parent_schema)
 
 
-_PersistenceValidator = validators.extend(Draft202012Validator, {"items": _object_items})
+_PersistenceValidator = local_schema_validator({"items": _object_items})
 
 
 def validate_v2(document: dict[str, Any], ref: EntityRef) -> PersistenceDto:
-    validator = _PersistenceValidator(schema_for(ref.kind))
-    errors = sorted(validator.iter_errors(document), key=lambda error: list(error.absolute_path))
+    view = variant_validation_view(document, ref)
+    with schema_execution(_PersistenceValidator, schema_for(ref.kind)) as validator:
+        errors = sorted(
+            ((error, view.original_path(error.absolute_path)) for error in validator.iter_errors(view.document)),
+            key=lambda item: item[1],
+        )
     if errors:
-        error = errors[0]
-        pointer = _json_pointer(error.absolute_path)
+        error, path = errors[0]
+        pointer = _json_pointer(path)
         raise SchemaValidationError("SCHEMA_VALIDATION_FAILED", error.message, pointer=pointer)
 
     identity = str(document["id"])

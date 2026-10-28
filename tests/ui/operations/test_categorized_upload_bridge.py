@@ -265,7 +265,7 @@ def test_single_source_rejects_batch_before_network(harness):
     assert harness.remote.reads == []
 
 
-@pytest.mark.parametrize("changed", ["project", "variant", "account", "config"])
+@pytest.mark.parametrize("changed", ["project", "variant", "account"])
 def test_target_change_prevents_remote_access(harness, changed):
     selection = _selection(harness)
     if changed == "project":
@@ -274,11 +274,14 @@ def test_target_change_prevents_remote_access(harness, changed):
         harness.context.active_variant_id = "other"
     elif changed == "account":
         harness.context.resolve_paratranz_target().account_user_id = 8
-    else:
-        harness.context.config.config_revision += 1
     with pytest.raises((ValueError, RuntimeError), match="变化"):
         _upload(harness, selection)
     assert harness.remote.reads == []
+
+
+def test_unrelated_config_revision_does_not_cancel_frozen_upload(harness):
+    harness.context.config.config_revision += 1
+    assert _upload(harness).success_count == 2
 
 
 def test_diagnostics_keep_session_identity(harness, caplog):

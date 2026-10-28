@@ -5,16 +5,32 @@ from __future__ import annotations
 import os
 from types import SimpleNamespace
 from unittest.mock import Mock
+from uuid import uuid4
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QFileDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QWidget,
+)
 import pytest
 
+from transbridge.application.contracts import RequestContext
+from transbridge.application.io import FormatId
+from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
 from transbridge.application.terminology.conflicts import ConflictResolutionOperation
 from transbridge.application.terminology.models import DecisionStatus
+from transbridge.bootstrap.persistence import build_persistence_v2_services
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.ui.context import AppContext, CollectionSlot
 from transbridge.ui.coordinators.parse_coordinator import ParseCoordinator
 from transbridge.ui.coordinators.project_transfer_coordinator import ProjectTransferCoordinator
 from transbridge.ui.coordinators.variant_coordinator import VariantCoordinator
@@ -50,8 +66,9 @@ class _LoadedWorker:
 
 
 @pytest.fixture
-def command_host(qapp, monkeypatch):
+def command_host(qapp, monkeypatch, tmp_path):
     host = QWidget()
+    host._test_root = tmp_path
     original = SimpleNamespace(label="Original collection")
     context = SimpleNamespace(active_key="fixture.json", slots={"fixture.json": original})
     context.uses_authoritative_projection = False
@@ -77,14 +94,17 @@ def command_host(qapp, monkeypatch):
     monkeypatch.setattr(QMessageBox, "information", lambda *_args: None)
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_args: ("fixture.json", ""))
     yield host, original
+    if hasattr(host, "_source_services"):
+        host.context.close_projection()
+        host._source_services.close()
     host.close()
     host.deleteLater()
     qapp.processEvents()
 
 
-def _variant_command(host, authoritative):
+def _variant_command(host):
     variants = [{"id": "selected", "name": "Selected"}, {"id": "other", "name": "Other"}]
-    host.context.uses_authoritative_projection = authoritative
+    host.context.uses_authoritative_projection = True
     host.context.project_variants = variants
     host.context.active_variant_id = "other"
     host.context.dirty = False
@@ -92,36 +112,38 @@ def _variant_command(host, authoritative):
     def remove(name, *_args):
         variants[:] = [item for item in variants if item["id"] != name]
 
-    if authoritative:
-        host.runtime_context = object()
-        host.project_commands = SimpleNamespace(delete_variant=remove)
-        host.start_foreground_task = lambda command, **_kwargs: command()
-    else:
-        host.context.active_variant = "other"
-        host.context.active_project = SimpleNamespace(
-            variants=variants,
-            variant_dir=lambda _name: SimpleNamespace(exists=lambda: False),
-            remove_variant=remove,
-            save=Mock(),
-        )
-        host.workbench = SimpleNamespace(project_bar=SimpleNamespace(refresh=Mock()))
+    host.runtime_context = RequestContext("confirmation-test")
+    host.project_commands = SimpleNamespace(delete_variant=remove)
+    host.start_foreground_task = lambda command, **_kwargs: command()
     coordinator = VariantCoordinator(host)
     return lambda: coordinator.delete_variant("selected"), lambda: len(variants) == 1
 
 
-def _transfer_command(host):
+def _transfer_command(host, monkeypatch):
     imported = []
     tasks = []
 
     def start(command, **kwargs):
         tasks.append(command)
         if len(tasks) == 1:
-            kwargs["on_result"](("Fixture", SimpleNamespace(exists=lambda: True)))
+            kwargs["on_result"](command())
         else:
-            # The destructive extraction task is queued only after confirmation.
-            imported.append(command)
+            # Exercise import authorization without opening the separate completion prompt.
+            command()
 
+    def import_project(path, context, *, requested_name, copy_on_identity_conflict):
+        assert path == "fixture.transbridge" and isinstance(context, RequestContext)
+        assert requested_name == "Fixture 副本" and copy_on_identity_conflict is True
+        imported.append(path)
+
+    archive = SimpleNamespace(
+        inspect_import=lambda *_: SimpleNamespace(identity_conflict=True, name_conflict=False, name="Fixture"),
+        import_project=import_project,
+    )
+    host.runtime_context = RequestContext("confirmation-test")
+    host.app_runtime = SimpleNamespace(use_cases=SimpleNamespace(resolve=lambda _: archive))
     host.start_foreground_task = start
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_args, **_kwargs: ("Fixture 副本", True))
     coordinator = ProjectTransferCoordinator(host)
     return lambda: coordinator.import_transbridge("fixture.transbridge"), lambda: bool(imported)
 
@@ -156,9 +178,9 @@ def _draft_command(host, operation="suppress"):
 
 def _command(case, host, original, monkeypatch):
     if case.startswith("variant-"):
-        return _variant_command(host, case == "variant-v2")
-    if case == "project-overwrite":
-        return _transfer_command(host)
+        return _variant_command(host)
+    if case == "project-copy":
+        return _transfer_command(host, monkeypatch)
     if case == "term-exclude":
         return _conflict_command(host)
     if case == "term-suppress":
@@ -174,9 +196,28 @@ def _command(case, host, original, monkeypatch):
         host._manager = SimpleNamespace(import_dict=import_dict)
         host._rebuild_combo = host._refresh_table = Mock()
         return lambda: DictionaryPanel._on_import_dict(host), lambda: state["dictionary"] == "imported"
-    if case in ("step-remove", "workbench-remove"):
-        method = step1.Step1SourceWidget._on_remove_slot if case == "step-remove" else WorkbenchWidget._on_remove_slot
-        return lambda: method(host), lambda: not host.context.slots
+    if case == "workbench-remove":
+        services = build_persistence_v2_services(
+            host._test_root / "data", id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now"
+        )
+        source = host._test_root / "source.xml"
+        source.write_text("<SSTXMLRessources><Params><Addon>Fixture</Addon></Params><Content /></SSTXMLRessources>")
+        runtime = RequestContext("gui", run_id="confirm-remove")
+        result = services.gui_project_commands.create_project(
+            ProjectProvisioningRequest("Confirm removal", source=ProjectSourceRequest(str(source), FormatId.XML_XT)),
+            runtime,
+        )
+        assert result.is_success, result.diagnostics
+        host._source_services = services
+        host.context = host._ctx = AppContext(
+            project_projection=services.project_projection,
+            project_commands=services.gui_project_commands,
+            runtime_context=runtime,
+        )
+        host.context.add_slot(str(source), CollectionSlot("Fixture", TranslationEntryCollection(())))
+        return lambda: WorkbenchWidget._on_remove_slot(host), lambda: not host.context.slots
+    if case == "step-remove":
+        return lambda: step1.Step1SourceWidget._on_remove_slot(host), lambda: not host.context.slots
     slot = SimpleNamespace(label="Imported collection")
 
     def changed():
@@ -196,9 +237,8 @@ def _command(case, host, original, monkeypatch):
 
 _CASES = (
     "variant-v2",
-    "variant-legacy",
     "parse-overwrite",
-    "project-overwrite",
+    "project-copy",
     "step-remove",
     "step-json-overwrite",
     "step-parse-overwrite",

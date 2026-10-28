@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -453,7 +454,9 @@ def test_plugin_pair_roundtrip_and_removal_keeps_source_files(tmp_path: Path, re
 
     assert restored.is_success and restored.value is not None
     assert len(restored.value.sources) == 2
-    assert [source["legacy"]["role"] for source in loaded_sources] == ["primary"]
+    assert loaded_sources == []
+    assert len(restored.value.baselines) == 1
+    assert restored.value.baselines[0].fingerprint == baseline.fingerprint
     assert opener.activate(restored.value, RequestContext("gui", run_id="restore")).is_success
 
     target = source if remove_target == "primary" else translated
@@ -503,3 +506,53 @@ def test_source_preparer_rejects_changed_expected_fingerprint(tmp_path: Path) ->
         )
 
     assert error.value.code == "PROJECT_SOURCE_FINGERPRINT_MISMATCH"
+
+
+def test_folded_plugin_artifact_preserves_final_baseline_and_blank_variant_defaults_after_restart(tmp_path):
+    source = tmp_path / "source.esp"
+    translated = tmp_path / "translated.esp"
+    source.write_bytes(b"plugin-source")
+    translated.write_bytes(b"plugin-translated")
+    io = _PairedPluginIo({source.name: "Original text", translated.name: "已有译文"})
+    root = tmp_path / "data"
+    services = build_persistence_v2_services(
+        root,
+        id_factory=lambda: uuid4().hex,
+        timestamp_factory=lambda: "2026-10-26T00:00:00+00:00",
+        source_preparer=TranslationIoProjectSourcePreparer(io),
+    )
+    try:
+        created = services.gui_project_commands.create_project(
+            ProjectProvisioningRequest(
+                "Paired",
+                source=ProjectSourceRequest(str(source)),
+                migration_sources=(ProjectSourceRequest(str(translated)),),
+            ),
+            _context(),
+        )
+        assert created.is_success, created.diagnostics
+        active = services.project_lifecycle.active
+        baseline = services.baselines.provide(active.project, active.formal_variant_ref, _context())[0]
+        assert baseline.entries[0].translation == "已有译文"
+        assert services.gui_project_commands.create_variant("Before restart", _context()).is_success
+        expected_defaults = services.project_lifecycle.active.variant.snapshot().entries
+        assert expected_defaults[0].translation == "已有译文"
+    finally:
+        services.close()
+    source.unlink()
+    translated.unlink()
+    restarted = build_persistence_v2_services(
+        root,
+        id_factory=lambda: uuid4().hex,
+        timestamp_factory=lambda: "2026-10-26T00:00:00+00:00",
+    )
+    try:
+        prepared = restarted.current_project_opener.prepare_active(_context())
+        assert prepared.is_success and prepared.value.recovery is None
+        assert prepared.value.baselines == (baseline,)
+        assert prepared.value.hydrations[0].entries[0].translation == "已有译文"
+        assert restarted.current_project_opener.activate(prepared.value, _context()).is_success
+        assert restarted.gui_project_commands.create_variant("After restart", _context()).is_success
+        assert restarted.project_lifecycle.active.variant.snapshot().entries == expected_defaults
+    finally:
+        restarted.close()

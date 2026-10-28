@@ -1,4 +1,4 @@
-"""Production download routing keeps batch launchers and single-source plans reachable."""
+"""All production download intents use the current source selection window."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
 import pytest
 
-from tests.ui.operations.test_production_facade import _ConfirmingDialog, _runtime, _Signal
+from tests.ui.operations.test_production_facade import _runtime, _Signal
 from transbridge.application.contracts import RequestContext
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -37,9 +37,9 @@ class Window:
         self.destroyed = _Signal()
 
 
-def context(*, authoritative=True):
+def context():
     return SimpleNamespace(
-        uses_authoritative_projection=authoritative,
+        uses_authoritative_projection=True,
         collection=TranslationEntryCollection((TranslationEntry("key", "key", "Original", "Local", 1, "INFO:NAM1"),)),
         slots={"one": object(), "two": object()},
         esp_path="source.esp",
@@ -68,9 +68,6 @@ def composed(monkeypatch):
 
     monkeypatch.setattr(production, "open_batch_download", launch)
     monkeypatch.setattr(production, "open_file_upload", upload)
-    monkeypatch.setattr(
-        production, "ParaTranzSyncDialog", lambda plan, _context, parent: _ConfirmingDialog(plan, parent)
-    )
     monkeypatch.setattr(
         QMessageBox, "warning", lambda *_args: pytest.fail("A supported production download must not show fallback")
     )
@@ -118,10 +115,9 @@ def test_batch_card_and_menu_use_supported_production_launcher(composed, entrypo
 
 
 @pytest.mark.parametrize("entrypoint", ["facade", "card", "menu"])
-@pytest.mark.parametrize("authoritative", [False, True])
-def test_current_project_single_download_uses_unified_ui_and_legacy_keeps_plan(composed, entrypoint, authoritative):
+def test_current_project_download_uses_unified_ui(composed, entrypoint):
     facade, runtime, launches, uploads = composed
-    ctx = context(authoritative=authoritative)
+    ctx = context()
     card = DownloadCard(ctx, lambda **_kwargs: pytest.fail("Direct download worker must not run"))
     card.bind_operation_plan_facade(facade)
     host = SimpleNamespace(context=ctx, download_card=card, operation_plan_facade=facade)
@@ -131,15 +127,12 @@ def test_current_project_single_download_uses_unified_ui_and_legacy_keeps_plan(c
             window = facade.begin_download(ctx)
         elif entrypoint == "card":
             card.btn.click()
-            windows = facade._download_windows if authoritative else facade._coordinator._owned_windows
+            windows = facade._download_windows
             window = next(iter(windows.values()))
         else:
             window = OperationCoordinator(host).download()
-        assert isinstance(window, Window if authoritative else _ConfirmingDialog)
-        if not authoritative:
-            assert window.shown
-            assert window.plan.kind is OperationKind.DOWNLOAD
-        assert launches == ([(ctx, runtime)] if authoritative else [])
+        assert isinstance(window, Window)
+        assert launches == [(ctx, runtime)]
         assert uploads == []
         assert facade.active_plan_count == 1
         window.destroyed.emit()
@@ -206,33 +199,10 @@ def test_batch_window_is_retained_until_destroyed_and_count_includes_other_uploa
     assert facade.active_plan_count == 0
 
 
-@pytest.mark.parametrize(
-    "legacy_context", [SimpleNamespace(collection=()), SimpleNamespace(uses_authoritative_projection=False)]
-)
-def test_default_production_does_not_claim_legacy_batch_support(composed, legacy_context):
-    facade, _runtime_value, launches, _uploads = composed
-    assert not facade.supports("download", legacy_context, batch=True)
-    assert launches == []
-
-
 def test_launcher_returning_no_window_does_not_leave_active_plan(monkeypatch, composed):
     facade, _runtime_value, _launches, _uploads = composed
     monkeypatch.setattr(production, "open_batch_download", lambda *_args: None)
     assert facade.begin_download(context(), batch=True) is None
-    assert facade.active_plan_count == 0
-
-
-def test_custom_dialog_factory_preserves_feature_routing_without_batch_launcher(monkeypatch):
-    monkeypatch.setattr(production, "open_batch_download", lambda *_args: pytest.fail("Unexpected production launcher"))
-    facade = production.build_operation_plan_facade(
-        _runtime(), RequestContext("custom-production"), dialog_factory=_ConfirmingDialog
-    )
-    ctx = context()
-    assert not facade.supports("download", ctx, batch=True)
-    window = facade.begin_download(ctx)
-    assert isinstance(window, _ConfirmingDialog)
-    assert window.shown
-    window.destroyed.emit()
     assert facade.active_plan_count == 0
 
 

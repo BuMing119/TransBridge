@@ -17,7 +17,6 @@ import re
 from unittest.mock import patch
 
 from transbridge.ai_translator.post_processor.base import PostProcessIssue
-from transbridge.ai_translator.post_processor.checkpoint import PostProcessCheckpoint
 from transbridge.ai_translator.post_processor.llm_refiner import (
     FixApplied,
     LLMRefiner,
@@ -482,36 +481,6 @@ def test_batch_empty_missing_and_invalid_json_responses_are_invalid():
     assert "缺少" in empty["e2"].note
     assert all(result.valid is False for result in malformed.values())
     assert all(result.failure_code == "invalid_response" for result in malformed.values())
-
-
-def test_checkpoint_round_trips_structured_issue_and_refine_validity_with_legacy_defaults():
-    issue = _issue("e1")
-    issue.term = "Dragon"
-    issue.matched_form = "Dragons"
-    issue.standard_translation = "巨龙"
-    restored_issue = PostProcessCheckpoint.issue_from_dict(PostProcessCheckpoint.issue_to_dict(issue))
-    restored_result = PostProcessCheckpoint.refine_result_from_dict({
-        "entry_id": "e1",
-        "original_translation": "龙",
-        "refined_translation": "龙",
-        "valid": False,
-        "failure_code": "invalid_response",
-    })
-    legacy_result = PostProcessCheckpoint.refine_result_from_dict({
-        "entry_id": "e1",
-        "original_translation": "龙",
-        "refined_translation": "巨龙",
-    })
-
-    assert (restored_issue.term, restored_issue.matched_form, restored_issue.standard_translation) == (
-        "Dragon",
-        "Dragons",
-        "巨龙",
-    )
-    assert restored_result.valid is False
-    assert restored_result.failure_code == "invalid_response"
-    assert legacy_result.valid is True
-    assert legacy_result.failure_code == ""
 
 
 def test_single_call_failure_and_cancellation_have_structured_failure_codes():

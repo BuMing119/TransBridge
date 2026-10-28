@@ -22,6 +22,7 @@ from transbridge.converter.translation_entry import TranslationEntry
 from .catalog import FormatCatalog, default_format_catalog
 from .contracts import CapabilityLevel, FormatId, SourceDescriptor, SourceSnapshot, WriteRequest
 from .mutation import EntrySnapshot
+from .plugin_bsa_output import conflicting_loose_outputs
 from .plugin_localized_sources import localized_physical_inputs
 from .plugin_write import plugin_artifact_paths
 from .publish import (
@@ -171,6 +172,16 @@ class HydratedWritePreflightService:
             )
         )
         paths = plugin_artifact_paths(draft.source_snapshot, target, draft.options)
+        loose_conflicts = conflicting_loose_outputs(draft.source_snapshot, target, draft.options)
+        if loose_conflicts:
+            checks.append(
+                WritePreflightCheck(
+                    "BSA_LOOSE_OUTPUT_CONFLICT",
+                    False,
+                    "目标位置已有同名散装 STRINGS，会优先于 BSA 读取；请选择其他另存目录："
+                    + "；".join(loose_conflicts),
+                )
+            )
         archives = {
             self._filesystem.canonicalize(path)
             for path, captured in localized_physical_inputs(draft.source_snapshot)

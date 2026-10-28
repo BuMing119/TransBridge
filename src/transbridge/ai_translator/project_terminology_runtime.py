@@ -37,8 +37,6 @@ class ProjectTerminologyBinding:
             "effective_terminology": self.adapter,
             "terminology_context": self.context,
         }
-        if self.run_snapshot is not None:
-            values["terminology_snapshot"] = self.run_snapshot.ref
         if self.legacy_term_filter is not None:
             values["legacy_term_filter"] = self.legacy_term_filter
         return values

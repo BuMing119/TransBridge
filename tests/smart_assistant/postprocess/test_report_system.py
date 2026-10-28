@@ -9,7 +9,8 @@ import time
 import unittest
 from unittest.mock import patch
 
-from tests.conftest import MockAppContext
+from tests.conftest import MockAppContext, make_test_collection
+from tests.smart_assistant.postprocess.project_support import project_context
 from transbridge.smart_assistant.tools.base import ExecutionContext
 
 
@@ -19,7 +20,8 @@ class TestReportSystem(unittest.TestCase):
     def setUp(self):
         import transbridge.smart_assistant.tools.tool_proofreader as proofreader
 
-        proofreader.set_last_report(None)
+        self.ctx = project_context(self, make_test_collection(1))
+        proofreader.set_last_report(None, self.ctx)
 
     def test_legacy_report_projection_helpers_are_removed(self):
         from transbridge.smart_assistant.tools.tool_proofreader import ProofreaderController
@@ -97,15 +99,16 @@ class TestLastReportIntegrity(unittest.TestCase):
         import transbridge.smart_assistant.tools.tool_proofreader as proofreader
 
         self.proofreader = proofreader
-        proofreader.set_last_report(None)
+        self.ctx = project_context(self, make_test_collection(1))
+        proofreader.set_last_report(None, self.ctx)
 
     def tearDown(self):
-        self.proofreader.set_last_report(None)
+        self.proofreader.set_last_report(None, self.ctx)
 
     def test_get_quality_report_without_report(self):
         from transbridge.smart_assistant.tools.tool_proofreader import _tool_get_quality_report
 
-        result = _tool_get_quality_report({}, MockAppContext())
+        result = _tool_get_quality_report({}, self.ctx)
 
         self.assertTrue(result.success)
         self.assertIn("暂无质量报告", result.message)
@@ -141,9 +144,9 @@ class TestLastReportIntegrity(unittest.TestCase):
             ],
             "timestamp": time.time(),
         }
-        self.proofreader.set_last_report(report)
+        self.proofreader.set_last_report(report, self.ctx)
 
-        result = _tool_get_quality_report({}, MockAppContext())
+        result = _tool_get_quality_report({}, self.ctx)
 
         self.assertTrue(result.success)
         stored = result.data["reports"][0]

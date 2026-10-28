@@ -55,7 +55,17 @@ def _source_inputs(source):
     return rows
 
 
-def discover_legacy_records(project_directory, *, runtime_root=None) -> tuple[dict, ...]:
+def discover_legacy_records(
+    project_directory,
+    *,
+    runtime_root=None,
+    known=None,
+    summaries=False,
+    project_id=None,
+    variant_id=None,
+    states=None,
+    task_id=None,
+) -> tuple[dict, ...]:
     """Build virtual manifests; neither reports nor checkpoints are rewritten.
 
     Full candidate validation occurs only when the user continues a task. Old
@@ -64,7 +74,8 @@ def discover_legacy_records(project_directory, *, runtime_root=None) -> tuple[di
     """
     directory = Path(project_directory)
     history = TaskHistoryStore(directory / "ai-task-history")
-    known = {record["task_id"] for record in TaskRecoveryStore(directory / "ai-task-recovery").list_records()}
+    if known is None:
+        known = {record["task_id"] for record in TaskRecoveryStore(directory / "ai-task-recovery").list_summaries()}
     pending = tuple(
         record
         for record in history.list_records()
@@ -73,9 +84,30 @@ def discover_legacy_records(project_directory, *, runtime_root=None) -> tuple[di
         and record.get("project_id")
         and record.get("variant_id")
         and not record.get("project_saved", record.get("saved", False))
+        and (project_id is None or str(record.get("project_id")) == str(project_id))
+        and (variant_id is None or str(record.get("variant_id")) == str(variant_id))
+        and (states is None or "interrupted" in states)
+        and (task_id is None or record.get("run_id") == task_id)
     )
     if not pending:
         return ()
+    if summaries:
+        return tuple(
+            {
+                "task_id": record["run_id"],
+                "created_at": record["created_at"],
+                "project_id": record["project_id"],
+                "variant_id": record["variant_id"],
+                "mode": "translate",
+                "state": "interrupted",
+                "supported": True,
+                "legacy": True,
+                "recovery_summary": True,
+                "sources": record.get("sources", []),
+                "execution_runs": [record["run_id"]],
+            }
+            for record in pending
+        )
     if runtime_root is None:
         from transbridge.config.paths import get_data_dir
 

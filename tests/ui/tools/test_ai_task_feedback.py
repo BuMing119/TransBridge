@@ -11,13 +11,13 @@ from PyQt6.QtCore import Qt
 import pytest
 
 from transbridge.application.translation.ai_request_budget import AiRequestBudget
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.tools.ai_translator.project_name_progress import ProjectNameProgress, ProjectNameSourceProgress
 from transbridge.ui.tools.ai_translator.source_execution import SourceExecutor, SourceOutcome
 from transbridge.ui.tools.ai_translator.task_feedback import TaskFeedback
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 from transbridge.ui.tools.ai_translator.task_worker import AiTaskWorker
 
 

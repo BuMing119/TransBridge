@@ -28,6 +28,26 @@ from transbridge.smart_assistant.tools.base import (
 )
 from transbridge.smart_assistant.tools.task_manager import TaskManager
 
+
+def _current_project(case, count):
+    from PyQt6.QtWidgets import QApplication
+
+    from tests.ui.fixtures.current_editing import CurrentEditingProject
+
+    case.qt_app = QApplication.instance() or QApplication([])
+    config = patch(
+        "transbridge.paratranz.config_manager.ParatranzConfig.create_or_load",
+        return_value=SimpleNamespace(token="", user_id=None),
+    )
+    config.start()
+    case.addCleanup(config.stop)
+    project = CurrentEditingProject(make_test_collection(count))
+    case.addCleanup(project.close)
+    case.project = project
+    case.ctx = project.context
+    case.collection = project.context.collection
+
+
 # ── Test: 完整工作流链路 ────────────────────────────────────────────────
 
 
@@ -35,8 +55,7 @@ class TestFullWorkflowChain(unittest.TestCase):
     """验收标准: 筛选→搜索→选择→编辑→标记→翻译 完整链路数据传递正确性。"""
 
     def setUp(self):
-        self.collection = make_test_collection(15)
-        self.ctx = MockAppContext(self.collection)
+        _current_project(self, 15)
 
     def test_filter_by_stage(self):
         from transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
@@ -121,7 +140,7 @@ class TestFullWorkflowChain(unittest.TestCase):
             ec,
         )
         self.assertTrue(result.success)
-        self.assertEqual(self.collection.get("entry_000").translation, "新翻译文本")
+        self.assertEqual(self.ctx.collection.get("entry_000").translation, "新翻译文本")
 
     def test_edit_translation_with_stage_change(self):
         from transbridge.smart_assistant.tools.tool_editor import _tool_edit_translation
@@ -133,7 +152,7 @@ class TestFullWorkflowChain(unittest.TestCase):
         )
         self.assertTrue(result.success)
         self.assertTrue(result.data["stage_changed"])
-        self.assertEqual(self.collection.get("entry_000").stage, 1)
+        self.assertEqual(self.ctx.collection.get("entry_000").stage, 1)
 
     def test_edit_translation_nonexistent(self):
         from transbridge.smart_assistant.tools.tool_editor import _tool_edit_translation
@@ -141,6 +160,44 @@ class TestFullWorkflowChain(unittest.TestCase):
         ec = ExecutionContext(app_context=self.ctx)
         result = _tool_edit_translation({"entry_id": "nonexistent", "new_translation": "x"}, ec)
         self.assertFalse(result.success)
+
+    def test_execution_allows_reinstalled_collection_with_the_same_source_and_entries(self):
+        from transbridge.smart_assistant.tools.tool_editor import _tool_edit_translation
+
+        ec = ExecutionContext(app_context=self.ctx)
+        self.project.install(make_test_collection(15))
+        result = _tool_edit_translation({"entry_id": "entry_000", "new_translation": "same target"}, ec)
+        self.assertTrue(result.success, result.message)
+        self.assertEqual(self.ctx.collection.get("entry_000").translation, "same target")
+
+    def test_execution_advances_target_after_its_own_successful_edit(self):
+        from transbridge.smart_assistant.tools.tool_editor import _tool_edit_translation
+
+        ec = ExecutionContext(app_context=self.ctx)
+        for value in ("first", "second"):
+            result = _tool_edit_translation({"entry_id": "entry_000", "new_translation": value}, ec)
+            self.assertTrue(result.success, result.message)
+        self.assertEqual(self.ctx.collection.get("entry_000").translation, "second")
+
+    def test_execution_cannot_retarget_another_project_identity(self):
+        from dataclasses import replace
+
+        from transbridge.smart_assistant.tools.tool_editor import _tool_edit_translation
+
+        ec = ExecutionContext(app_context=self.ctx)
+        before = self.project.aggregate.snapshot()
+        snapshot = self.project.store.snapshot()
+        self.project.store.rebuild(
+            replace(
+                snapshot,
+                stream_id="project:another-project",
+                values={**snapshot.values, "project_id": "another-project"},
+            )
+        )
+        self.assertNotEqual(self.ctx.active_version_identity, ec._target_version_identity)
+        result = _tool_edit_translation({"entry_id": "entry_000", "new_translation": "wrong project"}, ec)
+        self.assertFalse(result.success)
+        self.assertEqual(self.project.aggregate.snapshot(), before)
 
     def test_set_stage_batch(self):
         from transbridge.smart_assistant.tools.tool_editor import _tool_set_stage
@@ -151,7 +208,7 @@ class TestFullWorkflowChain(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.data["updated_count"], 3)
         for eid in ids:
-            self.assertEqual(self.collection.get(eid).stage, 9)
+            self.assertEqual(self.ctx.collection.get(eid).stage, 9)
 
     def test_set_stage_partial_not_found(self):
         from transbridge.smart_assistant.tools.tool_editor import _tool_set_stage
@@ -163,6 +220,9 @@ class TestFullWorkflowChain(unittest.TestCase):
         self.assertEqual(len(result.failed_items), 1)
 
     def test_start_translation_stop_and_status(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
         from transbridge.smart_assistant.tools.tool_translator import (
             _tool_get_task_status,
             _tool_start_translation,
@@ -174,6 +234,8 @@ class TestFullWorkflowChain(unittest.TestCase):
         ec = ExecutionContext(app_context=self.ctx, task_manager=TaskManager())
         test_config = SimpleNamespace(api_key="test-key", term_priority=["dynamic"])
         with (
+            TemporaryDirectory(prefix=".tmp-at-", dir=".") as directory,
+            patch.object(self.ctx.project_commands, "task_result_directory", return_value=Path(directory)),
             patch(
                 "transbridge.paratranz.config_manager.LLMConfig.load_from_file",
                 return_value=test_config,
@@ -240,7 +302,7 @@ class TestFullWorkflowChain(unittest.TestCase):
             r6 = _tool_set_stage({"entry_ids": rest, "stage": 3}, ec)
             self.assertTrue(r6.success)
 
-        entry = self.collection.get(target)
+        entry = self.ctx.collection.get(target)
         self.assertEqual(entry.translation, "集成测试译文")
         self.assertEqual(entry.stage, 1)
 
@@ -258,8 +320,7 @@ class TestLabelSystem(unittest.TestCase):
     """
 
     def setUp(self):
-        self.collection = make_test_collection(10)
-        self.ctx = MockAppContext(self.collection)
+        _current_project(self, 10)
 
     def test_label_full_lifecycle(self):
         from transbridge.smart_assistant.tools.tool_editor import (
@@ -267,12 +328,11 @@ class TestLabelSystem(unittest.TestCase):
             _tool_manage_entry_labels,
         )
 
-        ec = ExecutionContext(app_context=self.ctx)
-
         # 1. Create
         r1 = _tool_manage_entry_labels({"action": "create", "name": "需要校对", "color": "#FF5722"}, self.ctx)
         self.assertTrue(r1.success)
         label_id = r1.data["label_id"]
+        ec = ExecutionContext(app_context=self.ctx)
 
         # 2. List
         r2 = _tool_list_labels({}, self.ctx)
@@ -327,33 +387,16 @@ class TestLabelSystem(unittest.TestCase):
     def test_label_mutations_replace_copy_on_read_state(self):
         from transbridge.smart_assistant.tools.tool_editor import _tool_manage_entry_labels
 
-        class CopyOnReadContext(MockAppContext):
-            @property
-            def label_library(self) -> dict:
-                return {key: dict(value) for key, value in self._label_library.items()}
-
-            @label_library.setter
-            def label_library(self, value: dict) -> None:
-                self._label_library = {key: dict(info) for key, info in value.items()}
-
-            @property
-            def entry_labels(self) -> dict:
-                return {key: set(value) for key, value in self._entry_labels.items()}
-
-            @entry_labels.setter
-            def entry_labels(self, value: dict) -> None:
-                self._entry_labels = {key: set(labels) for key, labels in value.items()}
-
-        context = CopyOnReadContext(self.collection)
+        context = self.ctx
+        created = _tool_manage_entry_labels({"action": "create", "name": "copy-safe"}, context)
         execution = ExecutionContext(app_context=context)
-        created = _tool_manage_entry_labels({"action": "create", "name": "副本安全"}, context)
         assigned = _tool_manage_entry_labels(
-            {"action": "assign", "name": "副本安全", "entry_ids": ["entry_000"]},
+            {"action": "assign", "name": "copy-safe", "entry_ids": ["entry_000"]},
             execution,
             self.collection,
         )
         unassigned = _tool_manage_entry_labels(
-            {"action": "unassign", "name": "副本安全", "entry_ids": ["entry_000"]},
+            {"action": "unassign", "name": "copy-safe", "entry_ids": ["entry_000"]},
             execution,
             self.collection,
         )
@@ -595,9 +638,12 @@ class TestStateQueryTools(unittest.TestCase):
     def test_list_local_projects(self):
         from transbridge.smart_assistant.tools.tool_default import _tool_list_local_projects
 
+        self.ctx.project_catalog = SimpleNamespace(
+            list_projects=lambda: SimpleNamespace(projects=(SimpleNamespace(name="Current"),))
+        )
         result = _tool_list_local_projects({}, self.ctx)
         self.assertTrue(result.success)
-        self.assertIn("projects", result.data)
+        self.assertEqual(result.data["projects"], [{"name": "Current"}])
 
     def test_get_current_project_no_active(self):
         from transbridge.smart_assistant.tools.tool_default import _tool_get_current_project
@@ -607,9 +653,12 @@ class TestStateQueryTools(unittest.TestCase):
         self.assertIsNone(result.data["active_project"])
 
     def test_get_quality_report(self):
+        from transbridge.application.contracts import RequestContext
         from transbridge.smart_assistant.tools.tool_proofreader import _tool_get_quality_report
 
-        ec = ExecutionContext(app_context=self.ctx)
+        ec = ExecutionContext(
+            app_context=self.ctx, request_context=RequestContext("report-query", session_id="state-query-test")
+        )
         result = _tool_get_quality_report({}, ec)
         self.assertTrue(result.success)
         self.assertIn("reports", result.data)
@@ -859,9 +908,12 @@ class TestTaskManager(unittest.TestCase):
     """验收标准: TaskManager 单例线程安全 (E3)。"""
 
     def setUp(self):
-        # Clean up any leftover tasks from other tests
-        tm = TaskManager()
-        tm.cleanup_all()
+        TaskManager.reset()
+
+    def tearDown(self):
+        # cleanup_all only removes terminal tasks; registered live tasks must
+        # not leak into later caller-scoped task control tests.
+        TaskManager.reset()
 
     def test_singleton(self):
         tm1 = TaskManager()

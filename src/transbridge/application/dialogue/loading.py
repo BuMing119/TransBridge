@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from io import BytesIO
 from pathlib import Path
 from threading import Lock
@@ -29,10 +29,16 @@ class DialogueIndexLoader:
         *,
         plugin: SSEPluginWithContext | None = None,
         snapshot: SourceSnapshot | None = None,
+        on_preview: Callable[[DialogueIndex], None] | None = None,
     ) -> DialogueIndex:
+        entries = tuple(entries)
         source = snapshot if snapshot is not None and snapshot.content is not None else plugin
         with self._lock:
             if source is not self._source:
+                if on_preview is not None:
+                    # Hydrated entry relationships already support task browsing.
+                    # Publish them before parsing a potentially large source for scenes.
+                    on_preview(build_dialogue_index(entries))
                 if isinstance(source, SourceSnapshot):
                     # Project hydration has no live parser. Read its captured bytes,
                     # never a possibly changed plugin file on disk.

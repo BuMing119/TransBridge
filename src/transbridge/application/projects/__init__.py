@@ -7,7 +7,6 @@ from .catalog import (
     variant_catalog,
 )
 from .gui_facade import GuiProjectCommandFacade
-from .legacy import LegacyProjectLifecycleAdapter
 from .lifecycle import ProjectLifecycleService
 from .management import ProjectDeletion, ProjectManagementCommands, ProjectManagementPersistencePort
 from .models import (
@@ -66,7 +65,6 @@ __all__ = [
     "DirtyDecision",
     "ExportRevisionLease",
     "EntryStatePatch",
-    "LegacyProjectLifecycleAdapter",
     "LifecycleActivation",
     "LifecycleEvent",
     "LifecycleLease",

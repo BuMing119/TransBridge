@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from PyQt6.QtCore import QUrl
@@ -24,6 +25,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 from transbridge.translation_memory import TranslationMemoryManager
 
 
@@ -268,14 +271,28 @@ class DictionaryPanel(QDialog):
             QMessageBox.warning(self, "提示", "请先解析并加载翻译集合")
             return
 
-        original_states = {entry.identity: (entry.translation, entry.stage) for entry in collection}
         expected_identity = getattr(self._ctx, "active_version_identity", None)
         expected_project_revision = getattr(self._ctx, "project_revision", None)
         expected_variant_revision = getattr(self._ctx, "variant_revision", None)
+        commands = getattr(self._ctx, "project_commands", None)
+        runtime_context = getattr(self._ctx, "runtime_context", None)
+        if commands is None or runtime_context is None or expected_identity is None:
+            error = QMessageBox(
+                QMessageBox.Icon.Critical,
+                "套用失败",
+                "工程写入服务不可用，词典尚未套用。",
+                parent=self,
+            )
+            error.setDetailedText("权威 Variant 写入适配器不可用。")
+            error.exec()
+            return
+        # Dictionary arbitration operates on a detached candidate. Projection state
+        # stays unchanged until the command commits the complete reviewed batch.
+        collection = TranslationEntryCollection(replace(entry) for entry in collection)
 
         from transbridge.translation_memory.manager import QueryContext
 
-        manager = TranslationMemoryManager()
+        manager = self._manager
         try:
             manager.load()
         except RuntimeError as exc:
@@ -314,48 +331,21 @@ class DictionaryPanel(QDialog):
                         entry.translation = chosen
                 msg += f"\n\n已处理 {len(selections)} 处译文冲突"
 
-        if bool(getattr(self._ctx, "uses_authoritative_projection", False)):
-            from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
-
-            commands = getattr(self._ctx, "project_commands", None)
-            runtime_context = getattr(self._ctx, "runtime_context", None)
-            if commands is None or runtime_context is None or expected_identity is None:
-                self._restore_collection_states(collection, original_states)
-                error = QMessageBox(
-                    QMessageBox.Icon.Critical,
-                    "套用失败",
-                    "保存服务不可用，已撤销本次词典套用。",
-                    parent=self,
-                )
-                error.setDetailedText("权威 Variant 写入适配器不可用。")
-                error.exec()
-                return
-            project_id, variant_id = expected_identity
-            commit = commands.replace_entry_states(
-                {entry.identity: (entry.translation, entry.stage) for entry in collection},
-                runtime_context,
-                expected_project_revision=expected_project_revision,
-                expected_variant_revision=expected_variant_revision,
-                expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
-            )
-            if not commit.is_success:
-                self._restore_collection_states(collection, original_states)
-                detail = commit.diagnostics[0].message if commit.diagnostics else "Variant 提交失败"
-                QMessageBox.critical(self, "套用失败", f"{detail}\n\n词典修改已回滚。")
-                return
-        else:
-            self._ctx.mark_dirty()
-
-        self._ctx.collection_changed.emit(collection)
+        project_id, variant_id = expected_identity
+        commit = commands.replace_entry_states(
+            {entry.identity: (entry.translation, entry.stage) for entry in collection},
+            runtime_context,
+            expected_project_revision=expected_project_revision,
+            expected_variant_revision=expected_variant_revision,
+            expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+        )
+        if not commit.is_success:
+            detail = commit.diagnostics[0].message if commit.diagnostics else "Variant 提交失败"
+            QMessageBox.critical(self, "套用失败", f"{detail}\n\n工程译文未改变。")
+            return
+        self._ctx.collection_changed.emit(self._ctx.collection)
 
         QMessageBox.information(self, "套用词典", msg)
-
-    @staticmethod
-    def _restore_collection_states(collection, states) -> None:
-        for entry in collection:
-            state = states.get(entry.identity)
-            if state is not None:
-                entry.translation, entry.stage = state
 
     # ------------------------------------------------------------------
     # 分享 / 导入

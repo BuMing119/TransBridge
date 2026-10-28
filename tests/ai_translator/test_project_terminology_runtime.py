@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
+from tests.ui.tools.ai_runtime_support import ai_task_runtime
 from transbridge.ai_translator.project_terminology_runtime import (
     freeze_project_terminology,
     resolve_project_terminology,
 )
-from transbridge.ai_translator.translator import AutoTranslator, ProgressCheckpoint
 from transbridge.application.terminology.effective import EffectiveSnapshotStatus, EffectiveTerminologySnapshot
 from transbridge.application.terminology.identity import normalize_original, term_id
 from transbridge.application.terminology.models import DecisionStatus, TermDecision, TermScope
@@ -164,7 +162,7 @@ def test_run_controller_archives_and_reuses_the_same_frozen_binding() -> None:
         active_version_identity=("project-1", "variant-1"),
         effective_terminology_factory=lambda *_args: Adapter(),
     )
-    controller = RunController(owner_id="window")
+    controller = RunController(task_runtime=ai_task_runtime(), owner_id="window")
     request = controller.begin(
         "translate",
         SimpleNamespace(max_concurrent=1),
@@ -179,36 +177,3 @@ def test_run_controller_archives_and_reuses_the_same_frozen_binding() -> None:
     metadata = dict(runtime_job_spec(request.spec).metadata)
     assert metadata["terminology_version_id"] == "version-1"
     assert metadata["terminology_content_digest"] == "digest-1"
-
-    checkpoint = ProgressCheckpoint(
-        "plugin",
-        ["entry-1"],
-        False,
-        [],
-        {},
-        run_id=request.run_id,
-        terminology_snapshot=request.spec.terminology_snapshot.to_dict(),
-    )
-    AutoTranslator._validate_checkpoint_terminology(
-        SimpleNamespace(_terminology_snapshot=request.spec.terminology_snapshot),
-        checkpoint,
-    )
-
-
-def test_checkpoint_rejects_missing_or_changed_project_terminology_identity() -> None:
-    current = SimpleNamespace(
-        local_project_id="project-1",
-        local_variant_id="variant-1",
-        status=EffectiveSnapshotStatus.READY,
-        version_id="version-2",
-        content_digest="digest-2",
-        snapshot_identity="project-1:variant-1:version-2:digest-2",
-        captured_at="2026-08-30T00:00:00+00:00",
-    )
-    checkpoint = ProgressCheckpoint("plugin", None, False, [], {}, run_id="run-1")
-
-    with pytest.raises(ValueError, match="缺少项目术语快照"):
-        AutoTranslator._validate_checkpoint_terminology(
-            SimpleNamespace(_terminology_snapshot=current),
-            checkpoint,
-        )

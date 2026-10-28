@@ -28,15 +28,7 @@ class WritePlanDialog(ExecutionPlanDialog):
         self._path_buttons = []
         self._overwrite = None
         source = getattr(getattr(_context, "active_slot", None), "source_snapshot", None)
-        self._default_output = (
-            str(
-                Path(source.source.uri).with_name(
-                    f"{Path(source.source.uri).stem}_translated{Path(source.source.uri).suffix}"
-                )
-            )
-            if source is not None
-            else plan.target
-        )
+        self._default_output = source.source.uri if source is not None else plan.target
         super().__init__(plan, parent)
         self.setMinimumWidth(680)
         self._transfer_summary = QLabel(self)
@@ -51,6 +43,7 @@ class WritePlanDialog(ExecutionPlanDialog):
     def render_plan(self, plan) -> None:
         self._rendering = True
         self._path_buttons = []
+        self._overwrite = None
         if hasattr(self, "_transfer_summary"):
             self._transfer_summary.hide()
         try:
@@ -60,17 +53,30 @@ class WritePlanDialog(ExecutionPlanDialog):
                 if field_id == "overwrite_confirmed":
                     self._overwrite = editor
                     editor.toggled.connect(self._options_changed)
-                elif field_id in {"plugin_path", "target_path"}:
+                elif field_id == "pack_bsa":
+                    editor.setText("将 STRINGS 打包为 BSA（默认不勾选）")
+                    editor.setToolTip("仅打包本次本地化字符串资源；不勾选时生成散装文件。")
+                    editor.toggled.connect(self._clear_overwrite)
+                    editor.toggled.connect(self._options_changed)
+                elif field_id in {"plugin_path", "target_path", "output_directory"}:
                     label = self._fields.labelForField(editor)
                     self._fields.takeRow(row)
                     container = QWidget(self)
                     layout = QHBoxLayout(container)
                     layout.setContentsMargins(0, 0, 0, 0)
                     layout.addWidget(editor, 1)
-                    browse = QPushButton("浏览…", container)
-                    browse.setAccessibleName("选择要套用的插件" if field_id == "plugin_path" else "选择输出文件")
+                    browse = QPushButton("浏览…" if field_id == "plugin_path" else "另存为…", container)
+                    browse.setAccessibleName(
+                        "选择要套用的插件" if field_id == "plugin_path" else "批量另存为" if plan.is_batch else "另存为"
+                    )
                     ComponentStyle.apply_static(browse, ComponentKind.BUTTON)
-                    browse.clicked.connect(self._browse_plugin if field_id == "plugin_path" else self._browse_output)
+                    browse.clicked.connect(
+                        self._browse_plugin
+                        if field_id == "plugin_path"
+                        else self._browse_directory
+                        if field_id == "output_directory"
+                        else self._browse_output
+                    )
                     layout.addWidget(browse)
                     self._path_buttons.append(browse)
                     if field_id == "plugin_path":
@@ -81,6 +87,15 @@ class WritePlanDialog(ExecutionPlanDialog):
                         layout.addWidget(clear)
                         self._path_buttons.append(clear)
                         editor.textEdited.connect(self._plugin_path_changed)
+                    else:
+                        restore = QPushButton("写回原位置", container)
+                        ComponentStyle.apply_static(restore, ComponentKind.BUTTON)
+                        restore.clicked.connect(self._restore_output)
+                        layout.addWidget(restore)
+                        self._path_buttons.append(restore)
+                        if field_id == "output_directory":
+                            editor.setPlaceholderText("留空写回各原位置；选择目录可将多个文件按原名另存到一起")
+                        editor.textChanged.connect(self._clear_overwrite)
                     editor.textChanged.connect(self._options_changed)
                     self._fields.insertRow(row, label, container)
         finally:
@@ -102,9 +117,7 @@ class WritePlanDialog(ExecutionPlanDialog):
     def _plugin_path_changed(self, value: str) -> None:
         selected = value.strip()
         path = Path(selected) if selected else None
-        output = (
-            str(path.with_name(f"{path.stem}_translated{path.suffix}")) if path and path.name else self._default_output
-        )
+        output = str(path) if path and path.name else self._default_output
         self._field_edits["target_path"].setText(output)
         if self._overwrite is not None:
             self._overwrite.setChecked(False)
@@ -127,9 +140,11 @@ class WritePlanDialog(ExecutionPlanDialog):
             self._select_plugin(path)
 
     def _browse_output(self) -> None:
+        if self._execution_running or self._preflight_running:
+            return
         path, _filter = QFileDialog.getSaveFileName(
             self,
-            "选择译文输出位置",
+            "另存为",
             self._field_edits["target_path"].text(),
             "所有文件 (*)",
             options=QFileDialog.Option.DontConfirmOverwrite,
@@ -138,6 +153,30 @@ class WritePlanDialog(ExecutionPlanDialog):
             self._field_edits["target_path"].setText(path)
             if self._overwrite is not None:
                 self._overwrite.setChecked(False)
+
+    def _browse_directory(self) -> None:
+        if self._execution_running or self._preflight_running:
+            return
+        path = QFileDialog.getExistingDirectory(
+            self, "批量另存为：选择输出目录", self._field_edits["output_directory"].text()
+        )
+        if path:
+            self._field_edits["output_directory"].setText(path)
+
+    def _restore_output(self) -> None:
+        if self._execution_running or self._preflight_running:
+            return
+        if self._plan.is_batch:
+            self._field_edits["output_directory"].clear()
+        else:
+            plugin = self._field_edits.get("plugin_path")
+            self._field_edits["target_path"].setText(
+                plugin.text().strip() if plugin is not None and plugin.text().strip() else self._default_output
+            )
+
+    def _clear_overwrite(self, *_args) -> None:
+        if self._overwrite is not None:
+            self._overwrite.setChecked(False)
 
     def set_preflight_running(self, running: bool) -> None:
         if running:

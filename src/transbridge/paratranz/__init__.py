@@ -19,8 +19,6 @@ _EXPORTS = {
     "ParatranzScoresAPI": "api.paratranz_contribution_api",
     "ParatranzMailsAPI": "api.paratranz_mails_api",
     "ParatranzUserAPI": "api.paratranz_user_api",
-    "ParaTranzUploader": "workflow.uploader",
-    "UploadResult": "workflow.uploader",
     "ArtifactWorkflow": "workflow.artifact",
 }
 

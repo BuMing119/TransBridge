@@ -20,6 +20,7 @@ from transbridge.application.io.mutation import (
     MutationResult,
     MutationStatus,
 )
+from transbridge.converter.collection_changes import CollectionChangeJournal
 from transbridge.converter.translation_entry import (
     STAGE_TRANSLATED,
     TranslationEntry,
@@ -48,6 +49,7 @@ class TranslationEntryCollection:
         ] = {}
         self._collection_revision = EntryRevision()
         self._lock = RLock()
+        self.change_journal = CollectionChangeJournal(self._lock)
 
         if entries:
             self._bulk_load(entries)
@@ -97,6 +99,7 @@ class TranslationEntryCollection:
             if conflicts:
                 raise ValueError(f"external reference conflict: {conflicts[0][0]}")
             self._entries = projected
+            self.change_journal.publish(projected)
             self._external_ref_index = external_index
             self._collection_revision = revision
 
@@ -134,6 +137,7 @@ class TranslationEntryCollection:
             if conflicts:
                 raise ValueError(f"external reference conflict: {conflicts[0][0]}")
             self._entries = projected
+            self.change_journal.publish(projected, (storage_key,))
             self._external_ref_index = external_index
             self._collection_revision = self._collection_revision.next()
 
@@ -146,6 +150,7 @@ class TranslationEntryCollection:
         """
         projected = None
         count = 0
+        changed_keys = set()
         for entry in updates:
             if projected is None:
                 projected = dict(self._entries)
@@ -161,11 +166,13 @@ class TranslationEntryCollection:
                 metadata=entry.metadata or existing.metadata,
             )
             count += 1
+            changed_keys.add(key)
         if projected is not None:
             external_index, conflicts = self._build_external_index(projected)
             if conflicts:
                 raise ValueError(f"external reference conflict: {conflicts[0][0]}")
             self._entries = projected
+            self.change_journal.publish(projected, changed_keys)
             self._external_ref_index = external_index
             self._collection_revision = EntryRevision(self._collection_revision.value + count)
         return count
@@ -237,6 +244,7 @@ class TranslationEntryCollection:
             projected.pop(entry.identity.serialize(), None)
             external_index, _ = self._build_external_index(projected)
             self._entries = projected
+            self.change_journal.publish(projected, (entry.identity.serialize(),))
             self._external_ref_index = external_index
             self._collection_revision = self._collection_revision.next()
 
@@ -356,6 +364,7 @@ class TranslationEntryCollection:
                 )
 
             self._entries = projected
+            self.change_journal.publish(projected, (entry.identity.serialize() for entry in changed))
             self._external_ref_index = external_index
             self._collection_revision = previous_revision.next()
             return MutationResult(

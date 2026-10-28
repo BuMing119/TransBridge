@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 from tests.ui.tools import test_ai_partial_task as fixtures
 from tests.ui.tools.test_ai_partial_task import _outcome, _wait
-from transbridge.ui.tools.ai_translator.task_run_presentation import concise_event, source_label, summarize_entries
+from transbridge.application.translation.task_summary import summarize_entries
+from transbridge.ui.tools.ai_translator.task_run_presentation import concise_event, source_label
 
 make_task = fixtures.make_task
 qapp = fixtures.qapp

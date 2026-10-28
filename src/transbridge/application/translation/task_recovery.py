@@ -14,8 +14,11 @@ import uuid
 from transbridge.application.io.identity import EntryKey
 
 from .task_history import atomic_json
+from .task_recovery_storage import _FIXED, _MUTABLE, RecoveryStorage, recovery_summary
+from .task_recovery_transaction import recovery_transaction
 
 logger = logging.getLogger(__name__)
+_RECOVERY_LOCK = RLock()
 
 
 def _nonempty(value, name):
@@ -44,7 +47,52 @@ def _validate_fields(value):
 def _validate(record):
     if not isinstance(record, dict):
         raise ValueError("task recovery record must be an object")
-    _validate_fields(record)
+    # Entry-result payloads are explicit business-data boundaries. Metadata may
+    # legitimately contain fields such as a game's "token" or "secret"; only
+    # execution/configuration metadata is checked for credential-shaped names.
+    business_fields = (
+        {
+            "entries",
+            "baseline_entries",
+            "unmapped",
+            "prepared_source",
+            "candidate_rows",
+            "raw_entries",
+            "parse_unmapped",
+            "input_snapshot",
+        }
+        if (
+            record.get("result_kind") in {"download", "dictionary", "import", "source"}
+            and record.get("results_only") is True
+        )
+        else set()
+    )
+    metadata = {key: value for key, value in record.items() if key not in business_fields}
+
+    def source_configuration(sources):
+        if not isinstance(sources, list):
+            return sources
+        return [
+            {
+                **source,
+                "inputs": [
+                    {key: value for key, value in item.items() if key != "entry"} if isinstance(item, dict) else item
+                    for item in source.get("inputs", ())
+                ],
+            }
+            if isinstance(source, dict)
+            else source
+            for source in sources
+        ]
+
+    # Only the serialized TranslationEntry envelope is business data. Adjacent
+    # input metadata and every execution/configuration field remain protected.
+    metadata["sources"] = source_configuration(record.get("sources"))
+    if isinstance(record.get("execution_inputs"), dict):
+        metadata["execution_inputs"] = {
+            run: source_configuration(sources) for run, sources in record["execution_inputs"].items()
+        }
+    _validate_fields(metadata)
     for field in ("task_id", "project_id", "variant_id", "mode", "config_digest", "state", "created_at"):
         _nonempty(record.get(field), field)
     try:
@@ -79,7 +127,8 @@ def _validate(record):
             raise ValueError("task recovery source keys must be unique")
         seen_sources.add(key)
         source_entries = set()
-        for field in ("translate_keys", "polish_keys"):
+        fields = ("translate_keys", "polish_keys") + (("postprocess_keys",) if "postprocess_keys" in source else ())
+        for field in fields:
             if not isinstance(source.get(field), list):
                 raise ValueError(f"task recovery {field} must be a list")
             for value in source[field]:
@@ -120,7 +169,15 @@ def _validate(record):
                 raise ValueError("task recovery inputs do not match source scope")
     if "checkpoint_settings" in record and not isinstance(record["checkpoint_settings"], dict):
         raise ValueError("task recovery checkpoint_settings must be an object")
-    applied = record.get("applied_entries", [])
+    _validate_applied(record.get("applied_entries", []), seen_entries)
+    # Normalize to detached JSON values and reject non-JSON objects/non-finite numbers.
+    try:
+        return json.loads(json.dumps(record, ensure_ascii=False, allow_nan=False))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("task recovery fields must contain valid JSON values") from exc
+
+
+def _validate_applied(applied, seen_entries):
     if not isinstance(applied, list):
         raise ValueError("task recovery applied_entries must be a list")
     seen_applied = set()
@@ -139,11 +196,6 @@ def _validate(record):
             or type(row.get("stage")) is not int
         ):
             raise ValueError("task recovery applied entry result is invalid")
-    # Normalize to detached JSON values and reject non-JSON objects/non-finite numbers.
-    try:
-        return json.loads(json.dumps(record, ensure_ascii=False, allow_nan=False))
-    except (TypeError, ValueError) as exc:
-        raise ValueError("task recovery fields must contain valid JSON values") from exc
 
 
 class TaskRecoveryStore:
@@ -151,8 +203,33 @@ class TaskRecoveryStore:
 
     def __init__(self, root: Path):
         self.root = Path(root)
-        self._lock = RLock()
+        # Live execution, result review and history readers may hold separate
+        # store instances for the same project. Serialize their read/merge/write.
+        self._lock = _RECOVERY_LOCK
         self._lease = None
+        self._storage = RecoveryStorage(self.root)
+        self._saved_ledgers = {}
+        self._scopes = {}
+
+    def _remember_scope(self, record, manifest):
+        references = tuple(manifest.get("_input_refs", {}).get("sources", ()))
+        keys = frozenset(
+            EntryKey.from_dict(key)
+            for source in record["sources"]
+            for name in ("translate_keys", "polish_keys", "postprocess_keys")
+            for key in source.get(name, ())
+        )
+        self._scopes[record["task_id"]] = references, keys
+        return keys
+
+    def _scope(self, manifest, loaded):
+        task_id = manifest["task_id"]
+        references = tuple(manifest.get("_input_refs", {}).get("sources", ()))
+        previous = self._scopes.get(task_id)
+        if previous is not None and previous[0] == references:
+            return previous[1]
+        record = self._storage.unpack(manifest, fields={"sources"}, loaded=loaded)
+        return self._remember_scope(record, manifest)
 
     def acquire(self, task_id: str):
         """Hold execution ownership until the run and all persistence workers stop."""
@@ -173,13 +250,45 @@ class TaskRecoveryStore:
     def save_results(self, task_id, rows):
         from .task_recovery_results import TaskRecoveryResults
 
-        with self._lock:
+        with self._lock, recovery_transaction(self.root, task_id):
             TaskRecoveryResults(self.root).merge(task_id, rows)
+
+    def save_ledger_results(self, task_id, ledger):
+        from .task_result_recovery import recovery_result_rows
+
+        # Frozen result rows are immutable. Also capture their mutable entry's
+        # relevant fields so direct ledger replacements/entry edits remain visible.
+        evidence = {
+            key: (
+                row,
+                (
+                    row.before.original,
+                    row.before.translation,
+                    row.before.stage,
+                    row.before.context,
+                    row.before.revision.value,
+                ),
+            )
+            for key, row in getattr(ledger, "entries", {}).items()
+            if row.status == "succeeded"
+        }
+        with self._lock:
+            previous = self._saved_ledgers.get(task_id)
+            if (
+                previous is not None
+                and previous.keys() == evidence.keys()
+                and all(
+                    previous[key][0] is value[0] and previous[key][1] == value[1] for key, value in evidence.items()
+                )
+            ):
+                return
+            self.save_results(task_id, recovery_result_rows(ledger))
+            self._saved_ledgers[task_id] = evidence
 
     def load_results(self, task_id):
         from .task_recovery_results import TaskRecoveryResults
 
-        with self._lock:
+        with self._lock, recovery_transaction(self.root, task_id):
             return TaskRecoveryResults(self.root).load(task_id)
 
     def _path(self, task_id):
@@ -188,15 +297,17 @@ class TaskRecoveryStore:
 
     def create(self, record: dict) -> dict:
         record = _validate(record)
-        with self._lock:
+        with self._lock, recovery_transaction(self.root, record["task_id"]):
             path = self._path(record["task_id"])
             if path.exists():
                 raise FileExistsError(f"Task recovery record already exists: {record['task_id']}")
             temporary = path.parent / f".create-{uuid.uuid4().hex}.tmp"
             try:
-                atomic_json(temporary, record)
+                manifest = self._storage.pack(record)
+                atomic_json(temporary, manifest)
                 # Publish without replacing another process's record of the same task.
                 os.link(temporary, path)
+                self._remember_scope(record, manifest)
             finally:
                 temporary.unlink(missing_ok=True)
         return record
@@ -204,21 +315,32 @@ class TaskRecoveryStore:
     def load(self, task_id: str) -> dict:
         path = self._path(task_id)
         try:
-            record = _validate(json.loads(path.read_text(encoding="utf-8")))
+            with self._lock, recovery_transaction(self.root, task_id):
+                for attempt in range(2):
+                    try:
+                        manifest = json.loads(path.read_text(encoding="utf-8"))
+                        record = _validate(self._storage.unpack(manifest))
+                        break
+                    except FileNotFoundError:
+                        if attempt:
+                            raise
             if record["task_id"] != task_id:
                 raise ValueError("task identity does not match filename")
+            if "_recovery_storage" in manifest:
+                self._remember_scope(record, manifest)
             return record
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, KeyError, TypeError) as exc:
             raise ValueError(f"Cannot read task recovery {path}: {exc}") from exc
 
     def list_records(self) -> tuple[dict, ...]:
         records = []
         for path in self.root.glob("*.json"):
             try:
-                record = _validate(json.loads(path.read_text(encoding="utf-8")))
+                record = json.loads(path.read_text(encoding="utf-8"))
+                record = self.load(record["task_id"])
                 if self._path(record["task_id"]) != path:
                     raise ValueError("task identity does not match filename")
-            except (OSError, ValueError) as exc:
+            except (OSError, ValueError, KeyError, TypeError) as exc:
                 logger.warning("Skipping unreadable task recovery %s; original retained: %s", path, exc, exc_info=True)
                 continue
             records.append(record)
@@ -226,9 +348,106 @@ class TaskRecoveryStore:
 
     def update(self, task_id: str, **fields) -> dict:
         with self._lock:
-            record = self.load(task_id)
-            record.update(fields)
-            record["updated_at"] = datetime.now(UTC).isoformat()
-            record = _validate(record)
-            atomic_json(self._path(task_id), record)
-            return record
+            self.update_metadata(task_id, **fields)
+            return self.load(task_id)
+
+    def list_summaries(self, *, project_id=None, variant_id=None, states=None) -> tuple[dict, ...]:
+        records = []
+        for path in self.root.glob("*.json"):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(record, dict) or self._path(record.get("task_id")) != path:
+                    raise ValueError("task identity does not match filename")
+                for field in ("project_id", "variant_id", "state", "created_at"):
+                    _nonempty(record.get(field), field)
+                if (
+                    (project_id is not None and str(record["project_id"]) != str(project_id))
+                    or (variant_id is not None and str(record["variant_id"]) != str(variant_id))
+                    or (states is not None and record["state"] not in states)
+                ):
+                    continue
+                records.append(recovery_summary(record))
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                logger.warning("Skipping unreadable task recovery %s; original retained: %s", path, exc)
+        return tuple(sorted(records, key=lambda item: item["created_at"], reverse=True))
+
+    def mutate_metadata(self, task_id, change, *, load_fields=()):
+        """Serialize a read/merge/write using small state, without rehydrating fixed inputs."""
+        with self._lock, recovery_transaction(self.root, task_id):
+            path = self._path(task_id)
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            if manifest.get("task_id") != task_id:
+                raise ValueError("task identity does not match filename")
+            if "_recovery_storage" not in manifest:
+                # Compatibility conversion only at the storage boundary. The
+                # original inline bytes remain available after atomic migration.
+                legacy = _validate(manifest)
+                backup = self.root / "legacy" / path.name
+                if not backup.exists():
+                    atomic_json(backup, manifest)
+                manifest = self._storage.pack(legacy)
+                self._remember_scope(legacy, manifest)
+                migrated = True
+            else:
+                migrated = False
+            loaded = {}
+            metadata = self._storage.unpack(manifest, fields=set(load_fields), loaded=loaded)
+            fields = change(metadata)
+            if not isinstance(fields, dict):
+                raise ValueError("task recovery metadata change must be an object")
+            if any(not isinstance(key, str) for key in fields):
+                raise ValueError("task recovery field names must be strings")
+            if any(
+                key.startswith("_")
+                or (key == "task_id" and value != task_id)
+                or (key == "created_at" and value != manifest["created_at"])
+                for key, value in fields.items()
+            ):
+                raise ValueError("task recovery identity/storage fields are immutable")
+            changed = {key for key, value in fields.items() if key not in metadata or metadata[key] != value}
+            normalized = (
+                json.loads(json.dumps({key: fields[key] for key in changed}, ensure_ascii=False, allow_nan=False))
+                if changed
+                else {}
+            )
+            fields.update(normalized)
+            # Fixed inputs require the full contract validation when explicitly
+            # changed; ordinary state transactions never traverse them.
+            fixed_changes = changed & (_FIXED - _MUTABLE)
+            if fixed_changes:
+                full = self._storage.unpack(manifest, loaded=loaded)
+                full.update(fields)
+                _validate(full)
+            else:
+                business = (
+                    {"entries", "unmapped", "candidate_rows"}
+                    if (
+                        manifest.get("results_only") is True
+                        and manifest.get("result_kind") in {"download", "dictionary", "import", "source"}
+                    )
+                    else set()
+                )
+                _validate_fields({
+                    key: value for key, value in fields.items() if key not in business | (_FIXED - _MUTABLE)
+                })
+                if "applied_entries" in changed:
+                    _validate_applied(fields["applied_entries"], self._scope(manifest, loaded))
+                for field in ("project_id", "variant_id", "mode", "state", "config_digest"):
+                    if field in fields:
+                        _nonempty(fields[field], field)
+            merged = {**metadata, **fields}
+            if changed:
+                merged["updated_at"] = datetime.now(UTC).isoformat()
+                manifest = self._storage.pack(merged, previous=manifest, changed=changed)
+            if changed or migrated:
+                atomic_json(path, manifest)
+                self._storage.prune_state(manifest)
+            summary = {
+                key: value
+                for key, value in recovery_summary(manifest).items()
+                if key not in {"sources", "scope_count", "recovery_summary"}
+            }
+            return {**summary, **fields, **({"updated_at": merged["updated_at"]} if "updated_at" in merged else {})}
+
+    def update_metadata(self, task_id, **fields):
+        return self.mutate_metadata(task_id, lambda _previous: fields, load_fields=tuple(fields))

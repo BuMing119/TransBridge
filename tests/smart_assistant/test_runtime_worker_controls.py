@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
 
-from tests.conftest import MockAppContext, make_entry
+from tests.conftest import make_entry
 from transbridge.application.tasks import JobEventType, JobState, TaskCancelled, TaskCleanupFailed
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -167,7 +168,9 @@ class RecordingCollection(TranslationEntryCollection):
 
 
 @pytest.mark.parametrize("cancel", [False, True])
-def test_real_postprocess_respects_task_center_controls_before_candidate_commit(manager, monkeypatch, tmp_path, cancel):
+def test_real_postprocess_respects_task_center_controls_before_candidate_commit(
+    manager, monkeypatch, tmp_path, cancel, current_project_factory
+):
     from transbridge.smart_assistant.tools import tool_proofreader
 
     entered = threading.Event()
@@ -198,7 +201,15 @@ def test_real_postprocess_respects_task_center_controls_before_candidate_commit(
     monkeypatch.setattr("transbridge.paratranz.config_manager.ParatranzConfig.get_data_dir", lambda: str(tmp_path))
     monkeypatch.setattr(tool_proofreader, "_resolve_report_directory", lambda _ctx: tmp_path / "reports")
     collection = RecordingCollection([make_entry("entry", original="Source", translation="before", stage=1)])
-    context = MockAppContext(collection)
+    project = current_project_factory(collection)
+    context = project.context
+    context.active_slot.collection = collection
+    monkeypatch.setattr(project.commands, "task_result_directory", lambda _context: tmp_path)
+    project.commands._categorized_uploads = SimpleNamespace(
+        result_source_texts=lambda _project, _variant, keys, _context: {
+            entry.identity: (entry.original, entry.context or "") for entry in collection if entry.identity in keys
+        }
+    )
     result = _tool_run_postprocess({}, context)
     assert result.success, result.message
     task_id = result.data["task_id"]
@@ -224,7 +235,12 @@ def test_real_postprocess_respects_task_center_controls_before_candidate_commit(
         release.set()
         if manager.get_status(task_id)["status"] == "paused":
             manager.cancel(task_id)
-        handle._thread.join(5)
+        from PyQt6.QtWidgets import QApplication
+
+        deadline = time.monotonic() + 5
+        while handle._thread.is_alive() and time.monotonic() < deadline:
+            QApplication.processEvents()
+            handle._thread.join(0.01)
     assert not handle._thread.is_alive()
     if cancel:
         assert manager.get_status(task_id)["status"] == "cancelled"
@@ -232,5 +248,6 @@ def test_real_postprocess_respects_task_center_controls_before_candidate_commit(
         assert collection.get("entry").translation == "before"
     else:
         assert manager.get_status(task_id)["status"] == "completed", manager.get_status(task_id)
-        assert len(collection.applied) == 1
-        assert collection.get("entry").translation == "corrected"
+        assert collection.applied == []
+        assert context.collection.get("entry").translation == "corrected"
+        assert project.aggregate.snapshot().entries[0].translation == "corrected"

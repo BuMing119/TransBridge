@@ -30,6 +30,6 @@ def test_unavailable_save_restores_entries_and_keeps_technical_reason_in_details
     panel._ctx = SimpleNamespace(collection=[entry], uses_authoritative_projection=True)
     try:
         panel._on_apply_dict()
-        assert messages == [("保存服务不可用，已撤销本次词典套用。", "权威 Variant 写入适配器不可用。")]
+        assert messages == [("工程写入服务不可用，词典尚未套用。", "权威 Variant 写入适配器不可用。")]
     finally:
         panel.close()

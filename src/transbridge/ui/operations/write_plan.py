@@ -6,6 +6,7 @@ from pathlib import Path
 
 from transbridge.application.io.contracts import FormatId
 from transbridge.application.io.operation_write import HydratedWriteDraft
+from transbridge.application.io.plugin_localized_sources import _snapshot_localized_sources
 from transbridge.application.io.plugin_transfer import PluginTransferDraft
 from transbridge.application.io.plugin_write import plugin_artifact_paths
 from transbridge.application.io.publish import BackupPolicy, ConflictPolicy as PublishConflictPolicy
@@ -29,13 +30,21 @@ def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPla
         if request.format_id is FormatId.PLUGIN_SSE
         else ()
     )
+    resource_mode = (
+        "；本地化资源打包为 BSA"
+        if dict(request.options).get("pack_bsa", False)
+        else "；本地化资源输出散装 STRINGS"
+        if _snapshot_localized_sources(request.source_snapshot)
+        else ""
+    )
     return OperationPlanDraft(
         request=value,
         target=request.target_path,
         target_revision="existing" if target_exists else "missing",
         input_fingerprint=request.source_snapshot.sha256,
         scope_summary=f"{len(request.entries)} 个项目条目",
-        mode_summary="将当前译文匹配到所选插件，预检后写出" if transfer else "导出当前文件的译文，验证后写出",
+        mode_summary=("将当前译文匹配到所选插件，预检后写出" if transfer else "导出当前文件的译文，验证后写出")
+        + resource_mode,
         conflict_summary="已确认覆盖现有文件"
         if request.conflict_policy is PublishConflictPolicy.EXPLICIT_OVERWRITE
         else "目标已存在时停止",
@@ -48,6 +57,19 @@ def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPla
         editable_fields=(
             *plugin_fields,
             EditableFieldState("target_path", "输出路径", request.target_path, required=True),
+            *(
+                (
+                    EditableFieldState(
+                        "pack_bsa",
+                        "资源输出",
+                        "true" if dict(request.options).get("pack_bsa", False) else "false",
+                        control=EditableControl.BOOLEAN,
+                    ),
+                )
+                if request.format_id is FormatId.PLUGIN_SSE
+                and (transfer or _snapshot_localized_sources(request.source_snapshot))
+                else ()
+            ),
             EditableFieldState(
                 "overwrite_confirmed",
                 "覆盖确认",

@@ -12,8 +12,6 @@ import json
 import threading
 from typing import Any
 
-from transbridge.application.io.identity import EntryKey
-
 # ── ToolResult v2 ──────────────────────────────────────────────
 
 
@@ -283,39 +281,6 @@ def _owns_current_qt_thread(app_ctx: Any) -> bool:
         return False
 
 
-def _projection_entry_states(
-    app_ctx: Any,
-    collection: Any,
-    identity: tuple[str, str] | None,
-) -> dict[Any, tuple[str, int]] | None:
-    projection = getattr(app_ctx, "_project_projection", None)
-    snapshot_reader = getattr(projection, "snapshot", None)
-    if not callable(snapshot_reader):
-        return None
-    snapshot = snapshot_reader()
-    if snapshot is None:
-        return None
-    values = snapshot.to_dict()["values"]
-    if identity is not None:
-        projected_project = values.get("project_id")
-        projected_variant = values.get("variant_id") or values.get("active_variant_id")
-        if projected_project is not None and str(projected_project) != identity[0]:
-            return None
-        if projected_variant is not None and str(projected_variant) != identity[1]:
-            return None
-    by_identity = {
-        EntryKey.from_dict(item["entry_key"]): (str(item.get("translation", "")), int(item.get("stage", 0)))
-        for item in values.get("entries", ())
-    }
-    result: dict[Any, tuple[str, int]] = {}
-    for entry in collection:
-        entry_identity = entry.identity
-        state = by_identity.get(entry_identity)
-        if state is not None:
-            result[entry_identity] = state
-    return result
-
-
 @dataclass
 class ExecutionContext:
     """工具执行上下文，包装 AppContext + TaskManager。
@@ -346,7 +311,8 @@ class ExecutionContext:
     _target_version_identity: tuple[str, str] | None = field(default=None, init=False, repr=False)
     _target_project_revision: int | None = field(default=None, init=False, repr=False)
     _target_variant_revision: int | None = field(default=None, init=False, repr=False)
-    _committed_entry_states: dict[Any, tuple[str, int]] = field(default_factory=dict, init=False, repr=False)
+    _target_source_fingerprint: str = field(default="", init=False, repr=False)
+    _target_source_key: str | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         app_ctx = self.app_context
@@ -357,12 +323,9 @@ class ExecutionContext:
         object.__setattr__(self, "_target_version_identity", getattr(app_ctx, "active_version_identity", None))
         object.__setattr__(self, "_target_project_revision", getattr(app_ctx, "project_revision", None))
         object.__setattr__(self, "_target_variant_revision", getattr(app_ctx, "variant_revision", None))
-        if collection is not None:
-            object.__setattr__(
-                self,
-                "_committed_entry_states",
-                {entry.identity: (entry.translation, entry.stage) for entry in collection},
-            )
+        snapshot = getattr(getattr(app_ctx, "active_slot", None), "source_snapshot", None)
+        object.__setattr__(self, "_target_source_fingerprint", getattr(snapshot, "sha256", ""))
+        object.__setattr__(self, "_target_source_key", getattr(app_ctx, "active_key", None))
 
     # ── C10: 线程安全状态变更 ──────────────────────────────────
 
@@ -458,27 +421,33 @@ class ExecutionContext:
         self,
         entry_labels: dict[str, set[str]],
         label_library: dict[str, dict],
+        *,
+        before: tuple[dict[str, set[str]], dict[str, dict]],
+        source_identity=None,
+        warnings=None,
     ) -> object:
-        """Commit copied label state against the Project/Variant captured at tool start."""
+        """Validate the labels read before preparation, then use the latest command CAS."""
 
         app_ctx = self.__dict__.get("app_context")
         if app_ctx is None:
             raise RuntimeError("运行上下文未初始化，标签修改未提交。")
 
         def commit() -> object:
-            if not bool(getattr(app_ctx, "uses_authoritative_projection", False)):
-                app_ctx.entry_labels = entry_labels
-                app_ctx.label_library = label_library
-                return None
             identity = self.__dict__.get("_target_version_identity")
             if identity is None or getattr(app_ctx, "active_version_identity", None) != identity:
                 raise RuntimeError("活动 Project/Variant 已变化，标签修改未提交。")
-            expected_project = self.__dict__.get("_target_project_revision")
-            expected_variant = self.__dict__.get("_target_variant_revision")
-            if getattr(app_ctx, "project_revision", None) != expected_project:
-                raise RuntimeError("活动 Project 修订号已变化，标签修改未提交。")
-            if getattr(app_ctx, "variant_revision", None) != expected_variant:
-                raise RuntimeError("活动 Variant 修订号已变化，标签修改未提交。")
+            if source_identity is not None:
+                current = getattr(app_ctx, "collection", None)
+                observed = (
+                    getattr(app_ctx, "active_key", None),
+                    frozenset(entry.identity.namespace for entry in current or ()),
+                )
+                if observed != source_identity:
+                    raise RuntimeError("活动来源已变化，标签修改未提交。")
+            if (getattr(app_ctx, "entry_labels", None) or {}, getattr(app_ctx, "label_library", None) or {}) != before:
+                raise RuntimeError("标签状态或标签库已变化，请重新载入后核对。")
+            expected_project = app_ctx.project_revision
+            expected_variant = app_ctx.variant_revision
             from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
             from .undo_capture import capture_variant_command
@@ -493,6 +462,7 @@ class ExecutionContext:
                     expected_variant_revision=expected_variant,
                     expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
                 ),
+                warnings=warnings,
             )
             if hasattr(result, "is_success") and not result.is_success:
                 diagnostics = tuple(getattr(result, "diagnostics", ()))
@@ -506,106 +476,12 @@ class ExecutionContext:
                     object.__setattr__(self, "_target_project_revision", int(project_revision))
                 if variant_revision is not None:
                     object.__setattr__(self, "_target_variant_revision", int(variant_revision))
+                object.__setattr__(self, "_target_collection", app_ctx.collection)
+                if "collection" in self.__dict__:
+                    object.__setattr__(self, "collection", app_ctx.collection)
             return result
 
         return self.safe_mutate_wait(commit)
-
-    def capture_entry_states(self, collection=None) -> dict[Any, tuple[str, int]]:
-        target = collection if collection is not None else self.__dict__.get("_target_collection")
-        if target is None:
-            return {}
-        return {entry.identity: (entry.translation, entry.stage) for entry in target}
-
-    def rollback_entry_states(self, states: dict[Any, tuple[str, int]], collection=None) -> None:
-        """Restore a failed run from the latest authority, or its legacy start delta."""
-        from .projection_restore import restore_entry_projection
-
-        restore_entry_projection(self, states, collection)
-
-    def _target_is_current(self, app_ctx, collection) -> bool:
-        if getattr(app_ctx, "collection", None) is not collection:
-            return False
-        identity = self.__dict__.get("_target_version_identity")
-        return identity is None or getattr(app_ctx, "active_version_identity", None) == identity
-
-    def notify_collection_modified(self) -> None:
-        """Commit entry changes to the active Variant, then refresh the UI.
-
-        应在 safe_mutate 回调中调用，确保信号在主线程发射。
-        用于 entry.translation / entry.stage 等 dataclass 字段被修改后
-        通知 UI 更新显示。
-        """
-        app_ctx = self.__dict__.get("app_context")
-        if app_ctx is None:
-            return
-        collection = self.__dict__.get("_target_collection")
-        if collection is None:
-            collection = app_ctx.collection if hasattr(app_ctx, "collection") else None
-        if collection is None:
-            return
-        if bool(getattr(app_ctx, "uses_authoritative_projection", False)):
-            self._commit_authoritative_entries(app_ctx, collection)
-        elif hasattr(app_ctx, "mark_dirty"):
-            app_ctx.mark_dirty()
-        self._emit_collection_changed(app_ctx, collection)
-
-    def publish_collection_modified(self, *, rollback_on_failure: bool = True) -> None:
-        """Commit on the calling task, then marshal only the UI notification."""
-
-        app_ctx = self.__dict__.get("app_context")
-        collection = self.__dict__.get("_target_collection")
-        if app_ctx is None or collection is None:
-            return
-        if bool(getattr(app_ctx, "uses_authoritative_projection", False)):
-            self._commit_authoritative_entries(app_ctx, collection, rollback_on_failure=rollback_on_failure)
-            self.safe_mutate(lambda: self._emit_collection_changed(app_ctx, collection))
-        else:
-            self.safe_mutate(self.notify_collection_modified)
-
-    @staticmethod
-    def _emit_collection_changed(app_ctx, collection) -> None:
-        if hasattr(app_ctx, "collection_changed") and getattr(app_ctx, "collection", None) is collection:
-            app_ctx.collection_changed.emit(collection)
-
-    def _commit_authoritative_entries(self, app_ctx, collection, *, rollback_on_failure: bool = True) -> None:
-        from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
-
-        from .undo_capture import capture_variant_command
-
-        identity = self.__dict__.get("_target_version_identity")
-        commands = getattr(app_ctx, "project_commands", None)
-        runtime_context = getattr(app_ctx, "runtime_context", None)
-        if identity is None or commands is None or runtime_context is None:
-            if rollback_on_failure:
-                self.rollback_entry_states(self.__dict__.get("_committed_entry_states", {}), collection)
-            raise RuntimeError("权威 Variant 写入适配器不可用，助手修改已回滚。")
-        project_id, variant_id = identity
-        result = capture_variant_command(
-            self,
-            lambda: commands.replace_entry_states(
-                {entry.identity: (entry.translation, entry.stage) for entry in collection},
-                runtime_context,
-                expected_project_revision=self.__dict__.get("_target_project_revision"),
-                expected_variant_revision=self.__dict__.get("_target_variant_revision"),
-                expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
-            ),
-        )
-        if not result.is_success:
-            if rollback_on_failure:
-                self.rollback_entry_states(self.__dict__.get("_committed_entry_states", {}), collection)
-            detail = result.diagnostics[0].message if result.diagnostics else "Variant 提交失败"
-            raise RuntimeError(f"助手修改未能提交：{detail}")
-        revision = result.value.get("revision") if isinstance(result.value, dict) else None
-        if revision is not None:
-            object.__setattr__(self, "_target_variant_revision", int(revision))
-        object.__setattr__(
-            self,
-            "_committed_entry_states",
-            {entry.identity: (entry.translation, entry.stage) for entry in collection},
-        )
-
-    def _restore_committed_entries(self, collection) -> None:
-        self.rollback_entry_states(self.__dict__.get("_committed_entry_states", {}), collection)
 
     # ── 属性代理 ────────────────────────────────────────────────
 

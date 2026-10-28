@@ -13,8 +13,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
-import json
-import os
 from pathlib import Path
 import re
 import secrets
@@ -27,6 +25,7 @@ from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.infra.llm_structured_outputs import LlmStructuredOutputTruncatedError
 
+from .activity import ActivityKind, ActivityMessage
 from .generated_term_writer import GeneratedTerms, GeneratedTermWriter, TerminologyAccess
 from .stream_repetition import StreamRepetitionDetector
 from .term_validation import valid_term_pair
@@ -112,72 +111,6 @@ class TranslationResult:
     entry_outcomes: dict[EntryKey, TranslationEntryOutcome] = field(default_factory=dict)
 
 
-@dataclass
-class ProgressCheckpoint:
-    """批次级断点，持久化到 data/ai_translator/{esp_stem}/{esp_stem}_progress.json。"""
-
-    esp_stem: str
-    target_entry_ids: list[str] | None
-    overwrite: bool
-    completed_fingerprints: list[list[str]]  # 每项为已完成批次的排序 entry id 列表
-    result_so_far: dict  # success_count / failed_count / new_dynamic_terms
-    run_id: str = ""
-    term_repairs: list[dict] = field(default_factory=list)
-    completed_term_repairs: list[str] = field(default_factory=list)
-    terminology_snapshot: dict | None = None
-
-    @staticmethod
-    def _get_path(esp_path: str) -> str:
-        from transbridge.paratranz.config_manager import LLMConfig
-
-        stem = Path(esp_path).stem
-        ai_dir = LLMConfig.get_ai_translator_dir(stem)
-        return os.path.join(ai_dir, f"{stem}_progress.json")
-
-    def save(self, esp_path: str) -> None:
-        path = self._get_path(esp_path)
-        data = {
-            "esp_stem": self.esp_stem,
-            "target_entry_ids": self.target_entry_ids,
-            "overwrite": self.overwrite,
-            "completed_fingerprints": self.completed_fingerprints,
-            "result_so_far": self.result_so_far,
-            "run_id": self.run_id,
-            "term_repairs": self.term_repairs,
-            "completed_term_repairs": self.completed_term_repairs,
-            "terminology_snapshot": self.terminology_snapshot,
-        }
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-    @classmethod
-    def load(cls, esp_path: str) -> ProgressCheckpoint | None:
-        path = cls._get_path(esp_path)
-        if not os.path.exists(path):
-            return None
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            return cls(
-                esp_stem=data.get("esp_stem", ""),
-                target_entry_ids=data.get("target_entry_ids"),
-                overwrite=data.get("overwrite", False),
-                completed_fingerprints=data.get("completed_fingerprints", []),
-                result_so_far=data.get("result_so_far", {}),
-                run_id=data.get("run_id", ""),
-                term_repairs=data.get("term_repairs", []),
-                completed_term_repairs=data.get("completed_term_repairs", []),
-                terminology_snapshot=data.get("terminology_snapshot"),
-            )
-        except Exception:
-            return None
-
-    def delete(self, esp_path: str) -> None:
-        path = self._get_path(esp_path)
-        if os.path.exists(path):
-            os.remove(path)
-
-
 class AutoTranslator:
     def __init__(
         self,
@@ -196,7 +129,6 @@ class AutoTranslator:
         effective_terminology: ProjectTerminologyAdapter | None = None,
         terminology_context: TerminologyLookupContext | None = None,
         legacy_term_filter: object | None = None,
-        terminology_snapshot: object | None = None,
         term_snapshot_observer: Callable[[object], None] | None = None,
         term_update_observer: Callable[[object, list], None] | None = None,
         terminology_access: TerminologyAccess | None = None,
@@ -204,7 +136,6 @@ class AutoTranslator:
         generated_term_plugin_id: str | None = None,
         request_lane: str | None = None,
         batch_executor=None,
-        checkpoint_identity: str | None = None,
         prepared_names: Mapping[EntryKey, PreparedName] | None = None,
         defer_generated_terms: bool = False,
         committed_draft: CommittedDraftTranslations | None = None,
@@ -222,7 +153,6 @@ class AutoTranslator:
         self._paratranz_client = paratranz_client
         self._project_id = project_id
         self._candidate_checkpoint_port = candidate_checkpoint
-        self._terminology_snapshot = terminology_snapshot
         self._term_snapshot_observer = term_snapshot_observer
         self._term_update_observer = term_update_observer
         self._terminology_access = terminology_access or nullcontext
@@ -230,7 +160,6 @@ class AutoTranslator:
         self._candidate_session = None
         self._request_lane = request_lane
         self._batch_executor = batch_executor
-        self._progress_path = checkpoint_identity or config.esp_path
         self._prepared_names = dict(prepared_names or {})
         self._defer_generated_terms = defer_generated_terms
         self._committed_draft = committed_draft or CommittedDraftTranslations()
@@ -436,7 +365,6 @@ class AutoTranslator:
         progress_callback: Callable[[int, int, str, int, int, int], None],
         stop_event: threading.Event,
         pause_event: threading.Event | None = None,
-        checkpoint: ProgressCheckpoint | None = None,
         log_callback: Callable[[int, str], None] | None = None,
         stream_callback: Callable[[int, str], None] | None = None,
         stage_progress_callback: Callable[[str, int, int, str], None] | None = None,
@@ -450,7 +378,6 @@ class AutoTranslator:
         stream_callback(chunk) — LLM 流式响应片段回调，可为 None
         stage_progress_callback(stage, current, total, message) — 术语准备、后处理与结果收尾阶段进度
         pause_event: set=运行中，clear=暂停中（wait() 会阻塞直到 set）
-        checkpoint: 传入则从断点继续，跳过已完成批次
         """
         result = TranslationResult()
         lock = threading.Lock()
@@ -497,14 +424,8 @@ class AutoTranslator:
             with self._in_flight_lock:
                 self._in_flight_terms.clear()
 
-        # 从断点恢复累计统计
+        # Track batches settled by reuse within this execution only.
         completed_fps: set[frozenset] = set()
-        if checkpoint and checkpoint.run_id:
-            self._validate_checkpoint_terminology(checkpoint)
-            result.success_count = checkpoint.result_so_far.get("success_count", 0)
-            result.failed_count = checkpoint.result_so_far.get("failed_count", 0)
-            result.new_dynamic_terms = checkpoint.result_so_far.get("new_dynamic_terms", 0)
-            completed_fps = {frozenset(fp) for fp in checkpoint.completed_fingerprints}
 
         # 筛选待翻译词条
         all_entries = list(collection)
@@ -522,7 +443,7 @@ class AutoTranslator:
 
         if not candidates and not reused_keys:
             return result
-        new_reused_count = 0 if checkpoint and checkpoint.run_id else len(reused_keys)
+        new_reused_count = len(reused_keys)
         result.success_count += new_reused_count
 
         from transbridge.application.translation import (
@@ -535,7 +456,7 @@ class AutoTranslator:
             translation_input_fingerprint,
         )
 
-        run_id = checkpoint.run_id if checkpoint and checkpoint.run_id else self._run_id_factory()
+        run_id = self._run_id_factory()
         self._candidate_session = None
 
         max_workers = self._cfg.llm_config.max_concurrent
@@ -546,18 +467,9 @@ class AutoTranslator:
         total_batches = len(all_batches)
         total_entries = sum(len(b.entries) for b in all_batches) + new_reused_count
 
-        # 断点续传：将已完成的词条数加到总计中，避免 current 超过 total
-        completed_from_checkpoint = 0
-        if checkpoint and checkpoint.run_id:
-            completed_from_checkpoint = checkpoint.result_so_far.get("success_count", 0) + checkpoint.result_so_far.get(
-                "failed_count", 0
-            )
-            total_entries += completed_from_checkpoint
-
         if total_batches == 0 and not reused_keys:
             return result
 
-        esp_stem = Path(self._cfg.esp_path).stem
         # 全局批次计数器（并发时需加锁）
         batch_counter = [0]
 
@@ -655,12 +567,12 @@ class AutoTranslator:
 
         # Historical terminology conflicts are reference findings for post-processing.
         # They must not expand the translation scope or schedule forced retranslations.
-        if conflict_records or term_repair_requirements or (checkpoint and checkpoint.term_repairs):
+        if conflict_records or term_repair_requirements:
             _log("术语差异将在后处理/综合校对中评估，不执行译前强制重翻")
         plan = self._planner.plan(candidates)
         all_batches = plan.all_batches()
         total_batches = len(all_batches)
-        total_entries = sum(len(batch.entries) for batch in all_batches) + completed_from_checkpoint + new_reused_count
+        total_entries = sum(len(batch.entries) for batch in all_batches) + new_reused_count
         scoped_entries = candidates
         translation_inputs = self._committed_draft.inputs + tuple(
             TranslationInput(
@@ -705,29 +617,8 @@ class AutoTranslator:
             model=self._cfg.llm_config.model,
         )
 
-        checkpoint_write_lock = threading.Lock()
         started_entries: set[EntryKey] = set()
         finished_entries: set[EntryKey] = set()
-
-        def _save_checkpoint():
-            with checkpoint_write_lock:
-                with lock:
-                    cp = ProgressCheckpoint(
-                        esp_stem=esp_stem,
-                        target_entry_ids=target_entry_ids,
-                        overwrite=self._cfg.overwrite,
-                        completed_fingerprints=[sorted(fp) for fp in completed_fps],
-                        result_so_far={
-                            "success_count": result.success_count,
-                            "failed_count": result.failed_count,
-                            "new_dynamic_terms": result.new_dynamic_terms,
-                        },
-                        run_id=run_id,
-                        terminology_snapshot=(
-                            None if self._terminology_snapshot is None else self._terminology_snapshot.to_dict()
-                        ),
-                    )
-                cp.save(self._progress_path)
 
         from .translation_reuse import admit_translation_reuse
 
@@ -747,7 +638,6 @@ class AutoTranslator:
         started_entries.update(reuse.settled)
         finished_entries.update(reuse.settled)
         if reuse.settled:
-            _save_checkpoint()
             _emit("已有译文复用完成，翻译剩余条目")
 
         def _run_one_batch(batch: Batch, round_name: str) -> None:
@@ -757,7 +647,7 @@ class AutoTranslator:
                 idx = batch_counter[0]
             batch_fp = frozenset(ai_entry_key(e) for e in batch.entries)
 
-            # 跳过已完成批次（断点续传）
+            # Reused entries were already accepted before scheduling model work.
             with lock:
                 already_done = batch_fp in completed_fps
             if already_done:
@@ -772,7 +662,6 @@ class AutoTranslator:
                 pause_event.wait()
 
             if stop_event.is_set():
-                _save_checkpoint()
                 return
 
             with lock:
@@ -791,16 +680,10 @@ class AutoTranslator:
             # 批次专属 stream 回调（将 idx 绑定到外层 stream_callback）
             _per_batch_stream = (lambda chunk: stream_callback(idx, chunk)) if stream_callback else None
 
-            # 批次头
-            _blog("\n开始翻译：")
-            _blog(f"任务{idx}：{batch.batch_type}")
-            _blog("-----------------------")
+            _blog(ActivityMessage(f"开始翻译 {batch.batch_type}（{len(batch.entries)} 条）", ActivityKind.DETAIL))
 
             t_batch = time.perf_counter()
             _batch_timing: dict = {}
-            with lock:
-                _success_before = result.success_count
-                _terms_before = result.new_dynamic_terms
 
             def _progress_emit() -> None:
                 _emit(msg)
@@ -820,28 +703,14 @@ class AutoTranslator:
                 )
             except _CancelledByStop:
                 _blog("⏹ 批次已中断（停止）")
-                _save_checkpoint()
                 return
 
             t_batch_elapsed = time.perf_counter() - t_batch
-            with lock:
-                _success_delta = result.success_count - _success_before
-                _terms_delta = result.new_dynamic_terms - _terms_before
-
-            # 批次尾
-            _blog("-----------------------")
-            _blog("已完成：")
-            _blog(f"术语匹配时长:{_batch_timing.get('t_terms', 0):.2f} s")
-            _blog(f"LLM调用时长:{_batch_timing.get('t_llm', 0):.2f} s")
-            _blog(f"解析时长：{_batch_timing.get('t_parse', 0):.3f} s")
-            _blog(f"总时长：{t_batch_elapsed:.2f} s")
-            _blog(f"翻译词条数：{_success_delta}")
-            _blog(f"新增术语数：{_terms_delta}")
+            _blog(ActivityMessage(f"本批处理结束，耗时 {t_batch_elapsed:.1f} 秒", ActivityKind.DETAIL))
 
             with lock:
                 completed_fps.add(batch_fp)
                 finished_entries.update(entry.identity for entry in batch.entries)
-            _save_checkpoint()
             _emit(msg)
 
         from .translation_rounds import run_translation_rounds
@@ -1142,34 +1011,10 @@ class AutoTranslator:
             before_text_by_key={entry.entry_key: entry.translation for entry in translation_inputs},
         )
 
-        if not stop_event.is_set():
-            # 翻译与后处理均完成，删除翻译断点
-            ProgressCheckpoint(esp_stem, target_entry_ids, self._cfg.overwrite, [], {}).delete(self._progress_path)
-        elif stop_event.is_set():
-            # 被中断时保存翻译断点（若后处理被中断，翻译断点也保留）
-            _save_checkpoint()
-
         if not stop_event.is_set() and stage_progress_callback is not None:
             stage_progress_callback("finalize", 1, 1, "结果报告已生成")
         _log(f"\n总耗时: {time.perf_counter() - t_total_start:.2f}s")
         return result
-
-    def _validate_checkpoint_terminology(self, checkpoint: ProgressCheckpoint) -> None:
-        payload = checkpoint.terminology_snapshot
-        if self._terminology_snapshot is None:
-            if payload is not None:
-                raise ValueError("翻译断点要求项目术语快照，但当前运行没有该 Project/Variant")
-            return
-        if payload is None:
-            raise ValueError("翻译断点缺少项目术语快照身份，不能安全恢复")
-        from transbridge.application.translation.terminology_run_snapshot import TerminologyRunSnapshotRef
-
-        try:
-            checkpoint_ref = TerminologyRunSnapshotRef.from_dict(payload)
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError("翻译断点中的项目术语快照身份无效") from exc
-        if checkpoint_ref != self._terminology_snapshot:
-            raise ValueError("翻译断点的项目术语版本或内容摘要与当前运行不一致")
 
     def _run_batch(
         self,
@@ -1233,7 +1078,11 @@ class AutoTranslator:
                 _log(f"{orig_disp} -> {trans_disp} [直填]")
             accepted = self._accept_candidates(direct_fill, collection, result, lock)
             if accepted is None:
-                _log("  ❌ 直接填充候选未能持久化，将在后续运行中重试")
+                _log(
+                    ActivityMessage(
+                        "直接填充结果未能保存；请检查磁盘空间和写入权限，处理结束后重试失败条目。", ActivityKind.ERROR
+                    )
+                )
                 direct_fill = {}
             else:
                 direct_success = accepted
@@ -1310,7 +1159,11 @@ class AutoTranslator:
                 return 0
             accepted = self._accept_candidates(_stream_translations, collection, result, lock)
             if accepted is None:
-                _log("  ❌ 流式暂存结果未能持久化，将在后续运行中重试")
+                _log(
+                    ActivityMessage(
+                        "流式暂存结果未能保存；请检查磁盘空间和写入权限，处理结束后重试失败条目。", ActivityKind.ERROR
+                    )
+                )
                 return 0
             for eid, trans in _stream_translations.items():
                 entry = key_to_entry[eid]
@@ -1336,7 +1189,7 @@ class AutoTranslator:
                     retry_groups = (remaining[:middle], remaining[middle:])
                 else:
                     retry_groups = (remaining,)
-                _log(f"  ↩ {len(remaining)} 条{reason}，拆分重试")
+                _log(ActivityMessage(f"{len(remaining)} 条{reason}，正在拆分重试，暂时无需操作。", ActivityKind.RETRY))
                 for retry_entries in retry_groups:
                     sub = _Batch(
                         entries=retry_entries,
@@ -1356,7 +1209,11 @@ class AutoTranslator:
                         progress_emit=progress_emit,
                     )
             elif remaining:
-                _log(f"  ⚠ {len(remaining)} 条{reason}（已缩至最小）")
+                _log(
+                    ActivityMessage(
+                        f"{len(remaining)} 条{reason}；已无法继续拆分，处理结束后可重试失败条目。", ActivityKind.WARNING
+                    )
+                )
                 with lock:
                     for entry in remaining:
                         result.failed_entries.append(f"{ai_entry_id(entry)}: {reason}")
@@ -1374,7 +1231,7 @@ class AutoTranslator:
                 messages_factory=_prepare_messages,
             )
         except _RepetitionDetected as exc:
-            _log(f"⚠ 检测到重复输出（entry: {exc.entry_id or 'unknown'}），尝试截断修复并拆分重试")
+            _log(ActivityMessage("检测到模型重复输出，正在尝试修复并拆分重试，暂时无需操作。", ActivityKind.RETRY))
             # 尝试从截断的 buffer 中 salvaging 翻译
             if not repair_mode and exc.entry_id is None and _stream_buffer:
                 salvaged = self._salvage_from_repetition_buffer(
@@ -1398,7 +1255,11 @@ class AutoTranslator:
                 })
             return accepted
         except LlmStructuredOutputTruncatedError:
-            _log("⚠ Structured Outputs 响应因输出上限截断，保留完整结果项并拆分重试缺项")
+            _log(
+                ActivityMessage(
+                    "模型响应超过输出上限，正在保留完整结果并拆分重试缺项，暂时无需操作。", ActivityKind.RETRY
+                )
+            )
             accepted = _recover_remaining_after_stream_failure("因结构化响应截断未获得译文")
             if _timing_out is not None:
                 _timing_out.update({
@@ -1409,7 +1270,12 @@ class AutoTranslator:
             return accepted
         except Exception as exc:
             err_msg = str(exc)
-            _log(f"❌ API 调用失败（{len(llm_entries)} 条）: {err_msg}")
+            _log(
+                ActivityMessage(
+                    f"{len(llm_entries)} 条模型请求失败；本次未获得有效结果，处理结束后可重试失败条目。",
+                    ActivityKind.ERROR,
+                )
+            )
             with lock:
                 # 非截断异常不会接纳尚未通过完整结构化响应验证的流式暂存项。
                 for e in llm_entries:
@@ -1456,10 +1322,15 @@ class AutoTranslator:
             if len(missing_entries) == len(llm_entries):
                 mid = len(llm_entries) // 2
                 halves = [llm_entries[:mid], llm_entries[mid:]]
-                _log(f"  ↩ {len(missing)}/{len(llm_entries)} 条未获译文，对半拆分重试")
+                _log(
+                    ActivityMessage(
+                        f"{len(missing)}/{len(llm_entries)} 条未获译文，正在对半拆分重试，暂时无需操作。",
+                        ActivityKind.RETRY,
+                    )
+                )
             else:
                 halves = [missing_entries]
-                _log(f"  ↩ {len(missing)} 条未获译文，单独重试")
+                _log(ActivityMessage(f"{len(missing)} 条未获译文，正在单独重试，暂时无需操作。", ActivityKind.RETRY))
             from transbridge.ai_translator.batch_planner import Batch as _Batch
 
             accepted = self._accept_candidates(id_to_translation, collection, result, lock)
@@ -1496,7 +1367,11 @@ class AutoTranslator:
             return success + direct_success
 
         if missing:
-            _log(f"  ⚠ {len(missing)} 条未获得译文（已缩至单条，无法继续拆分）")
+            _log(
+                ActivityMessage(
+                    f"{len(missing)} 条未获得译文；已无法继续拆分，处理结束后可重试失败条目。", ActivityKind.WARNING
+                )
+            )
             with lock:
                 for eid in sorted(missing):
                     entry = key_to_entry[eid]

@@ -288,8 +288,7 @@ class TaskLaunch(QObject):
                     recovery_record=self.selection[0],
                 )
             self.activity = self.controller.create_activity(self.request)
-            if hasattr(self.session, "initial_entry_results"):
-                self.session.initial_entry_results.run_id = self.request.run_id
+            self.session.bind_run_identity(self.request.run_id)
             self.dialog.setLabelText("正在记录配置与术语版本…")
             request, owner = self.request, self.owner
             self.worker.start(

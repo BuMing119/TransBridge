@@ -5,13 +5,11 @@ import time
 import pytest
 
 from transbridge.ui.operations import (
-    DownloadOperationMapper,
     FomodOperationMapper,
     OperationKind,
     OperationPlanDraft,
     OperationPlanError,
     OperationPlanPresenter,
-    UploadOperationMapper,
     WriteOperationMapper,
 )
 
@@ -45,33 +43,11 @@ def draft(**changes) -> OperationPlanDraft:
 def presenter(submitter: Submitter) -> OperationPlanPresenter:
     return OperationPlanPresenter(
         (
-            UploadOperationMapper(),
-            DownloadOperationMapper(),
             WriteOperationMapper(),
             FomodOperationMapper(),
         ),
         submitter,
     )
-
-
-@pytest.mark.parametrize("kind", [OperationKind.UPLOAD, OperationKind.DOWNLOAD])
-def test_sync_confirmation_has_no_countdown_but_remains_bound_to_edited_request(kind) -> None:
-    submitter = Submitter()
-    subject = presenter(submitter)
-    opened = subject.open(kind, draft(), owner_id="gui")
-    first = subject.preflight(opened.session_id, owner_id="gui")
-    assert first.confirmation_token.expires_at is None
-    subject._sync_confirmations._clock = lambda: 10**12
-
-    assert subject.confirm(opened.session_id, first.confirmation_token, owner_id="gui", retain_session=True) == "run-1"
-    subject.edit(opened.session_id, draft(target_revision="remote-r2"), owner_id="gui")
-    second = subject.preflight(opened.session_id, owner_id="gui")
-    subject.edit(opened.session_id, draft(input_fingerprint="input-r2"), owner_id="gui")
-    third = subject.preflight(opened.session_id, owner_id="gui")
-    with pytest.raises(OperationPlanError) as stale:
-        subject.confirm(opened.session_id, second.confirmation_token, owner_id="gui")
-    assert stale.value.code == "CONFIRMATION_REPLAYED"
-    assert subject.confirm(opened.session_id, third.confirmation_token, owner_id="gui") == "run-2"
 
 
 def test_other_operations_keep_existing_confirmation_timeout_policy() -> None:
@@ -89,7 +65,7 @@ def test_other_operations_keep_existing_confirmation_timeout_policy() -> None:
 def test_starting_a_new_check_revokes_previous_confirmation_even_when_check_fails(monkeypatch) -> None:
     submitter = Submitter()
     subject = presenter(submitter)
-    opened = subject.open(OperationKind.DOWNLOAD, draft(), owner_id="gui")
+    opened = subject.open(OperationKind.WRITE, draft(), owner_id="gui")
     first = subject.preflight(opened.session_id, owner_id="gui")
 
     def failed_check(_self, _draft):
@@ -98,7 +74,7 @@ def test_starting_a_new_check_revokes_previous_confirmation_even_when_check_fail
         assert checking.value.code == "PREFLIGHT_REQUIRED"
         raise RuntimeError("remote check failed")
 
-    monkeypatch.setattr(DownloadOperationMapper, "preflight", failed_check)
+    monkeypatch.setattr(WriteOperationMapper, "preflight", failed_check)
     with pytest.raises(RuntimeError, match="remote check failed"):
         subject.preflight(opened.session_id, owner_id="gui")
     with pytest.raises(OperationPlanError) as failed:
@@ -110,7 +86,7 @@ def test_starting_a_new_check_revokes_previous_confirmation_even_when_check_fail
 def test_return_to_edit_invalidates_confirmation_and_preserves_new_draft() -> None:
     submitter = Submitter()
     subject = presenter(submitter)
-    opened = subject.open(OperationKind.UPLOAD, draft(), owner_id="gui")
+    opened = subject.open(OperationKind.WRITE, draft(), owner_id="gui")
     first = subject.preflight(opened.session_id, owner_id="gui")
 
     edited = subject.edit(
@@ -140,7 +116,7 @@ def test_one_final_confirmation_is_one_shot() -> None:
 def test_retained_session_requires_fresh_preflight_before_another_submission() -> None:
     submitter = Submitter()
     subject = presenter(submitter)
-    opened = subject.open(OperationKind.DOWNLOAD, draft(), owner_id="gui")
+    opened = subject.open(OperationKind.WRITE, draft(), owner_id="gui")
     checked = subject.preflight(opened.session_id, owner_id="gui")
 
     assert (
@@ -171,8 +147,6 @@ def test_cancel_has_zero_feature_side_effect_and_100_sessions_remain_bounded() -
 @pytest.mark.parametrize(
     ("kind", "changes", "blocking_id"),
     [
-        (OperationKind.UPLOAD, {"credentials_ready": False}, "CREDENTIAL"),
-        (OperationKind.DOWNLOAD, {"permission_ready": False}, "PERMISSION"),
         (OperationKind.WRITE, {"output_ready": False}, "OUTPUT"),
         (OperationKind.FOMOD, {"overwrite_risk": True}, "OVERWRITE"),
     ],

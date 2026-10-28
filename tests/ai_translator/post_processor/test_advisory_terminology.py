@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import pytest
 
 from transbridge.ai_translator.post_processor.base import PostProcessIssue
-from transbridge.ai_translator.post_processor.checkpoint import PostProcessCheckpoint
 from transbridge.ai_translator.post_processor.consistency_checker import ConsistencyChecker
 from transbridge.ai_translator.post_processor.llm_arbiter import ArbitrationContext, LLMArbiter
 from transbridge.ai_translator.post_processor.llm_refiner import LLMRefiner, RefineResult
@@ -126,9 +125,7 @@ def test_refiner_receives_all_findings_and_returns_suspect_reference_without_cha
     assert "term_mismatch" in calls[0][1]["content"]
     assert "low_quality" in calls[0][1]["content"]
     assert "Reference translation: 瓜尔" in calls[0][1]["content"]
-    restored = PostProcessCheckpoint.refine_result_from_dict(PostProcessCheckpoint.refine_result_to_dict(result))
-    assert restored.review_status == "term_suspect"
-    assert restored.review_reason == "guards 指卫兵"
+    assert result.review_reason == "guards 指卫兵"
 
 
 def test_conflicting_retained_response_is_invalid_instead_of_silently_rewriting():

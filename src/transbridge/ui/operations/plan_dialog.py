@@ -1,4 +1,4 @@
-"""One shared Qt presentation for upload/download/write/FOMOD plans."""
+"""Shared Qt presentation for write and FOMOD plans."""
 
 from __future__ import annotations
 

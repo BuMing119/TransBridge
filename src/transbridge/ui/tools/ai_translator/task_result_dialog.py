@@ -75,7 +75,7 @@ class TaskEntriesModel(QAbstractTableModel):
 
 
 class TaskResultDialog(QDialog):
-    def __init__(self, record, *, source_key=None, theme_view=None):
+    def __init__(self, record, *, source_key=None, theme_view=None, review_results=None):
         super().__init__()
         self.record = record
         self.worker = None
@@ -172,6 +172,11 @@ class TaskResultDialog(QDialog):
         self.export_status.hide()
         layout.addWidget(self.export_status)
         buttons = QHBoxLayout()
+        if review_results is not None:
+            review = QPushButton("处理已保存的结果 / 恢复译文")
+            configure_task_button(review)
+            review.clicked.connect(review_results)
+            buttons.addWidget(review)
         self.export_buttons = []
         for label, format in (("导出 Excel", "xlsx"), ("导出 CSV", "csv")):
             button = QPushButton(label)

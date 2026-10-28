@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.ui.tools.ai_runtime_support import frozen_ai_request
 from transbridge.ai_translator.generated_term_writer import GeneratedTermWriter
 from transbridge.ai_translator.shared_term_pool import SharedTermPool
 from transbridge.ai_translator.shared_term_snapshot import FrozenTermEntry
@@ -153,6 +154,7 @@ def local_publication(tmp_path, monkeypatch, request):
     dump_terms_json(seed._path, [initial])
     config = LLMConfig(term_priority=["dynamic"], enable_semantic_match=False)
     task_request = SimpleNamespace(run_id="local-write-race", config=config, spec=SimpleNamespace(mode="mixed"))
+    task_request = frozen_ai_request(task_request)
     guard = TaskConsistency(task_request)
     store = TaskReferenceStore("local-write-race") if request.param else None
 

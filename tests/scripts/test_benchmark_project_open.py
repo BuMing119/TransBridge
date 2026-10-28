@@ -3,6 +3,7 @@
 from contextlib import ExitStack
 import json
 import os
+from pathlib import Path
 import time
 from types import SimpleNamespace
 
@@ -75,6 +76,103 @@ def test_copy_rejects_overlapping_or_existing_destination(tmp_path):
     sibling.mkdir()
     with pytest.raises(FileExistsError):
         benchmark.copy_records(source, sibling)
+
+
+def _saved_project(source, origin):
+    from transbridge.application.contracts import RequestContext
+    from transbridge.application.io import FormatId
+    from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
+
+    origin.write_bytes(Path("tests/contracts/io/fixtures/eet-small.xml").read_bytes())
+    services = benchmark._services(source)
+    try:
+        created = services.gui_project_commands.create_project(
+            ProjectProvisioningRequest("Saved", source=ProjectSourceRequest(str(origin), FormatId.XML_EET)),
+            RequestContext("benchmark-copy", run_id="create"),
+        )
+        assert created.is_success, created.diagnostics
+        active = services.project_lifecycle.active
+        return (
+            Path(services.projects.path_for(active.project_ref)),
+            active.project.envelope.data["sources"][0]["source_artifact_id"],
+        )
+    finally:
+        services.close()
+
+
+def test_copy_saved_artifact_closure_is_read_only_and_opens_after_original_source_disappears(tmp_path, monkeypatch):
+    from transbridge.application.contracts import RequestContext
+    from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
+    from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
+
+    source, destination, origin = tmp_path / "input", tmp_path / "copy", tmp_path / "original.xml"
+    project, artifact_id = _saved_project(source, origin)
+    expected_records = {
+        Path("source_artifacts") / relative
+        for relative, _content in ProjectSourceArtifactStore(str(source)).iter_records(artifact_id)
+    }
+    unreferenced = source / "source_artifacts" / "blobs" / f"{'f' * 64}.bin"
+    unreferenced.write_bytes(b"unreferenced private content")
+    before = {path.relative_to(source): benchmark._digest(path) for path in source.rglob("*") if path.is_file()}
+    origin.unlink()
+    monkeypatch.setattr(
+        TranslationIoProjectSourcePreparer,
+        "prepare_source",
+        lambda *_args, **_kwargs: pytest.fail("Saved source copy must not parse live input"),
+    )
+    with monkeypatch.context() as copying:
+        copying.setattr(benchmark, "_services", lambda *_args: pytest.fail("Copy must not construct original services"))
+        copied, hashes = benchmark.copy_records(source, destination)
+    assert copied == [destination / project.relative_to(source)]
+    assert {
+        path.relative_to(destination) for path in (destination / "source_artifacts").rglob("*") if path.is_file()
+    } == expected_records
+    assert all(path.is_relative_to(source) for path in hashes)
+    assert benchmark.verify_inputs(hashes)
+    assert before == {path.relative_to(source): benchmark._digest(path) for path in source.rglob("*") if path.is_file()}
+    services = benchmark._services(destination)
+    try:
+        context = RequestContext("benchmark-copy", run_id="open")
+        prepared = services.current_project_opener.prepare_path(copied[0], context)
+        assert prepared.is_success, prepared.diagnostics
+        assert prepared.value.recovery is None
+        assert prepared.value.hydrations[0].entries
+        assert services.current_project_opener.activate(prepared.value, context).is_success
+    finally:
+        services.close()
+    assert before == {path.relative_to(source): benchmark._digest(path) for path in source.rglob("*") if path.is_file()}
+    original_blob = next(path for path in hashes if path.suffix == ".bin")
+    original_blob.write_bytes(b"changed externally after copy")
+    assert not benchmark.verify_inputs(hashes)
+
+
+@pytest.mark.parametrize("damage", ["missing_manifest", "corrupt_manifest", "missing_blob", "corrupt_blob"])
+def test_copy_rejects_missing_or_corrupt_saved_artifact_dependencies_before_creating_destination(tmp_path, damage):
+    from transbridge.persistence.source_artifact_store import (
+        ProjectSourceArtifactStore,
+        SourceArtifactCorruptError,
+        SourceArtifactMissingError,
+    )
+
+    source, destination = tmp_path / "input", tmp_path / "copy"
+    _project, artifact_id = _saved_project(source, tmp_path / "original.xml")
+    records = tuple(ProjectSourceArtifactStore(str(source)).iter_records(artifact_id))
+    relative = (
+        f"manifests/{artifact_id}.json"
+        if damage.endswith("manifest")
+        else next(path for path, _ in records if path.endswith(".bin"))
+    )
+    path = source / "source_artifacts" / relative
+    if damage.startswith("missing"):
+        path.unlink()
+    else:
+        path.write_bytes(b"corrupt saved artifact")
+    before = {path.relative_to(source): benchmark._digest(path) for path in source.rglob("*") if path.is_file()}
+    error = SourceArtifactMissingError if damage == "missing_manifest" else SourceArtifactCorruptError
+    with pytest.raises(error):
+        benchmark.copy_records(source, destination)
+    assert not destination.exists()
+    assert before == {path.relative_to(source): benchmark._digest(path) for path in source.rglob("*") if path.is_file()}
 
 
 def test_source_checkout_requires_a_src_directory(tmp_path):

@@ -69,10 +69,10 @@ def test_app_context_is_defensive_projection_and_releases_subscription(monkeypat
     assert context.label_library["review"]["name"] == "Review"
     with pytest.raises(RuntimeError):
         context.entry_labels = {}
-    with pytest.raises(RuntimeError):
-        context.active_project = object()
-    with pytest.raises(RuntimeError):
-        context.variant_store = object()
+    assert not hasattr(context, "active_project")
+    assert not hasattr(context, "variant_store")
+    with pytest.raises(AttributeError):
+        context.active_variant = "another"
 
     store.rebuild(_projection(2, 2))
     assert not context.dirty

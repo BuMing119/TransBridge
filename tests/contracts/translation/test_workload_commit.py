@@ -547,7 +547,6 @@ def test_real_auto_translator_constructor_buffers_then_commits_once(monkeypatch)
     from transbridge.ai_translator import noun_extractor, prompt_builder, term_database
     from transbridge.ai_translator.translator import (
         AutoTranslator,
-        ProgressCheckpoint,
         TranslatorConfig,
     )
     from transbridge.infra import llm_client
@@ -576,8 +575,6 @@ def test_real_auto_translator_constructor_buffers_then_commits_once(monkeypatch)
     monkeypatch.setattr(term_database, "TermDatabaseManager", FakeTermManager)
     monkeypatch.setattr(prompt_builder, "PromptBuilder", ConstructorOnly)
     monkeypatch.setattr(noun_extractor, "NounExtractor", ConstructorOnly)
-    monkeypatch.setattr(ProgressCheckpoint, "save", lambda self, esp_path: None)
-    monkeypatch.setattr(ProgressCheckpoint, "delete", lambda self, esp_path: None)
 
     config = SimpleNamespace(
         game_profile="fixture",
@@ -619,15 +616,15 @@ def test_stream_candidate_is_only_accepted_after_durable_checkpoint_and_retries(
     from transbridge.ai_translator import noun_extractor, prompt_builder, term_database
     from transbridge.ai_translator.translator import (
         AutoTranslator,
-        ProgressCheckpoint,
         TranslatorConfig,
     )
     from transbridge.infra import llm_client
 
     class StreamingLlm:
         def chat_stream(self, messages, max_tokens, callback):
-            callback('{"stream":"streamed"}')
-            return '{"stream":"streamed"}'
+            response = '{"results":[{"entry_id":"stream","translation":"streamed"}]}'
+            callback(response)
+            return response
 
     captured_prompt_calls: list[dict] = []
 
@@ -649,9 +646,6 @@ def test_stream_candidate_is_only_accepted_after_durable_checkpoint_and_retries(
                 "terms_by_entry": {key: dict(value) for key, value in (terms_by_entry or {}).items()},
             })
             return [{"role": "system", "content": "fixture"}, {"role": "user", "content": "fixture"}]
-
-        def extract_partial_pairs(self, value):
-            return {"stream": "streamed"}
 
         def parse_translation_response(self, response, expected_keys):
             return {}
@@ -683,8 +677,6 @@ def test_stream_candidate_is_only_accepted_after_durable_checkpoint_and_retries(
     monkeypatch.setattr(term_database, "TermDatabaseManager", EmptyTermManager)
     monkeypatch.setattr(prompt_builder, "PromptBuilder", StreamingPrompt)
     monkeypatch.setattr(noun_extractor, "NounExtractor", ConstructorOnly)
-    monkeypatch.setattr(ProgressCheckpoint, "save", lambda self, esp_path: None)
-    monkeypatch.setattr(ProgressCheckpoint, "delete", lambda self, esp_path: None)
 
     config = SimpleNamespace(
         game_profile="fixture",
@@ -738,43 +730,3 @@ def test_stream_candidate_is_only_accepted_after_durable_checkpoint_and_retries(
         "terms": {"stream-source": "流式源文"},
         "terms_by_entry": {"stream": {"stream-source": "流式源文"}},
     }
-
-
-def test_mixed_worker_passes_active_collection_and_source_path_to_auto_translator(
-    monkeypatch,
-) -> None:
-    from transbridge.ai_translator import translator as translator_module
-    from transbridge.ui.tools.ai_translator._mixed_worker import _MixedWorker
-
-    captured = {}
-
-    class FakeAutoTranslator:
-        def __init__(self, config, *, run_id_factory=None, request_budget=None, **_options) -> None:
-            captured["esp_path"] = config.esp_path
-            captured["run_id"] = run_id_factory()
-            captured["request_budget"] = request_budget
-
-        def translate(self, *, collection, target_entry_ids, **kwargs):
-            captured["collection"] = collection
-            captured["target_entry_ids"] = target_entry_ids
-            return SimpleNamespace(success_count=1, failed_count=0)
-
-    monkeypatch.setattr(translator_module, "AutoTranslator", FakeAutoTranslator)
-    collection = _collection((_input("mixed"),))
-    context = SimpleNamespace(collection=collection, esp_path="mixed.esp")
-    worker = _MixedWorker(
-        cfg=SimpleNamespace(),
-        translate_entries=list(collection),
-        polish_entries=[],
-        ctx=context,
-        run_id="mixed-parent-run",
-    )
-
-    result = worker._do_translate()
-
-    assert result.success_count == 1
-    assert captured["esp_path"] == "mixed.esp"
-    assert captured["run_id"] == "mixed-parent-run"
-    assert captured["collection"] is collection
-    assert captured["target_entry_ids"] == ["mixed"]
-    assert captured["request_budget"] is worker._request_budget

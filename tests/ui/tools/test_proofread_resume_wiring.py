@@ -8,11 +8,11 @@ from types import SimpleNamespace
 
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
 from transbridge.application.translation.ai_request_budget import AiRequestBudget
+from transbridge.application.translation.task_entry_results import TaskEntryResults
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.ui.tools.ai_translator.source_execution import SourceExecutor, SourceOutcome
-from transbridge.ui.tools.ai_translator.task_entry_results import TaskEntryResults
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 from transbridge.ui.tools.ai_translator.workflow_log_store import WorkflowLogStore
 
 

@@ -56,7 +56,12 @@ class DurableVariantCommitService:
             return _failed("ACTIVE_VARIANT_REVISION_CHANGED", "本地译文已变化，请按当前内容重试保存。", context)
         try:
             candidate = VariantAggregate(snapshot)
-            candidate.commit(change_set, context)
+            if (
+                change_set.entries != snapshot.entries
+                or change_set.source_fingerprints != snapshot.source_fingerprints
+                or change_set.label_library != snapshot.label_library
+            ):
+                candidate.commit(change_set, context)
             save = LifecycleSave.capture(replace(active, variant=candidate))
             written = False
 

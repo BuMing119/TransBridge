@@ -162,9 +162,13 @@ class TestManageEntryLabels(unittest.TestCase):
         self.ctx = MockAppContext()
 
     def test_create_label(self):
+        from tests.smart_assistant.current_project_support import bind_current_project
+
+        bind_current_project(self, ())
         r = self.func({"action": "create", "name": "TestLabel", "color": "#FF0000"}, self.ctx)
         self.assertTrue(r.success)
         self.assertIn("label_id", r.data)
+        self.assertIn(r.data["label_id"], self.project.aggregate.snapshot().label_library_data())
 
     def test_create_label_empty_name_rejected(self):
         r = self.func({"action": "create", "name": ""}, self.ctx)

@@ -17,7 +17,6 @@ from transbridge.ai_translator.prompt_builder import _extract_partial_translatio
 from transbridge.ai_translator.term_formats import TermEntry
 from transbridge.ai_translator.translator import (
     AutoTranslator,
-    ProgressCheckpoint,
     TranslationResult,
     TranslatorConfig,
 )
@@ -162,8 +161,6 @@ def _harness(
     monkeypatch.setattr(noun_extractor, "NounExtractor", _Extractor)
     monkeypatch.setattr(existing_term_extractor, "ExistingTermSeeder", _Seeder)
     monkeypatch.setattr(existing_term_extractor, "should_seed_existing_terms", lambda *_args: True)
-    monkeypatch.setattr(ProgressCheckpoint, "save", lambda self, esp_path: None)
-    monkeypatch.setattr(ProgressCheckpoint, "delete", lambda self, esp_path: None)
 
     translator = AutoTranslator(
         _config(overwrite=overwrite),
@@ -196,13 +193,12 @@ def _conflict(entry: TranslationEntry, kind: str) -> TermConflictEvidence:
     )
 
 
-def _run(harness: _ConflictHarness, checkpoint: ProgressCheckpoint | None = None) -> TranslationResult:
+def _run(harness: _ConflictHarness) -> TranslationResult:
     return harness.translator.translate(
         harness.collection,
         [entry.key for entry in harness.collection],
         lambda *_args: None,
         threading.Event(),
-        checkpoint=checkpoint,
     )
 
 
@@ -267,6 +263,9 @@ def test_generated_terms_are_observed_only_after_successful_storage(monkeypatch,
     database = SimpleNamespace(
         add_many_and_save=lambda terms: stored.extend(terms),
         as_list=lambda: [TermEntry(*row) for row in stored],
+        _lock=threading.RLock(),
+        _entries=[],
+        _revision=0,
     )
     monkeypatch.setattr(harness.term_manager, "get_dynamic_db", lambda: database, raising=False)
     monkeypatch.setattr(harness.term_manager, "has_term", lambda _: False, raising=False)
@@ -422,31 +421,6 @@ def test_different_reference_translation_does_not_fail_normal_translation(monkey
     assert result.failed_entries == []
     assert harness.collection.get("effective").translation == "仍然使用错误译法"
     assert harness.collection.get("normal").translation == "translated:normal"
-
-
-def test_legacy_repair_checkpoint_does_not_restore_obsolete_forced_retranslation(monkeypatch) -> None:
-    effective = _entry("effective", translation="旧冲突译文", stage=1)
-    harness = _harness(monkeypatch, conflicts=())
-    checkpoint = ProgressCheckpoint(
-        esp_stem="fixture",
-        target_entry_ids=["effective", "internal", "normal"],
-        overwrite=False,
-        completed_fingerprints=[],
-        result_so_far={},
-        run_id="term-conflict-run",
-        term_repairs=[
-            {
-                "entry_key": effective.identity.to_dict(),
-                "required_terms": {"Guild": "冲突记录中的旧权威译法"},
-            }
-        ],
-    )
-
-    result = _run(harness, checkpoint)
-
-    assert result.failed_count == 0
-    assert all("effective" not in keys for keys in harness.llm.keys_by_call)
-    assert harness.collection.get("effective").translation == "旧冲突译文"
 
 
 def test_queued_batch_builds_prompt_after_admission_with_latest_in_flight_terms(monkeypatch) -> None:

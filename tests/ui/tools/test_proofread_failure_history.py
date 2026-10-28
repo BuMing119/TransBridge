@@ -9,9 +9,9 @@ import pytest
 from transbridge.ai_translator.post_processor.proofread_pipeline import ProofreadPipeline
 from transbridge.application.translation.proofread_stage import ProofreadStage
 from transbridge.application.translation.task_history import TaskHistoryStore
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.ui.tools.ai_translator.source_execution import SourceOutcome, build_task_record
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 
 
 @pytest.mark.parametrize(

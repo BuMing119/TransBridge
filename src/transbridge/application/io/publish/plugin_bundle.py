@@ -8,6 +8,7 @@ its recovery location; it never reports a successful publication.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 import secrets
@@ -16,6 +17,11 @@ from tempfile import mkdtemp
 
 from transbridge.application.contracts import Diagnostic, OperationCounts, OperationOutcome, OperationResult
 from transbridge.application.io.contracts import SourceDescriptor, WriteRequest
+from transbridge.application.io.plugin_bsa_output import (
+    bsa_output_enabled,
+    conflicting_loose_outputs,
+    materialized_bsa_members,
+)
 from transbridge.application.io.plugin_publication_source import plugin_source_scope, retire_plugin_parsers
 from transbridge.application.io.plugin_write import localized_write_requests, plugin_artifact_paths
 
@@ -62,6 +68,7 @@ class PluginBundlePublisher:
             if tuple(expected) != paths or len(paths) != len(set(paths)):
                 raise _BundleFailure("WRITE_OUTPUT_SET_CHANGED", "写回输出集合与预检不一致。")
             self._check_targets(expected, conflict_policy)
+            self._check_loose_outputs(request)
             if self._cancelled(request):
                 return OperationResult.cancelled(run_id=request.context.run_id)
             prepare_output_directory(self._fs, paths[0])
@@ -132,13 +139,25 @@ class PluginBundlePublisher:
         return result
 
     def _validate(self, request: WriteRequest, staged: dict[str, str]) -> None:
-        checks = ((self._adapter, request), *localized_write_requests(request))
-        for adapter, member in checks:
-            validation = FormatRoundTripValidator(adapter, self._fs).validate(member, member.target.uri)
-            if not validation.valid:
-                raise _BundleFailure(validation.code, f"{Path(member.target.uri).name}：{validation.message}")
+        companions = localized_write_requests(request)
+        members = (
+            materialized_bsa_members(Path(request.target.uri), companions)
+            if bsa_output_enabled(request.source_snapshot, request.options)
+            else nullcontext(companions)
+        )
+        with members as localized:
+            for adapter, member in ((self._adapter, request), *localized):
+                validation = FormatRoundTripValidator(adapter, self._fs).validate(member, member.target.uri)
+                if not validation.valid:
+                    raise _BundleFailure(validation.code, f"{Path(member.target.uri).name}：{validation.message}")
         for path in staged.values():
             self._fs.fsync_file(path)
+
+    @staticmethod
+    def _check_loose_outputs(request) -> None:
+        conflicts = conflicting_loose_outputs(request.source_snapshot, request.target.uri, request.options)
+        if conflicts:
+            raise _BundleFailure("BSA_LOOSE_OUTPUT_CONFLICT", "目标位置出现同名散装 STRINGS：" + "；".join(conflicts))
 
     def _check_targets(self, expected, policy) -> None:
         for path, fingerprint in expected.items():
@@ -170,6 +189,7 @@ class PluginBundlePublisher:
 
         def commit():
             self._check_targets(expected, conflict_policy)
+            self._check_loose_outputs(request)
             try:
                 for path, saved in rollback.items():
                     if backup_policy is BackupPolicy.NONE:

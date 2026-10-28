@@ -10,6 +10,7 @@ from transbridge.ui.worker_registry import get_api_worker_registry
 from transbridge.ui.workers import ApiWorker
 
 from .close_input_guard import CloseInputGuard
+from .close_progress import CloseProgress
 from .save_recovery import SaveRecovery, choose_recovery_destination, write_recovery_bundle
 from .task_close import TaskCloseGuard
 
@@ -39,8 +40,8 @@ class AutoSaveManager(QObject):
     def _identity(self):
         context = self._host.context
         return (
-            getattr(context, "active_project_id", None) or id(getattr(context, "active_project", None)),
-            getattr(context, "active_variant_id", None) or getattr(context, "active_variant", None),
+            getattr(context, "active_project_id", None),
+            getattr(context, "active_variant_id", None),
         )
 
     def record_save_result(self, succeeded: bool) -> None:
@@ -72,11 +73,7 @@ class AutoSaveManager(QObject):
         if self._stopped or self._failed_identity == self._identity():
             return
         context = self._host.context
-        variant_store = context.variant_store
-        if context.uses_authoritative_projection:
-            if not context.dirty:
-                return
-        elif variant_store is None or not variant_store.dirty:
+        if not context.dirty:
             return
         self._result_reported = False
         accepted = self._host.save_current_project_async(
@@ -97,6 +94,8 @@ class WindowLifecycle:
         self._host = host
         self._close_pending = False
         self._close_ready = False
+        self._attempt_id = 0
+        self._progress = CloseProgress(host, self.cancel_close)
         self._discard_ai_record_errors = False
         self._recovery = SaveRecovery(host.context)
         self._recovery_destination = None
@@ -124,6 +123,7 @@ class WindowLifecycle:
         if self._close_pending:
             return False
         self._close_pending = True
+        self._attempt_id += 1
         self._recovery.reset()
         self._recovery_destination = None
         self._discard_ai_record_errors = False
@@ -132,6 +132,7 @@ class WindowLifecycle:
         self._input_guard.suspend()
         self.auto_saver.stop()
         self._host.workbench.show_step2_progress(0, "正在保存并关闭…")
+        self._progress.show()
         self.begin_background_close()
         return False
 
@@ -140,56 +141,61 @@ class WindowLifecycle:
         return worker is not None and worker.isRunning()
 
     def begin_background_close(self) -> None:
+        attempt = self._attempt_id
         if not self._close_pending or not self._check_inline_drafts():
+            return
+        if not self._is_attempt(attempt):
             return
         self._input_guard.suspend()
         # Issue cancellation immediately, including while legacy workers finish.
         runtime_ready = self._check_runtime_tasks()
-        if not self._close_pending:
+        if not self._is_attempt(attempt):
             return
         ai_tasks = getattr(self._host.workbench, "ai_tasks", None)
         if ai_tasks is not None:
             ai_tasks.shutdown()
             if ai_tasks.busy:
                 self._host.workbench.show_step2_progress(0, "正在结束 AI 任务…")
-                QTimer.singleShot(100, self.begin_background_close)
+                self._schedule(100, self.begin_background_close)
                 return
             if not self._check_record_errors(ai_tasks):
                 return
         if not runtime_ready:
             self._host.workbench.show_step2_progress(0, "正在取消后台任务并清理未提交内容…")
-            QTimer.singleShot(100, self.begin_background_close)
+            self._schedule(100, self.begin_background_close)
             return
         if self._host.project_open_worker is not None or getattr(self._host.context, "project_opening", False):
-            QTimer.singleShot(100, self.begin_background_close)
+            self._schedule(100, self.begin_background_close)
             return
         if self._running(self._host.foreground_worker):
-            self._host.foreground_worker.finished.connect(self.begin_background_close)
+            self._schedule(100, self.begin_background_close)
             return
         if get_api_worker_registry().busy or self._input_guard.awaiting_dialog:
             self._host.workbench.show_step2_progress(0, "正在等待后台任务完成…")
-            QTimer.singleShot(100, self.begin_background_close)
+            self._schedule(100, self.begin_background_close)
             return
-        if not self._host.save_current_project_async(on_finished=self.finish_background_close):
-            QTimer.singleShot(0, self.begin_background_close)
+        if not self._host.save_current_project_async(on_finished=self._guarded(self.finish_background_close)):
+            self._schedule(0, self.begin_background_close)
 
     def finish_background_close(self, saved: bool) -> None:
-        if not self._ready_to_dispose(saved):
+        attempt = self._attempt_id
+        if not self._ready_to_dispose(saved) or not self._is_attempt(attempt):
             return
         ai_tasks = getattr(self._host.workbench, "ai_tasks", None)
         if ai_tasks is not None:
             if not self._check_record_errors(ai_tasks):
                 return
-        if not self._check_inline_drafts():
+        if not self._is_attempt(attempt) or not self._check_inline_drafts():
             return
         # Both confirmations run nested event loops. Their answer does not
         # authorize discarding later edits or disposing a newly started worker.
-        if not self._ready_to_dispose(saved):
+        if not self._is_attempt(attempt) or not self._ready_to_dispose(saved):
             return
         if not self._input_guard.close_windows(exclude=self._host):
-            QTimer.singleShot(100, lambda: self.finish_background_close(saved))
+            if self._is_attempt(attempt):
+                self._schedule(100, lambda: self.finish_background_close(saved))
             return
-        if not self._ready_to_dispose(saved):
+        if not self._is_attempt(attempt) or not self._ready_to_dispose(saved):
             return
         try:
             self._host.project_coordinator.save_workspace_session()
@@ -209,14 +215,18 @@ class WindowLifecycle:
             self._close_ready = True
             self._host.close_ready = True
             self._input_guard.resume()
+            self._progress.hide()
             self._host.close()
 
     def _ready_to_dispose(self, saved: bool) -> bool:
+        attempt = self._attempt_id
         if not self._close_pending:
             return False
         if not self._check_runtime_tasks():
-            if self._close_pending:
-                QTimer.singleShot(100, lambda: self.finish_background_close(saved))
+            if self._is_attempt(attempt):
+                self._schedule(100, lambda: self.finish_background_close(saved))
+            return False
+        if not self._is_attempt(attempt):
             return False
         ai_tasks = getattr(self._host.workbench, "ai_tasks", None)
         # Saving itself is an ApiWorker. Also drain native completion handlers,
@@ -230,7 +240,7 @@ class WindowLifecycle:
             or (ai_tasks is not None and ai_tasks.busy)
         ):
             self._input_guard.suspend()
-            QTimer.singleShot(100, lambda: self.finish_background_close(saved))
+            self._schedule(100, lambda: self.finish_background_close(saved))
             return False
         if not saved or self._host.context.dirty:
             if self._recovery.verified:
@@ -241,13 +251,15 @@ class WindowLifecycle:
             if self._recovery_destination is None:
                 self._input_guard.resume()
                 destination = choose_recovery_destination(self._host)
+                if not self._is_attempt(attempt):
+                    return False
                 if destination is None:
                     self._cancel_close()
                     return False
                 self._recovery_destination = destination
                 self._input_guard.suspend()
                 # The dialogs run nested event loops; drain any new work before capturing.
-                QTimer.singleShot(0, lambda: self.finish_background_close(False))
+                self._schedule(0, lambda: self.finish_background_close(False))
             elif self._recovery_worker is None:
                 self._start_recovery()
             return False
@@ -263,9 +275,14 @@ class WindowLifecycle:
         self._host.workbench.show_step2_progress(0, "正在备份全部翻译内容并校验…")
         worker = None
         outcome = {}
+        attempt = self._attempt_id
+        destination = self._recovery_destination
 
         def finished():
-            self._recovery_worker = None
+            if self._recovery_worker is worker:
+                self._recovery_worker = None
+            if attempt != self._attempt_id or not self._close_pending:
+                return
             if "error" in outcome or "path" not in outcome:
                 self._recovery_failed(f"恢复备份失败，窗口保持打开：{outcome.get('error', '未收到备份结果')}")
             elif not self._recovery.accept(capture):
@@ -275,7 +292,7 @@ class WindowLifecycle:
 
         try:
             worker = ApiWorker(
-                lambda: write_recovery_bundle(self._recovery_destination, capture),
+                lambda: write_recovery_bundle(destination, capture),
                 route_http_errors=False,
             )
             self._recovery_worker = worker
@@ -314,6 +331,7 @@ class WindowLifecycle:
             return True
         from PyQt6.QtWidgets import QMessageBox
 
+        attempt = self._attempt_id
         self._input_guard.resume()
         answer = QMessageBox.question(
             self._host,
@@ -322,6 +340,8 @@ class WindowLifecycle:
             QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
+        if not self._is_attempt(attempt):
+            return False
         if answer == QMessageBox.StandardButton.Discard:
             self._discard_ai_record_errors = True
             self._input_guard.suspend()
@@ -333,20 +353,26 @@ class WindowLifecycle:
         confirm = getattr(self._host.workbench, "confirm_inline_edit_close", None)
         if confirm is None:
             return True
+        attempt = self._attempt_id
         self._input_guard.resume()
-        if confirm():
+        confirmed = confirm()
+        if not self._is_attempt(attempt):
+            return False
+        if confirmed:
             self._input_guard.suspend()
             return True
         self._cancel_close()
         return False
 
     def _cancel_close(self) -> None:
+        self._attempt_id += 1
         if self._task_close is not None:
             self._task_close.abort()
         self._close_pending = self._host.close_pending = False
         self._recovery.reset()
         self._recovery_destination = None
         self._input_guard.resume()
+        self._progress.hide()
         self._host.workbench.setEnabled(
             not (
                 getattr(self._host.context, "project_opening", False)
@@ -358,3 +384,23 @@ class WindowLifecycle:
         ai_tasks = getattr(self._host.workbench, "ai_tasks", None)
         if ai_tasks is not None:
             ai_tasks.resume()
+
+    def cancel_close(self) -> None:
+        """Return to work without reviving cancelled tasks or dropping results."""
+        if self._close_pending and not self._close_ready:
+            self._cancel_close()
+
+    def _guarded(self, callback):
+        attempt = self._attempt_id
+
+        def invoke(*args):
+            if self._is_attempt(attempt):
+                callback(*args)
+
+        return invoke
+
+    def _is_attempt(self, attempt: int) -> bool:
+        return self._close_pending and attempt == self._attempt_id
+
+    def _schedule(self, delay: int, callback) -> None:
+        QTimer.singleShot(delay, self._guarded(callback))

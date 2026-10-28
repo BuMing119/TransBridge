@@ -26,6 +26,7 @@ from .repository import (
     VariantRevisionConflict,
 )
 from .schema import parse_json_bytes, serialize_document, validate_v2, version_of
+from .validated_reads import decode_validated_read, reuse_validated_reads
 
 _LOGGER = logging.getLogger(__name__)
 _JOURNAL_SCHEMA_VERSION = 2
@@ -70,7 +71,7 @@ class ProjectSaveProtocol:
                 "The active Variant snapshot does not match its formal reference.",
             )
 
-        with self._mutation_lock:
+        with self._mutation_lock, reuse_validated_reads():
             self.recover_pending()
             current_project = _load_for_save(self._projects, project_ref)
             current_variant = (
@@ -93,6 +94,7 @@ class ProjectSaveProtocol:
                 assert save.expected_persisted_revision is not None
                 if save.variant.revision <= save.expected_persisted_revision:
                     raise _invalid_target_revision("variant")
+            target_variant = save.variant.to_dto() if write_variant and save.variant is not None else None
 
             journal_path = None
             previous_variant_bytes = None
@@ -100,6 +102,7 @@ class ProjectSaveProtocol:
                 assert isinstance(current_variant, LoadedRecord)
                 assert save.variant is not None
                 assert save.formal_variant_ref is not None
+                assert target_variant is not None
                 previous_project_bytes = self._verified_preimage_bytes(self._projects, project_ref, current_project)
                 previous_variant_bytes = self._verified_preimage_bytes(
                     self._variants,
@@ -115,7 +118,7 @@ class ProjectSaveProtocol:
                     save.formal_variant_ref,
                     current_variant,
                     previous_variant_bytes,
-                    save.variant.to_dto(),
+                    target_variant,
                 )
 
             try:
@@ -123,11 +126,12 @@ class ProjectSaveProtocol:
                 if write_variant:
                     assert save.formal_variant_ref is not None
                     assert save.variant is not None
+                    assert target_variant is not None
                     assert isinstance(current_variant, LoadedRecord)
                     try:
                         saved_variant = self._variants.save_if_revision(
                             save.formal_variant_ref,
-                            save.variant.to_dto(),
+                            target_variant,
                             expected_revision=save.expected_persisted_revision,
                             expected_source_hash=current_variant.source_hash,
                         )
@@ -215,7 +219,7 @@ class ProjectSaveProtocol:
                         _LOGGER.warning("Committed Project save journal cleanup is pending", exc_info=True)
 
     def recover_pending(self) -> None:
-        with self._mutation_lock:
+        with self._mutation_lock, reuse_validated_reads():
             try:
                 pending = self._filesystem.list_files(self._journal_directory)
             except Exception as exc:
@@ -259,12 +263,14 @@ class ProjectSaveProtocol:
                 previous_project,
                 previous_project_bytes,
                 target_project,
+                repository=self._projects,
             ),
             "variant": _journal_record(
                 variant_ref,
                 previous_variant,
                 previous_variant_bytes,
                 target_variant,
+                repository=self._variants,
             ),
         }
         document["manifest_digest"] = _manifest_digest(document)
@@ -285,7 +291,7 @@ class ProjectSaveProtocol:
             durable=True,
         )
         try:
-            loaded = _parse_manifest(self._filesystem.read_bytes(path), path)
+            loaded = _parse_manifest(self._filesystem.read_bytes(path), path, self._projects, self._variants)
         except Exception as exc:
             raise DomainError(
                 ErrorCategory.INTERNAL,
@@ -303,7 +309,7 @@ class ProjectSaveProtocol:
 
     def _recover_journal(self, path: str) -> str:
         try:
-            manifest = _parse_manifest(self._filesystem.read_bytes(path), path)
+            manifest = _parse_manifest(self._filesystem.read_bytes(path), path, self._projects, self._variants)
             project = manifest["project"]
             variant = manifest["variant"]
         except Exception as exc:
@@ -449,15 +455,18 @@ def _journal_record(
     previous: LoadedRecord,
     previous_bytes: bytes,
     target: ProjectDto | VariantDto,
+    *,
+    repository: object,
 ) -> dict[str, object]:
     if hashlib.sha256(previous_bytes).hexdigest() != previous.source_hash:
         raise ValueError("journal preimage bytes do not match their loaded digest")
-    previous_document = parse_json_bytes(previous_bytes)
-    previous_value = validate_v2(previous_document, ref)
+    previous_value = decode_validated_read(repository, ref, previous_bytes, validate=validate_v2).value
     target_document = target.envelope.to_dict()
     if isinstance(ref, ProjectRef) and version_of(target_document) < SCHEMA_VERSION:
         target_document = migrate_to_current(target_document, ref).document
-    validated_target = validate_v2(target_document, ref)
+    validated_target = decode_validated_read(
+        repository, ref, serialize_document(target_document), validate=validate_v2, reuse_unchanged=True
+    ).value
     normalized_target = validated_target.envelope.to_dict()
     previous_revision = previous_value.envelope.revision
     target_revision = validated_target.envelope.revision
@@ -475,7 +484,7 @@ def _journal_record(
     }
 
 
-def _parse_manifest(raw: bytes, path: str) -> dict[str, Any]:
+def _parse_manifest(raw: bytes, path: str, projects: object, variants: object) -> dict[str, Any]:
     document = json.loads(raw)
     if not isinstance(document, dict) or set(document) != _JOURNAL_KEYS:
         raise ValueError("journal manifest shape is invalid")
@@ -489,8 +498,8 @@ def _parse_manifest(raw: bytes, path: str) -> dict[str, Any]:
     manifest_digest = document["manifest_digest"]
     if not _is_sha256(manifest_digest) or _manifest_digest(document) != manifest_digest:
         raise ValueError("journal manifest digest does not match")
-    project = _parse_journal_record(document["project"], entity_type=EntityKind.PROJECT)
-    variant = _parse_journal_record(document["variant"], entity_type=EntityKind.VARIANT)
+    project = _parse_journal_record(document["project"], entity_type=EntityKind.PROJECT, repository=projects)
+    variant = _parse_journal_record(document["variant"], entity_type=EntityKind.VARIANT, repository=variants)
     if document["project_id"] != project["ref"].identity.value:
         raise ValueError("journal Project identity does not match its record")
     if document["variant_id"] != variant["ref"].identity.value:
@@ -504,7 +513,7 @@ def _parse_manifest(raw: bytes, path: str) -> dict[str, Any]:
     }
 
 
-def _parse_journal_record(data: object, *, entity_type: EntityKind) -> dict[str, Any]:
+def _parse_journal_record(data: object, *, entity_type: EntityKind, repository: object) -> dict[str, Any]:
     if not isinstance(data, dict) or set(data) != _RECORD_KEYS:
         raise ValueError("journal record shape is invalid")
     identity = data["identity"]
@@ -532,11 +541,11 @@ def _parse_journal_record(data: object, *, entity_type: EntityKind) -> dict[str,
     previous_document = parse_json_bytes(previous_bytes)
     if version_of(previous_document) != SCHEMA_VERSION:
         raise ValueError("journal preimage schema is not current")
-    previous = validate_v2(previous_document, ref)
+    previous = decode_validated_read(repository, ref, previous_bytes, validate=validate_v2).value
     target_document = data["target"]
     if not isinstance(target_document, dict):
         raise ValueError("journal target must be an object")
-    target = validate_v2(target_document, ref)
+    target = decode_validated_read(repository, ref, serialize_document(target_document), validate=validate_v2).value
     if hashlib.sha256(serialize_document(target_document)).hexdigest() != target_digest:
         raise ValueError("journal target digest does not match")
     previous_revision = data["previous_revision"]

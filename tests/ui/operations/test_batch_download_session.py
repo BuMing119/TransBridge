@@ -9,12 +9,16 @@ import pytest
 from tests.application.projects.test_categorized_upload import project as project  # noqa: F401
 from tests.ui.operations.test_production_facade import _runtime
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
+from transbridge.application.file_upload import upload_files
 from transbridge.application.io.paratranz_mapping import paratranz_record_from_entry
 from transbridge.application.projects import EntryStatePatch
 from transbridge.application.tasks import JobState, OwnerRef, TaskCancelled
-from transbridge.paratranz.batch_download_snapshot import BatchDownloadSnapshotReader
+from transbridge.paratranz.batch_download_snapshot import (
+    BatchDownloadRead,
+    BatchDownloadScope,
+    BatchDownloadSnapshotReader,
+)
 from transbridge.ui.operations.batch_download_session import BatchDownloadSession
-from transbridge.ui.operations.ordinary_upload_scope import ordinary_upload_path
 
 
 class Context:
@@ -90,8 +94,9 @@ def case(project):  # noqa: F811 - imported pytest fixture
         for source in snapshot.sources
     }
     gateway, membership = Gateway(), []
+    paths = {file.source_id: file.path for file in upload_files(snapshot.sources, categorized=False)}
     for index, source in enumerate(snapshot.sources, 1):
-        path = ordinary_upload_path(context, source.entries)
+        path = paths[source.source_id]
         gateway.files[path] = index
         gateway.rows[index] = [
             dict(
@@ -135,7 +140,7 @@ def case(project):  # noqa: F811 - imported pytest fixture
     )
 
 
-def compare(case, sources=None, policy="prefer_remote", decisions=()):
+def compare(case, sources=None, policy="keep_current", decisions=()):
     return case.session.compare(
         tuple(source.source_id for source in case.sources) if sources is None else sources,
         policy,
@@ -213,7 +218,8 @@ def test_batch_file_reads_and_one_real_commit_with_unsaved_state(case, monkeypat
     receipt = case.session.apply(lambda *_: None, case.cancel)
 
     assert receipt.updated == 2 and not receipt.requires_review
-    assert len(captures) == 1
+    assert len(captures) == 0
+    assert case.session.record["merges"]
     assert case.services.project_lifecycle.active.variant.revision == before + 1
     assert {translation for translation, _stage in states(case).values()} == {"云端1", "云端2"}
     assert case.gateway.calls == [("inventory", 42), ("file", 1), ("file", 2)]
@@ -233,17 +239,17 @@ def test_unselected_local_edit_is_preserved_without_another_cloud_read(case):
     assert case.gateway.calls == [("inventory", 42), ("file", 1)]
 
 
-def test_same_entry_new_edit_recompares_in_place_before_any_publication(case):
+def test_same_entry_new_edit_is_preserved_while_independent_results_are_published(case):
     compare(case)
     key = case.sources[0].entries[0].identity
     case.context.project_commands.update_entry(key, case.context.runtime_context, translation="刚改的", stage=1)
 
     first = case.session.apply(lambda *_: None, case.cancel)
 
-    assert first.requires_review and first.preview.updates == 1 and first.preview.deferred == 1
+    assert first.requires_review and first.updated == 1 and first.preview.deferred == 0
     assert states(case)[key] == ("刚改的", 1)
-    assert {translation for translation, _stage in states(case).values()} == {"刚改的", ""}
-    assert case.session.apply(lambda *_: None, case.cancel).updated == 1
+    assert "刚改的" in {translation for translation, _stage in states(case).values()}
+    assert case.session.apply(lambda *_: None, case.cancel).updated == 0
     assert states(case)[key] == ("刚改的", 1)
     assert len(case.gateway.calls) == 3
 
@@ -279,36 +285,41 @@ def test_normal_verification_status_upgrade_is_not_a_false_identity_change(case)
     assert session.apply(lambda *_: None, case.cancel).updated == 2
 
 
-@pytest.mark.parametrize("phase", ["snapshot", "commit"])
+@pytest.mark.parametrize("phase", ["evidence", "commit"])
 def test_failed_publication_preserves_every_source_and_can_retry(case, monkeypatch, phase):
     compare(case)
     before = states(case)
-    method = "save_snapshot" if phase == "snapshot" else "replace_entry_records"
     with monkeypatch.context() as patch:
-        patch.setattr(
-            case.context.project_commands,
-            method,
-            lambda *args, **kwargs: OperationResult.failed(
-                DomainError(ErrorCategory.INTERNAL, "DISK_FAILURE", "测试磁盘失败"),
-            ),
-        )
-        with pytest.raises(RuntimeError, match="测试磁盘失败"):
+        if phase == "evidence":
+
+            def fail(*args, **kwargs):
+                raise OSError("测试磁盘失败")
+
+            patch.setattr(case.session.result_store, "save_merge", fail)
+        else:
+            patch.setattr(
+                case.context.project_commands,
+                "merge_entry_states",
+                lambda *args, **kwargs: OperationResult.failed(
+                    DomainError(ErrorCategory.INTERNAL, "DISK_FAILURE", "测试磁盘失败"),
+                ),
+            )
+        with pytest.raises(RuntimeError):
             case.session.apply(lambda *_: None, case.cancel)
     assert states(case) == before
     assert case.session.apply(lambda *_: None, case.cancel).updated == 2
 
 
-def test_cancel_after_snapshot_before_commit_cannot_update_any_plugin(case, monkeypatch):
+def test_cancel_before_commit_cannot_update_any_plugin(case, monkeypatch):
     compare(case)
     before = states(case)
-    original = case.context.project_commands.save_snapshot
+    original = case.context.project_commands.merge_entry_states
 
-    def cancel_after_snapshot(*args):
-        result = original(*args)
+    def cancel_before_commit(*args, **kwargs):
         case.cancel.set()
-        return result
+        return original(*args, **kwargs)
 
-    monkeypatch.setattr(case.context.project_commands, "save_snapshot", cancel_after_snapshot)
+    monkeypatch.setattr(case.context.project_commands, "merge_entry_states", cancel_before_commit)
     with pytest.raises((RuntimeError, TaskCancelled)):
         case.session.apply(lambda *_: None, case.cancel)
     assert states(case) == before
@@ -361,7 +372,7 @@ def test_late_cancel_after_commit_keeps_completed_task_and_success_receipt(case)
     assert case.runtime.tasks.list(actor)[-1].state is JobState.COMPLETED
 
 
-def test_source_rename_automatically_relocates_current_path_before_confirmation(case):
+def test_source_rename_does_not_refetch_frozen_remote_result(case):
     selected = case.sources[0]
     compare(case, (selected.source_id,))
     active = case.services.project_lifecycle.active
@@ -382,14 +393,12 @@ def test_source_rename_automatically_relocates_current_path_before_confirmation(
     ).is_success
     case.gateway.files["新插件名.esp.json"] = 3
     case.gateway.rows[3] = [dict(row, id=300, fileId=3, translation="新路径译文") for row in case.gateway.rows[1]]
-    before = states(case)
 
     receipt = case.session.apply(lambda *_: None, case.cancel)
 
-    assert receipt.requires_review and any("新插件名.esp.json" in detail for detail in receipt.preview.details)
-    assert states(case) == before
-    assert case.session.apply(lambda *_: None, case.cancel).updated == 1
-    assert states(case)[selected.entries[0].identity][0] == "新路径译文"
+    assert not receipt.requires_review and receipt.updated == 1
+    assert states(case)[selected.entries[0].identity][0] == "云端1"
+    assert ("file", 3) not in case.gateway.calls
 
 
 def test_cross_cached_source_collision_is_recoverable_in_same_window(case):
@@ -447,6 +456,80 @@ def test_target_change_inside_runtime_guard_cannot_mutate_any_source(case, monke
     assert states(case) == before
 
 
+def test_preview_hashes_only_actual_merge_candidates(case, monkeypatch):
+    from transbridge.ui.operations import batch_download_results as results
+
+    case.gateway.rows[1] = [{**row, "translation": ""} for row in case.gateway.rows[1]]
+    signature = results.source_locator_signature
+    calls = []
+
+    def count_signature(*args):
+        calls.append(args)
+        return signature(*args)
+
+    monkeypatch.setattr(results, "source_locator_signature", count_signature)
+    preview = compare(case)
+    assert preview.updates == 1
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("field", ["metadata", "string_id", "fingerprint"])
+def test_preview_invalidates_review_when_source_locator_changes(case, field):
+    from transbridge.application.translation.result_merge import ResultConflictPolicy, merge_result_entries
+    from transbridge.ui.operations.batch_download_results import preview_entry_states, result_changes
+
+    compare(case, policy="defer")
+    source = case.sources[0]
+    key = source.entries[0].identity
+    case.context.project_commands.update_entry(key, case.context.runtime_context, translation="手改的", stage=1)
+    receipt = case.session.apply(lambda *_: None, case.cancel)
+    row = receipt.preview.review_rows[0]
+    reviewed = case.session.review_states[row.row_id]
+    snapshot = case.session._capture()
+    registrations = [dict(item) for item in case.context.project_sources]
+    if field == "fingerprint":
+        next(item for item in registrations if item["source_id"] == source.source_id)["fingerprint"] = "0" * 64
+    else:
+        snapshot = replace(
+            snapshot,
+            sources=tuple(
+                replace(
+                    item,
+                    entries=tuple(
+                        replace(
+                            entry,
+                            **{
+                                field: tuple({**dict(entry.metadata), "location": "changed"}.items())
+                                if field == "metadata"
+                                else "new"
+                            },
+                        )
+                        if entry.identity == key
+                        else entry
+                        for entry in item.entries
+                    ),
+                )
+                for item in snapshot.sources
+            ),
+        )
+    candidates = result_changes(case.session.plan)
+    plan = merge_result_entries(
+        {change.base.entry_key: change.base for change in candidates},
+        preview_entry_states(snapshot, registrations, {change.base.entry_key for change in candidates}),
+        {change.incoming.entry_key: change.incoming for change in candidates},
+        policy=ResultConflictPolicy.DEFER,
+        policies={key: ResultConflictPolicy.PREFER_INCOMING},
+        decision_states={key: reviewed},
+    )
+    assert any(conflict.entry_key == key and conflict.reason == "decision_stale" for conflict in plan.pending)
+    assert states(case)[key] == ("手改的", 1)
+    assert case.session.result_store.sources(
+        case.session.record,
+        scope_factory=BatchDownloadScope,
+        read_factory=BatchDownloadRead,
+    )
+
+
 def test_concurrent_new_edit_can_be_explicitly_kept_in_existing_review(case):
     compare(case)
     key = case.sources[0].entries[0].identity
@@ -458,8 +541,10 @@ def test_concurrent_new_edit_can_be_explicitly_kept_in_existing_review(case):
 
     preview = compare(case, decisions=((row.row_id, "keep_local"),))
 
-    assert preview.updates == 1 and preview.deferred == 0
-    assert case.session.apply(lambda *_: None, case.cancel).updated == 1
+    assert preview.updates == 0 and preview.deferred == 0
+    assert preview.review_rows[0].decision == "keep_local"
+    assert case.session.review_states[row.row_id].source_locator is not None
+    assert case.session.apply(lambda *_: None, case.cancel).updated == 0
     assert states(case)[key] == ("手改的", 1)
 
 

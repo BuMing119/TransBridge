@@ -1,24 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import replace
-import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QDialog
 import pytest
 
 from transbridge.ai_translator.translation_entry_outcomes import TranslationEntryOutcome
-from transbridge.config.llm import LLMConfig
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.projection_types import CollectionSlot
-from transbridge.ui.tools.ai_translator import _mixed_worker, task_session
+from transbridge.ui.tools.ai_translator import task_session
 from transbridge.ui.tools.ai_translator.source_execution import SourceOutcome
 from transbridge.ui.tools.ai_translator.task_progress import AiTaskProgressWindow
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 
 _APP = QApplication.instance() or QApplication([])
 
@@ -37,17 +33,16 @@ def test_unified_mixed_completion_distinguishes_rejecting_candidates_from_cancel
         active_version_identity = ("project", "variant")
         slots = {"plugin": slot}
         collection_changed = SimpleNamespace(emit=published.append)
-        uses_authoritative_projection = False
+        uses_authoritative_projection = True
 
         @property
         def collection(self):
             return slot.collection
 
     context = Context()
-    persistence = MagicMock()
-    persistence.commit_translation.return_value = {"ok": True}
-    persistence.create_snapshot.return_value = {"ok": True}
-    persistence.save_translation.return_value = {"ok": True}
+    from tests.ui.tools.test_ai_task_session import _Persistence
+
+    persistence = _Persistence(context, context.active_version_identity)
     monkeypatch.setattr(task_session, "VersionPersistence", lambda *_args: persistence)
     spec = SimpleNamespace(mode="mixed", run_id="run", execution_profile=SimpleNamespace(preview_enabled=True))
     source = SourceTask(
@@ -73,7 +68,12 @@ def test_unified_mixed_completion_distinguishes_rejecting_candidates_from_cancel
             setWindowTitle=lambda _title: None,
         ),
     )
-    window = AiTaskProgressWindow(SimpleNamespace(spec=spec, run_id="run"), session, MagicMock())
+    from tests.ui.tools.ai_runtime_support import admit_ai_request
+
+    request, activity = admit_ai_request(
+        SimpleNamespace(spec=spec, run_id="run"), session.tasks, identity=session.version_identity
+    )
+    window = AiTaskProgressWindow(request, session, activity)
     monkeypatch.setattr(window.run, "_record", lambda: None)
     window.run.preparing = False
     window.run.worker = SimpleNamespace(was_cancelled=False, stop=lambda: None)
@@ -103,80 +103,14 @@ def test_unified_mixed_completion_distinguishes_rejecting_candidates_from_cancel
     assert not session.can_save
     assert context.collection.get("one").translation == ("Translated" if committed else "")
     assert context.collection.get("two").translation == "旧译文"
-    assert collection.get("one").translation == ""
+    assert context.collection is collection
+    assert collection.get("one").translation == ("Translated" if committed else "")
+    assert collection.get("one").original == "Source"
+    assert collection.get("two").translation == "旧译文"
     assert published == ([context.collection] if committed else [])
-    assert persistence.commit_translation.call_count == int(committed)
+    assert len(persistence.commits) == int(committed)
     if preview_action == "reject_candidates":
         assert window.run.entries.entries[polish_entry.identity].decision == "rejected"
         assert polish_entry.identity not in window.run.entries.failed_keys
     window.run.worker = None
     window.close()
-
-
-def _worker(monkeypatch) -> _mixed_worker._MixedWorker:
-    monkeypatch.setattr(_mixed_worker, "WorkflowLogStore", lambda *_args, **_kwargs: MagicMock())
-    return _mixed_worker._MixedWorker(LLMConfig(), [object()], [object()], "parallel")
-
-
-def test_parallel_stage_errors_reach_error_signal_instead_of_completed(monkeypatch) -> None:
-    worker = _worker(monkeypatch)
-    errors = []
-    results = []
-    worker.error.connect(errors.append)
-    worker.completed.connect(results.append)
-
-    def translate():
-        raise RuntimeError("translator unavailable")
-
-    def polish():
-        raise ValueError("invalid term source")
-
-    worker._do_translate = translate
-    worker._do_polish = polish
-    worker.run()
-
-    assert results == []
-    assert len(errors) == 1
-    assert "translator unavailable" in errors[0]
-    assert "invalid term source" in errors[0]
-
-
-def test_failed_parallel_run_joins_successful_sibling_before_rollback(monkeypatch) -> None:
-    worker = _worker(monkeypatch)
-    sibling_started = threading.Event()
-    release_sibling = threading.Event()
-    order = []
-    state = {"translation": "before"}
-    results = []
-
-    def translate():
-        raise RuntimeError("translation setup failed")
-
-    def polish():
-        sibling_started.set()
-        assert release_sibling.wait(3)
-        state["translation"] = "late result"
-        order.append("sibling completed")
-        return SimpleNamespace()
-
-    def rollback(_message):
-        state["translation"] = "before"
-        order.append("rollback")
-
-    worker._do_translate = translate
-    worker._do_polish = polish
-    worker.error.connect(rollback, Qt.ConnectionType.DirectConnection)
-    worker.completed.connect(results.append, Qt.ConnectionType.DirectConnection)
-    runner = threading.Thread(target=worker.run)
-    runner.start()
-    try:
-        assert sibling_started.wait(3)
-        assert order == []
-        assert runner.is_alive()
-    finally:
-        release_sibling.set()
-        runner.join(3)
-    assert not runner.is_alive()
-    assert results == []
-    assert order == ["sibling completed", "rollback"]
-    assert state["translation"] == "before"

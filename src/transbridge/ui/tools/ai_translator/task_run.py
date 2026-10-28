@@ -8,8 +8,8 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from .request_state_presentation import RequestStatePresentation
 from .source_execution import SourceOutcome
+from .task_activity import ActivityBatch
 from .task_completion import TaskCompletion
-from .task_entry_results import TaskEntryResults
 from .task_progress_presentation import TaskProgressPresentation
 from .task_record_writer import TaskRecordWriter
 from .task_recovery_binding import TaskRecoveryBinding
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 class AiTaskRun(QObject):
     changed = pyqtSignal()
-    logged = pyqtSignal(str)
+    logged = pyqtSignal(object)
     preview_requested = pyqtSignal()
     translation_completed = pyqtSignal()
     completion_notice = pyqtSignal(object)
@@ -35,9 +35,7 @@ class AiTaskRun(QObject):
         self.request, self.session, self.activity = request, session, activity
         self.client, self.project_id = client, project_id
         self.consistency = consistency
-        self.entries = getattr(session, "initial_entry_results", None) or TaskEntryResults(
-            session.tasks, request.run_id
-        )
+        self.entries = session.initial_entry_results
         self._attempt_keys = set(self.entries.entries)
         self.applying = False
         self._attempt = 0
@@ -48,13 +46,12 @@ class AiTaskRun(QObject):
         self.rows = {task.key: ("等待", f"{len(task.entries)} 条") for task in session.tasks}
         self.selected_key = session.tasks[0].key if session.tasks else None
         self.state = "preparing"
-        self.status = "正在创建执行前快照"
+        self.status = "正在保存任务输入"
         self.save_status = ""
         self.result_summary = ""
         self.request_state = RequestStatePresentation(
             getattr(getattr(request, "config", None), "max_concurrent", 1), self
         )
-        self.snapshot_failed = False
         self.progress = (0, len(session.tasks), "已处理 %v/%m 个来源")
         self.progress_view = TaskProgressPresentation(session.tasks)
         self.pause_state = "running"
@@ -190,7 +187,7 @@ class AiTaskRun(QObject):
     def _source_log(self, key, text):
         event = concise_event(text)
         if event is not None and not self.completion_received:
-            self.logged.emit(f"{source_label(self.session.tasks, key)} · {event}")
+            self.logged.emit(ActivityBatch(((source_label(self.session.tasks, key), event),)))
 
     def _progress(self, key, stage, current, total, message):
         if self.cancelled or self.completion_received:
@@ -236,11 +233,9 @@ class AiTaskRun(QObject):
         if self.worker is None or self.completion_received or self.cancelled:
             return
         if self.worker.is_paused:
-            self.worker.resume()
             self.activity.resume()
         else:
             self._pause_changed("pausing")
-            self.worker.pause()
             self.activity.pause()
 
     def cancel(self):
@@ -257,8 +252,6 @@ class AiTaskRun(QObject):
         self.logged.emit("正在取消")
         self.session.rollback_uncommitted()
         self.activity.request_cancel()
-        if self.worker is not None:
-            self.worker.stop()
         if not self.preparing and (self.worker is None or self.completion_received):
             self._finish_cancelled()
         self.changed.emit()
@@ -294,9 +287,7 @@ class AiTaskRun(QObject):
                 self._completed(tuple(SourceOutcome(task, error="工作线程异常结束") for task in worker.tasks))
             self.worker = None
         worker.deleteLater()
-        unbind = getattr(self.activity, "unbind_worker", None)
-        if callable(unbind):
-            unbind(worker)
+        self.activity.unbind_worker(worker)
         if self.cancelled and not self.applying:
             self._finish_cancelled()
         if self.session.completed or self.cancelled or self.state == "error" or self.runtime_binding.is_failed:
@@ -341,7 +332,7 @@ class AiTaskRun(QObject):
             if not self.cancelled:
                 self.status = "已完成" if self.session.completed else "成功结果已保存 · 可重试失败条目"
             if not self.session.is_busy:
-                self.save_status = "项目已保存 · 快照未创建"
+                self.save_status = "项目已保存"
             self._record()
             self.changed.emit()
 
@@ -361,6 +352,7 @@ class AiTaskRun(QObject):
 
     def shutdown(self):
         self.shutting_down = True
+        self.completion.reset()
         if not self.session.completed and not self.cancelled:
             self.cancel()
 

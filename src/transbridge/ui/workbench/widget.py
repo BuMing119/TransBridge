@@ -396,13 +396,13 @@ class WorkbenchWidget(QWidget):
             return
         slot = self._ctx.slots.get(active)
         label = slot.label if slot else active
-        if self._ctx.uses_authoritative_projection:
-            scope = (
-                "范围：从当前工程移除此内容、译文状态，以及已合并的汉化来源登记，不删除磁盘上的源文件。\n"
-                "保存后重新打开工程，此内容也不会恢复。重新导入源文件不能保证恢复工程内的译文编辑。"
-            )
-        else:
-            scope = "范围：仅从当前工作台移除已解析数据，不删除源文件。\n恢复方式：之后可重新导入同一来源。"
+        if self._ctx.project_commands is None or self._ctx.runtime_context is None:
+            QMessageBox.warning(self, "移除未执行", "请先打开工程，再移除工程内容。")
+            return
+        scope = (
+            "范围：从当前工程移除此内容、译文状态，以及已合并的汉化来源登记，不删除磁盘上的源文件。\n"
+            "保存后重新打开工程，此内容也不会恢复。重新导入源文件不能保证恢复工程内的译文编辑。"
+        )
         ret = QMessageBox.question(
             self,
             "移除集合",
@@ -411,15 +411,14 @@ class WorkbenchWidget(QWidget):
             QMessageBox.StandardButton.No,
         )
         if ret == QMessageBox.StandardButton.Yes:
-            if self._ctx.uses_authoritative_projection:
-                removed = self._ctx.project_commands.remove_source(active, self._ctx.runtime_context)
-                if not removed.is_success:
-                    diagnostic = removed.diagnostics[0]
-                    message = (
-                        "移除未能完成，工程内容未改变。请查看日志中的错误详情。"
-                        if diagnostic.code == "ACTIVE_CONTENT_CHANGE_FAILED"
-                        else diagnostic.message
-                    )
-                    QMessageBox.warning(self, "移除失败", message)
-                    return
+            removed = self._ctx.project_commands.remove_source(active, self._ctx.runtime_context)
+            if not removed.is_success:
+                diagnostic = removed.diagnostics[0]
+                message = (
+                    "移除未能完成，工程内容未改变。请查看日志中的错误详情。"
+                    if diagnostic.code == "ACTIVE_CONTENT_CHANGE_FAILED"
+                    else diagnostic.message
+                )
+                QMessageBox.warning(self, "移除失败", message)
+                return
             self._ctx.remove_slot(active)

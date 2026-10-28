@@ -115,6 +115,15 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
     if err:
         return err
 
+    from .entry_task_results import EntryTaskResults
+
+    task = EntryTaskResults(
+        ctx,
+        target.collection,
+        kind="source" if action == "create_slot" else "import",
+        inputs={"path": path, "action": action, "file_type": file_type},
+    )
+
     dispatch = _PARSER_DISPATCH[file_type]
     source_snapshot = None
     format_id = None
@@ -123,7 +132,14 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
         if file_type == "json":
             from ._json_import import parse_json_source
 
-            collection, source_snapshot, format_id, options = parse_json_source(path, args)
+            parsed_json = parse_json_source(path, args)
+            collection, source_snapshot, format_id, options = parsed_json
+            task.record.update(
+                parse_outcome=parsed_json.outcome.value,
+                parse_diagnostics=[item.to_dict() for item in parsed_json.diagnostics],
+                raw_entries=list(parsed_json.raw_entries),
+                parse_unmapped=list(parsed_json.unmapped),
+            )
         elif "format_id" in dispatch:
             from transbridge.application.contracts import OperationOutcome, RequestContext
             from transbridge.application.io import (
@@ -149,6 +165,9 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
                 return ToolResult.fail(f"解析 {dispatch['label']} 失败: {message}")
             collection = _to_collection(parsed.entries)
             source_snapshot = parsed.source_snapshot
+            task.record.update(
+                parse_outcome=parsed.outcome.value, parse_diagnostics=[item.to_dict() for item in parsed.diagnostics]
+            )
         else:
             import importlib
 
@@ -165,6 +184,7 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
             format_id,
             action,
             options,
+            task=task,
         )
     except Exception as exc:
         return ToolResult.fail(f"解析 {dispatch['label']} 失败: {_sanitize_error(technical_error(exc), path)}")

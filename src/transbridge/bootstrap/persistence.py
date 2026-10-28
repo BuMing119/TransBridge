@@ -38,10 +38,12 @@ from transbridge.persistence.project_lifecycle_uow import RepositoryLifecycleUni
 from transbridge.persistence.project_management import ProjectManagementStore
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
 from transbridge.persistence.project_snapshots import ProjectSnapshotRepository
+from transbridge.persistence.saved_project_sources import SavedProjectSourcePreparer
 from transbridge.persistence.session_lifecycle import (
     SessionUnitOfWorkFactory,
     V2SessionSnapshotRepository,
 )
+from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
 from transbridge.persistence.source_update_store import ProjectSourceUpdateStore
 from transbridge.persistence.v2 import (
     OsPersistenceFilesystem,
@@ -50,7 +52,7 @@ from transbridge.persistence.v2 import (
     SessionRepository,
     VariantRepository,
 )
-from transbridge.persistence.v2.baselines import BaselineRegistry, LegacyIdentityRegistry
+from transbridge.persistence.v2.baselines import BaselineRegistry
 from transbridge.persistence.v2.lifecycle_transactions import (
     ProjectLifecycleTransactionStore,
     SessionLifecycleTransactionStore,
@@ -69,7 +71,6 @@ class PersistenceV2Services:
     sessions: SessionRepository
     session_catalog: SessionCatalogRepository
     baselines: BaselineRegistry
-    legacy_identities: LegacyIdentityRegistry
     project_lifecycle: ProjectLifecycleService
     project_management: ProjectManagementCommands
     project_provisioning: ProjectProvisioningService
@@ -92,7 +93,6 @@ class PersistenceV2Services:
         self.project_projection.close()
         self.session_projection.close()
         self.baselines.close()
-        self.legacy_identities.close()
 
 
 def build_persistence_v2_services(
@@ -110,7 +110,6 @@ def build_persistence_v2_services(
     sessions = SessionRepository(resolved_root, adapter)
     session_catalog = SessionCatalogRepository(resolved_root, adapter)
     baselines = BaselineRegistry()
-    identities = LegacyIdentityRegistry()
     # Recover all Project publication protocols before catalog reads/repair.
     project_store = ProjectLifecycleTransactionStore(resolved_root, adapter, projects, variants, baselines)
     source_update_store = ProjectSourceUpdateStore(resolved_root, adapter, projects, variants)
@@ -152,7 +151,10 @@ def build_persistence_v2_services(
     project_management = ProjectManagementCommands(project_lifecycle, project_management_store, baselines)
     snapshot_repository = ProjectSnapshotRepository(resolved_root, adapter)
     project_snapshots = ProjectSnapshotCommands(project_lifecycle, snapshot_repository)
-    resolved_source_preparer = source_preparer or TranslationIoProjectSourcePreparer()
+    source_artifacts = ProjectSourceArtifactStore(resolved_root, adapter)
+    resolved_source_preparer = SavedProjectSourcePreparer(
+        source_preparer or TranslationIoProjectSourcePreparer(), source_artifacts
+    )
     project_archive = ProjectArchiveService(
         resolved_root,
         adapter,
@@ -162,6 +164,7 @@ def build_persistence_v2_services(
         snapshot_repository,
         id_factory=id_factory,
         source_preparer=resolved_source_preparer,
+        source_artifact_store=source_artifacts,
     )
     project_provisioning = ProjectProvisioningService(
         project_lifecycle,
@@ -188,7 +191,6 @@ def build_persistence_v2_services(
 
     gui_project_commands = GuiProjectCommandFacade(
         project_lifecycle,
-        identities,
         project_publisher.rebuild,
         projects=projects,
         variants=variants,
@@ -208,6 +210,9 @@ def build_persistence_v2_services(
         baselines,
         gui_project_commands,
         source_preparer=resolved_source_preparer,
+        prepare_projection=project_publisher.prepare,
+        source_artifacts=source_artifacts,
+        discard_prepared_projection=project_publisher.discard_prepared,
     )
 
     session_projection = ProjectionStore()
@@ -250,7 +255,6 @@ def build_persistence_v2_services(
         sessions=sessions,
         session_catalog=session_catalog,
         baselines=baselines,
-        legacy_identities=identities,
         project_lifecycle=project_lifecycle,
         project_management=project_management,
         project_provisioning=project_provisioning,

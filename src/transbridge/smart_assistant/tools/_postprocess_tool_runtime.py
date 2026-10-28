@@ -73,6 +73,7 @@ class PostprocessTaskResult:
     completion_data: dict[str, object]
     cancelled: bool
     committed: bool
+    report_snapshot: object
 
 
 def resolve_postprocess_request(args: dict, ctx, collection) -> PostprocessToolRequest:
@@ -151,14 +152,13 @@ def execute_postprocess_task(
     from transbridge.application.contracts import OperationOutcome, RequestContext
     from transbridge.application.io import StagePolicy
     from transbridge.application.translation import (
-        FilesystemPostProcessCheckpointPort,
-        FilesystemTranslationCheckpointPort,
+        InMemoryPostProcessCheckpointPort,
+        InMemoryTranslationCheckpointPort,
         PostProcessExecutionService,
         PostProcessWorkload,
         TranslationInput,
         render_report_bundle,
     )
-    from transbridge.paratranz.config_manager import ParatranzConfig
 
     config = request.effective_config
     if not getattr(config, "api_key", ""):
@@ -178,12 +178,14 @@ def execute_postprocess_task(
     )
     try:
         stages = _build_stages(request, llm_runtime.client, term_manager, PostProcessor, PostProcessorConfig)
-        checkpoint_root = Path(ParatranzConfig.get_data_dir()) / "checkpoints"
+        # The detached run's canonical ledger is persisted by AssistantTaskResults.
+        # Draft checkpoints must not add an earlier disk-failure boundary that
+        # could discard validated model results before the ledger receives them.
         workload = PostProcessWorkload(
             stages,
             stage_policy=StagePolicy(),
             stage_names=request.stages,
-            checkpoint_port=FilesystemPostProcessCheckpointPort(checkpoint_root / "postprocess"),
+            checkpoint_port=InMemoryPostProcessCheckpointPort(),
         )
         context = _request_context(ctx, task_id, RequestContext)
         from transbridge.ai_translator.project_terminology_adapter import plugin_id_from_entry
@@ -206,7 +208,7 @@ def execute_postprocess_task(
             collection=collection,
             context=context,
             commit_guard=commit_guard,
-            commit_checkpoint=FilesystemTranslationCheckpointPort(checkpoint_root / "translation"),
+            commit_checkpoint=InMemoryTranslationCheckpointPort(),
             is_cancelled=stop_event.is_set,
             run_spec_summary={**request.metadata, "model": str(getattr(config, "model", ""))},
         )
@@ -234,21 +236,12 @@ def execute_postprocess_task(
                 "log_dir",
             )
         }
-        if execution.report_result.value is None and execution.report_result.outcome is not OperationOutcome.CANCELLED:
-            codes = ", ".join(item.code for item in execution.report_result.diagnostics)
-            raise RuntimeError(f"后处理候选阶段失败: {codes or 'POSTPROCESS_FAILED'}")
-        if execution.commit_result is not None and execution.commit_result.outcome not in {
-            OperationOutcome.COMPLETED,
-            OperationOutcome.PARTIAL,
-            OperationOutcome.CANCELLED,
-        }:
-            codes = ", ".join(item.code for item in execution.commit_result.diagnostics)
-            raise RuntimeError(f"后处理提交失败: {codes or 'POSTPROCESS_COMMIT_FAILED'}")
         return PostprocessTaskResult(
             report_data,
             completion_data,
             execution.outcome is OperationOutcome.CANCELLED,
             execution.commit_result is not None and execution.commit_result.is_success,
+            report,
         )
     finally:
         llm_runtime.close()

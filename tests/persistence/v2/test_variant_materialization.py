@@ -16,6 +16,7 @@ from transbridge.persistence.v2 import (
     SourceBaseline,
     SourceFingerprint,
     VariantAggregate,
+    VariantChangeSet,
     VariantEntryState,
     VariantId,
     VariantMaterializer,
@@ -63,6 +64,20 @@ def _context(ref: VariantRef) -> RequestContext:
         project_id=ref.project_id.value,
         variant_id=ref.identity.value,
     )
+
+
+def test_aggregate_reuses_immutable_snapshot_until_a_successful_commit():
+    namespace, fingerprint = _source("esp", "a" * 64)
+    initial = VariantSnapshot(_ref(), (fingerprint,), (_state(namespace, "one"), _state(namespace, "two")))
+    aggregate = VariantAggregate(initial)
+    assert aggregate.snapshot() is initial
+    assert aggregate.snapshot() is aggregate.snapshot()
+    changed = (replace(initial.entries[0], translation="changed"), initial.entries[1])
+    aggregate.commit(VariantChangeSet(_ref(), 0, (fingerprint,), changed, (), "run-1"), _context(_ref()))
+    after = aggregate.snapshot()
+    assert aggregate.snapshot() is after and after is not initial
+    assert after.entries[1] is initial.entries[1]
+    assert initial.entries[0].translation == ""
 
 
 def test_snapshot_roundtrip_preserves_explicit_empty_stage_labels_and_provenance() -> None:

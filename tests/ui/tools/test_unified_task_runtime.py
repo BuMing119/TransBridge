@@ -8,14 +8,15 @@ from unittest.mock import Mock
 from PyQt6.QtWidgets import QApplication
 import pytest
 
+from tests.ui.tools.ai_runtime_support import ai_task_runtime
 from transbridge.application.io.identity import EntryKey, SourceNamespace
+from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.tools.ai_translator import task_launch, task_progress, task_runtime, task_session
 from transbridge.ui.tools.ai_translator.run_controller import RunController
 from transbridge.ui.tools.ai_translator.run_spec import AiPreflightCode, AiPreflightIssue, AiPreflightResult
-from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 from transbridge.ui.tools.ai_translator.term_source_inspector import TermSourceInspector
 
 
@@ -62,7 +63,7 @@ def launch(monkeypatch, qapp):
         active_version_identity=("project", "variant"),
         config=object(),
     )
-    controller = RunController()
+    controller = RunController(task_runtime=ai_task_runtime())
     window = SimpleNamespace(
         _ctx=context,
         _config_presenter=SimpleNamespace(build=lambda: config),
@@ -82,8 +83,12 @@ def launch(monkeypatch, qapp):
 
     window.close = close
 
+    create_activity = controller.create_activity
+
     def activity(request):
-        value = SimpleNamespace(request=request, fail=lambda message: events.append(("failed", message)))
+        value = create_activity(request)
+        fail = value.fail
+        value.fail = lambda message: (events.append(("failed", message)), fail(message))[-1]
         activities.append(value)
         return value
 
@@ -96,6 +101,9 @@ def launch(monkeypatch, qapp):
             self.ctx = ctx
             self.project_dir = project_dir
             self.identity = ctx.active_version_identity
+            from transbridge.application.translation.task_entry_results import TaskEntryResults
+
+            self.initial_entry_results = TaskEntryResults(tasks, "launching")
 
         @classmethod
         def create_async(cls, ctx, tasks, spec, *, project_dir=None, on_success, on_error, parent=None, **kwargs):
@@ -113,6 +121,9 @@ def launch(monkeypatch, qapp):
 
             QTimer.singleShot(0, deliver)
             return capture
+
+        def bind_run_identity(self, run_id):
+            self.initial_entry_results.run_id = run_id
 
         def require_current(self):
             if self.ctx.active_version_identity != self.identity:

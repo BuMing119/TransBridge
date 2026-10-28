@@ -216,7 +216,9 @@ def test_real_project_publication_rejects_inactive_or_stale_permit(state, monkey
         project_revision=0,
         variant_revision=0,
         uses_authoritative_projection=True,
-        project_commands=GuiProjectCommandFacade(lifecycle, None),
+        project_commands=GuiProjectCommandFacade(
+            lifecycle, categorized_uploads=SimpleNamespace(result_source_texts=lambda *_args: {key: ("Source", "")})
+        ),
         runtime_context=context,
     )
     persistence = VersionPersistence(ctx, ctx.active_version_identity)
@@ -235,7 +237,19 @@ def test_real_project_publication_rejects_inactive_or_stale_permit(state, monkey
             runtime.pause(request.runtime_ref, request.spec.owner)
         else:
             monkeypatch.setattr(runtime, "try_commit", race)
-        result = persistence.commit_translation((entry,), commit_mutation=activity.commit_mutation)
+        from transbridge.application.translation.result_merge import (
+            ResultConflictPolicy,
+            ResultEntryChange,
+            ResultEntryState,
+        )
+
+        base = ResultEntryState(key, "Source", "", 0)
+        incoming = ResultEntryState(key, "Source", entry.translation, entry.stage)
+        result = persistence.merge_translation(
+            (ResultEntryChange(base, incoming),),
+            ResultConflictPolicy.KEEP_CURRENT,
+            commit_mutation=activity.commit_mutation,
+        )
         assert not result.is_success
         assert aggregate.revision == lifecycle.generation == 0
         assert aggregate.snapshot().entries[0].translation == ""

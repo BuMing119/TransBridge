@@ -33,8 +33,6 @@ from .mappers import (
     FomodOperationMapper,
     OperationPlanDraft,
 )
-from .paratranz_dialog import ParaTranzSyncDialog
-from .paratranz_sync import build_paratranz_sync_features
 from .plan_dialog import OperationPlanDialog
 from .plan_view import EditableControl, EditableFieldState, OperationKind
 from .preflight_view import PreflightCheckState, PreflightCheckStatus
@@ -61,11 +59,9 @@ def build_operation_plan_facade(
     *,
     dialog_factory=OperationPlanDialog,
 ) -> OperationPlanFacade:
-    """Build all four concrete GUI operation adapters from process services.
+    """Compose current transfer launchers and write/FOMOD plan adapters.
 
-    This constructor performs no remote or formal-file side effect.  ParaTranz
-    snapshots are fetched by the ParaTranz dialog's automatic check; writes
-    and FOMOD publication are scheduled only after final confirmation.
+    This constructor performs no remote or formal-file side effect.
     """
 
     context_factory = _context_factory(runtime_context)
@@ -150,17 +146,12 @@ def build_operation_plan_facade(
 
     def read_result(ref, owner):
         snapshot = runtime.tasks.get(ref, owner)
-        if snapshot.specification.job_type in {
-            "operation.fomod",
-            "operation.paratranz.upload",
-            "operation.paratranz.download",
-        }:
+        if snapshot.specification.job_type == "operation.fomod":
             with cache_lock:
                 return retained_results.get(ref.run_id)
         return operation_tasks.result(ref, owner)
 
     features = (
-        *build_paratranz_sync_features(runtime, on_result=retain_result),
         build_write_feature(context_factory, operation_tasks, write_preflights),
         OperationFeatureAdapter(
             OperationKind.FOMOD,
@@ -174,8 +165,6 @@ def build_operation_plan_facade(
     dialog_factories = None
     if dialog_factory is OperationPlanDialog:
         dialog_factories = {
-            OperationKind.UPLOAD: ParaTranzSyncDialog,
-            OperationKind.DOWNLOAD: ParaTranzSyncDialog,
             OperationKind.WRITE: WritePlanDialog,
             OperationKind.FOMOD: FomodPlanDialog,
         }
@@ -186,10 +175,10 @@ def build_operation_plan_facade(
         dialog_factory=dialog_factory,
         dialog_factories=dialog_factories,
         execution_result_reader=read_result,
-        upload_launcher=open_file_upload if dialog_factory is OperationPlanDialog else None,
-        download_launcher=(lambda context: open_batch_download(context, runtime))
-        if dialog_factory is OperationPlanDialog
-        else None,
+        upload_launcher=open_file_upload,
+        download_launcher=(
+            lambda context, **values: open_batch_download(context, runtime, **({"values": values} if values else {}))
+        ),
     )
     return facade
 

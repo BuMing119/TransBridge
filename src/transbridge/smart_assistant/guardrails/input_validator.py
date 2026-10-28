@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 import re
 
+from transbridge.application.assistant_requests.models import RequestError
 from transbridge.application.security.paths import PathAuthorizationPolicy, PathGrant
 from transbridge.application.tools.schema import validate_arguments
 
@@ -76,6 +77,16 @@ class InputValidationGuard(GuardMiddleware):
         path_values = tuple(self._iter_path_values(args))
         if not path_values:
             return GuardResult(True)
+        if output_path:
+            from ..tools.file_undo_capture import authorize_file_outputs
+
+            try:
+                authorize_file_outputs(ctx, (value for _key, value, _creation in path_values))
+            except RequestError as exc:
+                return GuardResult(False, str(exc), code=exc.code)
+            except (OSError, RuntimeError):
+                return GuardResult(False, "授权根无法安全解析", code="PATH_GRANT_INVALID")
+            return GuardResult(True)
         request_context = getattr(ctx, "request_context", None)
         roots = tuple(getattr(request_context, "authorized_roots", ()) or ())
         if not roots:
@@ -104,7 +115,7 @@ class InputValidationGuard(GuardMiddleware):
             decision = policy.authorize(
                 value,
                 working_directory=base,
-                for_creation=for_creation or (output_path and key == "path"),
+                for_creation=for_creation,
             )
             if not decision.allowed:
                 logger.warning("InputValidation: 路径参数 '%s' 被拒绝: %s", key, decision.code)

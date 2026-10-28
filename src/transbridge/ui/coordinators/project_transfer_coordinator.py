@@ -1,271 +1,221 @@
-from pathlib import Path, Path as PathLib
+"""Qt interactions for authoritative project snapshots and portable archives."""
 
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from __future__ import annotations
 
-from transbridge.persistence import (
-    PERSISTENCE_ROOT,
-    ProjectHandle,
-    VariantStore,
-    WorkspaceState,
-    workspace_path,
-)
+from dataclasses import replace
+from uuid import uuid4
+
+from PyQt6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 
 
 class ProjectTransferCoordinator:
-    """Own one application-shell interaction slice."""
-
     def __init__(self, host) -> None:
         self._host = host
 
-    def save_snapshot(self):
-        """另存为快照。"""
-        if getattr(self._host.context, "uses_authoritative_projection", False):
-            from .v2_project_transfer import V2ProjectTransferCoordinator
-
-            return V2ProjectTransferCoordinator(self._host).save_snapshot()
-        proj = self._host.context.active_project
-        vs = self._host.context.variant_store
-        if not proj or not vs:
-            return
-        from PyQt6.QtWidgets import QInputDialog
-
-        name, ok = QInputDialog.getText(self._host, "另存为快照", "快照名称:")
-        if not ok or not name.strip():
-            return
-        snap_dir = proj.variant_dir(self._host.context.active_variant) / "snapshots"
-        self._host.start_foreground_task(
-            lambda: vs.save_snapshot(snap_dir, name.strip()),
-            message="正在保存快照…",
-            on_result=lambda dest: QMessageBox.information(
-                self._host,
-                "快照已保存",
-                f"快照已保存到:\n{dest}",
-            ),
-            on_error=lambda error: QMessageBox.warning(self._host, "快照保存失败", error),
+    def _context(self):
+        return replace(
+            self._host.runtime_context,
+            project_id=self._host.context.active_project_id,
+            variant_id=self._host.context.active_variant_id,
+            run_id=f"project-transfer-{uuid4().hex}",
         )
 
-    def load_snapshot(self):
-        """加载快照。"""
-        if getattr(self._host.context, "uses_authoritative_projection", False):
-            from .v2_project_transfer import V2ProjectTransferCoordinator
+    def _service(self, name):
+        return self._host.app_runtime.use_cases.resolve(name)
 
-            return V2ProjectTransferCoordinator(self._host).load_snapshot()
-        proj = self._host.context.active_project
-        if not proj:
+    def save_snapshot(self) -> None:
+        if not self._host.context.active_variant_id:
+            QMessageBox.warning(self._host, "快照", "请先打开一个翻译版本。")
             return
-        variant_name = self._host.context.active_variant or proj.active_variant
-        snap_dir = proj.variant_dir(variant_name) / "snapshots"
+        name, ok = QInputDialog.getText(self._host, "创建历史还原点", "快照名称:")
+        if not ok or not name.strip():
+            return
+        context = self._context()
+        self._host.start_foreground_task(
+            lambda: self._host.project_commands.save_snapshot(name.strip(), context),
+            message="正在保存快照…",
+            on_result=lambda result: self._finish(result, "快照已保存"),
+        )
 
-        def _choose_snapshot(snapshots) -> None:
+    def load_snapshot(self) -> None:
+        if not self._host.context.active_variant_id:
+            QMessageBox.warning(self._host, "快照", "请先打开一个翻译版本。")
+            return
+        context = self._context()
+        service = self._service("project_snapshots")
+
+        def choose(snapshots):
             if not snapshots:
                 QMessageBox.information(self._host, "无快照", "当前版本无可用快照。")
                 return
-            items = [f"{item['name']} ({item['updated'][:19]})" for item in snapshots]
-            from PyQt6.QtWidgets import QInputDialog
-
-            choice, ok = QInputDialog.getItem(self._host, "加载快照", "选择快照:", items, 0, False)
+            items = [f"{item.name}（修订 {item.revision} · {item.identity[:8]}）" for item in snapshots]
+            choice, ok = QInputDialog.getItem(self._host, "载入历史还原点", "选择快照:", items, 0, False)
             if not ok:
                 return
-            snap_path = PathLib(snapshots[items.index(choice)]["path"])
-            mb = QMessageBox(
-                QMessageBox.Icon.Warning,
+            selected = snapshots[items.index(choice)]
+            answer = QMessageBox.question(
+                self._host,
                 "确认加载",
-                "加载快照将覆盖当前版本数据。\n建议先保存当前修改。\n是否继续？",
-                parent=self._host,
+                "加载快照将替换当前版本内容，并成为未保存修改。\n加载前会自动为当前内容创建还原点。是否继续？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
-            btn_save = mb.addButton("保存后加载", QMessageBox.ButtonRole.AcceptRole)
-            btn_load = mb.addButton("直接加载", QMessageBox.ButtonRole.DestructiveRole)
-            btn_cancel = mb.addButton("取消", QMessageBox.ButtonRole.RejectRole)
-            mb.exec()
-            clicked = mb.clickedButton()
-            if clicked == btn_cancel:
+            if answer != QMessageBox.StandardButton.Yes:
                 return
 
-            def _load() -> None:
-                self._host.start_foreground_task(
-                    lambda: VariantStore.load_snapshot(snap_path),
-                    message="正在加载快照…",
-                    on_result=lambda store: self._host.variant_coordinator.switch_to_variant(proj, variant_name, store),
-                    on_error=lambda error: QMessageBox.warning(self._host, "快照加载失败", error),
-                )
+            def restore():
+                backup = self._host.project_commands.save_snapshot(f"恢复前-{context.run_id}", context)
+                if not backup.is_success:
+                    return backup
+                return service.restore(selected.identity, context)
 
-            if clicked == btn_save:
-                self._host.save_current_project_async(on_finished=lambda saved: saved and _load())
-            elif clicked == btn_load:
-                _load()
+            self._host.start_foreground_task(
+                restore,
+                message="正在加载快照…",
+                on_result=lambda result: self._finish(result, "快照已加载，请保存当前翻译版本"),
+            )
 
         self._host.start_foreground_task(
-            lambda: VariantStore.list_snapshots(snap_dir),
+            lambda: service.list(context),
             message="正在读取快照列表…",
-            on_result=_choose_snapshot,
-            on_error=lambda error: QMessageBox.warning(self._host, "快照读取失败", error),
+            on_result=choose,
         )
 
-    def delete_snapshot(self):
-        """Delete one formally owned V3 snapshot."""
+    def delete_snapshot(self) -> None:
+        if not self._host.context.active_variant_id:
+            QMessageBox.warning(self._host, "快照", "请先打开一个翻译版本。")
+            return
+        context = self._context()
+        service = self._service("project_snapshots")
 
-        if getattr(self._host.context, "uses_authoritative_projection", False):
-            from .v2_project_transfer import V2ProjectTransferCoordinator
+        def choose(snapshots):
+            if not snapshots:
+                QMessageBox.information(self._host, "无快照", "当前版本无可删除的历史还原点。")
+                return
+            items = [f"{item.name}（修订 {item.revision} · {item.identity[:8]}）" for item in snapshots]
+            choice, ok = QInputDialog.getItem(self._host, "删除历史还原点", "选择快照:", items, 0, False)
+            if not ok:
+                return
+            selected = snapshots[items.index(choice)]
+            answer = QMessageBox.warning(
+                self._host,
+                "确认删除历史还原点",
+                f"将永久删除“{selected.name}”。此操作不可撤销，是否继续？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            self._host.start_foreground_task(
+                lambda: service.delete(selected.identity, context),
+                message="正在删除历史还原点…",
+                on_result=lambda result: self._finish(result, "历史还原点已删除"),
+            )
 
-            return V2ProjectTransferCoordinator(self._host).delete_snapshot()
-        QMessageBox.information(
-            self._host,
-            "快照",
-            "旧版工程快照不支持在此处删除；请先迁移为当前工程格式。",
+        self._host.start_foreground_task(
+            lambda: service.list(context),
+            message="正在读取快照列表…",
+            on_result=choose,
         )
 
-    def export_transbridge(self):
-        """导出项目为 .transbridge ZIP 文件。"""
-        if getattr(self._host.context, "uses_authoritative_projection", False):
-            from .v2_project_transfer import V2ProjectTransferCoordinator
-
-            return V2ProjectTransferCoordinator(self._host).export_transbridge()
-        proj = self._host.context.active_project
-        if not proj:
+    def export_transbridge(self) -> None:
+        if not self._host.context.active_project_id:
             QMessageBox.warning(self._host, "导出", "请先打开一个项目。")
             return
-
         path, _ = QFileDialog.getSaveFileName(
             self._host,
             "导出 .transbridge",
-            f"{proj.name}.transbridge",
+            f"{self._host.context.project_name}.transbridge",
             "TransBridge 项目 (*.transbridge);;所有文件 (*)",
         )
         if not path:
             return
+        context = self._context()
 
-        proj_dir = proj.project_dir
+        def start(saved):
+            if saved:
+                self._host.start_foreground_task(
+                    lambda: self._service("project_archive").export_project(path, context),
+                    message="正在导出项目包…",
+                    on_result=lambda target: QMessageBox.information(
+                        self._host, "导出完成", f"项目已导出到:\n{target}"
+                    ),
+                )
 
-        def _export() -> str:
-            import zipfile
+        self._host.save_current_project_async(on_finished=start)
 
-            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
-                for source in proj_dir.rglob("*.json"):
-                    archive.write(source, str(source.relative_to(proj_dir)))
-            return path
-
-        def _start_export(saved: bool) -> None:
-            if not saved:
-                return
-            self._host.start_foreground_task(
-                _export,
-                message="正在导出项目包…",
-                on_result=lambda target: QMessageBox.information(
-                    self._host,
-                    "导出完成",
-                    f"项目「{proj.name}」已导出到:\n{target}",
-                ),
-                on_error=lambda error: QMessageBox.warning(self._host, "导出失败", error),
-            )
-
-        self._host.save_current_project_async(on_finished=_start_export)
-
-    def import_transbridge(self, path: str | None = None):
-        """导入 .transbridge 文件。"""
-        if getattr(self._host.context, "uses_authoritative_projection", False):
-            from .v2_project_transfer import V2ProjectTransferCoordinator
-
-            return V2ProjectTransferCoordinator(self._host).import_transbridge(path)
+    def import_transbridge(self, path: str | None = None) -> None:
         if path is None:
             path, _ = QFileDialog.getOpenFileName(
-                self._host, "导入 .transbridge", "", "TransBridge 项目 (*.transbridge);;所有文件 (*)"
+                self._host,
+                "导入 .transbridge 项目包",
+                "",
+                "TransBridge 项目 (*.transbridge)",
             )
         if not path:
             return
+        context = replace(self._host.runtime_context, project_id=None, variant_id=None, run_id=uuid4().hex)
 
-        def _inspect_archive():
-            import json
-            import shutil
-            import zipfile
-
-            from transbridge.persistence._utils import validate_name
-
-            with zipfile.ZipFile(path, "r") as archive:
-                if "project.json" not in archive.namelist():
-                    raise ValueError("无效的 .transbridge 文件：缺少 project.json")
-                for member in archive.namelist():
-                    member_path = Path(member)
-                    if member_path.is_absolute() or ".." in member_path.parts:
-                        raise ValueError(f".transbridge 包含非法路径: {member}")
-                total_size = sum(info.file_size for info in archive.infolist())
-                project_data = json.loads(archive.read("project.json").decode("utf-8"))
-                project_name = validate_name(project_data.get("name", ""))
-                destination = PERSISTENCE_ROOT / project_name
-                free_bytes = shutil.disk_usage(destination.parent).free
-                reserve = max(64 * 1024 * 1024, total_size // 20)
-                if total_size + reserve > free_bytes:
-                    required_gib = (total_size + reserve) / (1024**3)
-                    free_gib = free_bytes / (1024**3)
-                    raise ValueError(
-                        f"目标磁盘空间不足：至少需要 {required_gib:.1f} GiB，当前可用 {free_gib:.1f} GiB。"
-                    )
-                return project_name, destination
-
-        def _confirm_and_import(info) -> None:
-            project_name, destination = info
-            if destination.exists():
+        def choose_strategy(inspection) -> None:
+            requested_name = None
+            copy_on_conflict = False
+            if inspection.identity_conflict:
                 answer = QMessageBox.question(
                     self._host,
-                    "项目已存在",
-                    f"项目「{project_name}」已存在。\n覆盖将丢失现有数据，是否继续？",
+                    "工程已存在",
+                    "这个归档来自当前数据目录中已经存在的工程。\n"
+                    "可以生成新的工程和版本标识，作为独立副本导入；现有工程不会被覆盖。是否继续？",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No,
                 )
                 if answer != QMessageBox.StandardButton.Yes:
                     return
-
-            def _extract_and_load():
-                import zipfile
-
-                with zipfile.ZipFile(path, "r") as archive:
-                    archive.extractall(destination)
-                project = ProjectHandle.load(destination / "project.json")
-                variant_store = None
-                variant_name = project.active_variant
-                if variant_name and project.has_variant(variant_name):
-                    variant_store = VariantStore.load(project.variant_dir(variant_name) / "current.json")
-                return project_name, destination, project, variant_store
-
-            def _activate_imported(result) -> None:
-                imported_name, destination, project, variant_store = result
-                workspace = self._host.context.workspace or WorkspaceState.load(workspace_path())
-                workspace.add_project(imported_name, destination / "project.json")
-                workspace.save()
-                self._host.context.workspace = workspace
-                self._host.context.active_project = project
-                self._host.context.active_variant = project.active_variant
-                self._host.context.variant_store = variant_store
-                if variant_store is not None and self._host.context.collection:
-                    variant_store.apply_to(list(self._host.context.collection))
-                QMessageBox.information(
-                    self._host,
-                    "导入完成",
-                    f"项目「{imported_name}」已导入。\n请通过文件菜单解析源文件。",
-                )
+                copy_on_conflict = True
+                requested_name = self._choose_import_name(f"{inspection.name} 副本")
+                if requested_name is None:
+                    return
+            elif inspection.name_conflict:
+                requested_name = self._choose_import_name(inspection.name)
+                if requested_name is None:
+                    return
 
             self._host.start_foreground_task(
-                _extract_and_load,
-                message="正在解压并加载项目包…",
-                on_result=_activate_imported,
-                on_error=lambda error: QMessageBox.warning(self._host, "导入失败", error),
+                lambda: self._service("project_archive").import_project(
+                    path,
+                    context,
+                    requested_name=requested_name,
+                    copy_on_identity_conflict=copy_on_conflict,
+                ),
+                message="正在校验并导入项目包…",
+                on_result=self._offer_open_imported,
             )
 
         self._host.start_foreground_task(
-            _inspect_archive,
-            message="正在校验项目包…",
-            on_result=_confirm_and_import,
-            on_error=lambda error: QMessageBox.warning(self._host, "导入失败", error),
+            lambda: self._service("project_archive").inspect_import(path, context),
+            message="正在检查项目包…",
+            on_result=choose_strategy,
         )
 
-    def _on_report_entry_activated(self, entry_id: str):
-        """报告对话框中双击条目后跳转到Step2定位。"""
-        if not self._host.context.collection:
-            self._host.show_message("请先加载翻译集合")
-            return
-        entry = self._host.context.collection.get(entry_id)
-        if entry is None:
-            self._host.show_message(f"条目不存在或已被删除: {entry_id}")
-            return
-        # 切换到工作台 tab
-        self._host.mode_tabs.setCurrentIndex(0)  # 工作台在 index 0
-        self._host.workbench.locate_entry(entry_id)
+    def _choose_import_name(self, suggested: str) -> str | None:
+        name, ok = QInputDialog.getText(self._host, "导入工程副本", "新工程名称:", text=suggested)
+        if not ok or not name.strip():
+            return None
+        return name.strip()
+
+    def _offer_open_imported(self, target: str) -> None:
+        answer = QMessageBox.question(
+            self._host,
+            "导入完成",
+            "项目包已安全导入。是否现在打开？\n当前工程不会在未确认保存策略时被覆盖。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._host.project_coordinator.open_project_path(str(target))
+        else:
+            self._host.show_message("项目包已导入，可稍后从本地工程列表打开。")
+
+    def _finish(self, result, message):
+        if result.is_success:
+            self._host.show_message(message)
+        else:
+            detail = "\n".join(f"{item.code}: {item.message}" for item in result.diagnostics)
+            QMessageBox.warning(self._host, "快照操作失败", detail)

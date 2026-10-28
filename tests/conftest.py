@@ -115,6 +115,8 @@ class MockAppContext:
         self.eet_path = None
         self.xt_path = None
         self.active_project = None
+        self.project_name = None
+        self.project_catalog = None
         self.current_project = None
         self.paratranz_project_id = None
         self.active_variant = None

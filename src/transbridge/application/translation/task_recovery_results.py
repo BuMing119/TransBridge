@@ -34,7 +34,7 @@ def _validate(payload, task_id):
         before = row["before"]
         if (
             not isinstance(row.get("source"), str)
-            or row.get("action") not in {"translation", "polish"}
+            or row.get("action") not in {"translation", "polish", "postprocess"}
             or row.get("status") != "succeeded"
             or row.get("decision") not in {"pending", "accepted", "rejected"}
             or not isinstance(row.get("text"), str)
@@ -86,6 +86,10 @@ class TaskRecoveryResults:
             old = combined.get(key)
             if old is not None:
                 if old["attempt"] > row["attempt"]:
+                    continue
+                if old["attempt"] == row["attempt"] and old.get("decision_revision", 0) > row.get(
+                    "decision_revision", 0
+                ):
                     continue
                 if (
                     old["attempt"] == row["attempt"]

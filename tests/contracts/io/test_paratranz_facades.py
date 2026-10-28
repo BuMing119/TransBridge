@@ -29,8 +29,6 @@ def test_paratranz_public_package_keeps_active_exports_after_lazy_loading() -> N
         "ParatranzScoresAPI",
         "ParatranzMailsAPI",
         "ParatranzUserAPI",
-        "ParaTranzUploader",
-        "UploadResult",
         "ArtifactWorkflow",
         "ParaTranzTermsService",
     }

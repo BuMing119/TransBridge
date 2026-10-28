@@ -12,6 +12,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox
 import pytest
 
+from tests.ui.fixtures.current_editing import CurrentEditingProject
 from transbridge.application.contracts import OperationResult, RequestContext
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
@@ -45,16 +46,16 @@ _APP = QApplication.instance() or QApplication([])
 @pytest.fixture
 def preview(monkeypatch):
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: SimpleNamespace(token=""))
-    context = context_module.AppContext()
     collection = TranslationEntryCollection(
         TranslationEntry(
             str(index), f"key-{index}", f"Original {index}", f"译文 {index}", STAGE_TRANSLATED, "NPC_:FULL"
         )
         for index in range(3)
     )
-    context.add_slot("source", context_module.CollectionSlot("Source", collection))
-    context.activate_slot("source")
+    project = CurrentEditingProject(collection, key="source")
+    context = project.context
     widget = Step2PreviewWidget(context)
+    widget._editing_project = project
     widget.refresh(collection)
     confirmations = []
 
@@ -69,7 +70,7 @@ def preview(monkeypatch):
     yield widget, tuple(collection), confirmations
     widget.close()
     widget.deleteLater()
-    context.close_projection()
+    project.close()
     _APP.processEvents()
 
 
@@ -94,8 +95,6 @@ def _label_action(widget, row, label):
 def test_cancel_translation_is_a_direct_action_and_resets_only_clicked_entry(preview, monkeypatch):
     widget, entries, confirmations = preview
     before = [entry.to_dict() for entry in entries]
-    dirty = []
-    monkeypatch.setattr(widget._ctx, "mark_dirty", lambda: dirty.append(True))
 
     action = _cancel_action(widget, 1)
     assert action.isEnabled()
@@ -110,7 +109,9 @@ def test_cancel_translation_is_a_direct_action_and_resets_only_clicked_entry(pre
     assert "未翻译" in widget._table.model().index(1, COL_CONTEXT).data(Qt.ItemDataRole.DisplayRole)
     assert widget._summary.untranslated == 1
     assert "1 条" in confirmations[0]
-    assert dirty == [True]
+    assert widget._ctx.dirty
+    stored = {entry.entry_key: entry for entry in widget._editing_project.aggregate.snapshot().entries}
+    assert stored[entries[1].identity].translation == ""
 
 
 @pytest.mark.parametrize("clicked_selected", [False, True])
@@ -258,7 +259,7 @@ def test_cancel_translation_includes_selected_rows_outside_viewport_after_sort(p
         TranslationEntry(str(index), f"key-{index:04d}", "Original", "Translation", STAGE_TRANSLATED, "NPC_:FULL")
         for index in range(600)
     )
-    widget._ctx.active_slot.collection = collection
+    widget._editing_project.install(collection, key="source")
     widget.refresh(collection)
     for _ in range(5):
         _APP.processEvents()
@@ -420,7 +421,7 @@ def authority(preview, monkeypatch):
             return OperationResult.completed({"revision": revision})
 
     lifecycle = Lifecycle()
-    monkeypatch.setattr(context, "_project_commands", GuiProjectCommandFacade(lifecycle, None, lambda: None))
+    monkeypatch.setattr(context, "_project_commands", GuiProjectCommandFacade(lifecycle, lambda: None))
     monkeypatch.setattr(context, "_runtime_context", RequestContext(owner_id="ui", run_id="reset"))
     warnings = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args[2]))

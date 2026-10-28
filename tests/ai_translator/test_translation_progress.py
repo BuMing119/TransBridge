@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from transbridge.ai_translator.translator import AutoTranslator, ProgressCheckpoint, TranslatorConfig
+from transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig
 from transbridge.application.translation import InMemoryTranslationCheckpointPort
 from transbridge.application.translation.entry_alias import ai_entry_key
 from transbridge.config.llm import LLMConfig
@@ -74,8 +74,6 @@ def test_translation_replaces_full_progress_before_postprocess_request(monkeypat
     monkeypatch.setattr(term_database, "TermDatabaseManager", lambda **kwargs: Terms())
     monkeypatch.setattr(noun_extractor, "NounExtractor", lambda *args, **kwargs: None)
     monkeypatch.setattr(existing_term_extractor, "should_seed_existing_terms", lambda *args: False)
-    monkeypatch.setattr(ProgressCheckpoint, "save", lambda *args: None)
-    monkeypatch.setattr(ProgressCheckpoint, "delete", lambda *args: None)
     monkeypatch.setattr(translator.time, "perf_counter", lambda: elapsed[0])
     collection = TranslationEntryCollection([TranslationEntry("one", "one", "Hello", "", 0, "BOOK:DESC")])
     config = LLMConfig(

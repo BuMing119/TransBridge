@@ -10,6 +10,7 @@ from transbridge.application.io.identity import (
     SourceNamespace,
 )
 from transbridge.application.io.mutation import EntrySnapshot
+from transbridge.converter.collection_changes import assign_entry_field
 from transbridge.converter.plugin_entry_metadata import build_plugin_metadata
 from transbridge.parser import EET_Entry
 from transbridge.parser.plugin.plugin_string_with_context import PluginStringWithContext
@@ -132,6 +133,8 @@ class TranslationEntry:
                     DeprecationWarning,
                     stacklevel=2,
                 )
+                assign_entry_field(self, name, value)
+                return
         super().__setattr__(name, value)
 
     def snapshot(self) -> EntrySnapshot:

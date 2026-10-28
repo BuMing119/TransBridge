@@ -1,17 +1,15 @@
-"""Truthful task projections for AI QThread workloads during migration."""
+"""Project real TaskRuntime jobs onto AI worker controls and progress."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from datetime import datetime
+from dataclasses import dataclass
 from enum import StrEnum
 import threading
 
 from transbridge.application.contracts import JobRef
 from transbridge.application.tasks import (
     JobCapabilities,
-    JobSnapshot,
     JobSpec,
     JobState,
     OwnerRef,
@@ -25,7 +23,7 @@ from .run_spec import AiRunSpec
 from .worker_controls import SerialAiWorkerControls
 
 
-class AiLegacyRunState(StrEnum):
+class AiRunState(StrEnum):
     RUNNING = "running"
     CANCELLING = "cancelling"
     CANCELLED = "cancelled"
@@ -34,9 +32,9 @@ class AiLegacyRunState(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class AiLegacyActivity:
+class AiActivity:
     spec: AiRunSpec
-    state: AiLegacyRunState
+    state: AiRunState
     revision: int = 0
     current: int = 0
     total: int = 0
@@ -46,109 +44,10 @@ class AiLegacyActivity:
     @property
     def is_terminal(self) -> bool:
         return self.state in {
-            AiLegacyRunState.CANCELLED,
-            AiLegacyRunState.COMPLETED,
-            AiLegacyRunState.FAILED,
+            AiRunState.CANCELLED,
+            AiRunState.COMPLETED,
+            AiRunState.FAILED,
         }
-
-
-class LegacyAiTaskAdapter:
-    def __init__(self, spec: AiRunSpec) -> None:
-        self._lock = threading.RLock()
-        self._closed = False
-        self._created_at = datetime.now().astimezone()
-        self._activity = AiLegacyActivity(spec, AiLegacyRunState.RUNNING)
-
-    @property
-    def activity(self) -> AiLegacyActivity:
-        with self._lock:
-            return self._activity
-
-    @property
-    def task_activity(self):
-        with self._lock:
-            value = self._activity
-            snapshot = JobSnapshot(
-                ref=JobRef(value.spec.run_id, value.spec.owner.owner_id, value.spec.run_id),
-                owner=value.spec.owner,
-                specification=_job_spec(value.spec, expose_controls=True),
-                state=_job_state(value.state),
-                revision=value.revision,
-                sequence=value.revision + 1,
-                created_at=self._created_at,
-                updated_at=datetime.now().astimezone(),
-                progress=(("current", value.current), ("total", value.total), ("message", value.message)),
-            )
-            return activity_from_snapshot(snapshot)
-
-    def progress(self, current: int, total: int, message: str) -> bool:
-        with self._lock:
-            if self._closed or self._activity.is_terminal:
-                return False
-            self._activity = replace(
-                self._activity,
-                revision=self._activity.revision + 1,
-                current=max(0, current),
-                total=max(0, total),
-                message=message,
-            )
-            return True
-
-    def request_cancel(self) -> bool:
-        with self._lock:
-            if self._closed or self._activity.is_terminal:
-                return False
-            self._activity = replace(
-                self._activity,
-                state=AiLegacyRunState.CANCELLING,
-                revision=self._activity.revision + 1,
-                message="正在等待安全停止点",
-            )
-            return True
-
-    def pause(self) -> bool:
-        return self._control_message("已暂停")
-
-    def resume(self) -> bool:
-        return self._control_message("执行中")
-
-    def finish(self, *, cancelled: bool = False) -> bool:
-        return self._terminal(AiLegacyRunState.CANCELLED if cancelled else AiLegacyRunState.COMPLETED, None)
-
-    def fail(self, diagnostic: str) -> bool:
-        return self._terminal(AiLegacyRunState.FAILED, diagnostic)
-
-    def close(self) -> None:
-        with self._lock:
-            self._closed = True
-
-    def bind_worker(self, _worker: object) -> None:
-        """Legacy controls are already wired directly by their progress window."""
-
-    def _control_message(self, message: str) -> bool:
-        with self._lock:
-            if self._closed or self._activity.is_terminal:
-                return False
-            self._activity = replace(
-                self._activity,
-                revision=self._activity.revision + 1,
-                message=message,
-            )
-            return True
-
-    def _terminal(self, state: AiLegacyRunState, diagnostic: str | None) -> bool:
-        with self._lock:
-            if self._closed or self._activity.is_terminal:
-                return False
-            if state is AiLegacyRunState.CANCELLED and self._activity.state is not AiLegacyRunState.CANCELLING:
-                return False
-            self._activity = replace(
-                self._activity,
-                state=state,
-                revision=self._activity.revision + 1,
-                diagnostic=diagnostic,
-            )
-            return True
 
 
 class TaskRuntimeAiTaskAdapter:
@@ -172,12 +71,12 @@ class TaskRuntimeAiTaskAdapter:
         return activity_from_snapshot(self._runtime.get(self._ref, self._owner))
 
     @property
-    def activity(self) -> AiLegacyActivity:
+    def activity(self) -> AiActivity:
         snapshot = self._runtime.get(self._ref, self._owner)
         progress = dict(snapshot.progress)
-        return AiLegacyActivity(
+        return AiActivity(
             spec=self._spec,
-            state=_legacy_state(snapshot.state),
+            state=_activity_state(snapshot.state),
             revision=snapshot.revision,
             current=int(progress.get("current", 0)),
             total=int(progress.get("total", 0)),
@@ -331,32 +230,21 @@ def runtime_job_spec(spec: AiRunSpec) -> JobSpec:
     return _job_spec(spec, expose_controls=True)
 
 
-def _job_state(state: AiLegacyRunState) -> JobState:
+def _activity_state(state: JobState) -> AiRunState:
     return {
-        AiLegacyRunState.RUNNING: JobState.RUNNING,
-        AiLegacyRunState.CANCELLING: JobState.CANCELLING,
-        AiLegacyRunState.CANCELLED: JobState.CANCELLED,
-        AiLegacyRunState.COMPLETED: JobState.COMPLETED,
-        AiLegacyRunState.FAILED: JobState.FAILED,
-    }[state]
-
-
-def _legacy_state(state: JobState) -> AiLegacyRunState:
-    return {
-        JobState.QUEUED: AiLegacyRunState.RUNNING,
-        JobState.RUNNING: AiLegacyRunState.RUNNING,
-        JobState.PAUSED: AiLegacyRunState.RUNNING,
-        JobState.CANCELLING: AiLegacyRunState.CANCELLING,
-        JobState.CANCELLED: AiLegacyRunState.CANCELLED,
-        JobState.COMPLETED: AiLegacyRunState.COMPLETED,
-        JobState.FAILED: AiLegacyRunState.FAILED,
+        JobState.QUEUED: AiRunState.RUNNING,
+        JobState.RUNNING: AiRunState.RUNNING,
+        JobState.PAUSED: AiRunState.RUNNING,
+        JobState.CANCELLING: AiRunState.CANCELLING,
+        JobState.CANCELLED: AiRunState.CANCELLED,
+        JobState.COMPLETED: AiRunState.COMPLETED,
+        JobState.FAILED: AiRunState.FAILED,
     }[state]
 
 
 __all__ = [
-    "AiLegacyActivity",
-    "AiLegacyRunState",
-    "LegacyAiTaskAdapter",
+    "AiActivity",
+    "AiRunState",
     "TaskRuntimeAiTaskAdapter",
     "runtime_job_spec",
 ]

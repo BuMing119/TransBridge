@@ -56,6 +56,7 @@ class UploadReceipt:
     cancelled_count: int = 0
     details: tuple[str, ...] = ()
     pending_count: int = 0
+    retry_count: int = 0
 
 
 class CategorizedUploadDialog(QDialog):
@@ -69,6 +70,7 @@ class CategorizedUploadDialog(QDialog):
         *,
         load_preview: Callable,
         upload: Callable,
+        retry_upload: Callable | None = None,
         batch: bool = True,
         categorized: bool = True,
         parent=None,
@@ -84,6 +86,8 @@ class CategorizedUploadDialog(QDialog):
         self._batch = batch
         self._load_preview = load_preview
         self._upload = upload
+        self._retry_upload = retry_upload
+        self._retry_count = 0
         self._sources: tuple[SourceOption, ...] | None = None
         self._file_selected: dict[str, bool] = {}
         self._worker = None
@@ -164,9 +168,12 @@ class CategorizedUploadDialog(QDialog):
         self._cancel.clicked.connect(self.reject)
         self._reload_button = QPushButton("重新加载", self)
         self._reload_button.clicked.connect(self._load_sources)
+        self._retry_button = QPushButton("补传未完成文件", self)
+        self._retry_button.setToolTip("按上次上传的内容和策略补传；重新核验云端，已成功的文件不会重复上传。")
+        self._retry_button.clicked.connect(self._request_retry)
         self._upload_button = QPushButton("上传所选分类" if self._kind == "分类" else "上传所选文件", self)
         self._upload_button.clicked.connect(self._request_upload)
-        for button in (self._cancel, self._reload_button, self._upload_button):
+        for button in (self._cancel, self._reload_button, self._retry_button, self._upload_button):
             ComponentStyle.apply_static(button, ComponentKind.BUTTON)
             footer.addWidget(button)
         ComponentStyle.apply_state(self._upload_button, SemanticState.PRIMARY)
@@ -242,7 +249,12 @@ class CategorizedUploadDialog(QDialog):
         selection = self.selection()
         if not selection.source_ids or not selection.file_keys:
             return
+        self._retry_count = len(selection.file_keys)
         self._start_worker("upload", lambda progress, cancel: self._upload(selection, progress, cancel))
+
+    def _request_retry(self) -> None:
+        if self._worker is None and self._retry_count and self._retry_upload is not None:
+            self._start_worker("retry", self._retry_upload)
 
     def _start_worker(self, phase: str, operation: Callable) -> None:
         self._phase = phase
@@ -253,7 +265,11 @@ class CategorizedUploadDialog(QDialog):
         self._progress.setFormat("处理中…")
         self._progress.show()
         self._set_status(
-            {"load": "正在读取工程分类…", "upload": "正在读取云端并核验所选分类…"}[phase],
+            {
+                "load": "正在读取工程分类…",
+                "upload": "正在读取云端并核验所选分类…",
+                "retry": "正在重新核验云端并补传未完成文件…",
+            }[phase],
             SemanticState.INFO,
         )
         mailbox = self._progress_mailbox = LatestProgress()
@@ -291,8 +307,16 @@ class CategorizedUploadDialog(QDialog):
         self._worker = None
         self._progress.hide()
         if self._error is not None:
-            action = "读取工程分类" if phase == "load" else "分类上传"
-            retry = "请重新加载。" if phase == "load" else "可再次点击上传；结果待核实的写入不会自动重发。"
+            action = "读取工程分类" if phase == "load" else f"{self._kind}{'补传' if phase == 'retry' else '上传'}"
+            retry = (
+                "请重新加载。"
+                if phase == "load"
+                else (
+                    "可点击“补传未完成文件”，补传前会重新核验云端。"
+                    if self._retry_upload is not None and self._retry_count
+                    else "可再次点击上传；结果待核实的写入不会自动重发。"
+                )
+            )
             self._set_status(f"{action}失败：{self._error}。{retry}", SemanticState.ERROR)
         elif self._cancel_event.is_set() and phase == "load":
             self._set_status("已取消读取分类，尚未上传内容。可重新加载。", SemanticState.INFO)
@@ -307,13 +331,21 @@ class CategorizedUploadDialog(QDialog):
         self._sync_controls()
 
     def _render_receipt(self, receipt: UploadReceipt) -> None:
+        self._retry_count = receipt.retry_count
         cancelled = self._cancel_event.is_set() or receipt.cancelled_count > 0
         unfinished = receipt.failed_count or receipt.pending_count or cancelled
         outcome = "已取消" if cancelled else "未全部完成" if unfinished else "完成"
+        action = "补传" if self._phase == "retry" else "上传"
         self._set_status(
-            f"{self._kind}上传{outcome}（按文件计数）：成功 {receipt.success_count}，"
+            f"{self._kind}{action}{outcome}（按文件计数）：成功 {receipt.success_count}，"
             f"失败或待核实 {receipt.failed_count}，取消 {receipt.cancelled_count}，待处理 {receipt.pending_count}。"
-            + ("请查看文件结果，可再次点击上传；结果待核实的写入不会自动重发。" if unfinished else ""),
+            + (
+                "请查看文件结果；可点击“补传未完成文件”，补传前会重新核验云端。"
+                if receipt.retry_count and self._retry_upload is not None
+                else "请查看文件结果，可再次点击上传；结果待核实的写入不会自动重发。"
+                if unfinished
+                else ""
+            ),
             SemanticState.WARNING if unfinished else SemanticState.SUCCESS,
         )
         self._set_details(receipt.details)
@@ -356,6 +388,9 @@ class CategorizedUploadDialog(QDialog):
         has_selection = bool(selection.source_ids and selection.file_keys)
         self._reload_button.setVisible(self._sources is None and not busy)
         self._reload_button.setEnabled(not busy)
+        self._retry_button.setVisible(not busy and self._retry_upload is not None and self._retry_count > 0)
+        self._retry_button.setEnabled(not busy and self._retry_count > 0)
+        self._retry_button.setText(f"补传未完成文件（{self._retry_count}）")
         self._upload_button.setEnabled(not busy and self._sources is not None and has_selection)
         self._mode.setEnabled(not busy)
         self._cancel.setText("取消任务" if busy else "关闭")

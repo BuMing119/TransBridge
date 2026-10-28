@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from transbridge.ai_translator.prepared_names import PreparedName, prepared_names_spec, select_prepared_names
-from transbridge.ai_translator.translator import AutoTranslator, ProgressCheckpoint, TranslatorConfig
+from transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.translation import InMemoryTranslationCheckpointPort
 from transbridge.application.translation.entry_alias import ai_entry_key
@@ -91,8 +91,6 @@ def make_translator(tmp_path, monkeypatch):
     terms = _Terms()
     monkeypatch.setattr("transbridge.ai_translator.term_database.TermDatabaseManager", lambda **_kwargs: terms)
     monkeypatch.setattr("transbridge.infra.llm_reasoning.with_reasoning_intent", lambda client, *_: client)
-    monkeypatch.setattr(ProgressCheckpoint, "save", lambda *_: None)
-    monkeypatch.setattr(ProgressCheckpoint, "delete", lambda *_: None)
 
     def make(
         *,
@@ -287,22 +285,13 @@ def test_prepared_overwrite_excludes_old_name_from_existing_term_seeding(make_tr
     assert result.entry_outcomes[entry.identity].status == "succeeded"
 
 
-def test_prepared_name_skips_restored_automatic_term_repair(make_translator):
+def test_prepared_name_ignores_obsolete_automatic_term_repair_requirement(make_translator):
     entry = _entry(translation="旧译文", stage=1)
     translator, provider, _ = make_translator(
         prepared={entry.identity: PreparedName(entry.original, entry.context, "雪漫城")}, overwrite=True
     )
-    checkpoint = ProgressCheckpoint(
-        esp_stem="plugin",
-        target_entry_ids=None,
-        overwrite=True,
-        completed_fingerprints=[],
-        result_so_far={},
-        run_id="resumed-prepared",
-        term_repairs=[{"entry_key": entry.identity.to_dict(), "required_terms": {"Whiterun": "旧术语"}}],
-    )
 
-    result, collection = _translate(translator, [entry], checkpoint=checkpoint)
+    result, collection = _translate(translator, [entry], term_repair_requirements={entry.key: {"Whiterun": "旧术语"}})
 
     assert provider.translation_calls == []
     assert collection.get(entry.identity).translation == "雪漫城"

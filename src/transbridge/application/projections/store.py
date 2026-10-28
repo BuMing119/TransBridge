@@ -125,7 +125,7 @@ class ProjectionStore:
                 current.stream_id,
                 current.revision,
                 revision,
-                current.to_dict()["values"],
+                current.values,
             )
             diagnostics = self._notify(self._snapshot)
             return ProjectionDecision(True, self.snapshot(), diagnostics)

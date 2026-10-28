@@ -6,6 +6,8 @@ from PyQt6.QtWidgets import QAbstractItemView, QTreeWidgetItem
 
 from tests.ui.responsive_layout_support import settle_layout, themed_layout_app  # noqa: F401
 from tests.ui.tools import test_unified_task_progress as fixtures
+from transbridge.ai_translator.activity import ActivityKind, ActivityMessage
+from transbridge.ui.tools.ai_translator.task_activity import ActivityBatch
 
 make_window = fixtures.make_window
 qapp = fixtures.qapp
@@ -35,7 +37,7 @@ def _project_progress(window):
     window._refresh()
 
 
-def test_project_summary_four_columns_and_default_logs_use_available_space(layout_app, make_window):
+def test_project_summary_four_columns_and_compact_activity(layout_app, make_window):
     window, _, _ = make_window()
     _project_progress(window)
     window.run.logged.emit("开始汇总所有插件的名称")
@@ -52,21 +54,17 @@ def test_project_summary_four_columns_and_default_logs_use_available_space(layou
         "正在翻译第 3 批名称",
     ]
     assert window.rows["second"].text(2) == "—"
-    assert window.logs.isVisible() and window.log_toggle.isChecked()
-    assert window.logs.height() > window.sources.height() * 2
+    assert not window.logs.isVisible() and not window.log_toggle.isChecked()
+    assert window.activity_panel.recent.isVisible()
     assert "开始汇总所有插件的名称" in window.logs.toPlainText()
-    compact_geometry = {
-        name: getattr(window, name).geometry()
-        for name in ("status", "request_status", "project_summary", "bar", "sources")
-    }
     window.log_toggle.click()
     settle_layout(layout_app)
-    assert not window.logs.isVisible() and window.log_toggle.text() == "展开过程日志"
-    assert all(getattr(window, name).geometry() == geometry for name, geometry in compact_geometry.items())
+    assert window.logs.isVisible() and window.log_toggle.text() == "收起动态记录"
+    assert window.rect().contains(window.stop_button.geometry())
     window.log_toggle.click()
     settle_layout(layout_app)
-    assert window.logs.isVisible() and window.log_toggle.text() == "收起过程日志"
-    assert all(getattr(window, name).geometry() == geometry for name, geometry in compact_geometry.items())
+    assert not window.logs.isVisible() and window.log_toggle.text() == "展开动态记录"
+    assert window.activity_panel.recent.isVisible()
 
 
 def test_many_sources_scroll_without_growing_beyond_six_visible_rows(layout_app, make_window):
@@ -98,7 +96,7 @@ def test_many_sources_scroll_without_growing_beyond_six_visible_rows(layout_app,
 
     assert window.sources.height() == six_rows_height
     assert window.sources.verticalScrollBar().maximum() > 0
-    assert window.logs.isVisible() and window.logs.height() > 100
+    assert not window.logs.isVisible() and window.activity_panel.recent.isVisible()
 
 
 def test_legacy_rows_and_terminal_results_replace_stale_source_progress(layout_app, make_window):
@@ -141,5 +139,39 @@ def test_narrow_layout_elides_long_details_and_adapts_table_height_to_font(layou
     assert window.rows["first"].toolTip(0) == long_label
     assert window.rows["first"].toolTip(3) == long_detail
     assert window.sources.visualItemRect(window.rows["second"]).bottom() < window.sources.viewport().height()
-    assert window.logs.isVisible() and window.rect().contains(window.logs.geometry())
+    assert window.activity_panel.recent.isVisible()
+    assert window.rect().contains(window.activity_panel.geometry())
     assert window.rect().contains(window.stop_button.geometry())
+
+
+def test_expanded_activity_and_warnings_fit_narrow_window(layout_app, make_window, tmp_path):
+    window, _, _ = make_window()
+    _project_progress(window)
+    window.resize(720, 680)
+    window.run.logged.emit(
+        ActivityBatch((
+            ("Skyrim.esm", ActivityMessage("已复用 1,071 个名称，无需再次请求模型。")),
+            (
+                "Update.esm",
+                ActivityMessage("6/12 条未获译文，正在对半拆分重试，暂时无需操作。", ActivityKind.RETRY, batch=3),
+            ),
+            (
+                "Skyrim.esm",
+                ActivityMessage(
+                    "12 条模型请求失败；本次未获得有效结果，处理结束后可重试失败条目。", ActivityKind.ERROR, batch=7
+                ),
+            ),
+        ))
+    )
+    window.show()
+    settle_layout(layout_app)
+    assert window.width() == 720 and window.height() == 680
+    assert window.activity_panel.notice.isVisible()
+    assert window.grab().save(str(tmp_path / "activity-compact.png"))
+    window.log_toggle.click()
+    settle_layout(layout_app)
+    assert window.width() == 720 and window.height() == 680
+    assert window.logs.isVisible()
+    assert window.rect().contains(window.activity_panel.geometry())
+    assert window.rect().contains(window.stop_button.geometry())
+    assert window.grab().save(str(tmp_path / "activity-expanded.png"))

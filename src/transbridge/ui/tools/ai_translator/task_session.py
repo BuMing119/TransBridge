@@ -3,33 +3,27 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from copy import deepcopy
-from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 
 from transbridge.application.io.identity import EntryKey
-from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.application.translation.result_merge import ResultConflictPolicy
+from transbridge.application.translation.task_merge_evidence import TaskMergeEvidenceStore
+from transbridge.application.translation.task_scope import SourceTask
+from transbridge.config.task_results import TaskResultPreferences
 from transbridge.ui.version_persistence import VersionPersistence
 from transbridge.ui.workers import ApiWorker
 
-from .task_apply_preparation import ApplyDelivery, prepare_committed_baseline
-from .task_scope import SourceTask
+from .task_apply_preparation import ApplyDelivery
+from .task_session_merge import accept_result, apply_result, freeze_application, freeze_changes
 from .task_session_preparation import (
     SessionCapture,
     SessionPreparationJob,
-    SourceState,
-    entries_unchanged,
-    read_source_states,
-    require_current,
 )
-from .version_snapshot import _require_success
+from .version_operations import require_success
 
 
 class TaskSession:
     """Publish selected drafts atomically while guarding against external version edits."""
-
-    supports_background_validation = True
 
     def __init__(
         self, ctx: object, tasks: tuple[SourceTask, ...], spec: object, *, project_dir: Path | None = None
@@ -67,39 +61,35 @@ class TaskSession:
             str(self._identity[1]) if self._identity is not None else "",
         )
         if self._identity is None:
-            raise RuntimeError("请先打开一个项目版本，AI 任务需要先创建版本快照。")
-        if project_dir is None:
-            project_dir = getattr(getattr(ctx, "active_project", None), "project_dir", None)
+            raise RuntimeError("请先打开一个项目版本，再创建 AI 任务。")
         self._project_dir = Path(project_dir) if project_dir is not None else None
         self._persistence = VersionPersistence(ctx, self._identity)
-        self._legacy_snapshot_inputs = capture.legacy_inputs
+        provider = getattr(ctx, "task_result_preferences_provider", None) or TaskResultPreferences
+        self.policy = ResultConflictPolicy(provider().ai_policy)
+        self.merge_evidence_writer = (
+            TaskMergeEvidenceStore(self._project_dir / "ai-task-recovery", str(getattr(spec, "run_id", "run")))
+            if self._project_dir is not None
+            else None
+        )
         self._worker: ApiWorker | None = None
         self._apply_delivery: ApplyDelivery | None = None
-        self._refresh_job = None
-        self._refresh_error = ""
         self._captured = self._completed = self._saved = self._discarded = False
         self._commit_result = None
         self.commit_mutation: Callable[[Callable[[], None]], None] | None = None
         self._applied_keys: set[EntryKey] = set()
-        self._generation = 0
+        self._applied_values = {}
         self._states = prepared.states
-        self._revisions = capture.revisions
         self._draft = prepared.draft
         self.initial_entry_results = prepared.initial_entry_results
         self.selection_intent = None if capture.selection_capture is None else capture.selection_capture.intent
+        recovery = None if self.selection_intent is None else self.selection_intent.recovery
+        if recovery is not None and not recovery[1]:
+            self.policy = ResultConflictPolicy(recovery[0].get("conflict_policy", self.policy))
         self.tasks = self._draft.tasks
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        mode = {"translate": "翻译", "polish": "润色", "mixed": "混合", "custom": "自定义"}.get(
-            getattr(spec, "mode", "translate"), "翻译"
-        )
-        suffix = str(getattr(spec, "run_id", "run"))[-8:]
-        self.before_snapshot_name = f"AI-{mode}-执行前-{stamp}-{suffix}"
-        self.after_snapshot_name = f"AI-{mode}-保存后-{stamp}-{suffix}"
-        self._after_snapshot_base = self.after_snapshot_name
 
     @property
     def is_busy(self) -> bool:
-        return self._worker is not None or self._refresh_job is not None
+        return self._worker is not None
 
     @property
     def completed(self) -> bool:
@@ -111,11 +101,7 @@ class TaskSession:
 
     @property
     def project_saved(self) -> bool:
-        return self._saved or bool(getattr(self._persistence, "project_saved", False))
-
-    @property
-    def snapshot_saved(self) -> bool:
-        return self._saved or bool(getattr(self._persistence, "snapshot_saved", False))
+        return (self._saved or bool(self._persistence.project_saved)) and self._applied_values_match()
 
     @property
     def project_saved_signal(self):
@@ -130,6 +116,8 @@ class TaskSession:
             self._require_current(allow_discarded=True)
         except RuntimeError:
             # A different revision/project cannot establish durability of our captured result.
+            return False
+        if not self._applied_values_match():
             return False
         self._persistence.mark_project_saved()
         return True
@@ -158,47 +146,24 @@ class TaskSession:
         """Validate the current project inputs before applying or dispatching retries."""
         self._require_current()
 
+    def bind_run_identity(self, run_id: str) -> None:
+        """Bind every output to the admitted runtime ID before any task writes."""
+        self._require_current()
+        if self._captured or self.is_busy or self._applied_keys:
+            raise RuntimeError("任务已经开始，不能重新绑定执行身份。")
+        self.initial_entry_results.run_id = run_id
+        self.merge_evidence_writer = (
+            TaskMergeEvidenceStore(self._project_dir / "ai-task-recovery", run_id)
+            if self._project_dir is not None
+            else None
+        )
+
     def capture_before(
         self, *, on_success: Callable, on_error: Callable[[str], None], background_validate: Callable | None = None
     ) -> None:
         self._require_current()
-        if self._captured:
-            on_success({"snapshot_name": self.before_snapshot_name, "already_captured": True})
-            return
-        entries = tuple(entry for state in self._states.values() for entry in state.entries)
-        freeze = getattr(type(self._persistence), "freeze_snapshot", None)
-        if freeze is not None:
-            operation = self._persistence.freeze_snapshot(
-                self.before_snapshot_name, entries, legacy_inputs=self._legacy_snapshot_inputs
-            )
-        else:
-            # Compatibility for existing persistence adapters; inputs are private
-            # baseline values, and any required copy is performed in the worker.
-            def operation():
-                return self._persistence.create_snapshot(self.before_snapshot_name, deepcopy(entries))
-
-        def captured(result):
-            try:
-                self._require_current()
-            except RuntimeError as exc:
-                on_error(str(exc))
-                return
-            self._captured = True
-            on_success(result)
-
-        self._run(
-            lambda: _require_success(operation()),
-            on_success=captured,
-            on_error=on_error,
-            background_validate=background_validate,
-        )
-
-    def mark_completed(self) -> object:
-        if self._completed:
-            return self._commit_result
-        result = self.apply_entries(set(self._draft.keys))
-        self.finish()
-        return result
+        self._captured = True
+        on_success({"task_inputs_captured": True})
 
     def finish(self) -> None:
         """Seal a task after its ledger has no remaining executable entries."""
@@ -210,8 +175,7 @@ class TaskSession:
         keys = self._application_keys(keys)
         if not keys:
             return self._commit_result
-        prepared = self._draft.freeze_merge(self._states, keys).prepare()
-        return self._commit_entries(keys, prepared.entries, baselines=dict(prepared.baselines))
+        return apply_result(self, freeze_changes(self._draft, keys))
 
     def _application_keys(self, keys: set[EntryKey]) -> set[EntryKey]:
         self._require_current()
@@ -242,15 +206,15 @@ class TaskSession:
         if not keys:
             on_success(self._commit_result)
             return
-        frozen = self._draft.freeze_merge(self._states, keys)
+        if validate is not None:
+            validate()
+        frozen = freeze_changes(self._draft, keys)
+        merge_operation = freeze_application(self, frozen)
 
         def operation():
             if background_validate is not None:
                 background_validate()
-            prepared = frozen.prepare()
-            if background_validate is not None:
-                background_validate()
-            return prepared
+            return require_success(merge_operation())
 
         worker = ApiWorker(operation, route_http_errors=False)
 
@@ -263,89 +227,17 @@ class TaskSession:
                     raise RuntimeError(error)
                 if entries is None:
                     raise RuntimeError("应用准备线程未返回结果。")
-                self._require_current()
-                if validate is not None:
-                    validate()
-                result = self._commit_entries(
-                    keys,
-                    entries.entries,
-                    baselines=dict(entries.baselines),
-                    collections=dict(entries.collections),
-                    refresh=False,
-                )
+                if self._ctx.active_version_identity == self._identity:
+                    self._persistence.acknowledge_merge(entries)
+                result = accept_result(self, entries.value, frozen)
             except Exception as exc:
                 on_error(str(exc))
                 return
-            self._refresh_after_commit(entries.baselines, result, on_success)
+            on_success(result)
 
         self._worker = worker
         self._apply_delivery = ApplyDelivery(worker, completed)
         worker.start()
-
-    def _commit_entries(
-        self, keys: set[EntryKey], entries: tuple, *, baselines=None, collections=None, refresh=True
-    ) -> object:
-        persistence = self._persistence if not self._generation else VersionPersistence(self._ctx, self._identity)
-        commit_options = {} if self.commit_mutation is None else {"commit_mutation": self.commit_mutation}
-        result = _require_success(persistence.commit_translation(entries, **commit_options))
-        # A successful authoritative command may already have reprojected slots.
-        # Only replace collections still holding the unchanged pre-run objects.
-        current = self._slots()
-        merged = {} if collections is not None else {entry.identity: entry for entry in entries}
-        for task in self.tasks:
-            previous = self._states[task.key]
-            slot = current.get(task.key)
-            if slot is previous.slot and slot.collection is previous.collection:
-                if entries_unchanged(slot.collection, previous.entries) and any(
-                    entry.identity in keys for entry in task.entries
-                ):
-                    slot.collection = (
-                        collections[task.key]
-                        if collections is not None
-                        else TranslationEntryCollection(merged[entry.identity] for entry in previous.entries)
-                    )
-        self._persistence = persistence
-        self._generation += 1
-        self.after_snapshot_name = self._after_snapshot_base
-        if self._generation > 1:
-            self.after_snapshot_name += f"-{self._generation}"
-        self._saved = False
-        self._applied_keys.update(keys)
-        self._commit_result = result
-        if refresh:
-            self._states = self._read_states(baselines)
-        self._revisions = self._read_revisions()
-        signal = getattr(self._ctx, "collection_changed", None)
-        if signal is not None:
-            signal.emit(getattr(self._ctx, "collection", None))
-        return result
-
-    def _refresh_after_commit(self, entries, result, on_success):
-        def failed(message):
-            self._refresh_job = None
-            self._refresh_error = message
-            # The commit already happened. Its evidence must reach the ledger;
-            # require_current blocks any later finish, save or retry.
-            on_success(result)
-
-        def ready(value):
-            self._refresh_job = None
-            self._states, self._revisions = value
-            on_success(result)
-
-        try:
-            capture = SessionCapture(self._ctx, (), SimpleNamespace(run_id="post-commit"))
-            if capture.identity != self._identity or capture.revisions != self._revisions:
-                raise RuntimeError("应用结果后活动项目或版本已变化，结果已应用但无法继续此任务。")
-            self._refresh_job = SessionPreparationJob(
-                capture,
-                lambda prepared, captured: (prepared.states, captured.revisions),
-                ready,
-                failed,
-                prepare=lambda: prepare_committed_baseline(capture, entries),
-            )
-        except Exception as exc:
-            failed(str(exc))
 
     def save_translation(
         self, *, on_success: Callable, on_error: Callable[[str], None], background_validate: Callable | None = None
@@ -354,45 +246,40 @@ class TaskSession:
         if not self._applied_keys:
             raise RuntimeError("任务结果尚未应用，不能保存翻译。")
         if self._saved:
-            on_success({"snapshot_name": self.after_snapshot_name, "already_saved": True})
+            on_success({"already_saved": True})
             return
-        entries = tuple(entry for state in self._states.values() for entry in state.entries)
-
-        freeze = getattr(type(self._persistence), "freeze_save", None)
-        if freeze is not None:
-            operation = self._persistence.freeze_save(
-                entries, self.after_snapshot_name, legacy_inputs=self._legacy_snapshot_inputs
-            )
-        else:
-
-            def operation():
-                return self._persistence.save_translation(deepcopy(entries), self.after_snapshot_name)
+        operation = self._persistence.freeze_save_project()
 
         def saved(result):
             try:
                 self._require_current(allow_discarded=True)
+                self._persistence.acknowledge_save()
+                if not self._applied_values_match():
+                    raise RuntimeError("当前项目已保存，但部分任务结果已被后续编辑替换；AI 成果仍保留。")
             except RuntimeError as exc:
                 on_error(str(exc))
                 return
             self._saved = True
-            acknowledge = getattr(type(self._persistence), "acknowledge_save", None)
-            if acknowledge is not None:
-                self._persistence.acknowledge_save()
             on_success(result)
 
         def failed(message):
             try:
                 self._require_current(allow_discarded=True)
-                acknowledge = getattr(type(self._persistence), "acknowledge_save", None)
-                if acknowledge is not None:
-                    self._persistence.acknowledge_save()
+                self._persistence.acknowledge_save()
             except RuntimeError:
                 # A different version must not inherit this operation's clean flag.
                 pass
             on_error(message)
 
+        writer = self.merge_evidence_writer
+
+        def persist():
+            if writer is not None:
+                writer.retry_receipts()
+            return require_success(operation())
+
         self._run(
-            lambda: _require_success(operation()),
+            persist,
             on_success=saved,
             on_error=failed,
             background_validate=background_validate,
@@ -401,16 +288,6 @@ class TaskSession:
     def rollback_uncommitted(self) -> None:
         if not self._completed:
             self._discarded = True
-
-    def reset_sources(self, keys) -> None:
-        """Retry whole failed sources from their captured inputs, retaining successful drafts."""
-        self._require_current()
-        if self._completed:
-            raise RuntimeError("AI 任务已经提交，不能重置处理来源。")
-        keys = set(keys)
-        if not keys.issubset({task.key for task in self.tasks}):
-            raise ValueError("重试包含未知处理来源。")
-        self.retry_entries({entry.identity for task in self.tasks if task.key in keys for entry in task.entries})
 
     def retry_entries(self, keys: set[EntryKey]) -> tuple[SourceTask, ...]:
         """Return only selected execution inputs; prior successful drafts remain intact."""
@@ -448,26 +325,25 @@ class TaskSession:
 
         self._run(lambda: draft.prepare_retry(keys), on_success=prepared, on_error=on_error)
 
-    def _slots(self) -> dict[str, object]:
-        slots = {str(key): slot for key, slot in self._ctx.slots.items()}
-        if len(slots) != len(self._ctx.slots):
-            raise ValueError("AI 任务来源键重复。")
-        return slots
-
-    def _read_revisions(self) -> tuple:
-        return getattr(self._ctx, "project_revision", None), getattr(self._ctx, "variant_revision", None)
-
-    def _read_states(self, prepared: dict | None = None) -> dict[str, SourceState]:
-        return read_source_states(self._ctx, prepared)
-
     def _require_current(self, *, allow_discarded: bool = False) -> None:
-        if self._refresh_error:
-            raise RuntimeError(self._refresh_error)
         if self._discarded and not allow_discarded:
-            raise RuntimeError("AI 任务已取消，未发布的结果已丢弃。")
-        require_current(self._ctx, self._identity, self._revisions, self._states)
-        if self._legacy_snapshot_inputs is not None:
-            self._legacy_snapshot_inputs.require_current(self._ctx)
+            raise RuntimeError("AI 任务已取消，可在结果记录中处理已保存的成果。")
+        if self._ctx.active_version_identity != self._identity:
+            raise RuntimeError("活动项目或版本已变化，不能提交本次 AI 结果。")
+
+    def _applied_values_match(self):
+        if self._ctx.active_version_identity != self._identity:
+            return False
+        for key, expected in self._applied_values.items():
+            current = next(
+                (slot.collection.get(key) for slot in self._ctx.slots.values() if slot.collection.get(key)), None
+            )
+            if (
+                current is None
+                or (current.original, current.translation, current.stage, current.context or "") != expected
+            ):
+                return False
+        return True
 
     def _run(
         self, operation: Callable, *, on_success: Callable, on_error: Callable[[str], None], background_validate=None

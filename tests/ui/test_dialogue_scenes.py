@@ -16,8 +16,8 @@ drain = editor_tests.drain
 def scene_editor(editor):
     editor.context.active_slot.plugin = dialogue_plugin()
     editor.refresh()
-    drain(editor)
     editor.open_entry(dialogue_entries()[2].identity)
+    drain(editor)
     return editor
 
 
@@ -97,8 +97,8 @@ def test_scene_survives_project_snapshot_hydration_without_a_live_plugin(editor)
     slot.plugin = None
     slot.format_id = FormatId.PLUGIN_SSE
     editor.refresh()
-    drain(editor)
     editor.open_entry(dialogue_entries()[2].identity)
+    drain(editor)
     select_record(editor, 3)
     assert editor._node_identity[-1] == "SCEN:00000012"
     assert editor.view.table_model.rowCount() == 5

@@ -33,15 +33,14 @@ def test_legacy_output_guard_constructor_does_not_rewrite_business_text():
     "text",
     ["password: swordfish", "token=questpassword", "sk-" + "A" * 24, 'secret: "quest-password"\nnext line'],
 )
-def test_query_guard_observation_edit_preserves_original_identity(text):
+def test_query_guard_observation_edit_preserves_original_identity(text, current_project_factory):
     entries = [
         TranslationEntry("same", "same", source, "old", 1, "QUST:CNAM", requires_original_match=True)
         for source in (text, text + " other")
     ]
     collection = TranslationEntryCollection(entries)
-    context = SimpleNamespace(
-        collection=collection, filter_state={}, entry_labels={}, publish_collection_modified=lambda: None
-    )
+    project = current_project_factory(collection)
+    context = project.context
     editor = EditorController()
     query = ToolSpec(
         "boundary_query",
@@ -63,8 +62,11 @@ def test_query_guard_observation_edit_preserves_original_identity(text):
         edit, {"entry_id": row["key"], "new_translation": text}, context, middlewares=[OutputValidationGuard()]
     )
     assert changed.success
-    assert entries[0].translation == text
-    assert entries[1].translation == "old"
+    assert context.collection.get(entries[0].identity).translation == text
+    assert context.collection.get(entries[1].identity).translation == "old"
+    assert {entry.entry_key: entry for entry in project.aggregate.snapshot().entries}[
+        entries[0].identity
+    ].translation == text
     assert changed.to_dict()["data"]["new_translation"] == text
 
 

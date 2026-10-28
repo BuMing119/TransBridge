@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtCore import QPersistentModelIndex, Qt
 from PyQt6.QtWidgets import QApplication
 
+from tests.ui.fixtures.current_editing import CurrentEditingProject
 from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
 from transbridge.converter.translation_entry import (
     STAGE_QUESTIONABLE,
@@ -180,8 +181,9 @@ def test_translation_projection_update_does_not_restart_full_render(monkeypatch)
 def test_stage_change_updates_one_row_without_restarting_render(monkeypatch) -> None:
     app = _application()
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
-    collection = _entries(3)
-    widget = Step2PreviewWidget(context_module.AppContext())
+    project = CurrentEditingProject(_entries(3))
+    collection = project.context.collection
+    widget = Step2PreviewWidget(project.context)
     widget.refresh(collection)
     app.processEvents()
     table = widget._table
@@ -193,13 +195,19 @@ def test_stage_change_updates_one_row_without_restarting_render(monkeypatch) -> 
     resets = []
     table.model().modelReset.connect(lambda: resets.append(True))
 
-    widget._on_stage_change(entry, STAGE_QUESTIONABLE)
-    app.processEvents()
+    try:
+        widget._on_stage_change(entry, STAGE_QUESTIONABLE)
+        app.processEvents()
 
-    assert widget._render_generation == generation
-    assert all(index.isValid() for index in row_indices)
-    assert tuple(table.model().index(1, column) for column in range(table.model().columnCount())) == row_indices
-    assert resets == []
-    assert entry.stage == STAGE_QUESTIONABLE
-    assert "有疑问" in table.model().index(1, COL_CONTEXT).data(Qt.ItemDataRole.DisplayRole)
-    assert widget._summary.needs_review == 1
+        assert widget._render_generation == generation
+        assert all(index.isValid() for index in row_indices)
+        assert tuple(table.model().index(1, column) for column in range(table.model().columnCount())) == row_indices
+        assert resets == []
+        assert collection.get(entry.identity).stage == STAGE_QUESTIONABLE
+        persisted = next(row for row in project.aggregate.snapshot().entries if row.entry_key == entry.identity)
+        assert persisted.stage.value == STAGE_QUESTIONABLE
+        assert "有疑问" in table.model().index(1, COL_CONTEXT).data(Qt.ItemDataRole.DisplayRole)
+        assert widget._summary.needs_review == 1
+    finally:
+        widget.close()
+        project.close()

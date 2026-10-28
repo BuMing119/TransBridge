@@ -2,7 +2,7 @@
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
 
-from .task_adapter import AiLegacyRunState, TaskRuntimeAiTaskAdapter
+from .task_adapter import AiRunState, TaskRuntimeAiTaskAdapter
 
 
 class AiTaskRuntimeBinding(QObject):
@@ -20,14 +20,15 @@ class AiTaskRuntimeBinding(QObject):
 
     def bind(self):
         activity = self.run.activity
+        if not isinstance(activity, TaskRuntimeAiTaskAdapter):
+            raise TypeError("AI task execution requires a TaskRuntime activity adapter")
         if activity is self.activity:
             return
         if self.activity is not None:
             self.activity.bind_run(None)
-        self.activity = activity if isinstance(activity, TaskRuntimeAiTaskAdapter) else None
-        if self.activity is not None:
-            self.run.session.commit_mutation = self.activity.commit_mutation
-            self.activity.bind_run(self.cancelled.emit)
+        self.activity = activity
+        self.run.session.commit_mutation = activity.commit_mutation
+        activity.bind_run(self.cancelled.emit)
 
     def require_active(self):
         self.bind()
@@ -47,7 +48,7 @@ class AiTaskRuntimeBinding(QObject):
 
     @property
     def is_failed(self):
-        return self.activity is not None and self.activity.activity.state is AiLegacyRunState.FAILED
+        return self.activity is not None and self.activity.activity.state is AiRunState.FAILED
 
     def synchronize(self):
         self.bind()

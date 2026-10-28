@@ -8,13 +8,11 @@ from time import monotonic
 
 from PyQt6.QtCore import QObject, QTimer
 
-from transbridge.application.translation.entry_alias import ai_entry_id
-from transbridge.ui.version_snapshot_inputs import LegacySnapshotCapture
+from transbridge.application.translation.task_draft import TaskDraft
+from transbridge.application.translation.task_entry_results import TaskEntryResults
 from transbridge.ui.workers import ApiWorker
 
 from .task_apply_preparation import ApplyDelivery
-from .task_draft import TaskDraft
-from .task_entry_results import TaskEntryResults
 
 
 @dataclass(frozen=True)
@@ -50,29 +48,6 @@ def read_slots(ctx):
 
 def read_revisions(ctx):
     return getattr(ctx, "project_revision", None), getattr(ctx, "variant_revision", None)
-
-
-def read_source_states(ctx, prepared=None):
-    """Synchronous compatibility path; asynchronous publication uses sliced capture."""
-    states, identities, legacy_ids = {}, set(), set()
-    for key, slot in read_slots(ctx).items():
-        entries = tuple(slot.collection)
-        for entry in entries:
-            if entry.identity in identities:
-                raise ValueError("AI 任务来源包含重复 EntryKey，不能安全合并版本。")
-            identities.add(entry.identity)
-            if entry.id and not getattr(ctx, "uses_authoritative_projection", False):
-                identifier = ai_entry_id(entry)
-                if identifier in legacy_ids:
-                    raise ValueError("旧版工程存在跨插件重复条目 ID，请先迁移到 V2 工程后运行 AI 任务。")
-                legacy_ids.add(identifier)
-        baseline = None if prepared is None else prepared.get(key)
-        if baseline is None or not entries_unchanged(entries, baseline):
-            baseline = deepcopy(entries)
-        states[key] = SourceState(
-            slot, slot.collection, getattr(slot.collection, "collection_revision", None), baseline
-        )
-    return states
 
 
 def entries_unchanged(collection, baseline):
@@ -116,15 +91,13 @@ class SessionCapture:
         self.run_id = getattr(spec, "run_id", "run")
         self.identity = ctx.active_version_identity
         if self.identity is None:
-            raise RuntimeError("请先打开一个项目版本，AI 任务需要先创建版本快照。")
+            raise RuntimeError("请先打开一个项目版本，再创建 AI 任务。")
         self.revisions = read_revisions(ctx)
-        self.authoritative = bool(getattr(ctx, "uses_authoritative_projection", False))
         self.states = {
             key: SourceState(slot, slot.collection, getattr(slot.collection, "collection_revision", None), ())
             for key, slot in read_slots(ctx).items()
         }
         self.captured_tasks = []
-        self.legacy_inputs = None
         self.selection_capture = selection_intent
         self.origins = {}
 
@@ -163,28 +136,25 @@ class SessionCapture:
             self.captured_tasks.append(CapturedTask(task.key, task.label, task.esp_path, *actions))
         if self.selection_capture is not None:
             yield from self.selection_capture.steps()
-        if not self.authoritative and getattr(self.ctx, "variant_store", None) is not None:
-            capture = LegacySnapshotCapture(self.ctx)
-            yield from capture.steps()
-            self.legacy_inputs = capture.finish()
 
     def prepare(self):
         # This method uses only captured values; live slot/collection references in
         # SourceState are opaque ownership tokens and are never inspected here.
-        identities, legacy_ids = set(), set()
+        identities = set()
         for state in self.states.values():
             for entry in state.entries:
                 if entry.identity in identities:
                     raise ValueError("AI 任务来源包含重复 EntryKey，不能安全合并版本。")
                 identities.add(entry.identity)
-                if entry.id and not self.authoritative:
-                    identifier = ai_entry_id(entry)
-                    if identifier in legacy_ids:
-                        raise ValueError("旧版工程存在跨插件重复条目 ID，请先迁移到 V2 工程后运行 AI 任务。")
-                    legacy_ids.add(identifier)
         tasks = tuple(self.captured_tasks)
+        draft_states = self.states
         if self.selection_capture is not None:
             selected = self.selection_capture.intent.select(self.states, self.origins)
+            if self.selection_capture.intent.recovery is not None:
+                draft_states = dict(self.states)
+                for task in selected:
+                    previous = draft_states.get(task.key, SourceState(None, None, None, ()))
+                    draft_states[task.key] = replace(previous, entries=tuple(task.collection))
             tasks = tuple(
                 CapturedTask(
                     task.key,
@@ -196,8 +166,8 @@ class SessionCapture:
                 for task in selected
                 if task.entries
             )
-        draft = TaskDraft.from_captured(tasks, self.states)
-        results = TaskEntryResults(draft.tasks, self.run_id)
+        draft = TaskDraft.from_captured(tasks, draft_states)
+        results = TaskEntryResults(draft.tasks, self.run_id, originals=draft.originals)
         results.index
         return PreparedSession(self.states, draft, results)
 
@@ -205,8 +175,6 @@ class SessionCapture:
         require_current(self.ctx, self.identity, self.revisions, self.states)
         if self.selection_capture is not None:
             self.selection_capture.require_current()
-        if self.legacy_inputs is not None:
-            self.legacy_inputs.require_current(self.ctx)
 
 
 _ACTIVE_JOBS: set[SessionPreparationJob] = set()

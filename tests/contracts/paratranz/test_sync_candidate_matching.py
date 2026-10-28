@@ -3,25 +3,19 @@ from unittest.mock import patch
 
 import pytest
 
-from transbridge.application.contracts import OperationOutcome
 from transbridge.application.io.identity import EntryKey, EntryRevision, ExternalEntryRef, SourceNamespace
-from transbridge.application.io.publish import ImmediateCommitGuard
 from transbridge.application.sync import (
-    AuthorizedSyncPlan,
-    CallbackLocalSyncUnitOfWork,
     ConflictPolicy,
     DownloadDecision,
     DownloadDecisionStaleError,
-    ExecuteSyncRequest,
     LocalEntrySnapshot,
-    ParaTranzSyncExecutor,
     RemoteEntrySnapshot,
     SyncAction,
     SyncOperation,
     SyncPlanner,
     models,
 )
-from transbridge.application.sync.local_candidate import RemoteSourceIndex
+from transbridge.application.sync.local_candidate import RemoteSourceIndex, build_local_candidate
 
 NS = SourceNamespace("project:candidate-feedback")
 SCOPE = f"paratranz:project:7:source:{NS.value}"
@@ -57,43 +51,27 @@ def plan(locals_, remotes, *, operation=SyncOperation.DOWNLOAD, decisions=()):
     )
 
 
-def execute(preview, locals_, remotes):
-    official = list(locals_)
-
-    class Remote:
-        def fetch(self, *_args, **_kwargs):
-            return remotes
-
-    service = Remote()
-    executor = ParaTranzSyncExecutor(
-        service,
-        service,
-        CallbackLocalSyncUnitOfWork(lambda: tuple(official), lambda value: official.__setitem__(slice(None), value)),
-    )
-    result = executor.execute(
-        ExecuteSyncRequest(
-            AuthorizedSyncPlan(preview, "test", "CONFIRMED"),
-            7,
-            NS,
+def materialize(preview, locals_, remotes):
+    return list(
+        build_local_candidate(
             tuple(locals_),
-            "candidate-test",
-            ImmediateCommitGuard("candidate-test"),
+            RemoteSourceIndex(tuple(remotes)),
+            tuple(item for item in preview.items if item.action is SyncAction.UPDATE_LOCAL),
+            attach_remote_refs=False,
         )
     )
-    return result, official
 
 
 def test_identical_54_candidates_download_shared_translation_without_inventing_an_association():
     locals_ = (local(),)
     remotes = tuple(remote(ref=number) for number in range(1, 55))
     preview = plan(locals_, remotes)
-    result, updated = execute(preview, locals_, tuple(reversed(remotes)))
+    updated = materialize(preview, locals_, tuple(reversed(remotes)))
 
     assert preview.conflicts == 0
     assert preview.download_review == ()
     assert preview.items[0].reason == "equivalent_remote_content"
     assert preview.plan_hash == plan(locals_, tuple(reversed(remotes))).plan_hash
-    assert result.outcome is OperationOutcome.COMPLETED
     assert updated[0].translation == "Cloud"
     assert updated[0].external_ref is None
     assert plan(updated, remotes).items[0].action is SyncAction.SKIP
@@ -119,10 +97,9 @@ def test_different_candidate_content_is_not_collapsed(change):
     locals_ = (replace(local(), context="local context"),)
     remotes = (remote(), replace(remote(ref=2), **change))
     preview = plan(locals_, remotes)
-    result, updated = execute(preview, locals_, remotes)
+    updated = materialize(preview, locals_, remotes)
 
     assert preview.conflicts == 1
-    assert result.value["deferred_count"] == 1
     assert updated == list(locals_)
 
 
@@ -135,8 +112,7 @@ def test_duplicate_ids_are_corrupt_identity_even_when_content_agrees():
 def test_duplicate_content_with_different_cloud_order_preserves_local_source_layout():
     locals_ = (replace(local(), context_order=88),)
     remotes = (replace(remote(), context_order=12), replace(remote(ref=2), context_order=90))
-    result, updated = execute(plan(locals_, remotes), locals_, remotes)
-    assert result.counts.succeeded == 1
+    updated = materialize(plan(locals_, remotes), locals_, remotes)
     assert updated[0].context_order == 88
     assert updated[0].external_ref is None
 
@@ -151,9 +127,8 @@ def test_mixed_54_candidates_show_two_content_choices_and_bind_the_entire_group(
     assert group.entry.external_ref is None
     decision = DownloadDecision(row.row_id, group.token)
     resolved = plan(locals_, remotes, decisions=(decision,))
-    result, updated = execute(resolved, locals_, tuple(reversed(remotes)))
+    updated = materialize(resolved, locals_, tuple(reversed(remotes)))
 
-    assert result.counts.succeeded == 1
     assert updated[0].translation == "Cloud"
     assert updated[0].stage == 1
     assert updated[0].external_ref is None
@@ -171,14 +146,12 @@ def test_historical_local_reference_does_not_separate_a_content_group_in_review(
     assert sorted(candidate.source_count for candidate in preview.download_review[0].candidates) == [1, 53]
 
 
-def test_changed_member_of_equivalent_group_invalidates_execution():
+def test_changed_member_of_equivalent_group_cannot_materialize_reviewed_content():
     locals_ = (local(),)
     remotes = (remote(), remote(ref=2))
     preview = plan(locals_, remotes)
-    result, updated = execute(preview, locals_, (remotes[0], replace(remotes[1], translation="New cloud text")))
-
-    assert result.outcome is OperationOutcome.FAILED
-    assert updated == list(locals_)
+    with pytest.raises(RuntimeError, match="reviewed equivalent remote content"):
+        materialize(preview, locals_, (remotes[0], replace(remotes[1], translation="New cloud text")))
 
 
 def test_consensus_ignores_other_locals_historical_reference():
@@ -186,8 +159,7 @@ def test_consensus_ignores_other_locals_historical_reference():
     remotes = (remote(), remote(ref=2))
     preview = plan(locals_, remotes)
     assert preview.conflicts == 0
-    result, updated = execute(preview, locals_, remotes)
-    assert result.counts.succeeded == 1
+    updated = materialize(preview, locals_, remotes)
     assert updated[0].translation == "Cloud"
     assert updated[1] == locals_[1]
 
@@ -198,8 +170,7 @@ def test_historical_reference_does_not_split_or_block_equivalent_content(ref):
     remotes = (remote(), remote(ref=2))
     preview = plan(locals_, remotes)
     assert preview.conflicts == 0
-    result, updated = execute(preview, locals_, remotes)
-    assert result.counts.succeeded == 1
+    updated = materialize(preview, locals_, remotes)
     assert updated[0].translation == "Cloud"
     assert updated[0].external_ref is None
 
@@ -230,8 +201,7 @@ def test_quest_journal_finds_exact_original_in_same_record_despite_shifted_ordin
     selected = next(item for item in preview.items if item.entry_key == locals_[0].entry_key)
     assert selected.external_ref.opaque_id == 2
     if operation is SyncOperation.DOWNLOAD:
-        result, updated = execute(preview, locals_, remotes)
-        assert result.counts.succeeded == 1
+        updated = materialize(preview, locals_, remotes)
         assert updated[0].entry_key == locals_[0].entry_key
         assert updated[0].external_ref is None
         assert updated[0].translation == "Cloud"
@@ -275,10 +245,9 @@ def test_several_exact_cross_ordinal_candidates_can_supply_content_but_not_ident
         remote(f"{QUEST}|81~QUST:CNAM", ref=3),
     )
     preview = plan(locals_, remotes)
-    result, updated = execute(preview, locals_, remotes)
+    updated = materialize(preview, locals_, remotes)
 
     assert preview.conflicts == 0
-    assert result.counts.succeeded == 1
     assert updated[0].external_ref is None
     assert updated[0].original == "Source"
     upload = plan(updated, remotes, operation=SyncOperation.UPLOAD)

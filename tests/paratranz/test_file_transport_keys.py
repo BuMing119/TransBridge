@@ -12,21 +12,23 @@ from transbridge.application.categorized_upload.models import UploadSource
 from transbridge.application.file_upload import execute_file_upload, upload_files, wire_records
 from transbridge.application.io.identity import EntryRevision
 from transbridge.application.io.paratranz_keys import ParaTranzKeyError
-from transbridge.application.io.publish import ImmediateCommitGuard
 from transbridge.application.ports.paratranz import ParaTranzEntry
 from transbridge.application.sync import (
-    AuthorizedSyncPlan,
-    CallbackLocalSyncUnitOfWork,
     ConflictPolicy,
-    ExecuteSyncRequest,
     LocalEntrySnapshot,
-    ParaTranzSyncExecutor,
     SyncAction,
     SyncOperation,
     SyncPlanner,
 )
-from transbridge.paratranz.path_snapshot import CurrentPathSnapshotAdapter
+from transbridge.application.sync.local_candidate import RemoteSourceIndex, build_local_candidate
+from transbridge.paratranz.batch_download_snapshot import BatchDownloadScope, BatchDownloadSnapshotReader
 from transbridge.paratranz.sync_snapshot import ParaTranzRemoteSnapshotAdapter, _snapshot
+
+
+def download(port, *paths):
+    return BatchDownloadSnapshotReader(port.config, gateway_factory=lambda _config: port).fetch(
+        7, (BatchDownloadScope("a", NS, paths),), limit=100
+    )[0]
 
 
 def plan(local, remote):
@@ -96,38 +98,18 @@ def test_online_download_and_execution_restore_translations_to_exact_local_origi
     artifact = files()[0]
     rows = [dict(row, id=index + 20) for index, row in enumerate(wire_records(artifact))]
     port, session = gateway([{"id": 5, "name": artifact.path}], rows)
-    adapter = CurrentPathSnapshotAdapter(
-        port.config, "A.esp.json", category_paths=(artifact.path,), gateway_factory=lambda _config: port
-    )
-    remote = adapter.fetch(7, NS, limit=100)
+    read = download(port, "A.esp.json", artifact.path)
+    assert not read.error
+    remote = read.entries
     local = tuple(
         LocalEntrySnapshot(entry.identity, EntryRevision(1), entry.original, "", "QUST:CNAM", 0)
         for entry in artifact.entries
     )
     preview = plan(local, remote)
     assert all(item.action is SyncAction.UPDATE_LOCAL for item in preview.items)
-    updated = list(local)
-
-    class Remote:
-        def fetch(self, *args, **kwargs):
-            return remote
-
-    executor = ParaTranzSyncExecutor(
-        Remote(),
-        Remote(),
-        CallbackLocalSyncUnitOfWork(lambda: tuple(updated), lambda value: updated.__setitem__(slice(None), value)),
+    updated = build_local_candidate(
+        local, RemoteSourceIndex(remote), preview.items, attach_remote_refs=False, preserve_local_source=True
     )
-    result = executor.execute(
-        ExecuteSyncRequest(
-            AuthorizedSyncPlan(preview, "test", "CONFIRMED"),
-            7,
-            NS,
-            local,
-            "transport-test",
-            ImmediateCommitGuard("transport-test"),
-        )
-    )
-    assert result.is_success
     assert {item.entry_key: item.translation for item in updated} == {
         entry.identity: entry.translation for entry in artifact.entries
     }
@@ -173,10 +155,9 @@ def test_old_conflict_files_are_excluded_without_reading_their_contents():
     port, session = gateway(
         [{"id": index + 5, "name": f"A.esp/任务/任务日志__冲突_{index}.json"} for index in range(2)],
     )
-    adapter = CurrentPathSnapshotAdapter(
-        port.config, "A.esp.json", category_paths=(files()[0].path,), gateway_factory=lambda _config: port
-    )
-    remote = adapter.fetch(7, NS, limit=10)
+    read = download(port, "A.esp.json", files()[0].path)
+    assert not read.error
+    remote = read.entries
     local = tuple(
         LocalEntrySnapshot(entry.identity, EntryRevision(), entry.original, "", "QUST:CNAM", 0) for entry in entries
     )
@@ -189,9 +170,9 @@ def test_old_conflict_files_are_excluded_without_reading_their_contents():
 def test_changed_cloud_original_fails_download_without_further_requests():
     row = dict(wire_records(files()[0])[0], original="Changed remotely")
     port, session = gateway([{"id": 5, "name": "A.esp.json"}], [row])
-    adapter = CurrentPathSnapshotAdapter(port.config, "A.esp.json", gateway_factory=lambda _config: port)
-    with pytest.raises(ParaTranzKeyError, match="哈希"):
-        adapter.fetch(7, NS, limit=10)
+    read = download(port, "A.esp.json")
+    assert read.error and "哈希" in read.error
+    assert read.entries == ()
     assert len(session.calls) == 2
 
 

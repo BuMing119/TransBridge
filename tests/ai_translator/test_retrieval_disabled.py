@@ -12,7 +12,7 @@ from transbridge.ai_translator.project_terminology_adapter import (
     ProjectTerminologyAdapter,
 )
 from transbridge.ai_translator.term_database import DynamicTermDatabase, TermDatabaseManager
-from transbridge.ai_translator.translator import AutoTranslator, ProgressCheckpoint, TranslatorConfig
+from transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig
 from transbridge.application.terminology.effective import (
     EffectiveSnapshotStatus,
     EffectiveTerminologySnapshot,
@@ -90,8 +90,6 @@ def test_disabled_retrieval_translates_with_model_instead_of_project_direct_fill
     tmp_path, monkeypatch, entry_context, response_shape
 ):
     monkeypatch.setattr(LLMConfig, "get_ai_translator_dir", staticmethod(lambda _stem: str(tmp_path)))
-    monkeypatch.setattr(ProgressCheckpoint, "save", lambda *_args: None)
-    monkeypatch.setattr(ProgressCheckpoint, "delete", lambda *_args: None)
     adapter, context = _project_binding()
     config = LLMConfig(retrieval_enabled=False, enable_post_process=False)
     entries = [TranslationEntry(word, word, word, "", 0, entry_context) for word in ("Sword", "Shield")]

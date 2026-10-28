@@ -3,10 +3,13 @@ import json
 
 import pytest
 
+from transbridge.application.translation.task_config_snapshot import (
+    execution_signature as signature,
+    execution_snapshot,
+    restore_execution_snapshot,
+)
 from transbridge.config.llm import LLMConfig
 from transbridge.paratranz.config_manager import ActionRule
-from transbridge.ui.tools.ai_translator.task_config_snapshot import execution_snapshot, restore_execution_snapshot
-from transbridge.ui.tools.ai_translator.task_recovery_binding import signature
 
 
 @pytest.mark.parametrize("custom", [False, True])

@@ -2,104 +2,54 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
-from transbridge.application.contracts import OperationOutcome, RequestContext
-from transbridge.application.io import FormatId
-from transbridge.application.io.operation_write import (
-    HydratedWriteDraft,
-    HydratedWritePreflightService,
-    HydratedWriteWorkload,
-)
-from transbridge.application.io.plugin_write import plugin_artifact_paths
-from transbridge.application.io.publish import BackupPolicy, ConflictPolicy
-from transbridge.application.security.paths import PathAuthorizationPolicy, PathGrant
+from transbridge.application.assistant_requests.models import RequestError
+from transbridge.application.contracts import OperationOutcome
+from transbridge.application.io.operation_write import HydratedWriteWorkload
+from transbridge.application.io.operation_write_batch import HydratedWriteBatchWorkload
 from transbridge.application.tasks import TaskCancelled
-from transbridge.application.terminology_profiles import TerminologyProfileWriteProjectionSource
 
-from .base import ToolResult, require_collection
+from .base import ToolResult
 from .diagnostics import technical_error
 from .file_undo_capture import capture_file_command
 from .task_manager import TaskManager
 from .task_runtime_bridge import task_metadata
+from .write_back_preparation import prepare_write_back
 
 
-@require_collection
-def _tool_write_back(args: dict, ctx, collection) -> ToolResult:
-    target = str(args.get("target", "")).lower()
-    formats = {
-        "esp": FormatId.PLUGIN_SSE,
-        "strings": FormatId.PLUGIN_SSE,
-        "eet": FormatId.XML_EET,
-        "xt": FormatId.XML_XT,
-    }
-    if target not in formats:
-        return ToolResult.fail("无效的 target；可选 esp/eet/xt/strings")
-    slot = getattr(ctx, "active_slot", None)
-    snapshot = getattr(slot, "source_snapshot", None)
-    if snapshot is None or snapshot.format_id is not formats[target]:
-        return ToolResult.fail(
-            "当前集合缺少匹配的来源快照，请先解析对应源文件。", error_code="SOURCE_SNAPSHOT_REQUIRED"
-        )
+def _tool_write_back(args: dict, ctx) -> ToolResult:
     try:
-        source = Path(snapshot.source.uri)
-        path = args.get("path")
-        if target == "strings":
-            directory = args.get("output_dir")
-            if not directory:
-                return ToolResult.fail("请提供 output_dir；本地化插件与 Strings 将作为同一发布事务输出。")
-            path = str(Path(directory) / source.name)
-        path = str(path or source)
-        request_context = getattr(ctx, "request_context", None) or getattr(ctx, "runtime_context", None)
-        roots = tuple(getattr(request_context, "authorized_roots", ()) or getattr(ctx, "authorized_roots", ()) or ())
-        if not roots:
-            return ToolResult.fail("写回缺少授权目录。", error_code="PATH_GRANT_REQUIRED")
-        metadata = dict(getattr(request_context, "metadata", ()) or ())
-        base = Path(metadata.get("working_directory") or roots[0])
-        destination = Path(path)
-        path = str((destination if destination.is_absolute() else base / destination).resolve(strict=False))
-        policy = PathAuthorizationPolicy([PathGrant(Path(root), allow_create=True) for root in roots])
-        for output in plugin_artifact_paths(snapshot, path):
-            output_path = Path(output)
-            # Companions are generated under exactly this one child directory.
-            # Authorize its creation without creating it before preflight. An
-            # existing symlink/junction must still pass normal canonical checks.
-            if output_path.parent == Path(path).parent / "Strings" and not os.path.lexists(output_path.parent):
-                output_path = output_path.parent
-            decision = policy.authorize(output_path, working_directory=base, for_creation=True)
-            if not decision.allowed:
-                return ToolResult.fail(decision.reason, error_code=decision.code)
-        if request_context is None:
-            request_context = RequestContext("smart-assistant-writer")
-        draft = HydratedWriteDraft(
-            snapshot,
-            snapshot.format_id,
-            tuple(entry.snapshot() for entry in collection),
-            path,
-            collection.collection_revision.value,
-            request_context,
-            conflict_policy=ConflictPolicy.EXPLICIT_OVERWRITE if args.get("overwrite", False) else ConflictPolicy.FAIL,
-            backup_policy=BackupPolicy.REQUIRED_IF_EXISTS,
-        )
-        profile_factory = getattr(ctx, "terminology_profile_service_factory", None)
-        projection = None
-        if profile_factory is not None:
-            projection = TerminologyProfileWriteProjectionSource(
-                profile_factory.profile_service_for,
-                base_snapshot_for=profile_factory.base_terminology_snapshot,
+        prepared = prepare_write_back(args, ctx)
+        if not prepared.capture_paths:
+            blocked = [
+                (key, check)
+                for key, checked in zip(prepared.source_keys, prepared.preflights, strict=True)
+                for check in checked.checks
+                if not check.passed and not check.warning
+            ]
+            return ToolResult.fail(
+                "；".join(f"{key}：{check.message}" for key, check in blocked),
+                error_code=blocked[0][1].code,
+                failed_items=[
+                    {"source_key": key, "code": check.code, "message": check.message} for key, check in blocked
+                ]
+                if prepared.is_batch
+                else None,
             )
-        checked = HydratedWritePreflightService(entry_projection=projection).preflight(draft)
-        if not checked.ready:
-            blocked = tuple(check for check in checked.checks if not check.passed and not check.warning)
-            return ToolResult.fail("；".join(check.message for check in blocked), error_code=blocked[0].code)
-        workload = HydratedWriteWorkload(checked)
-        manager = TaskManager()
-        task_id = manager.register(
-            metadata=task_metadata(ctx, {"type": "write", "display_name": "写回 " + source.name})
+        workload = (
+            HydratedWriteBatchWorkload(prepared.preflights)
+            if prepared.is_batch
+            else HydratedWriteWorkload(prepared.preflights[0])
         )
+        manager = TaskManager()
+        label = (
+            f"批量写回 {len(prepared.paths)} 个来源" if prepared.is_batch else "写回 " + Path(prepared.paths[0]).name
+        )
+        task_id = manager.register(metadata=task_metadata(ctx, {"type": "write", "display_name": label}))
         execution = manager.get_handle(task_id).execution
+        cancellation = manager.runtime.cancellation_token(execution.ref, execution.owner)
 
         def run():
             publication = None
@@ -109,47 +59,67 @@ def _tool_write_back(args: dict, ctx, collection) -> ToolResult:
                 publication = workload(
                     SimpleNamespace(
                         ref=execution.ref,
-                        cancellation=manager.runtime.cancellation_token(execution.ref, execution.owner),
+                        cancellation=cancellation,
                         publish_commit_guard=lambda: execution,
                     )
                 )
                 return publication
 
             try:
-                result = capture_file_command(
-                    ctx,
-                    plugin_artifact_paths(snapshot, path),
-                    publish,
-                )
-                if result.outcome is OperationOutcome.CANCELLED:
-                    raise TaskCancelled("写回已取消，正式目标未改变。")
-                data = _publication_data(result, path)
+                result = capture_file_command(ctx, prepared.capture_paths, publish)
+                data = _write_receipt(result, prepared)
                 if result.outcome is not OperationOutcome.COMPLETED:
+                    if cancellation.is_cancelled or result.outcome is OperationOutcome.CANCELLED:
+                        manager.set_status(task_id, "cancelled")
                     message = "；".join(item.message for item in result.diagnostics) or "写回未完整完成"
                     manager.notify_finished(task_id, False, message, data)
                     return
-                data["written_count"] = len(draft.entries)
-                manager.notify_finished(
-                    task_id,
-                    True,
-                    "写回完成",
-                    data,
-                )
+                data["written_count"] = sum(len(item.draft.entries) for item in prepared.preflights)
+                manager.notify_finished(task_id, True, "写回完成", data)
             except TaskCancelled:
                 raise
             except Exception as exc:
-                data = None if publication is None else _publication_data(publication, path)
+                data = None if publication is None else _write_receipt(publication, prepared)
                 if data is not None:
                     data["publication_outcome"] = publication.outcome.value
                     data["outcome"] = "partial" if publication.artifact_refs else "failed"
                     data["post_publish_error"] = technical_error(exc)
+                    data.pop("written_count", None)
                 manager.notify_finished(task_id, False, f"写回失败: {technical_error(exc)}", data)
                 raise
 
         manager.start_thread(task_id, run)
-        return ToolResult.ok("安全写回任务已启动", data={"task_id": task_id, "path": path})
+        started = {"task_id": task_id}
+        if prepared.is_batch:
+            started.update(paths=list(prepared.paths), source_keys=list(prepared.source_keys))
+        else:
+            started["path"] = prepared.paths[0]
+        return ToolResult.ok("安全写回任务已启动", data=started)
+    except RequestError as exc:
+        return ToolResult.fail(str(exc), error_code=exc.code)
     except Exception as exc:
         return ToolResult.fail(f"无法创建写回计划: {technical_error(exc)}")
+
+
+def _write_receipt(result, prepared):
+    data = _publication_data(result, prepared.paths[0])
+    if not prepared.is_batch:
+        return data
+    outcomes = data.get("outcomes", ())
+    if not outcomes:
+        outcomes = next(
+            (
+                dict(item.details).get("outcomes", ())
+                for item in result.diagnostics
+                if item.code == "WRITE_BATCH_RESULTS"
+            ),
+            (),
+        )
+    sources = dict(zip(prepared.paths, prepared.source_keys, strict=True))
+    data["outcomes"] = [{**item, "source_key": sources[item["object_ref"]]} for item in outcomes]
+    data.pop("path", None)
+    data.update(paths=list(prepared.paths), source_keys=list(prepared.source_keys))
+    return data
 
 
 def _publication_data(result, path: str) -> dict:
@@ -166,12 +136,37 @@ def _publication_data(result, path: str) -> dict:
 
 _PARAM_SCHEMAS = {
     "write_back": {
-        "target": {"type": "str", "required": True, "description": "esp/eet/xt/strings; must match the parsed source"},
+        "target": {
+            "type": "str",
+            "required": True,
+            "description": "esp/eet/xt/strings, or auto with explicit source_keys; auto preserves each source's format",
+        },
         "path": {"type": "str", "required": False, "description": "Output file; defaults to the source path"},
         "output_dir": {
             "type": "str",
             "required": False,
-            "description": "Output directory for a localized plugin bundle",
+            "description": (
+                "Save selected sources together under their original names; supports all targets. "
+                "Required for strings. Omit to write in place. Single-file path takes precedence except for strings."
+            ),
+        },
+        "source_keys": {
+            "type": "list",
+            "required": False,
+            "description": (
+                "Explicit collection keys from list_collections; omit for the active source. "
+                "A nonempty unique list selects one or more sources without switching the active collection. "
+                "Multiple sources cannot use path."
+            ),
+        },
+        "pack_bsa": {
+            "type": "bool",
+            "required": False,
+            "description": (
+                "Default false: write loose STRINGS. True packs only localized STRINGS into BSA alongside the plugin. "
+                "Other formats in an auto batch are unchanged. "
+                "Does not replace input archives or delete existing loose files."
+            ),
         },
         "overwrite": {
             "type": "bool",
@@ -194,10 +189,15 @@ def _register_writer_tools():
                 "description": (
                     "①Publish translations from the parsed source snapshot with validation, backups "
                     "and guarded atomic publication. "
-                    "②Arguments: target esp/eet/xt/strings, optional path, overwrite (default false), "
-                    "output_dir for strings. strings publishes the plugin and its localized Strings together. "
+                    "②Arguments: target esp/eet/xt/strings; auto preserves each explicitly selected source's format. "
+                    "source_keys selects exact keys returned by list_collections; omit for the active source. "
+                    "output_dir saves original filenames together for all formats; path selects one output file. "
+                    "strings requires output_dir and publishes the plugin and its localized resources together. "
+                    "pack_bsa defaults to false (loose STRINGS); true optionally packs localized resources. "
                     "Existing outputs require overwrite=true. "
-                    "③Returns {task_id,path}; wait for the task terminal result before dependent actions. "
+                    "③Returns {task_id,path} or {task_id,paths,source_keys}; task results include per-source outcomes, "
+                    "actual artifacts and diagnostics. Independent batch members may complete when others fail. "
+                    "Wait for the task terminal result before dependent actions. "
                     "Requires admin confirmation and an authorized output root. Parse the matching source first."
                 ),
                 "execute": _tool_write_back,

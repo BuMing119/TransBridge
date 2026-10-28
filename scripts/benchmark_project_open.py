@@ -2,8 +2,9 @@
 
 Example: uv run python scripts/benchmark_project_open.py --output result.json
 Use --source-root for another checkout (only src/ is needed). Real projects are
-opt-in with --data-root; only project/variant records are copied. Their source
-files are read by the normal parser, and input hashes are checked afterwards.
+opt-in with --data-root; project/variant records and referenced source artifacts
+are copied. Sources without saved artifacts use the normal parser. Original
+input hashes are checked afterwards.
 No application configuration, credentials, network or LLM services are loaded.
 """
 
@@ -35,7 +36,7 @@ def _digest(path: Path) -> str:
 
 
 def copy_records(source: Path, destination: Path) -> tuple[list[Path], dict[Path, str]]:
-    """Copy only records, without constructing any service against user data."""
+    """Copy records and their saved source closure without opening user services."""
     source = source.resolve(strict=True)
     destination = destination.resolve()
     if destination.is_relative_to(source) or source.is_relative_to(destination):
@@ -47,26 +48,57 @@ def copy_records(source: Path, destination: Path) -> tuple[list[Path], dict[Path
     if not records:
         raise ValueError("source data contains no project records")
     hashes = {}
-    for path in [*records, *variants]:
+    copied_paths = [*records, *variants]
+    for path in copied_paths:
         if path.is_symlink() or not path.resolve().is_relative_to(source):
             raise ValueError("record links outside the source tree are unsupported")
         hashes[path] = _digest(path)
-    # Track source content too, without including its text or filenames in JSON.
+    artifact_ids = set()
+    # Legacy records still track live input content. Saved source references
+    # depend only on their immutable store closure, even if live paths are gone.
     for record in records:
         document = json.loads(record.read_text(encoding="utf-8"))
         for item in document.get("data", {}).get("sources", ()):
+            artifact_id = item.get("source_artifact_id")
+            if artifact_id is not None:
+                if not isinstance(artifact_id, str):
+                    raise ValueError("source artifact identity must be a string")
+                artifact_ids.add(artifact_id)
+                continue
             location = item.get("location") or item.get("path")
             if location and Path(location).is_file():
                 path = Path(location).resolve()
                 hashes[path] = _digest(path)
+    if artifact_ids:
+        artifact_hashes = _artifact_record_hashes(source, artifact_ids)
+        hashes.update(artifact_hashes)
+        copied_paths.extend(artifact_hashes)
     destination.mkdir()
-    for path in [*records, *variants]:
+    for path in copied_paths:
         target = destination / path.relative_to(source)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(path.read_bytes())
         if _digest(target) != hashes[path]:
             raise RuntimeError("input changed while copying project records")
     return [destination / path.relative_to(source) for path in records], hashes
+
+
+def _artifact_record_hashes(source: Path, artifact_ids: set[str]) -> dict[Path, str]:
+    """Read and verify only formally referenced manifests and blob dependencies."""
+    from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
+
+    store = ProjectSourceArtifactStore(str(source))
+    hashes = {}
+    for artifact_id in sorted(artifact_ids):
+        for relative, content in store.iter_records(artifact_id):
+            path = source / "source_artifacts" / relative
+            if path.is_symlink() or not path.resolve().is_relative_to(source):
+                raise ValueError("artifact links outside the source tree are unsupported")
+            digest = hashlib.sha256(content).hexdigest()
+            if path in hashes and hashes[path] != digest:
+                raise RuntimeError("input changed while reading source artifact dependencies")
+            hashes[path] = digest
+    return hashes
 
 
 def verify_inputs(hashes: dict[Path, str]) -> bool:

@@ -6,9 +6,7 @@ from dataclasses import replace
 from threading import Event
 
 from transbridge.application.io.publish import TaskRuntimeCommitGuard
-from transbridge.application.projects import EntryStatePatch
 from transbridge.application.tasks import JobCapabilities, JobSpec, OwnerRef, TaskCancelled, TransitionError
-from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
 
 def run_download_task(runtime, context, fingerprint, operation, cancel):
@@ -82,32 +80,3 @@ def run_download_task(runtime, context, fingerprint, operation, cancel):
     if "error" in outcome:
         raise outcome["error"]
     return outcome["receipt"]
-
-
-def publish_download(context, snapshot, entries, updated_keys, remote_project_id, task_context, commit):
-    """Patch existing state only; the lifecycle performs the one atomic mutation."""
-    selected = set(updated_keys)
-    current = {entry.identity: entry for source in snapshot.sources for entry in source.entries}
-    scope = f"project:{remote_project_id}"
-    patches = {
-        entry.entry_key: EntryStatePatch(
-            entry.translation,
-            entry.stage,
-            tuple(
-                ref
-                for ref in current[entry.entry_key].external_refs
-                if not (ref.system == "paratranz" and ref.scope == scope)
-            ),
-        )
-        for entry in entries
-        if entry.entry_key in selected
-    }
-    return context.project_commands.replace_entry_records(
-        patches,
-        task_context,
-        expected_project_revision=snapshot.project_revision,
-        expected_variant_revision=snapshot.variant_revision,
-        expected_variant_ref=VariantRef(VariantId(snapshot.variant_id), ProjectId(snapshot.project_id)),
-        commit_mutation=commit,
-        persist=True,
-    )

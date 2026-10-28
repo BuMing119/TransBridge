@@ -12,6 +12,7 @@ from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QApplication, QLineEdit, QStyleOptionViewItem
 import pytest
 
+from tests.ui.fixtures.current_editing import CurrentEditingProject
 from transbridge.config.paratranz_credentials import UnavailableCredentialStore
 from transbridge.config.repository import ConfigRepository
 from transbridge.config.ui_preferences import ThemeMode, UiPreferenceRepository
@@ -175,7 +176,8 @@ def test_status_cell_text_and_theme_visual_follow_the_same_stage(
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
     service, theme_view = _theme(qapp, tmp_path)
     collection = _collection(1)
-    widget = Step2PreviewWidget(context_module.AppContext(), theme_view=theme_view)
+    project = CurrentEditingProject(collection)
+    widget = Step2PreviewWidget(project.context, theme_view=theme_view)
     widget.refresh(collection)
     _drain_render(qapp, widget, 1)
     entry = collection.get_by_id("0")
@@ -191,6 +193,7 @@ def test_status_cell_text_and_theme_visual_follow_the_same_stage(
     assert option.palette.brush(option.palette.ColorRole.Text).color() == expected.foreground.color()
 
     widget.close()
+    project.close()
     theme_view.close()
     service.close()
 

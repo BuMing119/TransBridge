@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from transbridge.ai_translator.activity import ActivityKind, ActivityMessage
 from transbridge.ai_translator.post_processor.base import PostProcessIssue
 from transbridge.ai_translator.post_processor.llm_arbiter import ArbiterDecision
 from transbridge.ai_translator.post_processor.llm_refiner import RefineResult
@@ -59,7 +60,10 @@ def test_caught_llm_stage_exception_remains_failed_and_retryable(stage):
 
     pipeline = _pipeline(stage, fail)
     entry = _entry()
-    result = pipeline.process([entry])[entry.id]
+    logs = []
+    result = pipeline.process([entry], log_callback=logs.append)[entry.id]
+    warnings = [event for event in logs if isinstance(event, ActivityMessage) and event.kind == ActivityKind.WARNING]
+    assert warnings and "任务结果" in warnings[0] and "provider unavailable" not in warnings[0]
     assert not result.accepted
     assert result.processing_status == "failed"
     assert "provider unavailable" in result.note

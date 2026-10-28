@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.persistence.terminology.test_effective_snapshot import _publish
+from tests.ui.tools.ai_runtime_support import ai_task_runtime
 from transbridge.ai_translator.project_terminology_runtime import freeze_project_terminology
 from transbridge.ai_translator.term_formats import TermEntry
 from transbridge.application.terminology.effective import EffectiveSnapshotStatus, EffectiveTerminologySnapshot
@@ -109,7 +110,7 @@ def test_all_ai_entrypoints_keep_one_frozen_snapshot_across_mid_run_transition(
         active_version_identity=("project-1", "variant-1"),
         effective_terminology_factory=_Factory(source),
     )
-    controller = RunController(owner_id=f"{entrypoint}-{transition}")
+    controller = RunController(task_runtime=ai_task_runtime(), owner_id=f"{entrypoint}-{transition}")
     request = controller.begin(
         run_mode,
         SimpleNamespace(max_concurrent=1),

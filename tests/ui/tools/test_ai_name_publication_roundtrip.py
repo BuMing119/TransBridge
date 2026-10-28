@@ -21,7 +21,10 @@ def test_name_with_leading_space_does_not_abort_other_sources(name_run):
     }
     outcomes = tuple(run.executor.execute(task) for task in (first, second))
     outcomes = run.executor.close_terms(outcomes)
-    assert all(outcome.successful for outcome in outcomes), [outcome.error for outcome in outcomes]
+    assert all(outcome.successful for outcome in outcomes), [
+        (outcome.failed_keys, outcome.diagnostics, getattr(outcome.translation, "entry_outcomes", None))
+        for outcome in outcomes
+    ]
     assert run.provider.counts() == {" Frost Immunity": 1, "Whiterun": 1, "Continue.": 1}
     for task in (first, second):
         current = task.collection.get(task.entries[0].identity)

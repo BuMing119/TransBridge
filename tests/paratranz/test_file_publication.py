@@ -56,6 +56,72 @@ def artifact(count=1, path="A.esp/人名.json"):
     )
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"files": []},
+        {"files": [], "page": 1, "pageSize": 800, "pageCount": 0, "rowCount": 0},
+        {"results": [], "page": 1, "pageCount": 1, "rowCount": 0},
+        {"files": [{"id": 1, "name": "A.json"}]},
+        {"files": [{"id": 1, "name": "A.json"}], "rowCount": 1},
+        {"results": [{"id": 1, "name": "A.json"}], "page": 1, "pageSize": 1, "pageCount": 1, "rowCount": 1},
+    ],
+)
+def test_inventory_accepts_complete_file_envelopes_without_string_reads(payload):
+    port, session = gateway(payload)
+    files = payload.get("files", payload.get("results"))
+    assert port.inventory(7) == {file["name"]: file["id"] for file in files}
+    assert len(session.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"page": True},
+        {"page": 0},
+        {"page": 2},
+        {"page": None},
+        {"rowCount": -1},
+        {"rowCount": True},
+        {"rowCount": "0"},
+        {"rowCount": None},
+        {"pageCount": -1},
+        {"pageCount": True},
+        {"pageCount": None},
+        {"pageSize": 0},
+        {"pageSize": False},
+        {"pageSize": "1"},
+        {"pageSize": None},
+    ],
+)
+def test_inventory_rejects_invalid_pagination_without_writes(metadata):
+    port, session = gateway({"files": [], **metadata})
+    with pytest.raises(ValueError, match="云端"):
+        port.inventory(7)
+    assert [request.method for request in session.calls] == ["GET"]
+
+
+@pytest.mark.parametrize(
+    "files,metadata",
+    [
+        ([], {"rowCount": 1, "pageCount": 2}),
+        ([], {"rowCount": 1}),
+        ([], {"rowCount": 0, "pageCount": 2}),
+        ([{"id": 1, "name": "A.json"}], {"rowCount": 1, "pageCount": 2}),
+        ([{"id": 1, "name": "A.json"}], {"pageCount": 0}),
+        ([{"id": 1, "name": "A.json"}], {"pageSize": 1}),
+        ([{"id": 1, "name": "A.json"}], {"rowCount": 2, "pageCount": 1}),
+        ([{"id": 1, "name": "A.json"}], {"rowCount": 0}),
+        ([{"id": 1, "name": "A.json"}, {"id": 2, "name": "B.json"}], {"pageSize": 1, "rowCount": 2, "pageCount": 1}),
+    ],
+)
+def test_inventory_rejects_incomplete_or_contradictory_listing_without_writes(files, metadata):
+    port, session = gateway({"files": files, **metadata})
+    with pytest.raises(ValueError, match="云端"):
+        port.inventory(7)
+    assert [request.method for request in session.calls] == ["GET"]
+
+
 @pytest.mark.parametrize("count", [1, 1000, 10000])
 def test_new_file_is_one_import_regardless_of_string_count(count):
     port, session = gateway([], {"file": {"id": 20}, "revision": {"id": 30}})

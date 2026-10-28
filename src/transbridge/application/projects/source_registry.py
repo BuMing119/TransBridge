@@ -49,6 +49,7 @@ class SourceRegistration:
     plugin_scope: str | None = None
     format_options: tuple[tuple[str, Any], ...] = ()
     legacy: tuple[tuple[str, Any], ...] = ()
+    source_artifact_id: str | None = None
 
     def __post_init__(self) -> None:
         if not _valid_id(self.source_id):
@@ -68,6 +69,8 @@ class SourceRegistration:
         location = normalize_source_location(self.location)
         if self.fingerprint is not None and not _SHA256.fullmatch(self.fingerprint):
             raise ValueError("source fingerprint must be a lowercase SHA-256 digest")
+        if self.source_artifact_id is not None and not _SHA256.fullmatch(self.source_artifact_id):
+            raise ValueError("source artifact identifier must be a lowercase SHA-256 digest")
         options = _canonical_items(self.format_options, "format option")
         legacy = _canonical_items(self.legacy, "legacy field")
         display_name = _optional_text(self.display_name, "display_name")
@@ -95,6 +98,7 @@ class SourceRegistration:
             ("fingerprint", self.fingerprint),
             ("display_name", self.display_name),
             ("plugin_scope", self.plugin_scope),
+            ("source_artifact_id", self.source_artifact_id),
         ):
             if value is not None:
                 result[key] = value
@@ -116,6 +120,7 @@ class SourceRegistration:
             plugin_scope=value.get("plugin_scope"),
             format_options=tuple((value.get("format_options") or {}).items()),
             legacy=tuple((value.get("legacy") or {}).items()),
+            source_artifact_id=value.get("source_artifact_id"),
         )
 
 
@@ -127,6 +132,7 @@ class SourceRelation:
     to_source_id: str
     alignment_policy: str = "entry_key"
     alignment_version: str = "1"
+    folded_into_baseline: bool = False
 
     def __post_init__(self) -> None:
         if not _valid_id(self.relation_id):
@@ -138,12 +144,14 @@ class SourceRelation:
         kind = self.kind if isinstance(self.kind, SourceRelationKind) else SourceRelationKind(self.kind)
         policy = _required_text(self.alignment_policy, "alignment_policy")
         version = _required_text(self.alignment_version, "alignment_version")
+        if not isinstance(self.folded_into_baseline, bool):
+            raise TypeError("source relation folded_into_baseline must be boolean")
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "alignment_policy", policy)
         object.__setattr__(self, "alignment_version", version)
 
-    def to_dict(self) -> dict[str, str]:
-        return {
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
             "relation_id": self.relation_id,
             "kind": self.kind.value,
             "from_source_id": self.from_source_id,
@@ -151,6 +159,9 @@ class SourceRelation:
             "alignment_policy": self.alignment_policy,
             "alignment_version": self.alignment_version,
         }
+        if self.folded_into_baseline:
+            result["folded_into_baseline"] = True
+        return result
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> SourceRelation:
@@ -161,6 +172,7 @@ class SourceRelation:
             to_source_id=str(value["to_source_id"]),
             alignment_policy=str(value["alignment_policy"]),
             alignment_version=str(value["alignment_version"]),
+            folded_into_baseline=value.get("folded_into_baseline", False),
         )
 
 
@@ -252,6 +264,7 @@ def migrate_legacy_source_registry(
                 plugin_scope=value.get("plugin_scope"),
                 format_options=tuple((value.get("format_options") or value.get("options") or {}).items()),
                 legacy=tuple((key, item) for key, item in legacy.items() if item is not None),
+                source_artifact_id=value.get("source_artifact_id"),
             )
         )
         if role:

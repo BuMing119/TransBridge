@@ -19,7 +19,8 @@ def assert_saved_current(case):
 
 
 def restore_points(case):
-    return tuple(sorted((Path(case.services.root) / "snapshots").glob("*.json")))
+    directory = case.session.result_store.directory(case.session.record["result_id"])
+    return tuple(sorted(directory.glob("merge-*.json")))
 
 
 def test_variant_replace_succeeded_but_save_reply_failed_is_verified_and_published(case, monkeypatch):
@@ -135,25 +136,24 @@ def test_task_cannot_complete_before_saved_candidate_is_also_current_in_memory(c
     assert_saved_current(case)
 
 
-def test_version_switch_after_restore_point_does_not_save_download_into_either_version(case, monkeypatch):
+def test_version_switch_before_publication_does_not_save_download_into_either_version(case, monkeypatch):
     compare(case)
     active = case.services.project_lifecycle.active
     original_ref = active.formal_variant_ref
     original_path = Path(case.services.variants.path_for(original_ref))
     original_disk = original_path.read_bytes()
-    original_snapshot = case.context.project_commands.save_snapshot
+    original_merge = case.context.project_commands.merge_entry_states
     switched = []
 
-    def snapshot_then_switch(*args, **kwargs):
-        result = original_snapshot(*args, **kwargs)
+    def switch_before_merge(*args, **kwargs):
         changed = case.context.project_commands.create_variant(
             "下载提交前切换的新版本", case.context.runtime_context, copy_active=True
         )
         assert changed.is_success, changed.diagnostics
         switched.append(case.services.project_lifecycle.active.formal_variant_ref)
-        return result
+        return original_merge(*args, **kwargs)
 
-    monkeypatch.setattr(case.context.project_commands, "save_snapshot", snapshot_then_switch)
+    monkeypatch.setattr(case.context.project_commands, "merge_entry_states", switch_before_merge)
     with pytest.raises(RuntimeError):
         case.session.apply(lambda *_: None, case.cancel)
 
@@ -162,4 +162,5 @@ def test_version_switch_after_restore_point_does_not_save_download_into_either_v
     assert original_path.read_bytes() == original_disk
     assert {translation for translation, _stage in states(case).values()} == {""}
     assert case.services.variants.read_snapshot(current.formal_variant_ref) == current.variant.snapshot().to_dto()
-    assert restore_points(case)
+    assert not case.session.record.get("merges")
+    assert not list((Path(case.services.root) / "snapshots").glob("*.json"))
