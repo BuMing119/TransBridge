@@ -1,5 +1,35 @@
 # 变更日志索引
 
+- 2026-10-27：[上传结束后手动补传未完成文件](paratranz-categorized-upload/story-26/2026-10-27-001-manual-upload-retry.md) — 普通/分类、单独/批量共用显式补传；刷新云端列表，只重传剩余文件及失败分片，沿用上轮内容和策略，范围仅当前窗口保留。需求、ADR、计划和说明同步；133 项相关回归及全库 Ruff/格式通过，未进行新按钮的真实账号验收。
+
+- 2026-10-27：[工程统一恢复已保存的来源成果](task-result-lifecycle/story-01-to-05/2026-10-26-010-durable-source-restoration.md) — 来源、包与下游读取统一，首次自动补引用；根因补修折叠/旧包身份、重复持久化、codec 遍历与 schema 执行器分配。真实“老滚5”准备中位105→58秒，完整重开仍约92秒；首次成本、独立审查、测试复验及按需物化后续边界见记录。
+
+- 2026-10-26：[打开、保存与退出共用内容证据](task-result-lifecycle/story-01-to-05/2026-10-26-009-open-save-content-reuse.md) — 打开复用验证、词条还原和冻结投影，保存差量结构校验，对话索引首次使用才建立；独立复审补修旧迁移与异常比较边界。相关 865 项、全库 Ruff/格式通过；合成 10k 同进程对照打开耗时减少约 47%、单条编辑保存约 25%，适用范围及未测项见记录。
+
+- 2026-10-26：[成果访问、保存与恢复成本补修](task-result-lifecycle/story-01-to-05/2026-10-26-008-result-access-recovery-cost.md) — 六处遗漏及独立复审补修：查询选区误拦、业务字段误拒、坏下载隔离、固定输入/报告复用、摘要恢复、投影一致性缓存；完整助手 1097、模型/契约/包 442 项与全库静态检查通过，扩大矩阵限制见记录。
+
+- 2026-10-26：[分阶段修复剩余旧流程与重复数据处理](task-result-lifecycle/story-01-to-05/2026-10-26-007-staged-remaining-flow-cleanup.md) — 助手请求门禁、下载/词典/导入成果统一、投影复用、旧进度双写及死接口清理、历史列表单次读取；独立审查发现继续根因修复。最终 2577 项关联测试、全库 Ruff/格式和 9530 项收集通过，未执行全部测试或真实服务。
+
+- 2026-10-26：[助手长任务统一成果机制](task-result-lifecycle/story-01-to-05/2026-10-26-006-assistant-shared-results.md) — 翻译、润色、后处理和上传固定输入、保存部分成果并局部合入；删除旧整表发布/回滚，共用应用层核心，提供不重算/不重传恢复。完整助手 1037 项、独立复审及全库 Ruff/格式通过。
+
+- 2026-10-26：[AI 翻译任务动态与异常可见性](maintenance/ai-task-activity/2026-10-26-001-useful-task-activity.md) — 紧凑动态、时间与批次上下文、重复合并、明确失败/重试事件与过载提醒保护；189 项相关回归及全库 Ruff/格式通过，完成窄窗口截图检查。
+
+- 2026-10-26：[AI 写回与界面能力对齐](maintenance/write-save-feedback/2026-10-26-005-assistant-write-parity.md) — writer 增加默认关闭的 BSA、各格式统一另存目录及明确来源混合批量，与界面共享应用层执行，保留实际文件撤销和取消回执。新增 27 项、扩大回归 446 项通过，1 跳过，最终全库 Ruff/格式通过。
+
+- 2026-10-26：[可选 BSA 输出，默认散装](maintenance/write-save-feedback/2026-10-26-004-optional-bsa-output.md) — 单文件/批量写回复选框默认不勾选，显式打包 STRINGS 时复用完整验证、备份和失败恢复；保护来源归档及散装优先读取冲突。新增 27 项、扩大相关 351 项通过，1 跳过，全库 Ruff/格式通过。
+
+- 2026-10-26：[写回保留原名与单文件、批量另存为](maintenance/write-save-feedback/2026-10-26-003-write-save-as.md) — 取消自动 `_translated`，写回窗口提供文件/统一目录另存及恢复原位置，保留覆盖确认、备份和插件/STRINGS 冲突检查。新增 11 项回归通过；扩大矩阵 904 项取得通过证据、1 跳过、1 既有 EET 导入失败，Ruff/格式通过。
+
+- 2026-10-26：[工程包自动升级](task-result-lifecycle/story-01-to-05/2026-10-26-005-transparent-package-upgrade.md) — 只接受 `.transbridge`，自动升级工程、版本及历史快照，删除未打包目录/独立 JSON 兼容；相关 97 项通过，独立复审无遗漏，全库 Ruff/格式与 9357 项收集通过。
+
+- 2026-10-26：[导入目录同名边界与最终收尾](task-result-lifecycle/story-01-to-05/2026-10-26-004-import-name-boundary.md) — 已登记版本的手动历史优先识别，不误作成果附件；旧工程回归 50 项通过，全库静态检查通过，最终收集 9361 项。
+
+- 2026-10-26：[单一运行流程与旧工程导入](task-result-lifecycle/story-01-to-05/2026-10-26-003-single-runtime-legacy-import.md) — 删除旧工程/AI/上传下载执行链和测试专用回退，旧目录、ZIP 与附属成果集中迁移；修复稀疏历史恢复、任务身份、跨工程历史与助手冻结目标。核心 880 项、独立附件复验 49 项通过，全库 Ruff/格式与 9361 项收集通过；扩大测试限制及保留参数见 QA。
+
+- 2026-10-26：[第二轮独立审查与保存协调](task-result-lifecycle/story-01-to-05/2026-10-26-002-independent-path-audit.md) — 补齐旧/显式下载入口和离线成果处理，修复 AI 成果身份，减少固定请求、回执、投影和保存重复工作；旧工程下载与自动保存自动排队，保留期间新编辑。后端 104、AI/退出 118、跨路径保存 49、完整 operations 564 项通过，全库 Ruff/格式通过；性能计数与边界见第二轮 QA，未操作用户数据或真实云端。
+
+- 2026-10-26：[固定输入、独立成果与局部合入](task-result-lifecycle/story-01-to-05/2026-10-26-001-fixed-inputs-independent-results.md) — 公共三方比较、AI/下载冲突偏好、成果重开与实际覆盖恢复、减少完整历史及重复快照、可取消退出。核心联合 227 项、下载 operations 550 个不同用例取得通过证据，全库 Ruff/格式通过；扩大矩阵既有失败与 Windows/Qt 限制见 QA，未操作真实云端或用户数据。
+
 - 2026-10-26：[插件写回性能优化](paratranz-categorized-upload/story-25/2026-10-26-001-plugin-write-performance.md) — 单次发布复用源解析、原字节复制和有界扫描诊断，保留完整输出回读及回滚；真实 Skyrim 前后各五轮发布中位 88.181→41.542 秒（缩短 52.9%），中型 1.654→0.971 秒。相关回归 1295 通过，1 跳过、3 项旧失败排除，Ruff/格式通过；源文件未改，未打包。
 
 - 2026-10-25：[恢复 BSA 本地化插件写回](paratranz-categorized-upload/story-24/2026-10-25-001-bsa-localized-write.md) — 复用归档/插件库、既有字段分流、完整字符串解析和原子发布；补齐原始资源快照、跨表同 ID 及实际 BSA 归档禁止输出。最终相关回归 1264 通过、1 跳过、3 项既有失败排除，Ruff/格式通过；80 个实际插件隔离写回与 Dragonborn 重号验证通过，游戏源文件哈希未变，未打包。
@@ -237,7 +267,7 @@ docs/changelogs/
 | v3-ui-gap-closure | [plan](../../plans/v3-ui-gap-closure/plan.md) | ✅ S01-05 已完成，综合 QA 通过 | 5 | [S01-05:①V3权威工程UI缺口闭环](v3-ui-gap-closure/story-01-to-05-implementation/2026-09-01-001-V3权威工程UI缺口闭环.md) |
 | authoritative-project-mutation-closure | [plan](../../plans/authoritative-project-mutation-closure/plan.md) | ✅ S01-06 已完成，综合 QA 通过；1 项既有断言失败 | 6 | [S01-06:①权威变更与可恢复保存统一修复](authoritative-project-mutation-closure/story-01-to-06-implementation/2026-08-30-001-权威变更与可恢复保存统一修复.md) · [S03:①配对插件来源移除与重开一致性修复](authoritative-project-mutation-closure/story-03-source-lifecycle/2026-08-31-001-配对插件来源移除与重开一致性修复.md) |
 | core-data-model | [plan](../../plans/core-data-model/plan.md) | ✔️ 已实现 | 5 | — |
-| dialogue-context-editor | [plan](../../plans/dialogue-context-editor/plan.md) | ✅ S01–09 已完成；应用重复处理优化 156 项回归通过 | 9 | [S09:①减少应用开销](dialogue-context-editor/story-09-apply-cost/2026-10-04-001-reduce-snapshot-copies.md) · [S08:③应用后重开](dialogue-context-editor/story-05-08-editing-flow/2026-10-04-003-reopen-after-apply.md) · [S05–08:②输入法提示重叠与计数换行](dialogue-context-editor/story-05-08-editing-flow/2026-10-04-002-ime-placeholder-and-navigation.md) · [S05–08:①应用返回、同原文同步与性能](dialogue-context-editor/story-05-08-editing-flow/2026-10-04-001-editor-flow-and-refresh.md) · [S01–04:①词条弹窗与XT式记录导航](dialogue-context-editor/story-01-04-implementation/2026-08-31-001-词条弹窗与XT式记录导航.md) |
+| dialogue-context-editor | [plan](../../plans/dialogue-context-editor/plan.md) | ✅ S01–09 已完成；S02／04 渐进任务上下文修复，133 项相关回归通过 | 9 | [S02／04:①筛选后任务树渐进加载](dialogue-context-editor/story-02-04-progressive-context/2026-10-28-001-filtered-task-context-loading.md) · [S09:①减少应用开销](dialogue-context-editor/story-09-apply-cost/2026-10-04-001-reduce-snapshot-copies.md) · [S08:③应用后重开](dialogue-context-editor/story-05-08-editing-flow/2026-10-04-003-reopen-after-apply.md) · [S05–08:②输入法提示重叠与计数换行](dialogue-context-editor/story-05-08-editing-flow/2026-10-04-002-ime-placeholder-and-navigation.md) · [S05–08:①应用返回、同原文同步与性能](dialogue-context-editor/story-05-08-editing-flow/2026-10-04-001-editor-flow-and-refresh.md) · [S01–04:①词条弹窗与XT式记录导航](dialogue-context-editor/story-01-04-implementation/2026-08-31-001-词条弹窗与XT式记录导航.md) |
 | dialogue-tree-order | [plan](../../plans/dialogue-tree-order/plan.md) | ✅ S01-02 已完成，相关 QA 与 Vigilant 实物验证通过 | 2 | [S01-02:① ESM 对话树顺序与父 DIAL 元数据](dialogue-tree-order/story-01-02-implementation/2026-08-30-001-ESM对话树顺序与父DIAL元数据实现.md) |
 | file-parsing | [plan](../../plans/file-parsing/plan.md) | ✔️ 已实现 | 11 | [s09:①](file-parsing/story-09-sst-parser/2026-05-08-001-SST解析器编码实现.md) · [②](file-parsing/story-09-sst-parser/2026-05-08-002-SSU9格式支持与文档更新.md) · [③](file-parsing/story-09-sst-parser/2026-05-08-003-SSU8-index修正perEDID.md) · [④](file-parsing/story-09-sst-parser/2026-05-08-004-SSU9解析修复与文档同步.md) · [⑤](file-parsing/story-09-sst-parser/2026-05-08-005-XT解析器归入parser-xt子包.md) · [⑥](file-parsing/story-09-sst-parser/2026-05-09-006-SSU9-extra子记录解析.md) · [⑦](file-parsing/story-09-sst-parser/2026-05-09-007-group_index与边界修复与格式注释.md) · [⑧](file-parsing/story-09-sst-parser/2026-05-09-008-SSU8完整逆向与序列化支持.md) · [s10:①](file-parsing/story-10-sst-migration-source/2026-05-08-001-Story10方案策划.md) · [②](file-parsing/story-10-sst-migration-source/2026-05-08-002-Story10详细展开.md) · [③](file-parsing/story-10-sst-migration-source/2026-05-08-003-try_update_from_sst实现.md) · [④](file-parsing/story-10-sst-migration-source/2026-05-09-004-apply_sst_entries与Step1SST加载UI.md) · [s11:①](file-parsing/story-11-sst-serializer/2026-05-09-001-Story11方案策划SST序列化器.md) · [②](file-parsing/story-11-sst-serializer/2026-05-09-002-Story11详细方案展开SST序列化器.md) · [③](file-parsing/story-11-sst-serializer/2026-05-09-003-SST序列化器编码实现.md) · [④](file-parsing/story-11-sst-serializer/2026-05-15-004-SST-Hash自生成与从零创建.md) · [⑤](file-parsing/story-11-sst-serializer/2026-05-15-005-修复_rebuild_ssu9与屏蔽写出接口.md) · [⑥](file-parsing/story-11-sst-serializer/2026-05-21-006-SST-Hash与序列化增强及写出屏蔽.md) |
 | file-writing | [plan](../../plans/file-writing/plan.md) | ✔️ 已实现 | 7 | — |

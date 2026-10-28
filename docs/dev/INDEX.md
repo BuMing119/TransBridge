@@ -18,10 +18,11 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | parser | ESP/ESM/ESL文件解析，上下文提取，本地化strings支持 | [parser.md](parser.md) |
 | writer | ESP/EET/XT文件写入 | [writer.md](writer.md) |
 | paratranz | ParaTranz 平台集成：API 客户端、配置管理、上传/下载/导出工作流 | [paratranz.md](paratranz.md) |
-| categorized_upload | 上传/脚本统一分类、文件 API、当前文件下载、自动保存与工作台投影一致性 | [paratranz-categorized-upload.md](paratranz-categorized-upload.md) |
+| categorized_upload | 上传/脚本统一分类、文件 API、手动补传未完成文件、当前文件下载、自动保存与工作台投影一致性 | [paratranz-categorized-upload.md](paratranz-categorized-upload.md) |
 | ai_translator | AI自动翻译：术语库、项目名称即时草稿复用、候选接续、批次规划与后处理 | [ai_translator.md](ai_translator.md) |
 | post_process_report | AI翻译后处理报告：Excel报告结构、生成机制、UI交互与集成点 | [post_process_report.md](post_process_report.md) |
-| ui | PyQt6用户界面：主窗口、工作台（三步流程）、ParaTranz管理面板、AI翻译浮动窗口 | [ui.md](ui.md) |
+| ui | PyQt6 用户界面：主窗口、工作台、ParaTranz 管理面板及工具窗口 | [ui.md](ui.md) |
+| dialogue_context_editor | 词条弹窗、筛选与任务导航范围、已有关系预览、后台场景补全及失败反馈 | [dialogue-context-editor.md](dialogue-context-editor.md) |
 
 ## 架构概览
 
@@ -61,7 +62,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | `AutoTranslator` | `src/transbridge/ai_translator/translator.py` | AI翻译控制器，支持暂停/停止/断点续传 |
 | `TranslatorConfig` | `src/transbridge/ai_translator/translator.py` | 翻译配置（llm_config/esp_path/overwrite） |
 | `TranslationResult` | `src/transbridge/ai_translator/translator.py` | 翻译结果（success/failed/skipped/new_terms） |
-| `ProgressCheckpoint` | `src/transbridge/ai_translator/translator.py` | 断点续传数据类 |
+| `FilesystemTranslationCheckpointPort` | `src/transbridge/application/translation/candidate_checkpoint.py` | 当前候选恢复存储，按运行身份隔离 |
 | `TermDatabaseManager` | `src/transbridge/ai_translator/term_database.py` | 四来源术语库管理器，支持向量语义检索 |
 | `DynamicTermDatabase` | `src/transbridge/ai_translator/term_database.py` | 动态术语库（按ESP绑定） |
 | `TermEntry` | `src/transbridge/ai_translator/term_database.py` | 术语条目数据类 |
@@ -87,7 +88,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | `ArbitrationContext` | `src/transbridge/ai_translator/post_processor/llm_arbiter.py` | 裁决上下文数据类 |
 | `PostProcessorConfig` | `src/transbridge/ai_translator/post_processor/post_processor.py` | 后处理器配置（14个字段，支持从LLMConfig加载） |
 | `PostProcessor` | `src/transbridge/ai_translator/post_processor/post_processor.py` | 后处理主控器，协调五阶段执行 |
-| `PostProcessCheckpoint` | `src/transbridge/ai_translator/post_processor/checkpoint.py` | 后处理断点续传数据类 |
+| `PostProcessCheckpoint` | `src/transbridge/application/translation/postprocess_checkpoint.py` | 应用层后处理候选与恢复记录 |
 | `ParatranzConfig` | `src/transbridge/paratranz/config_manager.py` | ParaTranz API 配置管理器，INI 持久化 |
 | `LLMConfig` | `src/transbridge/paratranz/config_manager.py` | AI 翻译配置管理器，共享 INI 文件 [llm] 节 |
 | `ParatranzClient` | `src/transbridge/paratranz/paratranz_client.py` | API 客户端基类，HTTP 请求封装 |
@@ -128,21 +129,12 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | `_BatchUploadModeDialog` | `src/transbridge/ui/workbench/cards/upload_card.py` | 批量上传模式选择对话框（已存在文件处理方式） |
 | `_BatchConfirmDialog` | `src/transbridge/ui/workbench/cards/*.py` | 批量操作滚动确认对话框（最大高度 400px） |
 | `_BatchResultDialog` | `src/transbridge/ui/workbench/cards/*.py` | 批量操作滚动结果对话框（最大高度 400px） |
-| `CategorizedUploadDialog` | `src/transbridge/ui/operations/categorized_upload_dialog.py` | 本地分类选择后直接上传；后台核验固定路径，取消手动对照与跨路径整理 |
-| `OrdinaryUploadAdapter` | `src/transbridge/paratranz/ordinary_upload.py` | 普通审阅流程的根目录文件范围，限定候选和写入目标 |
+| `CategorizedUploadDialog` | `src/transbridge/ui/operations/categorized_upload_dialog.py` | 本地分类选择后直接上传；后台核验固定路径，结束后手动补传未完成文件及分片 |
 | `AITranslatorWindow` | `src/transbridge/ui/tools/ai_translator/ai_translator_window.py` | AI翻译配置窗口（QTabWidget 三标签页布局：LLM 与模型 / 术语库 / 后处理，窗口高度 520 px） |
-| `_TranslationProgressWindow` | `src/transbridge/ui/tools/ai_translator/_translation_progress_window.py` | AI翻译进度窗口（暂停/停止/后台） |
-| `_TranslationWorker` | `src/transbridge/ui/tools/ai_translator/_translation_worker.py` | 翻译后台线程 |
+| `AiTaskProgressWindow` | `src/transbridge/ui/tools/ai_translator/task_progress.py` | 统一任务进度与后台控制 |
+| `AiTaskWorker` | `src/transbridge/ui/tools/ai_translator/task_worker.py` | TaskRuntime 使用的统一后台线程 |
 | `_LLMLogViewer` | `src/transbridge/ui/tools/ai_translator/_llm_log_viewer.py` | LLM 原始响应日志查看窗口 |
 | `_TermEditorDialog` | `src/transbridge/ui/tools/ai_translator/_term_editor_dialog.py` | 动态术语库查看对话框 |
-| `_TranslationTargetDialog` | `src/transbridge/ui/tools/ai_translator/_translation_target_dialog.py` | 翻译目标选择对话框（单插件/批量） |
-| `_BatchTranslationDialog` | `src/transbridge/ui/tools/ai_translator/_batch_translation_dialog.py` | 批量翻译对话框（插件排序+勾选） |
-| `_BatchConfigDialog` | `src/transbridge/ui/tools/ai_translator/_batch_config_dialog.py` | 批量翻译配置对话框 |
-| `_BatchTranslationWorker` | `src/transbridge/ui/tools/ai_translator/_batch_translation_worker.py` | 批量翻译后台线程 |
-| `_BatchTranslationProgressWindow` | `src/transbridge/ui/tools/ai_translator/_batch_translation_progress_window.py` | 批量翻译进度窗口 |
-| `_BatchLLMLogViewer` | `src/transbridge/ui/tools/ai_translator/_batch_llm_log_viewer.py` | 批量翻译 LLM 日志查看窗口 |
-| `PluginTranslationResult` | `src/transbridge/ui/tools/ai_translator/_batch_translation_worker.py` | 单插件翻译结果数据类 |
-| `BatchTranslationSummary` | `src/transbridge/ui/tools/ai_translator/_batch_translation_worker.py` | 批量翻译总结数据类 |
 | `ParaTranzWidget` | `src/transbridge/ui/paratranz/widget.py` | ParaTranz管理面板主界面 |
 | `ProjectListPanel` | `src/transbridge/ui/paratranz/project_panel.py` | 项目列表面板（全部/我参与的视图） |
 | `ConfigDialog` | `src/transbridge/ui/paratranz/config_dialog.py` | API Token配置对话框 |
@@ -157,7 +149,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 动态术语库 | `data/ai_translator/{esp_stem}/{esp_stem}_terms.json` | 按插件绑定的术语库（AI翻译自动维护） |
 | 向量索引 | `data/ai_translator/{esp_stem}/{esp_stem}_terms.faiss` | FAISS语义检索索引 |
 | 向量元数据 | `data/ai_translator/{esp_stem}/{esp_stem}_terms_meta.json` | 向量索引元数据 |
-| 翻译进度 | `data/ai_translator/{esp_stem}/{esp_stem}_progress.json` | AI翻译断点续传（完成后自动删除） |
+| 翻译候选 | `data/ai_translator/{esp_stem}/runtime-v2/` | 当前运行候选恢复存储；项目任务另存独立成果记录 |
 | 翻译缓存 | `data/{esp_stem}_translation.json` | Collection序列化 |
 | 游戏配置 | `data/prompts/games/{profile}.toml` | 游戏专属Prompt配置 |
 | 语言档案 | `data/prompts/langs/{lang}.toml` | 源/目标语言名称与可选示例数据 |

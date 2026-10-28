@@ -26,7 +26,7 @@
 | `tool_translator.py` | 3 个翻译工具（start/polish/写入链） | 兼容 `TaskManager` facade、`is_long_running=True` | facade 已绑定 Composition Root 的同一 TaskRuntime；候选提交不再拥有独立终态 |
 | `tool_proofreader.py` | postprocess 工具 | 兼容 `TaskManager` facade、`is_long_running=True` | 已切 candidate-only workload 与唯一 commit；异步 run_id 经 ToolExecutionHandler 进入 Session gate |
 | `tool_paratranz.py` | upload/download/export 工具 | `is_long_running=True`（3 处） | 经通用 ToolExecutionHandler 使用同一 TaskRuntime；ParaTranz service 保持业务 adapter |
-| `tool_writer.py` | write_back 工具 | `is_long_running=True` | 经通用 ToolExecutionHandler 使用同一 TaskRuntime；writer 保持 I/O adapter |
+| `tool_writer.py` | write_back 工具 | `is_long_running=True` | 经通用 ToolExecutionHandler 使用同一 TaskRuntime；单文件/明确来源批量共用应用层写回，支持统一另存目录及默认关闭的 BSA 打包 |
 | `graph_executor.py` | ExecutionContext | 兼容 `TaskManager` 注入 | GraphWorkloadAdapter 已接统一 runtime 终态；旧构造仅作兼容入口 |
 | `session_controller.py` | `handle_task_started` / `handle_task_completed` | 状态机 EXECUTING→AWAITING_TASK→THINKING/IDLE | 生产调用使用实际 JobRef/run_id；仅 active session 可接收终态，迟到事件忽略并审计 |
 | `task_manager.py` facade | 全项目 | `set_status/notify_finished/list_active/reset` 等 | 绑定 `AppRuntime.tasks`；status/progress/list 从 JobSnapshot 投影，外部 runtime 生命周期不由 facade 关闭 |

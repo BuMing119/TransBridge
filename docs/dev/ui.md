@@ -12,7 +12,7 @@ PyQt6 用户界面，包括主窗口、工作台、ParaTranz 管理面板、浮�
 ui/
 ├── __init__.py
 ├── app.py                     # QApplication 入口
-├── main_window.py             # 主窗口（工作台 + ParaTranz 管理双 Tab）
+├── main_window.py             # 主窗口（开始、工作台、ParaTranz）
 ├── context.py                 # AppContext 全局状态
 ├── workers.py                 # ApiWorker 后台线程 + 全局信号总线
 │
@@ -31,21 +31,22 @@ ui/
 │       ├── download_card.py   # 下载卡片
 │       └── write_card.py      # 写回卡片
 │
+├── dialogue/                  # 词条弹窗、渐进任务上下文、草稿与导航
+│   ├── controller.py          # DialogueEditorController
+│   ├── index_delivery.py      # 预览/最终索引交付与工作线程清理
+│   └── view.py                # 任务树分栏、可见状态提示和正文编辑
+│
 ├── tools/                     # 浮动工具窗口
 │   ├── __init__.py
 │   └── ai_translator/         # AI 翻译工具（子包）
 │       ├── __init__.py
 │       ├── ai_translator_window.py          # AITranslatorWindow 配置窗口
-│       ├── _translation_progress_window.py  # 进度窗口（暂停/停止/后台）
-│       ├── _translation_worker.py           # 后台翻译线程
-│       ├── _llm_log_viewer.py               # LLM 原始响应日志查看窗口（Tab 视图）
-│       ├── _term_editor_dialog.py           # 动态术语库查看对话框
-│       ├── _translation_target_dialog.py    # 翻译目标选择对话框（单插件/批量）
-│       ├── _batch_translation_dialog.py     # 批量翻译对话框（插件排序+勾选）
-│       ├── _batch_config_dialog.py          # 批量翻译配置对话框
-│       ├── _batch_translation_worker.py     # 批量翻译后台线程
-│       ├── _batch_translation_progress_window.py  # 批量翻译进度窗口
-│       └── _batch_llm_log_viewer.py         # 批量翻译 LLM 日志查看窗口
+│       ├── task_session.py                 # 固定输入、成果与局部合入
+│       ├── task_adapter.py                 # TaskRuntime 适配
+│       ├── task_worker.py                  # 统一任务后台线程
+│       ├── task_progress.py                # 统一进度窗口
+│       ├── task_history_dialog.py          # 按工程隔离的任务历史
+│       └── task_registry.py                # 后台任务窗口登记
 │
 └── paratranz/                 # ParaTranz 管理面板
     ├── __init__.py
@@ -74,7 +75,7 @@ ui/
 
 ### CollectionSlot
 
-**路径**: `src/transbridge/ui/context.py`
+**路径**: `src/transbridge/ui/projection_types.py`（`context.py` 重导出）
 
 **职责**: 单次解析的所有上下文打包为一个槽位，由 `AppContext` 统一管理。
 
@@ -91,9 +92,11 @@ class CollectionSlot:
     migrate_count: int = 0
     plugin: object = None               # 解析出的 Plugin 实例
     strings_lookup: object = None       # PluginStringsLookup（本地化插件）
+    source_snapshot: object = None      # 已保存来源的捕获字节
+    format_id: object = None            # 来源格式资格
 ```
 
-`plugin` 为 `None` 时表示该集合由 EET XML 构建，**不支持写回 ESP 插件**。`strings_lang` 记录解析时用户选择的语言，用于写入时生成正确命名的 strings 文件。
+`plugin=None` 不足以判定来源为 EET：保存后恢复的插件也可能只保留 `source_snapshot`。任务树能力由 `format_id`、正式来源登记及插件/EET 路径判断；插件快照可重建任务目录。写回资格由操作层判定。`strings_lang` 记录解析时选择的语言。
 
 ---
 
@@ -208,7 +211,7 @@ get_api_status_bus().request_started.connect(self._on_request_started)
 
 **路径**: `src/transbridge/ui/main_window.py`
 
-**职责**: 主窗口，包含工作台和 ParaTranz 管理两个 Tab，协调全局状态和菜单。
+**职责**：通过 `WorkspaceShell` 组合开始、工作台和 ParaTranz 主页面，协调全局状态、菜单及独立词条编辑窗口。
 
 **结构**:
 ```
@@ -218,9 +221,11 @@ MainWindow
 │   ├── 文件 → 刷新项目列表 / 设置 / 退出
 │   ├── 账户 → 我的信息 / 私信
 │   └── 帮助 → 关于
-├── QTabWidget
-│   ├── Tab 0: WorkbenchWidget（工作台）
-│   └── Tab 1: ParaTranzWidget（ParaTranz 管理）
+├── WorkspaceShell（主导航与页面栈）
+│   ├── 开始
+│   ├── WorkbenchWidget（工作台）
+│   └── ParaTranzWidget（ParaTranz 管理）
+├── EntryEditorDialog（按需打开的非模态独立窗口）
 └── StatusBar
     ├── 用户标签
     ├── 项目标签
@@ -367,35 +372,15 @@ EET XML ──Collection.from_eet_xml()──> TranslationEntryCollection
 
 **路径**: `src/transbridge/ui/workbench/step2.py`
 
-**职责**: 词条预览与选择。显示解析进度、四格统计卡、词条表格。支持多选、筛选、详情查看。
+**职责**：显示解析／操作进度、全部／未翻译／有疑问／已翻译摘要，以及支持选择、搜索、筛选和排序的词条表格。
 
-**表格列**:
-| 列 | 内容 | 说明 |
-|----|------|------|
-| 0 | 复选框 | 勾选词条供 AI 翻译使用 |
-| 1 | Key | 词条 ID（截断显示） |
-| 2 | 原文 | 原文内容（截断显示） |
-| 3 | 译文 | 译文内容，无译文显示灰色占位 |
-| 4 | 类型 | 分类名称（人名/物品/对话等） |
+`TranslationTable` 使用 `TranslationTableModel`，七列依次为复选框、序号、标签、Key、原文、译文和类型／状态。搜索及筛选只改变表格投影；完整集合继续由 `AppContext.collection` 提供。
 
-**统计卡**:
-- 总词条
-- 已有译文
-- 迁移
-- 未翻译
+公共接口区分标记、实际行选和筛选投影：`get_selected_entries()`／`selected_entry_ids()` 返回历史兼容的有标签条目，`selected_row_entry_ids()` 返回实际选择行，`filtered_entries()` 返回包含离屏行的完整筛选结果。`editor_navigation_keys()` 按当前显示顺序提供打开时导航，`get_filtered_count()` 返回筛选数量；`refresh(collection)` 由集合变化信号驱动。
 
-**公共方法**:
-- `get_selected_entries() -> list[TranslationEntry]` → 返回当前勾选的词条
-- `get_filtered_count() -> int` → 返回当前筛选后显示的条数
-- `set_parsing(parsing: bool)` → 设置解析中状态
-- `refresh(collection)` → 刷新表格（由 `collection_changed` 信号触发）
+双击数据列通过完整 `EntryKey` 打开非模态 `EntryEditorDialog`，复选框只选择，F2 保留译文行内编辑。有任务关联时导航使用完整任务／场景范围；首次使用先显示已有词条关系，再在后台补全源目录，状态提示独立于任务树分栏。详见 [词条编辑与任务上下文](dialogue-context-editor.md)。
 
-**详情对话框**: 双击词条打开 `_EntryDetailDialog`，支持按 Key/原文/译文筛选、翻译状态筛选、类型筛选、全选操作。
-
-**`itemChanged` 信号管理**（重要）:
-- `itemChanged → _on_item_changed` 仅在 `_init_ui` 中连接**一次**
-- `_populate_table` 批量填充期间调用 `blockSignals(True/False)` 屏蔽所有信号，填充完成后统一调用 `_update_count_label()` 一次
-- 不可在 `_populate_table` 内重复 `connect`，否则每次刷新都会累积一条新连接，导致大词条量时 O(n²) 卡顿
+表格刷新由 render session 与模型通知管理，不使用旧 `QTableWidget.itemChanged` 批量填充链路。双击激活直接处理鼠标事件，避免两次点击间模型刷新导致弹窗入口丢失。
 
 ---
 
@@ -421,13 +406,13 @@ Step3OpsWidget
 **批量操作功能**（当 `len(ctx.slots) > 1` 时，各卡片显示「批量」按钮）:
 - 批量上传：点击后弹出插件选择对话框 → 上传模式选择对话框 → 确认对话框 → 执行
 - 批量下载：点击后弹出插件选择对话框 → 确认对话框 → 执行
-- 批量写回：点击后弹出插件选择对话框 → 选择输出目录 → 执行
+- 批量写回：打开写回计划 → 写回各原位置或选择统一另存目录 → 预检 → 确认执行
 
 **按钮状态控制**:
 - 上传/下载：需 `collection` + `current_project` + `is_member`
-- 写回：仅需 `collection`
+- 写回：需完整来源快照、格式信息及 `collection`，统一进入安全写回计划
 - 批量上传/下载按钮：需 `current_project` + `is_member`
-- 批量写回按钮：始终可用（无 plugin 的 slot 自动过滤）
+- 批量写回按钮：至少两个来源且存在可写来源；无效来源保留失败回执，其他独立来源继续
 
 **ProjectPromptOverlay 遮罩层**:
 - 触发条件：`has_collection and not has_project`（已加载集合但未选项目）
@@ -462,7 +447,7 @@ class OpCard(QGroupBox):
 |----|------|------|
 | `UploadCard` | `cards/upload_card.py` | 上传到 ParaTranz（支持分类/普通模式，4 种原文/译文处理策略，分类模式下支持选择上传的文件） |
 | `DownloadCard` | `cards/download_card.py` | 从 ParaTranz 下载并合并 |
-| `WriteCard` | `cards/write_card.py` | 写回 ESP/EET XML/XT XML，点击后弹出目标选择对话框 |
+| `WriteCard` | `cards/write_card.py` | 写回插件/XML，点击后打开含另存选项、预检和执行结果的写回计划 |
 
 #### 批量操作通用对话框
 
@@ -474,45 +459,39 @@ class OpCard(QGroupBox):
 | `_BatchConfirmDialog` | 批量操作确认对话框，最大高度 400px，支持大量项目滚动查看 |
 | `_BatchResultDialog` | 批量操作结果展示对话框，显示成功/失败/总数及详情 |
 
-#### WriteCard — 批量写回对话框
+#### WriteCard — 写回与另存为
 
-`WriteCard` 提供两个可滚动对话框用于批量操作：
+单文件和批量写回共用 `operations/write_dialog.py` 中的 `WritePlanDialog`，在原窗口完成选项、后台预检、确认和逐文件结果展示。
 
-| 类 | 用途 |
-|----|------|
-| `_BatchConfirmDialog` | 批量写回确认对话框，最大高度 400px，支持大量插件滚动查看 |
-| `_BatchResultDialog` | 批量写回结果展示对话框，显示成功/失败/总数及详情 |
+- 默认写回原位置，保持来源文件名，不自动添加 `_translated`。单文件输出路径旁的「另存为…」允许选择其他位置或自定义名称，「写回原位置」可恢复当前来源或选中的套用插件路径。
+- 批量计划提供「另存目录（可选）」及「另存为…」目录选择按钮。留空写回各原位置；选定目录后，多个来源以各自原名保存到同一目录；「写回原位置」清空另存目录。
+- 改变输出位置会清除覆盖确认并使旧预检失效；取消文件/目录选择不改变选项。覆盖已有输出必须显式确认，执行前为已有文件创建备份。
+- 带本地化资源的写回计划提供「将 STRINGS 打包为 BSA」复选框，默认不勾选，每次打开仍默认生成散装文件。批量勾选只影响带本地化资源的插件；不含 STRINGS 的来源继续按原格式输出。切换此选项同样清除覆盖确认并要求重新预检。
+- 同名文件及配套资源之间的输出冲突由预检检查；冲突来源不互相覆盖，独立可写来源可继续完成并返回逐来源结果。
+- 仅插件来源提供「套用到其他插件」选项；普通写回始终使用已确认来源快照，不把已有输出当作模板。DSD 导出使用独立入口。
 
-对话框结构与 `UploadCard` / `DownloadCard` 中的同名类相同，确保插件数量较多时按钮始终可见可点击。
+#### WriteCard — 插件与 STRINGS 输出
 
-#### WriteCard — `_WriteTargetDialog` 写回目标选择
+本地化插件的资源位于输出目录下的 `Strings/`，名称为 `{输出插件名去扩展名}_{Lang}.*strings`，使用来源解析时确认的语言。默认保持插件原名及资源原名；另存时如果用户主动改名，配套资源同步改名。
 
-点击「写回」按钮后弹出，三选一：
+纯外部字符串翻译保留插件本体字节；另存时复制插件以提供完整输出。混合插件同时保存内嵌文本修改和字符串资源；非本地化插件将译文写入插件本体。插件及其全部配套资源沿用统一预检、备份、发布和失败恢复流程。
 
-| 选项 | 说明 | 禁用条件 |
-|------|------|---------|
-| 写回 ESP 插件 | 将译文写入插件副本，输出汉化版 ESP 文件 | `ctx.plugin is None`（EET 构建的集合） |
-| 写回 EET XML | 将译文更新到 EET XML 文件，需指定路径 | — |
-| 写回 XT XML | 将译文更新到 XT XML 文件，需指定路径 | — |
+显式勾选 BSA 时，仅将本次完整 STRINGS 表打包到输出 BSA，不向正式目录同时写出散装表。归档使用现有资源发现的命名规则：普通插件为 `{插件名}.bsa`，基础游戏插件使用 `Skyrim - Interface.bsa`。归档成员逐字节核对后，还需通过字符串表及插件译文回读验证；BSA 与插件作为同一组输出备份、提交和失败恢复。
 
-- EET/XT 路径输入框在对应选项选中时才激活，路径为空则「确认写回」按钮禁用
-- 打开时自动用 `ctx.eet_path` / `ctx.xt_path` 预填路径
-- **EET 构建的集合**（`ctx.plugin is None`）：ESP 选项禁用并显示说明文字，默认选中 EET 选项
-- 确认后弹出「另存为」对话框，支持覆盖原文件或另存新路径
+BSA 模式禁止覆盖来源依赖的原归档，避免仅包含 STRINGS 的输出替换原归档中的其他资源。目标位置存在同名散装表时要求选择其他另存目录，避免散装内容优先读取而遮住 BSA 译文。批量输出归档重名也会进入既有冲突检查；不自动合并原 BSA，不删除既有散装文件。
 
-`_WriteTargetDialog(eet_path, xt_path, has_esp=True)` — `has_esp` 参数控制 ESP 选项是否可用。
+#### AI 助手 — 写回与界面能力一致
 
-#### WriteCard — ESP 写入行为
+`writer.write_back` 保留 admin 权限、确认及授权目录要求。默认仍处理当前活动来源，未指定路径时写回原位置；覆盖必须显式传 `overwrite=true`，并先备份。
 
-**本地化插件**（`ctx.strings_lookup is not None`）：
-- 弹出**目录选择对话框**选择 Strings 文件输出目录
-- 使用 `ctx.strings_lang` 作为语言标签，生成 `{PluginName}_{Lang}.*strings` 文件
-- **纯本地化模式**：仅输出 strings 文件，原 ESP 不修改
-- **混合模式**：同时保存 ESP 副本和 strings 文件
+- `output_dir` 适用于 ESP/ESM/ESL、EET XML、XT XML，按来源原名另存到同一目录，不添加后缀。单文件 `path` 可自定义文件名并优先于 `output_dir`；保留 `target=strings` 必须提供目录且优先使用目录的旧语义。
+- `source_keys` 是 `list_collections` 返回的 `key` 列表，只处理明确选择的来源，不切换活动集合；省略仍是当前来源。空列表、重复或未知 key 拒绝执行；多个来源不接受同一个 `path`，可指定统一 `output_dir` 或按原位置写回。
+- `target` 保留 `esp/eet/xt/strings`；显式选择来源时可用 `auto`，混合批量保持每个来源自己的格式。
+- `pack_bsa` 默认 `false`，继续生成散装 STRINGS；`true` 只对带本地化资源的插件打包，混合批量中的 XML 仍正常输出。沿用原归档、散装优先读取及输出重名保护。
+- 批量先固定来源、译文和译名方案，检查全部授权及逐来源预检；无效来源选择、快照或授权直接拒绝建任务。独立来源的输出冲突/已有文件等预检失败保留回执，其他可写来源继续；全部阻断时不建任务。
+- 单文件启动结果仍为 `{task_id,path}`；批量返回 `{task_id,paths,source_keys}`。等待终态后查看 `outcomes` 中的来源 key、状态和实际 `artifacts`。部分完成或取消会保留已提交文件及未执行来源的回执，不能只凭任务的成功/失败标记判断是否有文件写出。
 
-**非本地化插件**：
-- 弹出**文件保存对话框**选择 ESP 保存路径
-- 译文内嵌到 ESP 文件中
+界面和助手共用 `application/io/operation_write_batch.py` 的输出冲突及批量执行逻辑。助手文件撤销凭证按预检确定的实际目标记录插件、BSA、散装资源或 XML，整批一次捕获；撤销可恢复原文件并移除本轮新建输出，不包含未选择的来源。
 
 #### UploadCard — `_BatchUploadModeDialog` 批量上传模式
 
@@ -587,356 +566,15 @@ _CONTEXT_TO_CATEGORY = {
 
 ### AITranslatorWindow
 
-**路径**: `src/transbridge/ui/tools/ai_translator/ai_translator_window.py`
+**路径**：`src/transbridge/ui/tools/ai_translator/ai_translator_window.py`。
 
-**子包结构**:
+配置窗口通过 TaskLaunch 固定输入并提交 TaskRuntime；TaskRuntimeAiTaskAdapter、AiTaskWorker 和 AiTaskProgressWindow 负责统一执行、暂停、停止和进度。单来源、多来源、翻译及混合任务共用此流程，关闭工具窗口后仍可由后台任务登记重新打开。
 
-| 文件 | 类 | 职责 |
-|------|-----|------|
-| `ai_translator_window.py` | `AITranslatorWindow` | 配置窗口（翻译开始前） |
-| `_translation_progress_window.py` | `_TranslationProgressWindow` | 进度窗口（暂停/停止/后台） |
-| `_translation_worker.py` | `_TranslationWorker` | 后台翻译线程（QThread） |
-| `_llm_log_viewer.py` | `_LLMLogViewer` | LLM 原始响应日志查看窗口 |
-| `_term_editor_dialog.py` | `_TermEditorDialog` | 动态术语库查看对话框 |
-| `_translation_target_dialog.py` | `_TranslationTargetDialog` | 翻译目标选择对话框（单插件/批量） |
-| `_batch_translation_dialog.py` | `_BatchTranslationDialog` | 批量翻译对话框（插件排序+勾选） |
-| `_batch_config_dialog.py` | `_BatchConfigDialog` | 批量翻译配置对话框（简化版） |
-| `_batch_translation_worker.py` | `_BatchTranslationWorker` | 批量翻译后台线程 |
-| `_batch_translation_progress_window.py` | `_BatchTranslationProgressWindow` | 批量翻译进度窗口 |
-| `_batch_llm_log_viewer.py` | `_BatchLLMLogViewer` | 批量翻译 LLM 日志查看窗口 |
+TaskSession 保存固定请求、独立成果和合入状态。TaskRuntime 分配的 run ID 同步给成果账本和覆盖前证据。历史窗口及正在运行的窗口按工程身份筛选，不用共享存储目录判定归属。
 
-**职责**: AI 翻译浮动工具，采用双窗口架构：
-- **配置窗口** (`AITranslatorWindow`)：翻译开始前使用，配置 LLM、Embedding、术语库、翻译范围
-- **进度窗口** (`_TranslationProgressWindow`)：翻译进行中使用，显示进度、计时日志，支持暂停/停止/后台继续
-- **批量翻译**：支持多插件顺序翻译，插件间术语实时共享
+结果通过当前工程命令执行局部三方合入，成功后保存工程；没有任务前后自动创建正式历史的第二套逻辑。旧报告和检查点由读取入口转换，不能调用已删除的旧 worker 或旧版本写入器。
 
-**配置窗口分区**:
-1. **LLM 配置**：供应商、**目标语言**、模型名、API Key、Base URL、并发数、Token 限制
-2. **语义检索配置（Embedding）**：模式（本地模型/API 服务）、模型名、API Key（可选）
-3. **术语库来源**：优先级列表、本地 JSON/Excel 路径
-4. **翻译范围**：全部/筛选/选中，覆盖选项
-5. **后处理配置**：检测阶段（一致性/格式/质量检测）、修复与润色阶段（修复开关、润色开关及范围/强度）、裁决阶段（裁决开关、严格模式）
-
-**目标语言配置**:
-- 下拉框从 `data/prompts/langs/*.toml` 中通过严格校验的语言档案动态生成
-- 显示本地化名称但保存稳定 locale code；不可用的已保存配置会被明确标记
-- 默认值：`zh_CN`
-- 自动保存到 INI 文件的 `target_lang` 字段
-
-**`_TranslationWorker` 信号**:
-
-| 信号 | 类型 | 说明 |
-|------|------|------|
-| `progress` | `(int, int, str, int, int, int)` | current, total, message, success, failed, new_terms |
-| `log` | `(int, str)` | `(batch_idx, line)` 详细日志行；`batch_idx=-1` 为轮次级消息，`>=1` 为批次专属消息 |
-| `result` | `(object)` | 翻译完成，携带 `TranslationResult` |
-| `error` | `(str)` | 全局异常 |
-
-**LLM 流式日志目录**:
-- `run()` 启动时创建 `data/log/{esp_stem}_{YYYYMMDD_HHMMSS}/` 目录
-- 每个并发批次独立写入 `batch_{idx:03d}.log`（`stream_callback(batch_idx, chunk)` 绑定 idx 后写入），并发批次互不干扰
-- `stream_log_dir` 属性暴露目录路径，供进度窗口的日志查看器使用
-
-**日志格式（`log` 信号内容示例）**:
-
-```
-── 第一轮开始（3 批，专有名词）──
-
-开始翻译：
-任务1：专有名词
------------------------
-  术语精确匹配: 1 条直接填充
-Alvor -> 阿尔沃尔 [直填]
-  LLM 响应中...
-Hadvar -> 哈德瓦尔
-Ralof -> 拉洛夫
------------------------
-已完成：
-术语匹配时长:0.01 s
-LLM调用时长:1.23 s
-解析时长：0.002 s
-总时长：1.26 s
-翻译词条数：3
-新增术语数：2
-
-── 第一轮完成: 3.45s ──
-
-总耗时: 12.34s
-```
-
-每批次结构：头（`开始翻译：` / `任务N：类型` / `---`）→ 体（翻译条目行 + 状态行）→ 尾（`---` / `已完成：` / 各项计时 / 词条数 / 新增术语数）。
-`_run_batch` 的 `_timing_out` dict 负责将计时数据回传给 `_run_one_batch` 以填充尾部。
-
-**`_LLMLogViewer`**:
-- 独立窗口，接受日志目录路径（`data/log/{esp_stem}_{timestamp}/`）
-- 使用 `QTabWidget`，每个 `batch_{idx:03d}.log` 文件对应一个 Tab（「批次 N」）
-- 定时器每 800ms 扫描目录，自动为新出现的日志文件创建 Tab
-- 各 Tab 独立刷新：保持滚动到底部（仅当用户未上滚时）
-- 翻译结束后自动停止定时器，进行最后一次全量刷新
-- 进度窗口右下角「📄 LLM 日志」按钮打开，可重复点击（已打开则激活）
-
-**`_TranslationProgressWindow` 详细日志区 — 并发批次子组件**:
-
-进度窗口「详细日志」区分为两层：
-
-- **轮次日志区**（`_round_log: QTextEdit`，固定高度 70px）：接收 `batch_idx=-1` 的消息，即 `_log()` 在 `translate()` 中发出的轮次级消息（`── 第N轮开始/完成 ──` / 总耗时）及进度消息（`▶ ...`）。追加前检测是否已在底部（`value >= maximum - 4`），仅在底部时自动跟随滚动。
-- **批次滚动区**（`QScrollArea`）：每个批次 `batch_idx>=1` 对应一个 `_BatchWidget(QFrame)` 子组件，懒创建并插入滚动区。同样仅在用户处于底部时才跟随滚动，用户向上翻阅时不强制拉回。
-
-**`_BatchWidget` 状态机**:
-
-```
-phase: 'init' → 'header' → 'trans' → 'footer' → 'done'
-
-'header': 收到"开始翻译："后进入，等待任务标题行 和 第一条 ---
-'trans':  收到第一条 --- 后进入，对含 " -> " 的行维护 deque 滚动窗口（最多10条）
-'footer': 收到第二条 --- 后进入，收集计时行
-'done':   收到"新增术语数："行后折叠为单行摘要（或调用 force_collapse）
-```
-
-**折叠行为**:
-- **正常完成**: footer 末行触发 `_collapse()`，`QTextEdit` 隐藏，`QFrame` 变为绿色摘要行（`✅ 任务N：类型 — X 条 | Xs | 新增术语 N`）
-- **中断/停止**: `_on_result`/`_on_error` 调用所有未完成 widget 的 `force_collapse()`，变为黄色警告行（`⚠ 任务N：类型（未完成）`）
-- **内存约束**: 活跃批次最多 `max_concurrent` 个 `QTextEdit`；完成后替换为空白 label，bounded
-
-**滚动窗口（trans 阶段）**:
-- 同单 QTextEdit 方案：`QTextCursor` 存入 `deque`，超过 10 条时弹出最旧游标并 `removeSelectedText()`
-- 每个 `_BatchWidget` 有独立的 `deque`，并发批次互不干扰
-
-**配置区**:
-| 区域 | 字段 |
-|------|------|
-| LLM 配置 | 供应商、**目标语言**、模型名、API Key、Base URL、并发数、拆批 Token、输出 Token |
-| 术语库来源 | 优先级列表（可拖拽排序）、本地 JSON 路径、本地 Excel 路径、Excel 列配置 |
-| 翻译范围 | 全部未翻译 / 筛选可见 / 选中词条、覆盖已有译文选项 |
-| 后处理配置 | 各阶段独立开关、润色范围/强度、裁决模式 |
-
-**后处理配置（QGroupBox）**:
-
-新增独立分组框，位于「翻译范围」下方，提供细粒度的后处理控制：
-
-```
-后处理配置
-├── 总开关: [☑] 启用翻译后质量检查与优化
-│
-├── 阶段1: 质量检测
-│   ├── [☑] 术语一致性检查
-│   ├── [☑] 格式验证（占位符、标签、引号等）
-│   └── [☑] LLM质量检测
-│
-├── 阶段2: 修复与润色
-│   ├── [☑] 启用LLM自动修复
-│   ├── [☑] 启用润色优化（需要额外LLM调用）
-│   │       润色范围: (●全部条目 ○仅通过检测的条目 ○仅问题项)
-│   │       润色强度: (●适中 ○轻微 ○深度)
-│   └── 提示：润色会在修复后执行，优先采用润色结果
-│
-└── 阶段3: 质量裁决
-    ├── [☑] 启用质量裁决
-    └── [☑] 严格模式（uncertain→reject而非pending）
-```
-
-**控件联动**:
-- 总开关未选中时，所有阶段配置控件禁用
-- 润色开关未选中时，润色范围和强度下拉框禁用
-- 裁决开关未选中时，严格模式复选框禁用
-
-**配置字段**（14个INI字段）：
-
-| 阶段 | 字段 | 类型 | 默认值 | UI控件 |
-|------|------|------|--------|--------|
-| 总开关 | `enable_post_process` | bool | true | 总开关复选框 |
-| 检测 | `pp_enable_consistency_check` | bool | true | 术语一致性检查 |
-| | `pp_enable_format_validation` | bool | true | 格式验证 |
-| | `pp_enable_quality_gate` | bool | true | LLM质量检测 |
-| 修复 | `pp_enable_refinement` | bool | true | 启用LLM修复 |
-| | `pp_refinement_batch_size` | int | 5 | 内部使用 |
-| 润色 | `pp_enable_polish` | bool | false | 启用润色 |
-| | `pp_polish_scope` | str | "all" | 润色范围下拉框 |
-| | `pp_polish_level` | str | "moderate" | 润色强度下拉框 |
-| | `pp_polish_batch_size` | int | 5 | 内部使用 |
-| 裁决 | `pp_enable_arbitration` | bool | true | 启用裁决 |
-| | `pp_strict_arbitration` | bool | false | 严格模式 |
-| | `pp_arbitration_batch_size` | int | 10 | 内部使用 |
-
-**状态管理**:
-- `_on_pp_enable_changed()`: 总开关状态变化时更新所有子控件启用状态
-- `_on_polish_changed()`: 润色开关状态变化时更新润色选项启用状态
-- 所有控件变更实时触发 `_save_config()` 持久化到INI文件
-
-**向后兼容**:
-- 旧配置（仅含 `enable_post_process`）加载时，新增字段使用默认值
-- 首次打开窗口时显示默认配置（检测/修复/裁决启用，润色禁用）
-
-**配置自动保存**:
-- 所有配置字段的变更（文本输入、下拉选择、数值调整、拖拽排序）均实时触发 `_save_config()` 写入 INI 文件
-- 自动保存信号在 `_load_config()` 完成后才连接（`_connect_auto_save()`），避免初始化时误写文件
-- 点击「开始翻译」时仍会执行一次 `_save_config()`，确保最新值持久化
-
-**信号**:
-- `progress_window_created.emit(progress_win)` → 翻译启动时发出
-
-**断点续传**:
-- 启动时检测未完成的翻译任务，询问是否从断点继续
-
----
-
-### 批量翻译组件
-
-**入口方法** `AITranslatorWindow.open_for_translation()`:
-1. 弹出 `_TranslationTargetDialog` 选择翻译目标（当前插件/批量翻译）
-2. 单插件模式：打开 `AITranslatorWindow` 配置窗口
-3. 批量模式：打开 `_BatchTranslationDialog` 批量翻译对话框
-
-#### _TranslationTargetDialog
-
-**路径**: `src/transbridge/ui/tools/ai_translator/_translation_target_dialog.py`
-
-**职责**: 翻译目标选择对话框，选择翻译当前插件还是批量翻译已加载插件。
-
-| 选项 | 说明 | 禁用条件 |
-|------|------|---------|
-| 翻译当前插件 | 进入单插件翻译流程 | `ctx.active_slot is None` |
-| 批量翻译已加载插件 | 进入批量翻译流程 | `len(ctx.slots) <= 1` |
-
-显示统计信息：当前插件的条目数/未翻译数，批量模式下的总插件数/总条目数。
-
-#### _BatchTranslationDialog
-
-**路径**: `src/transbridge/ui/tools/ai_translator/_batch_translation_dialog.py`
-
-**职责**: 批量翻译对话框，支持插件排序、勾选、配置编辑。
-
-**功能**:
-- **可拖拽排序**：调整翻译顺序（从上到下依次翻译）
-- **勾选插件**：全选/全不选/仅选未翻译
-- **覆盖选项**：是否覆盖已有译文
-- **LLM 配置显示与修改**：显示当前配置摘要，点击「修改配置」打开 `_BatchConfigDialog`
-- **统计信息**：已选插件数、总条目数、未翻译条目数
-
-**公共方法**:
-- `get_selected_slots() -> list[CollectionSlot]` → 返回按列表顺序排列的选中 slot
-- `is_overwrite() -> bool` → 返回是否覆盖已有译文
-- `get_llm_config() -> LLMConfig | None` → 返回当前 LLM 配置
-
-#### _BatchConfigDialog
-
-**路径**: `src/transbridge/ui/tools/ai_translator/_batch_config_dialog.py`
-
-**职责**: 批量翻译的简化版 LLM 配置对话框，仅包含核心选项。
-
-**字段**:
-| 字段 | 说明 |
-|------|------|
-| 供应商 | OpenAI 兼容 / Anthropic |
-| 模型名 | 如 gpt-4o / deepseek-chat |
-| API Key | 密码输入框 |
-| Base URL | 仅 OpenAI 兼容模式启用 |
-| 并发数 | 1-50，默认 20 |
-
-**功能**:
-- 测试连接按钮：验证配置有效性
-- 保存时保留其他配置字段（如 max_tokens_per_batch 等）
-
-#### _BatchTranslationWorker
-
-**路径**: `src/transbridge/ui/tools/ai_translator/_batch_translation_worker.py`
-
-**职责**: 批量翻译后台线程，依次翻译多个插件，支持暂停/停止/断点续传。
-
-**数据类**:
-
-```python
-@dataclass
-class PluginTranslationResult:
-    plugin_name: str
-    success: bool
-    result: TranslationResult | None = None
-    error: str | None = None
-
-@dataclass
-class BatchTranslationSummary:
-    total_plugins: int
-    success_plugins: int
-    failed_plugins: int
-    total_success_entries: int
-    total_failed_entries: int
-    details: list[PluginTranslationResult]
-```
-
-**信号**:
-| 信号 | 类型 | 说明 |
-|------|------|------|
-| `plugin_started` | `(str, int, int)` | 插件开始翻译：插件名、当前索引、总数 |
-| `plugin_finished` | `(str, object)` | 插件完成：插件名、TranslationResult |
-| `plugin_progress` | `(int, int, str, int, int, int)` | 当前条目、总条目、消息、成功数、失败数、新术语数 |
-| `log` | `(int, str)` | 日志：batch_idx, line |
-| `all_finished` | `(object)` | 全部完成：BatchTranslationSummary |
-| `error` | `(str)` | 全局异常 |
-
-**共享 in-flight 缓存**:
-- `_shared_in_flight_terms: dict[str, str]` — 插件间实时共享的术语缓存
-- `_shared_in_flight_lock: threading.Lock` — 并发锁
-- 每个插件的 `AutoTranslator` 实例注入共享缓存，实现插件间术语实时共享
-
-**LLM 流式日志**:
-- 日志目录：`data/log/batch_{YYYYMMDD_HHMMSS}/`
-- 每个插件独立子目录：`{plugin_name}/`
-- 每个批次独立文件：`batch_{idx:03d}.log`
-
-#### _BatchTranslationProgressWindow
-
-**路径**: `src/transbridge/ui/tools/ai_translator/_batch_translation_progress_window.py`
-
-**职责**: 批量翻译进度窗口，显示总体进度和当前插件详细进度。
-
-**结构**:
-```
-_BatchTranslationProgressWindow
-├── 总体进度区（QGroupBox）
-│   ├── 进度条 + 插件计数
-│   └── 状态消息
-├── 当前插件区（QGroupBox）
-│   ├── 进度条 + 条目计数
-│   ├── 状态消息
-│   └── 统计行（成功/失败/新增术语）
-├── 详细日志区（QGroupBox）
-│   ├── 轮次日志（QTextEdit，固定高度 70px）
-│   └── 批次滚动区（QScrollArea，动态创建 _BatchWidget）
-└── 按钮行
-    ├── 暂停/继续
-    ├── 停止
-    └── LLM 日志
-```
-
-**信号**:
-- `translation_completed` → 批量翻译完成时发出
-
-**关闭行为**:
-- 翻译进行中关闭时弹出对话框，选择「停止翻译并关闭」或「后台继续，关闭窗口」
-
-#### _BatchLLMLogViewer
-
-**路径**: `src/transbridge/ui/tools/ai_translator/_batch_llm_log_viewer.py`
-
-**职责**: 批量翻译 LLM 日志查看窗口，两级 Tab 结构（插件 → 批次）。
-
-**结构**:
-```
-_BatchLLMLogViewer
-├── 工具栏（路径标签 + 自动刷新复选框 + 刷新按钮）
-└── 插件 Tab 区域（QTabWidget）
-    ├── 插件1 Tab
-    │   └── _PluginLogWidget
-    │       └── 批次 Tab 区域（batch_001.log, batch_002.log, ...）
-    ├── 插件2 Tab
-    │   └── ...
-    └── ...
-```
-
-**功能**:
-- 定时刷新（800ms）：自动扫描新出现的日志文件并创建 Tab
-- 滚动跟随：仅在用户处于底部时自动滚动
-- 翻译结束后停止定时器，进行最后一次全量刷新
+配置、术语库、报告和恢复契约详见 [AI 翻译开发说明](ai_translator.md)；任务生命周期和冲突策略详见 [ADR-049](../adr/049-task-result-lifecycle.md)。
 
 ---
 

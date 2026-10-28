@@ -18,7 +18,6 @@ AI 翻译后处理系统，负责译文质量检查、一致性校验、格式�
 | `polisher.py` | **LLM润色器**（专注提升译文流畅度和风格） |
 | `llm_arbiter.py` | LLM裁决者（最终质量判定） |
 | `post_processor.py` | 后处理主控器，协调各阶段执行 |
-| `checkpoint.py` | 后处理断点续传数据类 |
 
 ---
 
@@ -65,33 +64,9 @@ class PostProcessResult:
     needs_review: list[str]    # 需人工审核的条目ID
 ```
 
-### PostProcessCheckpoint
+### 后处理恢复记录
 
-**路径**: `src/transbridge/ai_translator/post_processor/checkpoint.py`
-
-**职责**: 后处理断点续传数据类，支持各阶段进度的持久化与恢复。
-
-```python
-@dataclass
-class PostProcessCheckpoint:
-    esp_stem: str
-    completed_batches: dict[str, list[list[str]]]  # phase -> 已完成批次的 entry_id 列表
-    issues: list[dict]                               # 已完成的检测问题
-    refine_results: dict[str, dict]                  # entry_id -> RefineResult
-    polish_results: dict[str, dict]                  # entry_id -> PolishResult
-    decisions: dict[str, dict]                       # entry_id -> ArbiterDecision
-```
-
-**存储路径**: `data/ai_translator/{esp_stem}/{esp_stem}_post_process.json`
-
-**方法**:
-- `save(esp_path)` / `load(esp_path)` / `delete(esp_path)` — 持久化操作
-- `is_batch_completed(phase, entry_ids)` — 检查某批次是否已完成
-- `mark_batch_completed(phase, entry_ids)` — 标记批次完成
-- `issue_to_dict()` / `issue_from_dict()` — `PostProcessIssue` 序列化
-- `refine_result_to_dict()` / `refine_result_from_dict()` — `RefineResult` 序列化
-- `polish_result_to_dict()` / `polish_result_from_dict()` — `PolishResult` 序列化
-- `decision_to_dict()` / `decision_from_dict()` — `ArbiterDecision` 序列化
+当前记录位于 `application/translation/postprocess_checkpoint.py`，由应用层后处理任务适配负责。综合校对使用 `application/translation/proofread_checkpoint.py`。两者根据固定输入和运行身份恢复，计算器不维护按插件名称写入的第二份进度文件。
 
 ---
 
@@ -653,30 +628,13 @@ post_processor.process_entries(
 3. `QualityGateChecker` / `LLMRefiner` / `LLMPolisher` / `LLMArbiter` 内部捕获 HTTP 异常后返回 fallback 结果
 4. 主控器在 worker 返回后检查 event：
    - **Stop**：直接退出循环，返回当前已累积的结果
-   - **Pause**：丢弃该批次结果（不写入 checkpoint，不标记完成），等待 `pause_event.wait()` 恢复后继续重新执行该批次
+   - **Pause**：丢弃该批次结果（不发布该批候选，不标记完成），等待 `pause_event.wait()` 恢复后继续重新执行该批次
 
 #### 断点续传
 
-`process_entries()` 支持传入 `checkpoint` 和 `esp_path`：
+后处理的恢复由应用层任务适配负责，`PostProcessor.process_entries()` 不再接受旧 `checkpoint` 参数，也不写入 `{esp_stem}_post_process.json`。
 
-```python
-from .checkpoint import PostProcessCheckpoint
-
-checkpoint = PostProcessCheckpoint.load(esp_path) or PostProcessCheckpoint(esp_stem=stem)
-post_processor.process_entries(
-    entries,
-    checkpoint=checkpoint,
-    esp_path=esp_path,
-)
-```
-
-**续传逻辑**：
-- 各 LLM 阶段在批次执行前检查 fingerprint（`sorted(entry_ids)`）
-- 若该批次已在 `checkpoint.completed_batches[phase]` 中，直接跳过
-- 每完成一个批次后，在 `threading.Lock` 内更新结果并调用 `checkpoint.save(esp_path)`
-- 执行阶段无需 checkpoint，直接从已恢复的 `decisions` 应用裁决
-
-**断点文件**：`data/ai_translator/{esp_stem}/{esp_stem}_post_process.json`
+严格后处理使用 `application/translation/postprocess_checkpoint.py` 的当前候选记录；综合校对使用 `ProofreadCheckpoint` 保存已完成批次。记录绑定任务身份、固定输入和执行条件，只有匹配的成功结果可以复用。最终成果先保留，再通过公共逐条合入处理工作台变化；取消和部分失败不删除已经保存的成果。
 
 #### 译文优先级
 
@@ -694,56 +652,15 @@ post_processor.process_entries(
 
 ### 集成点（五阶段协作流程）
 
-```
+```text
 AutoTranslator.translate()
-    │
-    ▼
-完成所有批次翻译
-    │
-    ▼
-检查 LLMConfig.enable_post_process
-    │
-    ├─► true  → 加载 PostProcessCheckpoint
-    │           │
-    │           ▼
-    │           阶段1: 检测（QualityGate + Consistency + Format）
-    │           │   Consistency/Format 串行执行
-    │           │   QualityGate 并发执行（max_workers）
-    │           │   每批次完成后保存 checkpoint
-    │           │
-    │           ▼
-    │           阶段2: 修复（LLMRefiner，如启用）
-    │           │   并发执行（max_workers）
-    │           │   每批次完成后保存 checkpoint
-    │           │
-    │           ▼
-    │           阶段3: 润色（LLMPolisher，如启用）
-    │           │   并发执行（max_workers）
-    │           │   每批次完成后保存 checkpoint
-    │           │
-    │           ▼
-    │           阶段4: 裁决（LLMArbiter）
-    │           │   并发执行（max_workers）
-    │           │   每批次完成后保存 checkpoint
-    │           │
-    │           ▼
-    │           阶段5: 执行
-    │           │   输出质量检查摘要（日志）
-    │           │   根据裁决结果调整 entry.stage
-    │           │
-    │           ▼
-    │           删除 PostProcessCheckpoint
-    │           删除 ProgressCheckpoint
-    │
-    └─► false → 跳过质量检查
-                删除 ProgressCheckpoint
-                输出 "质量检查已跳过（用户设置）"
-
-stage 调整逻辑:
-    - verdict=pass: 更新为 stage=1（检查通过）
-    - verdict=pending: 保持 stage=2（AI翻译待审核/拿不定）
-    - verdict=reject: 重置为 stage=0（待翻译）
+    → 固定输入与执行配置
+    → 当前翻译候选恢复与剩余批次执行
+    → 按配置选择应用层后处理或综合校对
+    → 生成并保存逐条成果及报告（保留成功部分）
+    → 通过公共三方合入提交工作台变化
 ```
+
 
 ### 五智能体协作说明
 
@@ -783,61 +700,9 @@ class PostProcessorConfig:
     strict_arbitration: bool = False
 ```
 
-**实际代码** (translator.py):
-```python
-# 根据用户配置决定是否执行后处理
-if not stop_event.is_set() and result.success_count > 0 \
-        and getattr(self._cfg.llm_config, 'enable_post_process', True):
-    _log(f"\n── 开始质量检查 ──")
+**当前调用链**：`AutoTranslator` 根据固定执行配置选择应用层后处理或综合校对适配，使用独立输入和当前候选恢复存储。`PostProcessor` 负责计算与报告，不拥有另一套旧文件恢复流程，也不直接替换整个工作台集合。
 
-    from .post_processor import PostProcessor, PostProcessorConfig
-    from .post_processor.checkpoint import PostProcessCheckpoint
-
-    pp_config = PostProcessorConfig.from_llm_config(self._cfg.llm_config)
-    if not bool(self._llm):
-        pp_config.enable_quality_gate = False
-    post_processor = PostProcessor(pp_config)
-    post_processor.register_default_checkers(
-        term_manager=self._term_mgr,
-        llm_client=self._llm,
-    )
-
-    # 加载或创建后处理断点
-    pp_checkpoint = PostProcessCheckpoint.load(self._cfg.esp_path) \
-        or PostProcessCheckpoint(esp_stem=esp_stem)
-
-    # 五阶段协作处理（支持并发、暂停/停止、断点续传）
-    pp_result = post_processor.process_entries(
-        entries_to_check,
-        progress_callback=lambda phase, c, t, m: _emit(f"后处理[{phase}] {m}"),
-        stop_event=stop_event,
-        pause_event=pause_event,
-        checkpoint=pp_checkpoint,
-        max_workers=max_workers,
-        log_callback=lambda line: log_callback(-1, line),
-        esp_path=self._cfg.esp_path,
-    )
-
-    # 输出摘要
-    _log(f"质量检查完成：检查 {pp_result.total_checked} 条")
-    error_count = sum(1 for i in pp_result.issues if i.severity == "error")
-    warning_count = sum(1 for i in pp_result.issues if i.severity == "warning")
-    _log(f"  发现问题：{error_count} 个错误，{warning_count} 个警告")
-    if pp_result.needs_review:
-        _log(f"  需审核条目：{len(pp_result.needs_review)} 条")
-
-    # 根据裁决结果更新 stage
-    stage_stats = post_processor.update_entry_stages(collection, pp_result)
-
-    # 附加结果到 TranslationResult
-    result.post_process_result = pp_result
-
-    if not stop_event.is_set():
-        # 后处理正常完成，删除后处理断点
-        pp_checkpoint.delete(self._cfg.esp_path)
-else:
-    _log(f"\n── 质量检查已跳过（用户设置）──")
-```
+GUI 与助手把结果写入任务成果账本，提供查看、导出及再次合入；再次合入复用已经保存的结果，不重新请求模型。运行许可、取消及来源身份检查继续在各自边界执行。
 
 ### UI集成
 
@@ -857,8 +722,6 @@ post_processor
     ├─► ai_translator/term_database (TermDatabaseManager，用于术语一致性检查)
     │
     ├─► ai_translator/llm_client (用于QualityGate/Refiner/Polisher/Arbiter的并发中断)
-    │
-    ├─► checkpoint (PostProcessCheckpoint，断点续传)
     │
     ├─► [可选] llm_refiner (用于LLM修复，需配置LLM)
     │
