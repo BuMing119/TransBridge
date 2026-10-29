@@ -6,6 +6,8 @@
 
 ## 当前实施
 
+- [application-preflight](application-preflight/plan.md)：S01～S10 本地实现、相关验证与清理完成；S10 写回输入清单、批量补充、明确部分范围和验证限制见[S10 增量](../docs/changelogs/application-preflight/story-10/2026-10-29-001-batch-source-inputs.md)。助手原请求恢复见[增量 003](../docs/changelogs/application-preflight/story-09/2026-10-29-003-assistant-source-inputs.md)，无损物化、桌面范围和两项既有合同失败见[增量 002](../docs/changelogs/application-preflight/story-05-to-08/2026-10-28-002-on-demand-source-inputs.md)。历史证据与 [ADR-050](../docs/adr/050-application-preflight-and-optional-source-reference.md) 提议标签保留（2026-10-29）。
+
 - [task-result-lifecycle](task-result-lifecycle/plan.md)：第九轮统一工程恢复与持久来源成果已实现验证；来源/包/下游读取统一，补修 codec 遍历及 schema 执行成本。真实“老滚5”准备中位减少约44%，完整重开仍约92秒，按需物化为明确后续切片；验证、首次成本和基线限制见[增量 010](../docs/changelogs/task-result-lifecycle/story-01-to-05/2026-10-26-010-durable-source-restoration.md)（2026-10-27）。
 
 - [ai-project-concurrency / 默认 100 并发](ai-project-concurrency/concurrency-100-plan.md)：S19～S23 已实现，默认/界面统一、有界日志、增量解析/检测及五轮高并发对照完成；1,457 项通过，7 项旧失败排除。全库 lint 和极快流响应的 UI 延迟限制见交付记录（2026-10-25）。
@@ -14,7 +16,7 @@
 
 - [ai-project-concurrency](ai-project-concurrency/plan.md)：S14～S16 已完成术语快照复用、增量检查点和 GUI 最新状态轮询，1901 项相关回归及五轮大样本对照通过，详见[响应性计划](ai-project-concurrency/progress-responsiveness-plan.md)和[增量记录](../docs/changelogs/ai-project-concurrency/story-14-to-16/2026-10-24-001-progress-responsiveness.md)。S11～S13 已完成术语参考化、AI 综合校对、后台报告及 Excel 标注，1849 项扩大回归和最后 339 项兼容矩阵通过（范围有重叠），详见 [实施计划](ai-project-concurrency/terminology-advisory-plan.md)及[增量记录](../docs/changelogs/ai-project-concurrency/story-11-to-13/2026-10-24-001-terminology-advisory-review.md)。S01～S06、启动卡顿及并发进度展示修复本地完成；S10 已改为剩余名称模型请求前先写任务草稿，接续后处理和项目参考差异评估。S10 专项 107 项、来源集成 108 项、后端 830 项通过，扩大 UI 回归及并发工作线检查限制见 [QA](../docs/test-reports/ai-name-immediate-reuse-qa-2026-10-24.md)；S07～S09 已完成启动、结果与辅助窗口后台化，1846 项相关回归通过，2 项既有布局失败排除，见 [生命周期记录](../docs/changelogs/ai-project-concurrency/story-07-to-09/2026-10-24-001-background-lifecycle.md)；已修复真实配置启动时复制 RLock 失败，291 项相关回归通过，见 [配置快照记录](../docs/changelogs/ai-project-concurrency/story-07-to-09/2026-10-24-002-launch-config-snapshot.md)。名称发布自身写入误判外部修改已修复，893 项回归通过，见 [原生术语往返记录](../docs/changelogs/ai-project-concurrency/story-05/2026-10-24-004-native-term-roundtrip.md)。见 [S10 增量](../docs/changelogs/ai-project-concurrency/story-10/2026-10-24-001-immediate-name-draft-reuse.md)、[响应修复记录](../docs/changelogs/ai-project-concurrency/story-06/2026-10-24-001-ui-feedback-and-term-lookup.md)与 [ADR-048](../docs/adr/048-ai-project-concurrency-and-terms.md)（2026-10-24）。
 
-- [paratranz-categorized-upload](paratranz-categorized-upload/plan.md)：S26 手动补传实现、文档与验证完成；本轮结束后主动补传剩余文件及分片，刷新云端列表、沿用上轮内容和策略，范围仅当前窗口有效。133 项相关回归及全库 Ruff/格式通过，详见 [S26 记录](../docs/changelogs/paratranz-categorized-upload/story-26/2026-10-27-001-manual-upload-retry.md)；S25 性能与此前同步/保存保护保留（2026-10-27）。
+- [paratranz-categorized-upload](paratranz-categorized-upload/plan.md)：S27 完整用例下沉无 Qt 应用层，GUI/助手共用插件目录下载、匹配、保存及本轮清理，不新增索引或校验。927 项联合回归、助手最终 53 项聚焦通过，全库 Ruff/格式通过，见[共享用例记录](../docs/changelogs/paratranz-categorized-upload/story-27/2026-10-28-002-shared-application-download.md)。S26 上传补传保持（2026-10-28）。
 
 - [plugin-drop-project-choice](plugin-drop-project-choice/plan.md)：S01～S02 本地实现与验证完成；插件拖放按当前工程选择新建/加入，重复提示、未保存内容保护及失败恢复。扩大回归 324 通过、1 跳过、1 项范围外同步断言失败；见[增量记录](../docs/changelogs/plugin-drop-project-choice/story-01-to-02/2026-10-23-001-plugin-drop-project-choice.md)（2026-10-23）。
 

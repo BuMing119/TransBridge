@@ -22,6 +22,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 ## 架构决策记录 (ADR)
 
+2026-10-29：[ADR-050：应用层预检与可选来源参考路径](adr/050-application-preflight-and-optional-source-reference.md)，对应 [application-preflight 计划](../plans/application-preflight/plan.md)。S01～S10 本地实现、相关验证与清理完成；写回缺输入清单、多文件/目录补充、明确部分范围及验证限制见[S10 增量](changelogs/application-preflight/story-10/2026-10-29-001-batch-source-inputs.md)。助手原请求范围、新许可/确认与保存原文成果合入见[增量 003](changelogs/application-preflight/story-09/2026-10-29-003-assistant-source-inputs.md)，无损物化、桌面闭环及两项既有合同失败保留于[增量 002](changelogs/application-preflight/story-05-to-08/2026-10-28-002-on-demand-source-inputs.md)。
+
 2026-10-27：[ADR-049：固定任务输入、独立成果与局部合入](adr/049-task-result-lifecycle.md)，对应[计划](../plans/task-result-lifecycle/plan.md)及[第九轮持久来源与统一恢复记录](changelogs/task-result-lifecycle/story-01-to-05/2026-10-26-010-durable-source-restoration.md)。打开/切换、工程包及下游使用同一保存来源，减少 codec 遍历和 schema 校验器分配；独立复审及全库 Ruff/格式通过。真实“老滚5”准备中位减少约44%，完整重开仍约92秒；首次成本、测试复验与剩余按需物化契约见记录。工程包仍只兼容 `.transbridge` 并自动升级，前轮记录保留。
 
 新增提议：[ADR-042：项目作用域优先的助手长期记忆](adr/042-assistant-durable-memory.md)，对应[详细计划与流程图](../plans/assistant-durable-memory/plan.md)；草稿规划，尚未实现。
@@ -29,7 +31,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 编号 | 标题 | 状态 |
 |------|------|------|
 | [ADR-048](adr/048-ai-project-concurrency-and-terms.md) | AI 多插件并发、共享术语与参考差异综合校对 | S01～S13 本地实现及相关验证完成；术语不再是翻译通过条件，见 [S11～S13 记录](changelogs/ai-project-concurrency/story-11-to-13/2026-10-24-001-terminology-advisory-review.md) |
-| [ADR-047](adr/047-opt-in-categorized-project-upload.md) | 普通与分类上传使用文件 API | 已接受；上传/脚本共用分类，任务优先 QUST:FULL 原名；上传结束后可手动补传未完成文件及分片。下载复用一次当前文件快照，不依赖历史关联。见[使用说明](dev/paratranz-categorized-upload.md) |
+| [ADR-047](adr/047-opt-in-categorized-project-upload.md) | 普通与分类上传使用文件 API | 已接受；任务标题命名及手动补传保持。GUI/助手共用无 Qt 应用层下载用例，按插件目录读取并匹配、保存，本轮结束清理，不新增索引或校验。见[使用说明](dev/paratranz-categorized-upload.md) |
 | [ADR-046](adr/046-purpose-aware-data-projection.md) | 按来源与用途保护凭据，业务数据保持原样 | 已接受（2026-10-07），实施中 |
 | [ADR-041](adr/041-assistant-context-compaction.md) | 助手稳定上下文与按预算压缩；保留目标与计划系统；[实现增量](changelogs/assistant-context-compaction/story-01-to-09-implementation/2026-09-12-001-稳定上下文与不可变摘要链实现.md) | 本地实现与离线验证完成；真实收益待评测 |
 | [ADR-001](adr/001-unified-translation-entry.md) | TranslationEntry 作为统一翻译数据模型 | ✅ 历史与 V2 身份增量已接受 |

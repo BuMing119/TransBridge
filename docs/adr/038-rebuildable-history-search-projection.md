@@ -3,13 +3,14 @@
 - **状态**：提议
 - **日期**：2026-09-06
 - **对应需求**：[FR29](../requirements.md)
+- **局部被取代**：[ADR-050](050-application-preflight-and-optional-source-reference.md) 以已保存来源成果替代实时解析外部参考路径；以下当前读取合同同步对齐，历史方案背景与备选理由保留。
 - **关联 ADR**：[ADR-014](014-fomod-translation-memory.md)、[ADR-016](016-modular-monolith-application-composition.md)、[ADR-017](017-translation-io-kernel-v2.md)、[ADR-018](018-project-session-persistence-v2.md)、[ADR-019](019-unified-task-runtime.md)、[ADR-034](034-project-terminology-build-versioning-reporting.md)、[ADR-035](035-authoritative-project-mutations-and-recoverable-save.md)
 
 ## 背景与约束
 
 FR29 需要通过统一搜索窗口检索三种已有资产：Project/Variant 的完整译文、`.tbdict` 翻译记忆和当前生效项目术语；用户可以同时打开多个窗口，并在每个窗口独立选择全部来源、单个 Project 或单个词典。这三类数据具有不同所有者和存储方式：
 
-- Project/Variant 由 ADR-018 的 JSON repository 拥有；Variant 保存完整 `EntryKey` 与译文状态，但不复制原文，原文必须从 Project 登记来源通过格式适配器恢复；
+- Project/Variant 由 ADR-018 的 JSON repository 拥有；Variant 保存完整 `EntryKey` 与译文状态，但不复制原文，原文从 Project 登记的保存来源成果恢复；
 - `.tbdict` 由翻译记忆模块拥有，按 mod 文件分库；
 - 项目术语由 ADR-034 的每 Project SQLite repository 拥有，并按 Project/Variant 保存不可变发布版本。
 
@@ -31,7 +32,7 @@ HistorySearchIndexPort + HistoryRecordProvider ports
 Project/Variant provider  TM provider  Terminology provider
         ↓                    ↓                ↓
 V2 repositories       .tbdict model     terminology repository
-FormatAdapter
+SavedProjectSourcePreparer
 ```
 
 搜索域不得修改 Project、Variant、翻译记忆、术语版本、当前集合或命中计数。UI 只消费不可变搜索投影，不读取路径、JSON 或 SQL。
@@ -44,13 +45,13 @@ FormatAdapter
 
 索引 schema 与规范化版本显式记录。记录同时保存用于只读筛选的 Project ID 和 dictionary ID，并维护去重后的可选来源投影；选择 Project 时同时命中其 Variant 翻译与生效术语。版本不兼容时直接重建，不迁移或反向修改权威资产。索引文件损坏时报告诊断并允许刷新重建；损坏索引不得导致任何来源文件被隔离、改名或覆盖。
 
-### 3. Project/Variant 记录由已登记来源恢复原文
+### 3. Project/Variant 记录由已保存来源成果恢复原文
 
-Project provider 从只读 Project catalog 枚举可用 Project，以 `ProjectRepository.read_snapshot()` 和 `VariantRepository.read_snapshot()` 读取已保存状态。它只解析 Project 中登记且启用的来源，并通过 ADR-017 `FormatAdapter.parse(ParseRequest)` 得到原文与 `EntryKey`；解析沿用该来源保存的 `format_options`，不得临时扩大到未登记目录或游戏安装目录。
+Project provider 从只读 Project catalog 枚举可用 Project，以 `ProjectRepository.read_snapshot()` 和 `VariantRepository.read_snapshot()` 读取已保存状态。它优先读取 Project 中登记且启用的保存来源成果，恢复原文与 `EntryKey`；没有可用成果时可使用 `EntryKey.original` 中实际保存的原文，未知则不猜测。不重新解析原始参考路径，不临时扩大到未登记目录或游戏安装目录。
 
-同一 Project 的来源只解析一次，再按完整 `EntryKey` 与各 Variant 保存状态连接。只有非 tombstone、非空译文且能够证明原文对应关系的记录进入索引。来源缺失、变化、格式能力不足、解析失败或 EntryKey 无法对齐时产生来源级诊断并跳过相关记录；不得用 local key、文件名或扫描顺序猜测原文。
+同一 Project 的保存来源只读取一次，再按完整 `EntryKey` 与各 Variant 保存状态连接。只有非 tombstone、非空译文且能够证明原文对应关系的记录进入索引。所需保存内容实际缺失、损坏、格式能力不足或 EntryKey 无法对齐时产生来源级诊断并跳过相关记录；原始参考路径缺失或同路径文件变化不影响完整保存内容。不得用 local key、文件名或扫描顺序猜测原文。
 
-索引来源投影保存 Project/Variant 的显示名和稳定 ID，以及可证明的来源/插件标识。绝对来源路径只用于受控读取和诊断，不进入普通结果摘要。
+索引来源投影保存 Project/Variant 的显示名和稳定 ID，以及可证明的来源/插件标识。原始绝对路径仅为可选参考，不用于读取保存内容或决定来源身份，也不进入普通结果摘要。
 
 ### 4. 翻译记忆与术语使用只读投影
 
@@ -87,7 +88,7 @@ record_kind + normalized_original + normalized_translation
 - `HistorySearchProvider.collect(cancellation)`：从一个权威来源域产生记录与诊断；provider 失败被刷新服务隔离。
 - `HistorySearchTaskEntrypoint.refresh(owner)`：把完整刷新提交到 TaskRuntime；UI 不自行创建业务线程。
 
-错误分为：索引不可用、Project/Variant 不可读、来源不可读/变化/不支持、词典损坏、术语仓储不可读、刷新取消和内部错误。部分来源失败的刷新可提交为带诊断的完整派生快照；只有索引构建或原子替换失败才保留旧快照并使任务失败。
+错误分为：索引不可用、Project/Variant 不可读、保存来源内容不可读/不支持、词典损坏、术语仓储不可读、刷新取消和内部错误。部分来源失败的刷新可提交为带诊断的完整派生快照；只有索引构建或原子替换失败才保留旧快照并使任务失败。
 
 ## 备选方案
 
@@ -112,7 +113,7 @@ record_kind + normalized_original + normalized_translation
 - 正面：搜索响应与来源解析解耦；三类资产继续保持单一权威；重复译对可聚合且来源不丢失。
 - 成本：新增一个可重建 SQLite adapter、刷新 workload 和跨 Project 读取 provider。
 - 风险：全量首次刷新可能较慢。通过 TaskRuntime、进度、取消和保留旧快照降低影响；后续可在不改变查询合同的前提下增加按 revision/fingerprint 的增量刷新。
-- 风险：源文件变化导致 Variant 原文无法证明。严格跳过并诊断，不能为了覆盖率采用 local key 猜测。
+- 风险：所需保存来源内容缺失或损坏导致 Variant 原文无法证明。沿用跳过并诊断，不能为了覆盖率采用 local key 猜测；外部参考文件变化不触发此分支。
 - 风险：SQLite 前导通配包含查询无法完全利用普通 B-tree。首版以有界结果和可复现基准验证；若规模超过预算，可在同一端口后引入已验证的 FTS/ngram adapter，不改变权威存储。
 
 ## 迁移与回退
