@@ -36,6 +36,8 @@ def _slot(source, format_id, request):
         format_id=format_id,
         label=source.name,
         esp_path=str(source) if format_id is FormatId.PLUGIN_SSE else None,
+        eet_path=str(source) if format_id is FormatId.XML_EET else None,
+        xt_path=str(source) if format_id is FormatId.XML_XT else None,
     )
 
 
@@ -104,6 +106,21 @@ def test_one_explicit_inactive_source_can_be_written_without_an_active_collectio
     assert sources.ctx.active_slot is None
 
 
+def test_cleared_reference_never_reuses_saved_snapshot_uri_as_output(sources, manager):
+    slot = sources.ctx.active_slot
+    slot.esp_path = None
+    original = sources.plugin.read_bytes()
+    rejected = tool_writer._tool_write_back({"target": "esp", "overwrite": True}, sources.ctx)
+    assert not rejected.success and rejected.error_code == "OUTPUT"
+    assert manager.list_all() == []
+    assert sources.plugin.read_bytes() == original
+
+    output = sources.root / "chosen-output"
+    started = tool_writer._tool_write_back({"target": "esp", "output_dir": str(output)}, sources.ctx)
+    assert _result(manager, started)["artifacts"] == [str(output / sources.plugin.name)]
+    assert sources.plugin.read_bytes() == original
+
+
 @pytest.mark.parametrize(
     "selection,code",
     [
@@ -154,6 +171,9 @@ def test_invalid_member_format_or_missing_snapshot_fails_before_any_selected_sou
         {"target": "auto", "source_keys": list(sources.ctx.slots), "output_dir": str(output)}, sources.ctx
     )
     assert not result.success and result.error_code == "SOURCE_SNAPSHOT_REQUIRED"
+    assert result.data["source_input_repair"]["source_keys"] == ["plugin-key", "xml-key"]
+    assert result.data["source_input_repair"]["missing_source_keys"] == ["xml-key"]
+    assert result.data["source_input_repair"]["requirement"] == "template"
     assert manager.list_all() == [] and not output.exists()
 
 

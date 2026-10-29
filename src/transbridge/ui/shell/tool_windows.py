@@ -9,6 +9,7 @@ from PyQt6.QtCore import QRect
 from PyQt6.QtWidgets import QApplication
 
 from transbridge.paratranz.api.paratranz_user_api import ParatranzUserAPI
+from transbridge.ui.source_input_state import ensure_source_input
 from transbridge.ui.workers import ApiWorker
 
 from .overlay_geometry import workspace_overlay_rect
@@ -121,25 +122,35 @@ class ToolWindows:
 
         MailsDialog(self._host.context, self._host).exec()
 
-    def open_ai_translator(self) -> None:
+    def open_ai_translator(self, *, source_keys=None) -> None:
         runtime = getattr(self._host, "app_runtime", None)
         if runtime is None:
-            self._host.workbench.open_tool(
+            window = self._host.workbench.open_tool(
                 "ai_translator",
                 settings_requested=lambda: self.show_ui_settings("ai_service"),
             )
         else:
-            self._host.workbench.open_tool(
+            window = self._host.workbench.open_tool(
                 "ai_translator",
                 task_runtime=runtime.tasks,
                 settings_requested=lambda: self.show_ui_settings("ai_service"),
             )
+        if window is not None and source_keys is not None:
+            window.select_sources(source_keys)
 
     def open_batch_ai_translation(self) -> None:
         """Route legacy callers to the unified AI task entry."""
         self.open_ai_translator()
 
     def open_dictionary(self) -> None:
+        if not ensure_source_input(
+            self._host.context,
+            "originals",
+            resume=self.open_dictionary,
+            source_keys=(self._host.context.active_key,),
+            parent=self._host,
+        ):
+            return
         from transbridge.ui.tools.dictionary_panel import DictionaryPanel
 
         DictionaryPanel(self._host.context, self._host).exec()

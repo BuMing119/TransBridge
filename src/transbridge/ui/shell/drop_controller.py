@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from PyQt6.QtWidgets import QDialog, QMessageBox
 
 from transbridge.ui.coordinators.source_add_operation import ProjectSourceAddOperation
@@ -59,12 +57,6 @@ class ShellDropController:
             return True
         return False
 
-    def _duplicate(self, path):
-        normalized = os.path.normcase(os.path.abspath(path))
-        context = self._host.context
-        locations = [*context.slots, *(source.get("location", "") for source in context.project_sources)]
-        return any(location and os.path.normcase(os.path.abspath(location)) == normalized for location in locations)
-
     def _plugin(self, path):
         if self._busy():
             return
@@ -75,9 +67,7 @@ class ShellDropController:
         identity = context.active_version_identity
         project_name = context.project_name
         reason = ""
-        if self._duplicate(path):
-            reason = "该插件已在当前项目中，不能重复加入。你仍可以用它新建项目。"
-        elif identity is None or not context.uses_authoritative_projection:
+        if identity is None or not context.uses_authoritative_projection:
             reason = "当前项目没有可编辑的工程版本，无法加入插件。"
         dialog = PluginDropDialog(path, project_name, add_unavailable=reason, parent=self._host)
         self.plugin_dialog = dialog
@@ -93,9 +83,6 @@ class ShellDropController:
             self._host.show_message("目标项目已变化，请重新拖入插件。", error=True)
             return
         if choice == "add":
-            if self._duplicate(path):
-                self._host.show_message("该插件已在当前项目中，不能重复加入。")
-                return
             self._source_add.start(path, identity)
         elif choice == "new":
             self._new_project(path, identity)

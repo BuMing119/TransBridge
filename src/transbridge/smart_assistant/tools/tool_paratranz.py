@@ -410,60 +410,10 @@ def _tool_recover_upload_associations(args: dict, ctx) -> ToolResult:
 
 @_close_paratranz_clients
 def _tool_download_entries(args: dict, ctx) -> ToolResult:
-    """Capture remote inputs and retain results without changing local entries."""
-    from .entry_task_results import EntryTaskResults
+    """Download plugin files and save matching translations through the shared use case."""
+    from ._project_download import download_entries
 
-    config = ctx.config
-    copy_config = getattr(config, "copy_for_execution", None)
-    captured_config = copy_config() if callable(copy_config) else deepcopy(config)
-    captured = SimpleNamespace(
-        config=captured_config,
-        current_user=deepcopy(getattr(ctx, "current_user", None)),
-        paratranz_binding=deepcopy(getattr(ctx, "paratranz_binding", None)),
-        project_revision=getattr(ctx, "project_revision", None),
-    )
-    client, pid, target_error = _get_paratranz_client(captured, args.get("project_id"))
-    if target_error:
-        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
-    if not pid:
-        return ToolResult.fail("请指定 project_id")
-    task = EntryTaskResults(
-        ctx,
-        getattr(ctx, "collection", None),
-        kind="download",
-        policy_section="download_policy",
-        inputs={
-            "project_id": args.get("project_id"),
-            "limit": args.get("limit", 2000),
-            "endpoint": _config_endpoint(captured),
-            "account_user_id": _account_user_id(captured),
-        },
-    )
-    downloaded = []
-    error = ""
-    task.record["fixed_inputs"]["project_id"] = int(pid)
-    try:
-        remote_entries = client.iter_entries(
-            pid, limit=task.record["fixed_inputs"]["limit"], cancellation=_cancellation(ctx)
-        )
-        for remote in remote_entries:
-            if isinstance(remote, ParaTranzEntry):
-                data = remote.to_remote_payload()
-            else:
-                data = remote
-            downloaded.append(deepcopy(data))
-    except Exception as exc:
-        error = f"下载未完成: {technical_error(exc)}"
-    task.candidates(downloaded, remote=True)
-    result = task.finish(auto_merge=False, error=error)
-    result.data.update(
-        downloaded_count=len(downloaded),
-        diff_summary={
-            "new_from_remote": len(task.record["unmapped"]),
-            "updated": sum(row["before"]["translation"] != row["text"] for row in task.record["candidate_rows"]),
-        },
-    )
-    return result
+    return download_entries(args, ctx)
 
 
 @_close_paratranz_clients
@@ -667,6 +617,11 @@ _PARAM_SCHEMAS = {
             "required": False,
             "description": "Project ID (uses the current project binding when omitted)",
         },
+        "source_ids": {
+            "type": "list",
+            "required": False,
+            "description": "Registered source IDs to download; defaults to the currently active plugin",
+        },
     },
     "export_artifact": {
         "project_id": {
@@ -797,14 +752,13 @@ def _register_paratranz_tools():
                 "name": "download_entries",
                 "display_name": "下载条目",
                 "description": (
-                    "①Download translation entries from the remote project. ②Parameters: project_id (optional). Write "
-                    "permission, long-running, and confirmation required. ③Returns: "
-                    "{result_id,downloaded_count,entries:[{key,original,translation,stage,context}],"
-                    "diff_summary}. Rules: this does not "
-                    "automatically modify the local collection, so entries must be handled "
-                    "explicitly using translator.get_task_result/merge_task_result without downloading again; "
-                    "diff_summary is "
-                    "null when no local collection is loaded."
+                    "Download all files under the selected plugin directories, match local entries, and save "
+                    "translations directly using the same project workflow as the GUI. project_id is optional; "
+                    "source_ids selects registered sources and defaults to the active plugin. Returns updated_count, "
+                    "unchanged_count, pending_count, source_ids and retryable. Does not create local source entries. "
+                    "There is no 2000-entry pagination limit or saved result_id. Temporary download content is cleared "
+                    "when this call ends; do not call get_task_result or merge_task_result for this operation. "
+                    "Unresolved translations keep their local content. Write permission and confirmation required."
                 ),
                 "execute": _tool_download_entries,
                 "permission": "write",

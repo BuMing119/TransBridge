@@ -149,7 +149,11 @@ def test_qualified_legacy_archive_round_trips_current_and_historical_state(tmp_p
     actual = {entry.entry_key: entry for entry in variants[0].entries}
     assert len(actual) == 3
     for index, entry in enumerate(entries):
-        state = actual[entry.identity]
+        state = (
+            actual[entry.identity]
+            if entry.requires_original_match
+            else next(item for item in actual.values() if item.entry_key.local_key == entry.id)
+        )
         assert (state.translation, state.stage.value, state.revision, state.provenance) == (
             entry.translation,
             entry.stage,
@@ -158,9 +162,8 @@ def test_qualified_legacy_archive_round_trips_current_and_historical_state(tmp_p
         )
         assert state.labels == (f"label-{index}",)
     historical = snapshots[0]["variant"]["data"]["entries"]
-    assert {json.dumps(row["entry_key"], sort_keys=True) for row in historical} == {
-        json.dumps(entry.identity.to_dict(), sort_keys=True) for entry in entries
-    }
+    assert len(historical) == 3
+    assert {row["translation"] for row in historical} == {entry.translation for entry in entries}
 
     services = build_persistence_v2_services(
         tmp_path / "imported", id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now"
@@ -169,8 +172,8 @@ def test_qualified_legacy_archive_round_trips_current_and_historical_state(tmp_p
         imported = services.project_archive.import_project(str(archive), _context())
         opened = services.current_project_opener.open_path(imported, _context())
         assert opened.is_success, opened.diagnostics
-        assert not opened.value.get("read_only", False)
-        restored = services.project_lifecycle.active.variant.snapshot()
+        assert opened.value["read_only"]
+        restored = opened.value["recovery"].variant
         assert {entry.entry_key: entry for entry in restored.entries} == actual
     finally:
         services.close()
@@ -189,7 +192,7 @@ def test_qualified_legacy_archive_keeps_identity_when_source_is_missing(tmp_path
     assert all(fingerprint.sha256 is None for fingerprint in variants[0].source_fingerprints)
 
 
-def test_sparse_legacy_history_restores_complete_baseline_and_explicit_empty(tmp_path):
+def test_sparse_legacy_history_preserves_saved_rows_without_reading_reference(tmp_path):
     source, prepared = _xml_source(tmp_path / "source.xml", extra_entry=True)
     saved_key = prepared.hydration.entries[0].legacy_id
     records = {
@@ -201,34 +204,26 @@ def test_sparse_legacy_history_restores_complete_baseline_and_explicit_empty(tmp
             "entry_states": {saved_key: {"stage": 5}},
         },
     }
-    project = _project(source, names=("Main",))
-    path = _write_archive(tmp_path / "legacy.transbridge", project, records)
+    path = _write_archive(tmp_path / "legacy.transbridge", _project(source, names=("Main",)), records)
     services = build_persistence_v2_services(
         tmp_path / "imported", id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now"
     )
     try:
         imported = services.project_archive.import_project(str(path), _context())
-        assert services.current_project_opener.open_path(imported, _context()).is_success
-        for entry in services.project_lifecycle.active.variant.snapshot().entries:
-            assert services.gui_project_commands.update_entry(
-                entry.entry_key, _context(), translation="later"
-            ).is_success
-        history = services.project_snapshots.list(_context())
-        restored = services.project_snapshots.restore(history[0].identity, _context())
-        assert restored.is_success, restored.diagnostics
-        actual = {entry.entry_key: entry for entry in services.project_lifecycle.active.variant.snapshot().entries}
-        assert len(actual) == 2
-        saved = actual[prepared.hydration.entries[0].entry_key]
-        assert saved.translation == "" and saved.stage.value == 5
-        other_key = prepared.hydration.entries[1].entry_key
-        baseline = next(entry for entry in prepared.baseline.entries if entry.entry_key == other_key)
-        assert actual[other_key].translation == baseline.translation
+        opened = services.current_project_opener.open_path(imported, _context())
+        assert opened.is_success and opened.value["read_only"]
+        current = opened.value["recovery"].variant.entries
+        assert len(current) == 1 and current[0].translation == "current"
+        histories = list((tmp_path / "imported" / "snapshots").glob("*.json"))
+        historical = json.loads(histories[0].read_bytes())["variant"]["data"]["entries"]
+        assert len(historical) == 1
+        assert historical[0]["translation"] == "" and historical[0]["stage"] == 5
     finally:
         services.close()
 
 
 @pytest.mark.parametrize("key_kind", ["bare", "wrong_original"])
-def test_qualified_legacy_archive_rejects_unproved_saved_identity(tmp_path, key_kind):
+def test_qualified_legacy_archive_retains_unproved_saved_identity_in_recovery(tmp_path, key_kind):
     _path, _archive, entries, _current, source = _qualified_plugin_archive(tmp_path)
     first = entries[0]
     bad_key = first.id if key_kind == "bare" else replace(first.identity, original="Not present").serialize()
@@ -238,8 +233,9 @@ def test_qualified_legacy_archive_rejects_unproved_saved_identity(tmp_path, key_
         {"主版本/current.json": {"variant": "主版本", "translations": {bad_key: "Wrong"}}},
     )
 
-    with pytest.raises(ValueError, match="无法唯一映射"):
-        _decode(archive)
+    project, variants, _ = _decode(archive)
+    assert project.envelope.data["legacy"]["archive_recovery"] == "source-baseline-required"
+    assert variants[0].entries[0].translation == "Wrong"
 
 
 def test_missing_source_keeps_all_variants_entry_states_and_duplicate_named_snapshots(tmp_path: Path) -> None:
@@ -288,7 +284,7 @@ def test_missing_source_keeps_all_variants_entry_states_and_duplicate_named_snap
     }
 
 
-def test_verified_source_remaps_exact_legacy_identity_and_materializes_saved_state(tmp_path: Path) -> None:
+def test_existing_reference_does_not_remap_legacy_identity_or_read_source(tmp_path: Path) -> None:
     source, prepared = _xml_source(tmp_path / "source.xml")
     parsed = prepared.hydration.entries[0]
     saved = {
@@ -310,24 +306,29 @@ def test_verified_source_remaps_exact_legacy_identity_and_materializes_saved_sta
         },
     )
 
-    project, variants, snapshots = _decode(archive)
+    class NoSourceReads:
+        def prepare_source(self, *_args, **_kwargs):
+            pytest.fail("A pure-record archive must not read its external source reference")
 
+    project, variants, snapshots = _decode(archive, preparer=NoSourceReads())
     entry = variants[0].entries[0]
-    assert entry.entry_key == parsed.entry_key
+    assert entry.entry_key.namespace.value == "legacy:v1"
+    assert entry.entry_key.local_key == parsed.legacy_id
     assert entry.translation == "人工译文" and entry.stage.value == 5 and entry.revision.value == 7
     assert entry.labels == ("reviewed",)
-    assert variants[0].source_fingerprints == (prepared.baseline.fingerprint,)
+    assert all(item.sha256 is None for item in variants[0].source_fingerprints)
     assert project.envelope.data["sources"][0]["format_id"] == "xml.xt"
-    assert snapshots[0]["variant"]["data"]["entries"][0]["entry_key"] == parsed.entry_key.to_dict()
     assert snapshots[0]["variant"]["data"]["entries"][0]["translation"] == "历史译文"
     services = build_persistence_v2_services(
         tmp_path / "v2", id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now"
     )
-    imported = services.project_archive.import_project(str(archive), _context())
-    opened = services.current_project_opener.open_path(imported, _context())
-    assert opened.is_success and not opened.value.get("read_only", False)
-    actual = services.project_lifecycle.active.variant.snapshot().entries[0]
-    assert actual == entry
+    try:
+        imported = services.project_archive.import_project(str(archive), _context())
+        opened = services.current_project_opener.open_path(imported, _context())
+        assert opened.is_success and opened.value["read_only"]
+        assert opened.value["recovery"].variant.entries[0] == entry
+    finally:
+        services.close()
 
 
 def test_returning_source_does_not_make_unmapped_legacy_states_editable(tmp_path: Path) -> None:
@@ -393,7 +394,9 @@ def test_import_and_open_without_baseline_preserves_data_and_active_project(
 
 
 @pytest.mark.parametrize("ambiguous", [False, True])
-def test_existing_sources_refuse_unmapped_or_ambiguous_legacy_ids(tmp_path: Path, ambiguous: bool) -> None:
+def test_existing_references_keep_unmapped_or_ambiguous_legacy_ids_for_recovery(
+    tmp_path: Path, ambiguous: bool
+) -> None:
     first, prepared = _xml_source(tmp_path / "source.xml")
     sources = [first]
     key = "unknown-id"
@@ -409,8 +412,10 @@ def test_existing_sources_refuse_unmapped_or_ambiguous_legacy_ids(tmp_path: Path
         },
     )
 
-    with pytest.raises(ValueError, match="无法唯一映射"):
-        _decode(archive)
+    project, variants, _ = _decode(archive)
+    assert project.envelope.data["legacy"]["archive_recovery"] == "source-baseline-required"
+    assert variants[0].entries[0].translation == "不能丢失"
+    assert all(item.sha256 is None for item in variants[0].source_fingerprints)
 
 
 @pytest.mark.parametrize(
@@ -461,3 +466,24 @@ def test_missing_legacy_source_preserves_parser_selection(
     project, variants, _ = _decode(archive)
     assert project.envelope.data["sources"][0]["format_id"] == expected
     assert len(variants[0].entries) == 3
+
+
+def test_legacy_sst_format_hint_never_reads_optional_reference(tmp_path, monkeypatch):
+    source = tmp_path / "reference.sst"
+    source.write_bytes(b"SSU9 this reference is not imported content")
+    archive = _write_archive(
+        tmp_path / "legacy.transbridge",
+        _project({"key": "sst", "type": "sst", "path": str(source)}),
+        {"主版本/current.json": _variant()},
+    )
+    original = Path.open
+
+    def no_source_read(path, *args, **kwargs):
+        assert path != source, "The format hint must not read an external reference"
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", no_source_read)
+    project, variants, _ = _decode(archive)
+
+    assert project.envelope.data["sources"][0]["format_id"] == FormatId.SST_SSU8.value
+    assert variants[0].entries[0].translation in {"译文", ""}

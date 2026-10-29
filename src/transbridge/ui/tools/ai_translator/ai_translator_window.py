@@ -6,7 +6,9 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QLineEdit, QMessageBox, QWidget
 
+from transbridge.ui.dynamic_terminology_source import dynamic_terminology_source
 from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.source_input_state import ensure_source_input
 from transbridge.ui.tools.ai_translator.config_dialogs import open_term_editor, show_connection_test
 from transbridge.ui.tools.ai_translator.config_presenter import ConfigPresenter
 from transbridge.ui.tools.ai_translator.config_view import (
@@ -32,7 +34,9 @@ from transbridge.ui.workbench.filters_presenter import ALL_CATEGORIES, entry_cat
 from ._theme_support import AiThemeBinding
 from ._window_actions import (
     apply_window_theme,
+    missing_original_source_keys,
     open_settings_from_window,
+    selected_source_keys,
     update_window_quick_run,
 )
 
@@ -338,7 +342,8 @@ class AITranslatorWindow(QWidget):
             target_edit.setText(path)
 
     def on_view_terms(self):
-        open_term_editor(self, self._ctx.esp_path)
+        source = dynamic_terminology_source(self._ctx)
+        open_term_editor(self, source.reference, source_key=source.source_key)
 
     def on_save_term_source_as_scheme(self) -> None:
         if self._terminology_workbench_requested is None:
@@ -349,7 +354,20 @@ class AITranslatorWindow(QWidget):
     def on_start(self):
         from .task_runtime import start_task
 
+        keys = selected_source_keys(self)
+
+        def resume():
+            self.close()
+            self._ctx.source_input_coordinator.open_ai(keys)
+
+        if not ensure_source_input(
+            self._ctx, "originals", source_keys=missing_original_source_keys(self), resume=resume, parent=self
+        ):
+            return
         start_task(self)
+
+    def select_sources(self, keys):
+        self._view.sources_panel.select_keys(keys)
 
     def _on_mixed_start(self):
         self.on_start()

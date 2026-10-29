@@ -160,3 +160,19 @@ def test_each_domain_preflights_before_submit(kind, changes, blocking_id) -> Non
     assert not checked.ready
     assert blocking_id in {item.check_id for item in checked.checks if item.status.value == "blocked"}
     assert checked.confirmation_token is None
+
+
+def test_ui_contracts_preserve_application_result_identity() -> None:
+    from transbridge.application.preflight.operation import (
+        OperationKind as ApplicationOperationKind,
+        OperationPreflightResult,
+    )
+    from transbridge.ui.operations.preflight_view import OperationPreflightResult as UiPreflightResult
+
+    result = WriteOperationMapper().preflight(draft(locked_count=1))
+
+    assert OperationKind is ApplicationOperationKind
+    assert UiPreflightResult is OperationPreflightResult
+    assert isinstance(result, OperationPreflightResult)
+    assert result.ready
+    assert next(item for item in result.checks if item.check_id == "LOCKED_HIDDEN").status.value == "warning"

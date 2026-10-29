@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 from threading import Event, get_ident
 
@@ -98,64 +99,48 @@ def review_row():
     return SyncReviewRow("row", "key", "Original", "Local", "", "选择译文", (candidate,))
 
 
-def test_saved_result_reopens_in_worker_and_export_success_is_shown(qapp, workers, monkeypatch):
-    from transbridge.ui.operations import batch_download_recovery as recovery
+@pytest.mark.parametrize("phase", ["success", "failure", "cancel", "kept_current"])
+def test_finished_round_discards_download_data(qapp, workers, phase):
+    discarded = []
 
-    calls = []
-    record = {"created_at": "2026-10-26", "sources": {"one": "one.json"}, "result_id": "saved"}
+    def compare(*args):
+        if phase == "failure":
+            raise RuntimeError("network failed")
+        if phase == "cancel":
+            args[-1].set()
+            raise TaskCancelled("cancelled")
+        if phase == "kept_current":
+            return DownloadPreview(0, 1, 0, review_rows=(replace(review_row(), decision="keep_local"),))
+        return DownloadPreview(1, 0, 0)
+
+    subject = make_dialog(compare=compare, discard=lambda: discarded.append(True))
+    subject.show()
+    qapp.processEvents()
+    workers[-1].complete()
+    discarded.clear()
+    subject._primary_button.click()
+    assert not discarded  # Never clear input while the worker still uses it.
+    workers[-1].complete()
+    assert discarded and subject._preview is None and not subject._decisions
+    assert not any("重开" in button.text() or "另存" in button.text() for button in subject.findChildren(QPushButton))
+    subject.close()
+
+
+def test_close_discards_pending_review_and_its_choices(qapp, workers):
+    discarded = []
     subject = make_dialog(
-        saved_results=lambda: (record,),
-        restore=lambda result_id, *_: calls.append(result_id) or DownloadPreview(1, 0, 1, source_ids=("one",)),
-        export_results=lambda path: calls.append(path),
+        compare=lambda *_: DownloadPreview(0, 0, 1, review_rows=(review_row(),)),
+        discard=lambda: discarded.append(True),
     )
     subject.show()
     qapp.processEvents()
     workers[-1].complete()
-    monkeypatch.setattr(
-        recovery.QInputDialog, "getItem", lambda *_args, **_kwargs: ("2026-10-26 · 1 个来源 · saved", True)
-    )
-    subject._recovery_controls.reopen.click()
-    assert calls == []
+    discarded.clear()
+    subject._primary_button.click()
     workers[-1].complete()
-    workers[-1].complete()
-    assert calls == ["saved"] and subject.selection() == ("one",)
-    monkeypatch.setattr(recovery.QFileDialog, "getSaveFileName", lambda *_: ("export.json", "JSON"))
-    subject._recovery_controls.save_as.click()
-    workers[-1].complete()
-    assert calls[-1] == "export.json" and "已另存" in subject._status.text()
-    assert subject._worker is None
+    assert not discarded and subject._preview.review_rows
     subject.close()
-
-
-@pytest.mark.parametrize("has_healthy", [False, True])
-def test_saved_result_damage_warning_keeps_healthy_selection_available(qapp, workers, monkeypatch, has_healthy):
-    from transbridge.application.sync.download_results import DownloadResultRecords
-    from transbridge.ui.operations import batch_download_recovery as recovery
-
-    calls, warnings = [], []
-    record = {"created_at": "2026-10-26", "sources": {"one": "one.json"}, "result_id": "saved"}
-    diagnostic = "损坏记录：result.json；原文件保留"
-    records = DownloadResultRecords((record,) if has_healthy else (), diagnostics=(diagnostic,))
-    subject = make_dialog(
-        saved_results=lambda: records,
-        restore=lambda result_id, *_: calls.append(result_id) or DownloadPreview(1, 0, 1, source_ids=("one",)),
-        export_results=lambda *_: None,
-    )
-    monkeypatch.setattr(recovery.QMessageBox, "warning", lambda *_args: warnings.append(_args[-1]))
-    monkeypatch.setattr(recovery.QMessageBox, "information", lambda *_args: None)
-    monkeypatch.setattr(
-        recovery.QInputDialog, "getItem", lambda *_args, **_kwargs: ("2026-10-26 · 1 个来源 · saved", True)
-    )
-    subject.show()
-    qapp.processEvents()
-    workers[-1].complete()
-    subject._recovery_controls.reopen.click()
-    workers[-1].complete()
-    if has_healthy:
-        workers[-1].complete()
-    assert warnings == [diagnostic]
-    assert calls == (["saved"] if has_healthy else [])
-    subject.close()
+    assert discarded and subject._preview is None and not subject._decisions
 
 
 def test_one_click_compares_and_saves_in_one_worker_without_another_confirmation(qapp, workers):
@@ -251,7 +236,7 @@ def test_failure_keeps_choices_and_decisions_for_one_click_retry(dialog, workers
     dialog._primary_button.click()
     workers[-1].complete()
     assert dialog.selection() == ("one",)
-    assert dialog._decisions == (("entry", "keep_local"),)
+    assert dialog._decisions == ()
     assert "本次选择已保留" in dialog._status.text()
     assert dialog._primary_button.isEnabled()
     assert dialog._primary_button.text() == "重试未完成项"
@@ -406,7 +391,7 @@ def test_rebase_failure_keeps_specific_reason_without_another_save_confirmation(
     dialog._apply = lambda *_args: DownloadReceipt(0, requires_review=True, preview=fresh)
     dialog._primary_button.click()
     workers[-1].complete()
-    assert dialog._preview is fresh
+    assert dialog._preview is None
     assert dialog._status.text() == fresh.status
     assert dialog._primary_button.text() == "重试未完成项"
     assert dialog._primary_button.isEnabled()
@@ -451,7 +436,7 @@ def test_unsubmitted_replan_is_retryable_even_without_a_source_error_flag(dialog
     dialog._apply = lambda *_args: DownloadReceipt(0, requires_review=True, preview=fresh)
     dialog._primary_button.click()
     workers[-1].complete()
-    assert dialog._preview.updates == 1
+    assert dialog._preview is None
     assert dialog._primary_button.text() == "重试未完成项"
     assert dialog._primary_button.isEnabled()
 
@@ -498,7 +483,7 @@ def test_review_applies_and_saves_choices_automatically_without_another_main_but
         workers[-1].complete()
         assert calls[-2:] == [("compare", ("one", "two"), "keep_current", (("row", "remote-choice"),)), ("apply",)]
         assert "保存到当前本地版本" in dialog._status.text()
-        assert dialog._decisions == (("row", "remote-choice"),)
+        assert dialog._decisions == ()
         assert dialog._primary_button.text() == "已保存"
         assert not dialog._primary_button.isEnabled()
     else:
@@ -670,7 +655,10 @@ def test_real_worker_compares_and_saves_off_gui_thread_without_blocking_events(q
     try:
         subject._primary_button.click()
         assert entered.wait(1)
-        QTest.qWait(30)
+        for _ in range(50):
+            QTest.qWait(10)
+            if gui_ticks:
+                break
         assert gui_ticks and subject._worker is not None
         assert len(phases) == 1
         release.set()

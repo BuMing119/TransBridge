@@ -16,6 +16,7 @@ from .message_bubble import MessageBubble
 from .message_list_view import MessageListView
 from .react_execution_binding import ReactExecutionBinding
 from .session_binding import ConversationBinding, SessionBinding
+from .source_input_binding import AssistantSourceInputBinding
 from .streaming_presenter import StreamingPresenter
 from .submission_binding import SubmissionBinding
 from .task_binding import TaskBinding, sanitize_error_message
@@ -53,9 +54,7 @@ def initialize_runtime(facade) -> None:
         on_confirm_permission=lambda title, message: (
             facade._confirmation_view.ask_permission(title, message) if facade._confirmation_view is not None else False
         ),
-        on_tool_result=lambda step, result: (
-            facade._confirmation_view.complete_tool(step, result) if facade._confirmation_view is not None else None
-        ),
+        on_tool_result=lambda step, result: _tool_result(facade, step, result),
         llm_client_provider=lambda: facade._orchestrator.get_llm_client(),
     )
     facade._orchestrator = ConversationOrchestrator(
@@ -171,6 +170,7 @@ def initialize_message_area(facade) -> None:
         on_execution_failed=lambda message: (
             facade._request_binding.fail(message) if facade._request_binding is not None else None
         ),
+        on_tool_result=lambda step, result: facade._source_input_binding.present(step, result),
     )
     facade._confirmation_actions = ConfirmationActions(
         controller=lambda: facade._controller,
@@ -191,6 +191,7 @@ def initialize_message_area(facade) -> None:
         theme=facade._theme,
         preview_context=facade._tool_handler.build_execution_context,
     )
+    facade._source_input_binding = AssistantSourceInputBinding(facade)
 
     def abort_session_activity() -> None:
         facade._submission.invalidate()
@@ -273,3 +274,11 @@ def _task_started(facade, task_id: str, run_id: str) -> None:
         QTimer.singleShot(0, lambda: facade._task_binding.reconcile_task(task_id))
     if facade._session_binding is not None:
         facade._session_binding.auto_save()
+
+
+def _tool_result(facade, step, result):
+    if facade._confirmation_view is not None:
+        facade._confirmation_view.complete_tool(step, result)
+    repair = getattr(facade, "_source_input_binding", None)
+    if repair is not None:
+        repair.present(step, result)

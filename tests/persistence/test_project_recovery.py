@@ -54,7 +54,7 @@ def project(tmp_path):
 @pytest.mark.parametrize("source_change", ["missing", "changed"])
 @pytest.mark.parametrize("project_schema", [2, SCHEMA_VERSION])
 @pytest.mark.parametrize("variant_schema", [2, SCHEMA_VERSION])
-def test_unavailable_source_opens_saved_view_without_mutating_current_project(
+def test_optional_reference_prepare_preserves_edits_then_activates_the_saved_variant(
     project, source_change, project_schema, variant_schema
 ):
     services, context, source, raw, path, key = project
@@ -70,26 +70,32 @@ def test_unavailable_source_opens_saved_view_without_mutating_current_project(
         source.write_bytes(raw + b"\n")
     persisted = _data_tree(services.root)
 
-    result = services.current_project_opener.open_path(path, context, dirty_decision=DirtyDecision.SAVE)
+    result = services.current_project_opener.prepare_path(path, context)
 
     assert result.is_success
-    assert result.value["read_only"] is True
-    recovery = result.value["recovery"]
-    assert recovery.variant.entries[0].translation == "已保存译文"
-    assert recovery.variant.entries[0].stage.value == 5
+    assert result.value.recovery is None
+    if variant_schema == SCHEMA_VERSION and project_schema == SCHEMA_VERSION:
+        assert not result.value.missing_inputs
+    assert result.value.prepared_read.snapshot.entries[0].translation == "已保存译文"
+    assert result.value.prepared_read.snapshot.entries[0].stage.value == 5
     assert all(item.severity is DiagnosticSeverity.WARNING for item in result.diagnostics)
-    assert dict(result.diagnostics[0].details)["source_location"] == str(source.resolve())
     assert services.project_lifecycle.active is active
     assert active.dirty
     assert active.variant.snapshot().entries[0].translation == "尚未保存的修改"
     assert services.baselines.provide(active.project, active.formal_variant_ref, context) is before_baselines
     assert _data_tree(services.root) == persisted
+    activated = services.current_project_opener.activate(result.value, context, dirty_decision=DirtyDecision.DISCARD)
+    assert activated.is_success and "read_only" not in activated.value, activated.diagnostics
+    assert services.project_lifecycle.active.variant.snapshot().entries[0].translation == "已保存译文"
 
 
-def test_restoring_original_source_reenables_normal_opening(project):
+def test_reference_changes_do_not_disable_saved_content(project):
     services, context, source, raw, path, _key = project
     source.write_bytes(raw + b"\n")
-    assert services.current_project_opener.open_path(path, context).value["read_only"] is True
+    opened = services.current_project_opener.open_path(path, context)
+    assert opened.is_success and "read_only" not in opened.value
+    assert not opened.value["missing_inputs"]
+    assert services.gui_project_commands.save(context).is_success
 
     source.write_bytes(raw)
     opened = services.current_project_opener.open_path(path, context)
@@ -175,34 +181,36 @@ def test_unexpected_source_loader_error_remains_a_failure(project, monkeypatch):
     def broken_loader(*_args):
         raise RuntimeError("programming error")
 
-    monkeypatch.setattr(services.current_project_opener, "_baseline_loader", broken_loader)
+    monkeypatch.setattr(services.current_project_opener._source_artifacts, "get", broken_loader)
     result = services.current_project_opener.prepare_path(path, context)
     assert not result.is_success
     assert result.diagnostics[0].code == "INTERNAL_ERROR"
 
 
-def test_recovery_does_not_scan_remaining_sources_after_the_first_failure(project, monkeypatch):
-    from transbridge.persistence import current_project
-
-    services, context, source, _raw, path, _key = project
-    source.rename(source.with_name("moved.xml"))
-    original_sources = current_project.authoritative_baseline_sources
-    original_loader = current_project._load_baseline
-    later_source = {"location": "must-not-be-opened"}
-    monkeypatch.setattr(
-        current_project,
-        "authoritative_baseline_sources",
-        lambda *args: (*original_sources(*args), later_source),
+def test_missing_saved_input_does_not_skip_later_available_sources(project, monkeypatch):
+    services, context, source, raw, path, _key = project
+    other = source.with_name("second.xml")
+    other.write_bytes(raw.replace(b"Hello, traveler.", b"Second original"))
+    added = services.gui_project_commands.add_source(
+        ProjectSourceRequest(str(other), FormatId.XML_EET, options=(("source_namespace", "source:second"),)), context
     )
+    assert added.is_success, added.diagnostics
+    assert services.gui_project_commands.save(context).is_success
+    registrations = services.project_lifecycle.active.project.envelope.data["sources"]
+    first_id = registrations[0]["source_artifact_id"]
+    calls = []
+    get = services.current_project_opener._source_artifacts.get
 
-    def load_source(record, context):
-        if record is later_source:
-            pytest.fail("recovery must not scan additional sources for diagnostics")
-        return original_loader(record, context)
+    def load(artifact_id, **options):
+        calls.append(artifact_id)
+        if artifact_id == first_id:
+            raise FileNotFoundError("unavailable saved input")
+        return get(artifact_id, **options)
 
-    monkeypatch.setattr(services.current_project_opener, "_baseline_loader", load_source)
-    result = services.current_project_opener.open_path(path, context)
+    monkeypatch.setattr(services.current_project_opener._source_artifacts, "get", load)
+    result = services.current_project_opener.prepare_path(path, context)
 
-    assert result.is_success
-    assert result.value["recovery"].variant.entries[0].translation == "已保存译文"
-    assert len(result.diagnostics) == 1
+    assert result.is_success and result.value.recovery is None, result.diagnostics
+    assert calls == [item["source_artifact_id"] for item in registrations]
+    assert len(result.value.hydrations) == 1 and len(result.value.missing_inputs) == 1
+    assert len(result.value.prepared_read.snapshot.entries) == 2

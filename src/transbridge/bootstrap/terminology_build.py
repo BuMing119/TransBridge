@@ -33,7 +33,7 @@ class BuildRunner:
     def __call__(self, request, runtime: TerminologyExecutionContext) -> TerminologyWorkloadExecution:
         if not isinstance(request, BuildWorkloadRequest):
             raise TypeError("build runner received another workload")
-        snapshot = self._state.get(self._state.snapshots, request.build_key)
+        snapshot = request.input_snapshot or self._state.get(self._state.snapshots, request.build_key)
         context = self._state.get(self._state.contexts, request.build_key)
         runtime.progress.update(TerminologyProgress(TerminologyPhase.PARSE, 0, len(snapshot.sources)))
         builder = TerminologyFullBuilder(

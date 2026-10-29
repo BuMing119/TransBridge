@@ -23,7 +23,8 @@ def source_members(prepared, index, location):
     if hydration is None or hydration.source_snapshot.content is None:
         raise ValueError("来源成果缺少完整源文件内容")
     snapshot = hydration.source_snapshot
-    member = f"sources/{index}/{_filename(location)}"
+    resource_name = snapshot.source.display_name or snapshot.source.uri
+    member = f"sources/{index}/{_filename(resource_name)}"
     yield member, snapshot.content
     seen = {member.casefold()}
     for companion, _entries in _snapshot_localized_sources(snapshot):
@@ -41,9 +42,9 @@ def source_members(prepared, index, location):
 
 def capture_saved_source(archive, source, index, store):
     artifact_id = source["source_artifact_id"]
-    prepared = store.get(artifact_id, location=source["location"])
+    prepared = store.get(artifact_id)
     validate_saved_source(prepared, source)
-    members = source_members(prepared, index, source["location"])
+    members = source_members(prepared, index, source.get("location", ""))
     member, content = next(members)
     archive.writestr(member, content)
     for child, content in members:
@@ -80,11 +81,11 @@ def validate_artifacts(archive, sources, locations):
         artifact_id = source.get("source_artifact_id")
         if artifact_id is None:
             continue
-        prepared = ProjectSourceArtifactStore.read_records(artifact_id, read, location=source["location"])
+        prepared = ProjectSourceArtifactStore.read_records(artifact_id, read)
         validate_saved_source(prepared, source)
         # A portable file and its cached read model must describe the same input.
         source_member = locations[source["source_id"]]
-        expected = list(source_members(prepared, index, source["location"]))
+        expected = list(source_members(prepared, index, source.get("location", "")))
         for generated, content in expected:
             member = (
                 source_member

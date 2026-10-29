@@ -83,7 +83,6 @@ def test_preflight_explains_missing_credentials_dependency_and_scope() -> None:
         AiPreflightCode.MISSING_MODEL,
         AiPreflightCode.MISSING_DEPENDENCY,
         AiPreflightCode.EMPTY_SCOPE,
-        AiPreflightCode.MISSING_SOURCE,
     }
     assert all(issue.fix_intent.value for issue in result.issues)
 
@@ -109,6 +108,21 @@ def test_preflight_disabled_embedding_does_not_probe_vector_dependencies() -> No
 
     assert result.ready is True
     assert probed == ["tiktoken"]
+
+
+@pytest.mark.parametrize("source_path", [None, "", "missing-reference.esp"])
+@pytest.mark.parametrize("mode", ["translate", "mixed", "batch"])
+def test_translation_preflight_uses_project_entries_without_requiring_source_path(source_path, mode) -> None:
+    result = preflight_ai_run(
+        mode,
+        _config(retrieval_enabled=False),
+        [Entry("entry")],
+        esp_path=source_path,
+        dependency_available=lambda _: True,
+    )
+
+    assert result.ready
+    assert result.issues == ()
 
 
 def test_preflight_local_embedding_reports_missing_vector_dependencies(

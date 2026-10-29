@@ -18,7 +18,7 @@ from transbridge.application.contracts import (
     OperationResult,
     RequestContext,
 )
-from transbridge.application.io import CapabilityLevel, FormatCapabilitySnapshot, FormatId, SourceSnapshot
+from transbridge.application.io import CapabilityLevel, FormatCapabilitySnapshot, FormatId, ParseResult, SourceSnapshot
 from transbridge.application.projects.source_registry import (
     BilingualCapability,
     SourceRegistration,
@@ -76,6 +76,8 @@ class SourceLease:
     source_id: str
     snapshot: SourceSnapshot
     actual_fingerprint: str
+    saved_result: ParseResult | None = None
+    source_artifact_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.source_id.strip():
@@ -250,7 +252,16 @@ class BuildInputCaptureService:
             if context.variant_id is not None and context.variant_id != variant_id:
                 return _failure(context, "TERMINOLOGY_VARIANT_CONTEXT_MISMATCH", "请求上下文指向另一个版本。")
             registry = SourceRegistrySnapshot.from_project_data(state.project.envelope.data)
-            enabled = tuple(item for item in registry.sources if item.enabled)
+            selected = config.get("source_ids")
+            enabled = tuple(
+                item for item in registry.sources if item.enabled and (selected is None or item.source_id in selected)
+            )
+            selected_ids = {item.source_id for item in enabled}
+            relations = tuple(
+                item
+                for item in registry.relations
+                if item.from_source_id in selected_ids and item.to_source_id in selected_ids
+            )
             if not enabled:
                 return _failure(context, "TERMINOLOGY_SOURCE_REQUIRED", "术语构建需要至少一个已启用来源。")
             if self._max_unstreamed_source_count is not None and len(enabled) > self._max_unstreamed_source_count:
@@ -346,7 +357,7 @@ class BuildInputCaptureService:
                         self._max_unstreamed_total_bytes,
                     )
                 options = dict(registration.format_options)
-                if registration.format_id is FormatId.PLUGIN_SSE:
+                if registration.format_id is FormatId.PLUGIN_SSE and lease.saved_result is None:
                     options["discover_sibling_strings"] = False
                 captured.append(
                     CapturedSource(
@@ -382,7 +393,7 @@ class BuildInputCaptureService:
                 variant_snapshot=state.variant,
                 variant_content_digest=_variant_digest(state.variant),
                 sources=tuple(captured),
-                relations=registry.relations,
+                relations=relations,
                 config_digest=_canonical_digest(config),
                 effective_version_id=baseline.effective_version_id,
                 draft_id=baseline.draft_id,

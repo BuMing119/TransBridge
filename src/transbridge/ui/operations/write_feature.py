@@ -127,11 +127,13 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
             overwrite = bool(values.get("overwrite_confirmed", False))
             request_context = context_factory(context)
             for slot_key, slot in getattr(context, "slots", {}).items():
+                captured_source = getattr(getattr(slot, "source_snapshot", None), "source", None)
                 source_ref = (
-                    getattr(slot, "esp_path", None)
+                    getattr(captured_source, "display_name", None)
+                    or getattr(captured_source, "uri", None)
+                    or getattr(slot, "esp_path", None)
                     or getattr(slot, "eet_path", None)
                     or getattr(slot, "xt_path", None)
-                    or getattr(getattr(getattr(slot, "source_snapshot", None), "source", None), "uri", None)
                     or str(slot_key)
                 )
                 try:
@@ -175,8 +177,8 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
                     failures.append(
                         _WriteBatchFailure(str(target), source.name, "WRITE_SOURCE_INVALID", str(exc), str(source))
                     )
-            if len(drafts) + len(failures) < 2:
-                raise OperationCompositionError("批量写回至少需要两个已载入的来源文件")
+            if not drafts and not failures:
+                raise OperationCompositionError("请选择至少一个来源进行写回")
             return _write_batch_plan(_HydratedWriteBatch(tuple(drafts), tuple(failures), output_directory))
         slot = getattr(context, "active_slot", None)
         if slot is None or any(
@@ -186,8 +188,7 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         collection = slot.collection
         entries = tuple(item.snapshot() for item in collection)
         plugin_path = str(values.get("plugin_path") or "").strip()
-        source = Path(plugin_path or getattr(slot, "esp_path", None) or slot.source_snapshot.source.uri)
-        target = str(values.get("target_path") or source)
+        target = str(values.get("target_path") or "").strip()
         request_context = context_factory(context)
         overwrite = bool(values.get("overwrite_confirmed", False))
         request = HydratedWriteDraft(
@@ -318,16 +319,9 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
     def supports_write(context, batch: bool) -> bool:
         if batch:
             slots = tuple(getattr(context, "slots", {}).values())
-            return len(slots) >= 2 and any(
-                all(getattr(slot, name, None) is not None for name in ("source_snapshot", "format_id", "collection"))
-                for slot in slots
-            )
+            return bool(slots) and any(getattr(slot, "collection", None) is not None for slot in slots)
         slot = getattr(context, "active_slot", None)
-        return bool(
-            not batch
-            and slot is not None
-            and all(getattr(slot, name, None) is not None for name in ("source_snapshot", "format_id", "collection"))
-        )
+        return bool(not batch and slot is not None and getattr(slot, "collection", None) is not None)
 
     def discard_write(draft) -> None:
         if isinstance(draft, OperationPlanDraft) and isinstance(draft.request, _HydratedWriteBatch):

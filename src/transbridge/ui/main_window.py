@@ -14,6 +14,7 @@ from .coordinators import (
     SourceUpdateCoordinator,
     VariantCoordinator,
 )
+from .coordinators.source_input_coordinator import SourceInputCoordinator
 from .foundation.adapters import ThemeView
 from .foundation.components import ComponentKind, ComponentStyle
 from .shell.action_catalog import IntentId
@@ -60,6 +61,7 @@ class MainWindow(QMainWindow):
     project_coordinator = _composition_port("_project_coordinator")
     project_management_coordinator = _composition_port("_project_management_coordinator")
     source_update_coordinator = _composition_port("_source_update_coordinator")
+    source_input_coordinator = _composition_port("_source_input_coordinator")
     parse_coordinator = _composition_port("_parse_coordinator")
     operation_coordinator = _composition_port("_operation_coordinator")
     operation_plan_facade = _composition_port("_operation_plan_facade")
@@ -131,6 +133,8 @@ class MainWindow(QMainWindow):
         self._project_coordinator = ProjectCoordinator(self)
         self._project_management_coordinator = ProjectManagementCoordinator(self)
         self._source_update_coordinator = SourceUpdateCoordinator(self)
+        self._source_input_coordinator = SourceInputCoordinator(self)
+        self._ctx.source_input_coordinator = self._source_input_coordinator
         self._variant_coordinator = VariantCoordinator(self)
         self._project_transfer_coordinator = ProjectTransferCoordinator(self)
         self._operation_plan_facade = None

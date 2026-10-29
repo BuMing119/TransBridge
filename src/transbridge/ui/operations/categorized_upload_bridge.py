@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import QMessageBox
 from transbridge.application.categorized_upload.diagnostics import diagnostic_scope, log_event
 from transbridge.application.file_upload import execute_file_upload, file_key, upload_files
 from transbridge.application.projects.remote_binding import normalize_paratranz_endpoint
+from transbridge.application.projects.source_content import source_content_identity
 from transbridge.paratranz.file_publication import FilePublicationGateway
 
 from .categorized_upload_dialog import (
@@ -31,6 +32,21 @@ class CategorizedUploadSession:
     ) -> None:
         self.context = context
         self.source_namespace = source_namespace
+        slots = tuple(getattr(context, "slots", {}).values())
+        if source_namespace is not None:
+            slots = tuple(
+                slot for slot in slots if any(entry.identity.namespace == source_namespace for entry in slot.collection)
+            )
+        ids = {slot.source_id for slot in slots if getattr(slot, "source_id", None)}
+        namespaces = {entry.identity.namespace.value for slot in slots for entry in slot.collection}
+        ids.update(
+            source["source_id"]
+            for source in getattr(context, "project_sources", ())
+            if source_content_identity(source) in namespaces
+        )
+        registered_namespaces = {source_content_identity(source) for source in getattr(context, "project_sources", ())}
+        ids.update(f"namespace:{namespace}" for namespace in namespaces - registered_namespaces)
+        self.source_ids = tuple(sorted(ids)) if hasattr(context, "slots") else None
         self.categorized = categorized
         self.commands = context.project_commands
         if self.commands is None or not context.uses_authoritative_projection:
@@ -198,6 +214,7 @@ class CategorizedUploadSession:
                 self.request_context,
                 endpoint=self.target.endpoint,
                 remote_project_id=self.target.project_id,
+                source_ids=self.source_ids,
             )
         )
 

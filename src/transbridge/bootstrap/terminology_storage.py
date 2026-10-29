@@ -27,6 +27,8 @@ from transbridge.persistence.v2.filesystem import OsPersistenceFilesystem, Repos
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef
 from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
 
+from .terminology_sources import lightweight_build_snapshot
+
 if TYPE_CHECKING:
     from transbridge.application.terminology.publish import PublishTerminologyRequest
 
@@ -218,6 +220,8 @@ class ProductionState:
         self._lock = RLock()
 
     def put(self, mapping: dict, key, value) -> None:
+        if mapping is self.snapshots:
+            value = lightweight_build_snapshot(value)
         with self._lock:
             mapping[key] = value
 

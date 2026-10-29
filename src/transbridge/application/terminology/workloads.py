@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 import hashlib
 import json
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from transbridge.application.tasks import JobCapabilities, JobSpec, OwnerRef
+
+if TYPE_CHECKING:
+    from .input_capture import BuildInputSnapshot
 
 
 class TerminologyWorkloadType(StrEnum):
@@ -132,6 +135,7 @@ class _RequestBase:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class BuildWorkloadRequest(_RequestBase):
     build_key: str
+    input_snapshot: BuildInputSnapshot | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         super(BuildWorkloadRequest, self).__post_init__()

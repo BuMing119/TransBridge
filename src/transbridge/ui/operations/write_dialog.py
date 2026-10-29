@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.application.preflight.sources import existing_reference
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 
 from .execution_dialog import ExecutionPlanDialog
@@ -28,7 +29,7 @@ class WritePlanDialog(ExecutionPlanDialog):
         self._path_buttons = []
         self._overwrite = None
         source = getattr(getattr(_context, "active_slot", None), "source_snapshot", None)
-        self._default_output = source.source.uri if source is not None else plan.target
+        self._source_reference = source.source.uri if source is not None else ""
         super().__init__(plan, parent)
         self.setMinimumWidth(680)
         self._transfer_summary = QLabel(self)
@@ -88,13 +89,15 @@ class WritePlanDialog(ExecutionPlanDialog):
                         self._path_buttons.append(clear)
                         editor.textEdited.connect(self._plugin_path_changed)
                     else:
-                        restore = QPushButton("写回原位置", container)
+                        restore = QPushButton("清空输出位置", container)
                         ComponentStyle.apply_static(restore, ComponentKind.BUTTON)
                         restore.clicked.connect(self._restore_output)
                         layout.addWidget(restore)
                         self._path_buttons.append(restore)
                         if field_id == "output_directory":
-                            editor.setPlaceholderText("留空写回各原位置；选择目录可将多个文件按原名另存到一起")
+                            editor.setPlaceholderText("选择目录，将多个文件按原名另存到一起")
+                        else:
+                            editor.setPlaceholderText("请选择输出位置")
                         editor.textChanged.connect(self._clear_overwrite)
                     editor.textChanged.connect(self._options_changed)
                     self._fields.insertRow(row, label, container)
@@ -115,10 +118,8 @@ class WritePlanDialog(ExecutionPlanDialog):
         self.plan_input_changed.emit()
 
     def _plugin_path_changed(self, value: str) -> None:
-        selected = value.strip()
-        path = Path(selected) if selected else None
-        output = str(path) if path and path.name else self._default_output
-        self._field_edits["target_path"].setText(output)
+        del value
+        self._field_edits["target_path"].clear()
         if self._overwrite is not None:
             self._overwrite.setChecked(False)
 
@@ -142,10 +143,14 @@ class WritePlanDialog(ExecutionPlanDialog):
     def _browse_output(self) -> None:
         if self._execution_running or self._preflight_running:
             return
+        plugin = self._field_edits.get("plugin_path")
+        reference = existing_reference(
+            plugin.text().strip() if plugin is not None and plugin.text().strip() else self._source_reference
+        )
         path, _filter = QFileDialog.getSaveFileName(
             self,
             "另存为",
-            self._field_edits["target_path"].text(),
+            self._field_edits["target_path"].text() or (Path(reference).name if reference else ""),
             "所有文件 (*)",
             options=QFileDialog.Option.DontConfirmOverwrite,
         )
@@ -169,10 +174,8 @@ class WritePlanDialog(ExecutionPlanDialog):
         if self._plan.is_batch:
             self._field_edits["output_directory"].clear()
         else:
-            plugin = self._field_edits.get("plugin_path")
-            self._field_edits["target_path"].setText(
-                plugin.text().strip() if plugin is not None and plugin.text().strip() else self._default_output
-            )
+            self._field_edits["target_path"].clear()
+        self._clear_overwrite()
 
     def _clear_overwrite(self, *_args) -> None:
         if self._overwrite is not None:

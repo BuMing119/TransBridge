@@ -44,7 +44,7 @@ def test_original_fallback_is_reported_and_remote_only_rows_do_not_inflate_uncha
 
 
 def test_diagnostic_failure_cannot_block_automatic_save(case, monkeypatch, caplog):
-    from transbridge.ui.operations import batch_download_session as module
+    from transbridge.application.sync import project_download as module
 
     def unavailable(*_args, **_kwargs):
         raise OSError("Diagnostic storage is temporarily unavailable")

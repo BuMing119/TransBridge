@@ -60,7 +60,8 @@ def _assert_installed(case, paths):
     assert not case.context.project_opening
     assert not case.context.project_view_failed
     assert not case.context.authoritative_projection_diverged()
-    assert set(case.context.slots) == {str(path.resolve()) for path in paths}
+    assert set(case.context.slots) == {source["source_id"] for source in case.context.project_sources}
+    assert {slot.esp_path for slot in case.context.slots.values()} == {str(path.resolve()) for path in paths}
     assert sum(len(slot.collection) for slot in case.context.slots.values()) == len(paths)
     active = case.services.project_lifecycle.active
     assert case.services.variants.read_snapshot(active.formal_variant_ref) == active.variant.snapshot().to_dto()

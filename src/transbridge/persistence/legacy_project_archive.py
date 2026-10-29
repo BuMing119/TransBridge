@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, replace
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import Any
 from zipfile import ZipFile
 
-from transbridge.application.contracts import DomainError, RequestContext
+from transbridge.application.contracts import RequestContext
 from transbridge.application.io import FormatId
 from transbridge.application.io.identity import EntryKey, Provenance
-from transbridge.application.projects import ProjectSourceRequest
-from transbridge.application.projects.source_content import authoritative_baseline_sources
+from transbridge.application.preflight.sources import source_reference
 
 from .legacy_project_records import LegacyArchiveRecords, LegacyProjectRecords
 from .legacy_project_tasks import is_legacy_task_member
@@ -20,15 +18,7 @@ from .v2.ids import ProjectId, ProjectRef, VariantId, VariantRef
 from .v2.migration import migrate_to_current
 from .v2.models import ProjectDto, SchemaValidationError, VariantDto
 from .v2.schema import parse_json_bytes, validate_v2, version_of
-from .v2.variant import SourceFingerprint, VariantEntryState, VariantSnapshot
-
-
-@dataclass(frozen=True, slots=True)
-class _SourceIdentity:
-    fingerprints: tuple[SourceFingerprint, ...]
-    entries: dict[EntryKey, VariantEntryState]
-    legacy_keys: dict[str, frozenset[EntryKey]]
-    verified: bool
+from .v2.variant import VariantSnapshot
 
 
 def decode_legacy_archive(
@@ -54,8 +44,8 @@ def decode_legacy_records(
 ) -> tuple[ProjectDto, tuple[VariantSnapshot, ...], tuple[dict, ...]]:
     """Decode validated legacy records; missing sources retain unverified state.
 
-    Legacy packages contain JSON records, not source files. Qualified cache keys
-    retain their complete identity; bare IDs require a unique verified source.
+    Legacy packages contain JSON records, not captured source content. Saved
+    qualified identities and bare IDs are retained without opening references.
     The caller owns atomic publication and read-only recovery activation.
     """
 
@@ -67,6 +57,7 @@ def decode_legacy_records(
     project = validate_v2(document, project_ref)
     if not isinstance(project, ProjectDto):
         raise ValueError("旧项目包缺少有效工程记录")
+    project.envelope.data["sources"] = [source_reference(source) for source in project.envelope.data["sources"]]
     mapping = project.envelope.data["legacy"]["variant_name_map"]
     members = archive.members
     expected = {"project.json"}
@@ -87,9 +78,8 @@ def decode_legacy_records(
     if missing:
         raise ValueError(f"旧项目包缺少版本记录：{', '.join(sorted(missing))}")
 
-    identity = _prepare_identity(project.envelope.data, source_preparer, context)
     variants = tuple(
-        _decode_variant(archive, f"{name}/current.json", VariantRef(VariantId(value), project_id), identity)
+        _decode_variant(archive, f"{name}/current.json", VariantRef(VariantId(value), project_id))
         for name, value in mapping.items()
     )
     documents = []
@@ -97,14 +87,7 @@ def decode_legacy_records(
     for member in snapshots:
         ref = VariantRef(VariantId(mapping[PurePosixPath(member).parts[0]]), project_id)
         raw = _read_document(archive, member)
-        snapshot = _decode_variant(archive, member, ref, identity, raw=raw)
-        if identity.verified:
-            # Historical V1 caches may omit unchanged rows. Current history is
-            # a complete restore point, so fill only absent rows from the proven
-            # source baseline; explicit saved empty translations remain present.
-            entries = dict(identity.entries)
-            entries.update((entry.entry_key, entry) for entry in snapshot.entries)
-            snapshot = replace(snapshot, entries=tuple(entries.values()))
+        snapshot = _decode_variant(archive, member, ref, raw=raw)
         name = raw.get("snapshot_name", PurePosixPath(member).stem)
         if not isinstance(name, str) or not name.strip():
             raise ValueError(f"旧项目包快照名称无效：{member}")
@@ -122,9 +105,7 @@ def decode_legacy_records(
             "variant": snapshot.to_dto().envelope.to_dict(),
         })
     project.envelope.data["legacy"]["archive_project"] = raw_project
-    if not identity.verified and (
-        any(variant.entries for variant in variants) or any(item["variant"]["data"]["entries"] for item in documents)
-    ):
+    if any(variant.entries for variant in variants) or any(item["variant"]["data"]["entries"] for item in documents):
         project.envelope.data["legacy"]["archive_recovery"] = "source-baseline-required"
     validate_v2(project.envelope.to_dict(), project_ref)
     return project, variants, tuple(documents)
@@ -156,76 +137,13 @@ def _restore_format_hints(document: dict[str, Any]) -> None:
         elif kind == "eet":
             source["format_id"] = (FormatId.BINARY_EET if location.lower().endswith(".eet") else FormatId.XML_EET).value
         elif kind == "sst":
-            try:
-                with Path(location).open("rb") as stream:
-                    magic = stream.read(4)
-            except FileNotFoundError:
-                magic = b""
-            source["format_id"] = (FormatId.SST_SSU9 if magic == b"SSU9" else FormatId.SST_SSU8).value
-
-
-def _prepare_identity(data: dict[str, Any], preparer, context: RequestContext) -> _SourceIdentity:
-    sources = authoritative_baseline_sources(tuple(data["sources"]), tuple(data.get("source_relations", ())))
-    fingerprints = {}
-    entries = {}
-    keys: dict[str, set[EntryKey]] = {}
-    verified = bool(sources)
-    for source in sources:
-        location = source["location"]
-        try:
-            prepared = preparer.prepare_source(
-                ProjectSourceRequest(
-                    location,
-                    format_hint=FormatId(source["format_id"]),
-                    expected_fingerprint=source.get("fingerprint"),
-                    options=tuple(source["format_options"].items()),
-                ),
-                context,
-                role="primary",
-                common_options=(),
-            )
-        except FileNotFoundError:
-            verified = False
-            continue
-        except DomainError as exc:
-            if exc.code == "PROJECT_SOURCE_NOT_FOUND":
-                verified = False
-                continue
-            raise ValueError(f"旧项目包来源无法验证，请恢复原始源文件后重试：{location}；{exc}") from exc
-        fingerprint = prepared.baseline.fingerprint
-        hydration = prepared.hydration
-        if hydration is None or hydration.fingerprint != fingerprint.sha256:
-            raise ValueError(f"旧项目包来源缺少可靠的旧 ID 映射，请恢复源文件后重试：{location}")
-        previous = fingerprints.get(fingerprint.namespace)
-        if previous is not None and previous != fingerprint:
-            raise ValueError(f"旧项目包来源身份冲突：{location}")
-        fingerprints[fingerprint.namespace] = fingerprint
-        baseline_entries = {entry.entry_key: entry for entry in prepared.baseline.entries}
-        for item in hydration.entries:
-            if not item.legacy_id or item.entry_key not in baseline_entries:
-                raise ValueError(f"旧项目包来源条目身份无法验证：{location}")
-            keys.setdefault(item.legacy_id, set()).add(item.entry_key)
-        for key, entry in baseline_entries.items():
-            if key in entries and entries[key] != entry:
-                raise ValueError(f"旧项目包来源包含冲突的条目：{location}")
-            entries[key] = entry
-        source["fingerprint"] = fingerprint.sha256
-        artifact_id = prepared.to_dict().get("source_artifact_id")
-        if artifact_id is not None:
-            source["source_artifact_id"] = artifact_id
-        # A legacy path alias is not the parsed EntryKey namespace. Publish the
-        # same verified identity used to migrate the saved Variant entries.
-        source.setdefault("legacy", {})["namespace"] = fingerprint.namespace.value
-    return _SourceIdentity(
-        tuple(fingerprints.values()), entries, {key: frozenset(value) for key, value in keys.items()}, verified
-    )
+            source["format_id"] = FormatId.SST_SSU8.value
 
 
 def _decode_variant(
     archive: LegacyProjectRecords,
     member: str,
     ref: VariantRef,
-    identity: _SourceIdentity,
     *,
     raw: dict[str, Any] | None = None,
 ) -> VariantSnapshot:
@@ -276,25 +194,11 @@ def _decode_variant(
         qualified = _qualified_cache_key(key)
         if qualified is not None:
             row["entry_key"] = qualified.to_dict()
-        if identity.verified:
-            if qualified is not None:
-                candidates = frozenset((qualified,)) if qualified in identity.entries else frozenset()
-            else:
-                candidates = identity.legacy_keys.get(key, frozenset())
-            if len(candidates) != 1 or qualified is None and next(iter(candidates)).original is not None:
-                raise ValueError(f"旧条目 ID 无法唯一映射到当前来源：{member}，{key!r}；请恢复匹配的原始源文件后重试")
-            entry_key = next(iter(candidates))
-            row["entry_key"] = entry_key.to_dict()
-            row["external_refs"] = [item.to_dict() for item in identity.entries[entry_key].external_refs]
-    if identity.verified:
-        data["source_fingerprints"] = [item.to_dict() for item in identity.fingerprints]
-    else:
-        # Missing source files keep the saved identities in read-only recovery,
-        # without claiming that their original namespace has been verified.
-        data["source_fingerprints"] = [
-            {"namespace": namespace, "sha256": None}
-            for namespace in sorted({row["entry_key"]["namespace"] for row in rows.values()})
-        ]
+    # A reference cannot prove the saved content namespace or baseline.
+    data["source_fingerprints"] = [
+        {"namespace": namespace, "sha256": None}
+        for namespace in sorted({row["entry_key"]["namespace"] for row in rows.values()})
+    ]
     data["entries"] = list(rows.values())
     validated = validate_v2(document, ref)
     if not isinstance(validated, VariantDto):

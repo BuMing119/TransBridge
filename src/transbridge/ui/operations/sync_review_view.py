@@ -1,35 +1,5 @@
-"""Qt-free, user-facing projections for actionable synchronization review."""
+"""Compatibility exports for the application synchronization review values."""
 
-from __future__ import annotations
+from transbridge.application.sync.review_view import KEEP_LOCAL, SyncReviewCandidate, SyncReviewRow
 
-from dataclasses import dataclass
-
-KEEP_LOCAL = "keep_local"
-
-
-@dataclass(frozen=True, slots=True)
-class SyncReviewCandidate:
-    candidate_id: str
-    label: str
-    original: str
-    translation: str
-    context: str = ""
-    selectable: bool = True
-    disabled_reason: str = ""
-    stage: int = 0
-    source_count: int = 1
-
-
-@dataclass(frozen=True, slots=True)
-class SyncReviewRow:
-    row_id: str
-    key: str
-    original: str
-    translation: str
-    context: str
-    reason: str
-    candidates: tuple[SyncReviewCandidate, ...] = ()
-    decision: str = ""
-    can_select_remote: bool = True
-    selection_disabled_reason: str = ""
-    stage: int = 0
+__all__ = ["KEEP_LOCAL", "SyncReviewCandidate", "SyncReviewRow"]

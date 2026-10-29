@@ -13,7 +13,7 @@ def _source(relative: str) -> str:
 _MUTATION_FILES = (
     "smart_assistant/tools/tool_editor.py",
     "smart_assistant/tools/types.py",
-    "ui/operations/batch_download_results.py",
+    "application/sync/download_merge.py",
     "ui/tools/ai_translator/task_session.py",
     "ui/tools/dictionary_panel.py",
     "ui/workbench/step2.py",
@@ -71,7 +71,7 @@ class _ProjectionWriteVisitor(ast.NodeVisitor):
 def test_known_translation_adapters_commit_or_fail_closed_for_v2_projects() -> None:
     assert "commands.replace_entry_states(" in _source("ui/tools/dictionary_panel.py")
     assert "commands.merge_entry_states(" in _source("smart_assistant/tools/translation_task_results.py")
-    assert "commands.merge_entry_states(" in _source("ui/operations/batch_download_results.py")
+    assert "commands.merge_entry_states(" in _source("application/sync/download_merge.py")
     assert "commands.replace_entry_states(" in _source("ui/workbench/translation_stage_action.py")
 
     task_ai = _source("ui/tools/ai_translator/task_session_merge.py")

@@ -145,10 +145,14 @@ class PluginTransferPreflightService:
                 (path for path, _fingerprint in checked.artifact_fingerprints),
                 child.conflict_policy,
             )
-            output_requests = {
-                canonical(path): path
-                for path in plugin_artifact_paths(child.source_snapshot, child.target_path, child.options)
-            }
+            output_requests = (
+                {
+                    canonical(path): path
+                    for path in plugin_artifact_paths(child.source_snapshot, child.target_path, child.options)
+                }
+                if child.target_path.strip()
+                else {}
+            )
             leases += tuple(
                 TransferFileLease(canonical(path), fingerprint, False, output_requests[canonical(path)])
                 for path, fingerprint in checked.artifact_fingerprints

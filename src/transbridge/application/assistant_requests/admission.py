@@ -162,9 +162,20 @@ def record_effect_outcome(
             satisfy_items=satisfy_item,
         )
     elif not request.terminal and request.revision == effect.execution.request_revision:
+        from .source_input_waiting import SOURCE_INPUT_REASON, needs_source_input
+
         ids = set(effect.execution.item_ids)
-        reason = "outcome_unknown" if status == EffectStatus.OUTCOME_UNKNOWN else "execution_failed"
-        item_status = ItemStatus.WAITING if status == EffectStatus.OUTCOME_UNKNOWN else ItemStatus.FAILED
+        missing_input = status == EffectStatus.FAILED and needs_source_input(receipt)
+        reason = (
+            SOURCE_INPUT_REASON
+            if missing_input
+            else "outcome_unknown"
+            if status == EffectStatus.OUTCOME_UNKNOWN
+            else "execution_failed"
+        )
+        item_status = (
+            ItemStatus.WAITING if missing_input or status == EffectStatus.OUTCOME_UNKNOWN else ItemStatus.FAILED
+        )
         updated = replace(
             updated,
             items=tuple(

@@ -65,15 +65,15 @@ class TerminologyCommandPort(Protocol):
 
     def task_result(self, run_id: str, context: RequestContext): ...
 
-    def render_report(self, context: RequestContext) -> JobRef: ...
+    def render_report(self, context: RequestContext, *, config=None) -> JobRef: ...
 
-    def render_changelog(self, context: RequestContext) -> JobRef: ...
+    def render_changelog(self, context: RequestContext, *, config=None) -> JobRef: ...
 
     def apply_decision(self, operation: DecisionOperation, context: RequestContext, **values): ...
 
     def resolve_conflict(self, conflict, operation: ConflictResolutionOperation, context: RequestContext, **values): ...
 
-    def compare(self, version_ref, context: RequestContext) -> JobRef: ...
+    def compare(self, version_ref, context: RequestContext, *, config=None) -> JobRef: ...
 
     def restore(self, version_ref, context: RequestContext) -> JobRef: ...
 
@@ -151,6 +151,10 @@ class TerminologyPresenter:
     def preflight(self, *, config: dict[str, Any] | None = None) -> TerminologyPreflightViewState:
         state, _snapshot = self._capture_preflight(config=config)
         return state
+
+    def set_source_scope(self, source_ids) -> None:
+        """Keep the explicitly repaired operation scope through build and publication."""
+        self._build_config["source_ids"] = list(source_ids)
 
     def _capture_preflight(
         self, *, config: dict[str, Any] | None = None
@@ -247,15 +251,21 @@ class TerminologyPresenter:
         return self._short_command("task_result", run_id, self.context)
 
     def render_report(self) -> JobRef:
+        if self._build_config:
+            return self._command("render_report", self.context, config=deepcopy(self._build_config))
         return self._command("render_report", self.context)
 
     def render_changelog(self) -> JobRef:
+        if self._build_config:
+            return self._command("render_changelog", self.context, config=deepcopy(self._build_config))
         return self._command("render_changelog", self.context)
 
     def retry_changelog(self) -> JobRef:
         commands = self._commands()
         method = getattr(commands, "retry_changelog", None)
         if callable(method):
+            if self._build_config:
+                return method(self.context, config=deepcopy(self._build_config))
             return method(self.context)
         return self.render_changelog()
 
@@ -286,6 +296,8 @@ class TerminologyPresenter:
         )
 
     def compare(self, version_ref) -> JobRef:
+        if self._build_config:
+            return self._command("compare", version_ref, self.context, config=deepcopy(self._build_config))
         return self._command("compare", version_ref, self.context)
 
     def restore(self, version_ref) -> JobRef:

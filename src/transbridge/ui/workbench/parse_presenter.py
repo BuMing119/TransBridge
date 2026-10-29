@@ -91,7 +91,9 @@ class ParsePresenter:
                         pass
             if request.strings_dir and current.strings_path is None:
                 try:
-                    stem = Path(current.esp_path).stem if current.esp_path else ""
+                    snapshot = getattr(current, "source_snapshot", None)
+                    resource = snapshot.source.display_name or snapshot.source.uri if snapshot is not None else ""
+                    stem = Path(resource or current.esp_path or "").stem
                     lookup = PluginStringsLookup.from_strings_dir(
                         Path(request.strings_dir), stem, request.strings_language
                     )

@@ -35,18 +35,23 @@ class SavedProjectSourcePreparer:
 def load_saved_project_source(artifacts, source, source_fingerprints):
     """Verify the registered content identity before exposing a saved read model."""
     try:
-        prepared = artifacts.get(source["source_artifact_id"], location=source["location"])
+        prepared = artifacts.get(source["source_artifact_id"])
         validate_saved_source(prepared, source, source_fingerprints)
         descriptor = prepared.to_dict()
         descriptor["source_artifact_id"] = source["source_artifact_id"]
-        return replace(prepared, descriptor=tuple(descriptor.items()))
+        hydration = replace(
+            prepared.hydration,
+            source_id=source.get("source_id"),
+            reference_location=str(source.get("location") or ""),
+        )
+        return replace(prepared, descriptor=tuple(descriptor.items()), hydration=hydration)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         # A broken reference cannot establish which companion inputs were used.
         # Preserve the saved Variant rather than silently parsing changed input.
         raise DomainError(
             ErrorCategory.PREREQUISITE,
             "PROJECT_SOURCE_ARTIFACT_UNAVAILABLE",
-            "保存的来源成果不可用或与工程身份不一致；已保留译文并打开只读恢复视图。",
+            "保存的来源成果不可用或与工程身份不一致；已有译文可以继续编辑和保存，需要来源内容时请补充输入。",
             cause=exc,
         ) from exc
 

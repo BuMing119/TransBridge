@@ -15,6 +15,7 @@ from transbridge.application.projects import (
     TransitionTarget,
 )
 from transbridge.bootstrap.persistence import build_persistence_v2_services
+from transbridge.persistence.v2.models import ProjectDto
 from transbridge.persistence.v2.variant import VariantSnapshot
 
 
@@ -111,6 +112,82 @@ def test_overwritten_source_compares_saved_original_and_preserves_reviewed_state
         for entry in services.project_lifecycle.active.variant.snapshot().entries
     )
     assert "recovery" not in services.current_project_opener.open_path(path, context).value
+
+
+@pytest.mark.parametrize("reference", ["", "present"])
+@pytest.mark.parametrize("artifact", ["absent", "unavailable"])
+def test_update_without_previous_artifact_never_reads_optional_reference(project, monkeypatch, reference, artifact):
+    services, service, context, source, path, source_id = project
+    active = services.project_lifecycle.active
+    data = {**active.project.envelope.data, "sources": [dict(active.project.envelope.data["sources"][0])]}
+    registration = data["sources"][0]
+    registration["location"] = str(source) if reference else ""
+    registration["legacy"] = {**registration["legacy"], "path": registration["location"]}
+    if artifact == "absent":
+        registration.pop("source_artifact_id")
+    else:
+        registration["source_artifact_id"] = "f" * 64
+    updated = ProjectDto(replace(active.project.envelope, revision=active.project.envelope.revision + 1, data=data))
+    assert services.project_lifecycle.commit_project_update(
+        updated, active.project.envelope.revision, context
+    ).is_success
+    assert services.gui_project_commands.save(context).is_success
+    replacement = source.with_name("replacement.xml")
+    _xml(replacement, [(1, "One changed"), (2, "Two"), (3, "Three")])
+    requests = []
+    prepare = service._preparer.prepare_source
+
+    def prepare_explicit(request, *args, **kwargs):
+        requests.append(request.location)
+        assert request.location == str(replacement.resolve())
+        return prepare(request, *args, **kwargs)
+
+    monkeypatch.setattr(service._preparer, "prepare_source", prepare_explicit)
+    result = service.prepare(path, source_id, str(replacement), context)
+    assert result.is_success, result.diagnostics
+    assert result.value.unverified == 3 and result.value.warnings
+    committed = service.commit(result.value.token, context)
+    assert committed.is_success, committed.diagnostics
+    assert requests == [str(replacement.resolve())] * 2
+    assert all(
+        entry.translation == "译文" and entry.stage.value == 2
+        for entry in services.project_lifecycle.active.variant.snapshot().entries
+    )
+
+
+def test_update_allows_another_registration_to_share_the_replacement_reference(project):
+    services, service, context, source, path, source_id = project
+    other = source.with_name("other.xml")
+    _xml(other, [(9, "Independent content")])
+    added = services.gui_project_commands.add_source(ProjectSourceRequest(str(other), FormatId.XML_EET), context)
+    assert added.is_success, added.diagnostics
+    assert services.gui_project_commands.save(context).is_success
+    replacement = source.with_name("replacement.xml")
+    _xml(replacement, [(1, "One changed"), (2, "Two"), (3, "Three")])
+    active = services.project_lifecycle.active
+    data = {**active.project.envelope.data, "sources": [dict(item) for item in active.project.envelope.data["sources"]]}
+    second = next(item for item in data["sources"] if item["source_id"] == added.value.source_id)
+    second["location"] = str(replacement.resolve())
+    updated = ProjectDto(replace(active.project.envelope, revision=active.project.envelope.revision + 1, data=data))
+    assert services.project_lifecycle.commit_project_update(
+        updated, active.project.envelope.revision, context
+    ).is_success
+    assert services.gui_project_commands.save(context).is_success
+
+    preview = service.prepare(path, source_id, str(replacement), context)
+    assert preview.is_success, preview.diagnostics
+    assert preview.value.changed == 1
+    committed = service.commit(preview.value.token, context)
+    assert committed.is_success, committed.diagnostics
+    registrations = services.project_lifecycle.active.project.envelope.data["sources"]
+    assert len(registrations) == 2
+    assert {item["location"] for item in registrations} == {str(replacement.resolve())}
+    assert len({item["fingerprint"] for item in registrations}) == 2
+    before = Path(path).read_bytes()
+    conflict = service.prepare(path, source_id, str(other), context)
+    assert not conflict.is_success
+    assert conflict.diagnostics[0].code == "INVALID_INPUT"
+    assert Path(path).read_bytes() == before
 
 
 def test_pure_reordering_preserves_reviewed_state_and_produces_new_order(project):

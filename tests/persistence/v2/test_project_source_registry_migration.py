@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 
+import pytest
+
 from transbridge.persistence.v2 import (
     SCHEMA_VERSION,
     LoadedRecord,
@@ -108,3 +110,28 @@ def test_failed_v2_registry_migration_keeps_original_and_verified_backup() -> No
     assert filesystem.read_bytes(path) == raw
     digest = hashlib.sha256(raw).hexdigest()
     assert filesystem.read_bytes(repository._paths.backup(ref, digest, 2)) == raw
+
+
+@pytest.mark.parametrize("reference", ["", None, "C:/copied/shared.esp", "omitted"])
+def test_canonical_project_roundtrips_optional_and_shared_references(reference) -> None:
+    filesystem = MemoryFilesystem()
+    ref = ProjectRef(ProjectId("project-1"))
+    repository = ProjectRepository(ROOT, filesystem)
+    filesystem.seed(repository.path_for(ref), json.dumps(_v2_document()).encode())
+    migrated = repository.load(ref)
+    assert isinstance(migrated, LoadedRecord)
+    project = migrated.value
+    identities = tuple(source["source_id"] for source in project.envelope.data["sources"])
+    for source in project.envelope.data["sources"]:
+        if reference == "omitted":
+            source.pop("location")
+        else:
+            source["location"] = reference
+
+    repository.save(ref, project)
+    reloaded = repository.load(ref)
+
+    assert isinstance(reloaded, LoadedRecord)
+    sources = reloaded.value.envelope.data["sources"]
+    assert tuple(source["source_id"] for source in sources) == identities
+    assert all(not source.get("location") or source["location"] == reference for source in sources)

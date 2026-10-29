@@ -58,8 +58,8 @@ if TYPE_CHECKING:
     from transbridge.application.translation.terminology_run_snapshot import TerminologyRunSnapshotRef
     from transbridge.paratranz.terms_service import ParaTranzTermsService
 
+from .terminology_sources import ProjectSourceLeases
 from .terminology_storage import (
-    FilesystemSourceLeases,
     FormatCapabilities,
     LifecycleCapture,
     ProductionState,
@@ -643,7 +643,7 @@ def build_production_terminology(
     max_unstreamed_total_bytes: int = 256 * 1024 * 1024,
 ) -> ProductionTerminologyComposition:
     repositories = ProjectTerminologyRepositories(root)
-    leases = FilesystemSourceLeases(max_unstreamed_source_bytes=max_unstreamed_source_bytes)
+    leases = ProjectSourceLeases(root, lifecycle)
     capabilities = FormatCapabilities(default_format_catalog())
     state = ProductionState()
     build_inputs = BuildInputCaptureService(

@@ -12,6 +12,7 @@ from transbridge.application.io.publish import ImmediateCommitGuard
 from ._postprocess_tool_runtime import execute_postprocess_task, resolve_postprocess_request
 from .base import ExecutionContext, ToolResult
 from .diagnostics import technical_error
+from .input_prerequisites import SourceInputRequired, source_input_failure
 from .task_manager import TaskManager
 from .task_runtime_bridge import task_metadata
 from .translation_task_results import AssistantTaskResults
@@ -28,6 +29,11 @@ def launch_postprocess_task(args, ctx, *, report_directory, report_callback, man
         if not collection:
             raise ValueError("当前没有加载翻译集合")
         request = resolve_postprocess_request(args, dispatch, collection)
+        # Every currently resolved proofreading phase consumes original text.
+        # Resolve the actual selection once; configuration errors retain their existing precedence.
+        missing = source_input_failure(dispatch, request.entries) if request.stages else None
+        if missing is not None:
+            raise SourceInputRequired(missing)
         task = AssistantTaskResults.capture(
             dispatch,
             collection,
@@ -64,13 +70,15 @@ def launch_postprocess_task(args, ctx, *, report_directory, report_callback, man
             lambda: execute_task(
                 task,
                 request,
-                lambda: report_directory(SimpleNamespace(esp_path=task.esp_path)),
+                lambda: report_directory(task.report_context),
                 report_callback,
                 manager,
                 task_id,
                 handle,
             ),
         )
+    except SourceInputRequired as exc:
+        return exc.result
     except Exception as exc:
         if task is not None:
             task.pending_state, task.pending_error = "failed", technical_error(exc)

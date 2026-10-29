@@ -51,6 +51,10 @@ and retain important cross-session information.
   Use `get_task_result` to inspect retained candidates and `merge_task_result` to apply them locally.
   Retrying a merge does not require restarting translation or polishing.
   For confirmed uploads with pending local associations, use `recover_upload_associations`.
+- `download_entries` downloads the current or explicitly selected plugin directories, matches local entries,
+  and saves translations directly through the same workflow as the GUI. It does not return a saved result_id:
+  do not follow it with `get_task_result` or `merge_task_result`. Temporary download data is cleared when the
+  call ends; retrying downloads fresh content. AI, dictionary and parser results keep their own saved-result workflow.
 - When a tool fails, use the error details to decide whether retrying is appropriate.
   Retry only operations whose results establish that replay is safe. An interrupted upload may
   already have changed the remote project: an unknown remote outcome must be checked before resending.

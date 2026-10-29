@@ -6,6 +6,7 @@ from dataclasses import replace
 import json
 
 from transbridge.application.io.identity import EntryKey
+from transbridge.application.preflight.inputs import SOURCE_CONTEXT_KNOWN
 
 
 def save_recovery_results(store, task_id, ledger):
@@ -27,6 +28,7 @@ def recovery_result_rows(ledger):
                 "translation": row.before.translation,
                 "stage": row.before.stage,
                 "context": row.before.context or "",
+                "context_known": source_context_known(row.before),
                 "revision": row.before.revision.value,
             },
             "status": row.status,
@@ -94,7 +96,7 @@ def restore_recovery_results(ledger, tasks, record):
             original=before["original"],
             translation=before["translation"],
             stage=before["stage"],
-            context=before["context"],
+            context=recovery_source_context(before),
         )
         ledger.entries[key] = replace(
             row,
@@ -124,3 +126,13 @@ def restore_recovery_results(ledger, tasks, record):
         for task in tasks
     )
     return ledger, tuple(task for task in remaining if task.entries), len(restored)
+
+
+def recovery_source_context(before):
+    """Old records retain their known-context guard; new unknown input stays unknown."""
+    return None if before.get("context_known") is False else before["context"]
+
+
+def source_context_known(entry):
+    """Parsed empty context is known; only saved-only metadata marks it unknown."""
+    return dict(getattr(entry, "metadata", ())).get(SOURCE_CONTEXT_KNOWN, True) is not False

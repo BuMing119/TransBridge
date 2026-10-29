@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from contextlib import closing
-import hashlib
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import sqlite3
@@ -51,26 +50,7 @@ def capture_sources(archive: zipfile.ZipFile, sources: list[dict], *, source_art
 
             locations.append(capture_saved_source(archive, source, index, source_artifacts))
             continue
-        path = Path(source["location"]).resolve(strict=True)
-        if not path.is_file():
-            raise ValueError(f"工程来源不是文件: {path}")
-        payload = path.read_bytes()
-        fingerprint = source.get("fingerprint")
-        if fingerprint and hashlib.sha256(payload).hexdigest() != fingerprint:
-            raise ValueError(f"来源文件已改变，请先在工程中重新载入: {path.name}")
-        member = f"sources/{index}/{path.name}"
-        archive.writestr(member, payload)
-        locations.append({"source_id": source["source_id"], "member": member})
-        if path.suffix.lower() in {".esp", ".esm", ".esl"}:
-            strings = path.parent / "Strings"
-            if strings.is_dir():
-                for sidecar in sorted(strings.iterdir()):
-                    if (
-                        sidecar.is_file()
-                        and sidecar.name.casefold().startswith(f"{path.stem}_".casefold())
-                        and sidecar.suffix.lower() in {".strings", ".dlstrings", ".ilstrings"}
-                    ):
-                        archive.write(sidecar, f"sources/{index}/Strings/{sidecar.name}")
+        raise ValueError("工程尚未保存可用的来源内容，请补充输入后再导出。")
     return locations
 
 

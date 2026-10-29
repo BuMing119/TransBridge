@@ -131,7 +131,8 @@ def test_reusing_active_plugin_opens_draft_and_creates_independent_project(
     assert window.mode_tabs.currentIndex() == 0
     assert window.context.active_project_id != case.original_project_id
     assert window.context.project_name == "Project B"
-    assert tuple(window.context.slots) == (str(case.plugin),)
+    assert tuple(window.context.slots) == (window.context.project_sources[0]["source_id"],)
+    assert window.context.active_slot.esp_path == str(case.plugin)
     assert next(iter(window.context.collection)).translation == ""
     table = window.workbench.preview._table
     _until(lambda: table.rowCount() == 1)
@@ -187,10 +188,9 @@ def test_dragging_the_active_plugin_repeatedly_shows_review_before_opening_a_new
             timer.stop()
         assert drop.isAccepted()
         assert len(reviews) == count
-        visible, add_enabled, notice = reviews[-1]
+        visible, add_enabled, _notice = reviews[-1]
         assert visible
-        assert not add_enabled
-        assert "该插件已在当前项目中" in notice
+        assert add_enabled
         assert window.context.active_project_id == case.original_project_id
         assert next(iter(window.context.collection)).translation == "Project A translation"
         if count == 1:

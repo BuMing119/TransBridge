@@ -56,9 +56,8 @@ class SessionWorkspace(QObject):
     def workbench_issue(self):
         if getattr(self.context, "project_opening", False):
             return "正在加载工程与版本，请等待加载完成后重试。"
-        if getattr(self.context, "project_view_failed", False) or getattr(
-            self.context, "authoritative_projection_diverged", False
-        ):
+        diverged = getattr(self.context, "authoritative_projection_diverged", False)
+        if getattr(self.context, "project_view_failed", False) or (diverged() if callable(diverged) else diverged):
             return "工作台尚未完整加载工程，请重新打开工程后重试。"
         return ""
 

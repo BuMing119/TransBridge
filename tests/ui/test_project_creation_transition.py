@@ -102,8 +102,11 @@ def test_new_project_replaces_all_old_slots_and_remains_saveable(creation, sourc
     assert _create(creation, "Skyrim", paths).phase is GuidedDraftPhase.COMPLETED
 
     assert creation.context.active_project_id != old_project
-    expected = tuple(str(path.resolve()) for path in paths)
+    expected = tuple(source["source_id"] for source in creation.context.project_sources)
     assert tuple(creation.context.slots) == expected
+    assert tuple(slot.esp_path for slot in creation.context.slots.values()) == tuple(
+        str(path.resolve()) for path in paths
+    )
     assert observations == [("Skyrim", expected)]
     assert sum(len(slot.collection) for slot in creation.context.slots.values()) == source_count
     assert not creation.context.project_opening
@@ -181,10 +184,12 @@ def test_independent_migration_sources_are_included_in_the_new_workbench(creatio
     state = _create(creation, "New", (primary,) if with_primary else (), migrations=(translated,))
 
     assert state.phase is GuidedDraftPhase.COMPLETED
-    assert set(creation.context.slots) == {str(translated.resolve())} | (
+    assert set(creation.context.slots) == {source["source_id"] for source in creation.context.project_sources}
+    assert {slot.esp_path for slot in creation.context.slots.values()} == {str(translated.resolve())} | (
         {str(primary.resolve())} if with_primary else set()
     )
-    migrated = next(iter(creation.context.slots[str(translated.resolve())].collection))
+    migrated_slot = next(slot for slot in creation.context.slots.values() if slot.esp_path == str(translated.resolve()))
+    migrated = next(iter(migrated_slot.collection))
     assert migrated.translation == "已有译文"
     assert migrated.stage == 1
     assert not creation.context.authoritative_projection_diverged()

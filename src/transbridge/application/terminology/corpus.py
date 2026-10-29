@@ -127,8 +127,15 @@ class EvidenceAssembler:
     ) -> EvidenceAssemblyResult:
         fragment_map: dict[str, SourceCorpusFragment] = {}
         overlay_diagnostics: list[str] = []
+        folded_sources = {item.from_source_id for item in relations if item.folded_into_baseline}
         for item in fragments:
-            overlay, item_diagnostics = _overlay_variant(item, variant_snapshot)
+            # A folded translation keeps its captured content fingerprint, while
+            # the Variant's shared EntryKeys belong to the original baseline.
+            # Its relation still supplies evidence, but only the original gets
+            # the current Variant overlay.
+            overlay, item_diagnostics = (
+                (item, ()) if item.source_id in folded_sources else _overlay_variant(item, variant_snapshot)
+            )
             fragment_map[item.source_id] = overlay
             overlay_diagnostics.extend(item_diagnostics)
         if len(fragment_map) != len(fragments):

@@ -8,8 +8,7 @@ from zipfile import ZipFile
 import pytest
 
 from tests.application.translation.test_legacy_task_recovery import _history, _key, _record
-from tests.persistence.v2.test_legacy_project_archive import _context, _project, _variant, _xml_source
-from transbridge.application.sync.download_results import DownloadResultStore
+from tests.persistence.v2.test_legacy_project_archive import _context, _project, _variant
 from transbridge.application.translation.imported_task_history import ProjectTaskHistoryReader
 from transbridge.application.translation.postprocess_checkpoint import (
     FilesystemPostProcessCheckpointPort,
@@ -160,12 +159,7 @@ def test_results_without_history_remain_visible_and_foreign_scope_is_only_viewab
 
 
 def test_real_resume_and_download_writer_assets_are_retained_without_execution(tmp_path):
-    registration, prepared = _xml_source(tmp_path / "source.xml")
-    old = _directory(
-        tmp_path / "old",
-        _project(registration),
-        {"主版本/current.json": {"translations": {prepared.hydration.entries[0].legacy_id: "saved"}}},
-    )
+    old = _directory(tmp_path / "old", _project(), {"主版本/current.json": {"translations": {}}})
     proofreading = ProofreadCheckpoint(
         old / "ai-proofread-resume", project="old", variant="main", source="source", settings={}, task_id="old-task"
     )
@@ -174,7 +168,9 @@ def test_real_resume_and_download_writer_assets_are_retained_without_execution(t
     FilesystemPostProcessCheckpointPort(old / "ai-translation-resume" / "postprocess").save(
         PostProcessCheckpoint("old-run", "owner", "a" * 64)
     )
-    DownloadResultStore(old).create(("old-project", "main"), "keep_current")
+    legacy_download = old / "download-results" / "historical" / "result.json"
+    legacy_download.parent.mkdir(parents=True)
+    legacy_download.write_text(json.dumps({"schema": 1, "target": ["old-project", "main"]}), encoding="utf-8")
     before = _contents(old)
     source = _source(old)
     services = build_persistence_v2_services(
@@ -257,11 +253,9 @@ def test_variant_named_like_sidecar_directory_keeps_its_manual_history(tmp_path)
 
 
 def test_imported_task_index_survives_current_archive_roundtrip_and_copy(tmp_path):
-    source, prepared = _xml_source(tmp_path / "source.xml")
-    entry = prepared.hydration.entries[0]
-    old = _directory(
-        tmp_path / "old", _project(source), {"主版本/current.json": {"translations": {entry.legacy_id: "saved"}}}
-    )
+    # This test exercises self-contained reports. Missing translation input is
+    # covered separately by read-only legacy recovery tests.
+    old = _directory(tmp_path / "old", _project(), {"主版本/current.json": {"translations": {}}})
     _history(old)
     services = build_persistence_v2_services(
         tmp_path / "first", id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now"

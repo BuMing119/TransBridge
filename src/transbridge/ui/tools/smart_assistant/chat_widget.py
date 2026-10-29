@@ -219,6 +219,7 @@ class ChatWidget(QWidget):
         # 1/ 先关闭 UI-owned bindings/presenters，迟到事件从此被忽略。
         for attr in (
             "_presentation",
+            "_source_input_binding",
             "_request_binding",
             "_submission",
             "_confirmation_view",

@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from transbridge.application.translation.result_merge import ResultConflictPolicy, ResultEntryChange, ResultEntryState
 from transbridge.application.translation.task_merge_evidence import TaskMergeEvidenceStore
+from transbridge.application.translation.task_result_recovery import recovery_source_context
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
 
@@ -36,7 +37,7 @@ def merge_saved_results(ctx, store, record, payload, *, policy=None, execution=N
                 original=row["before"]["original"],
                 translation=row["before"]["translation"],
                 stage=row["before"]["stage"],
-                context=row["before"]["context"],
+                context=recovery_source_context(row["before"]),
                 source_locator=row["before"].get("source_locator"),
             ),
             ResultEntryState(
@@ -44,7 +45,7 @@ def merge_saved_results(ctx, store, record, payload, *, policy=None, execution=N
                 original=row["before"]["original"],
                 translation=row["text"],
                 stage=row["stage"],
-                context=row["before"]["context"],
+                context=recovery_source_context(row["before"]),
                 source_locator=row["before"].get("source_locator"),
             ),
         )

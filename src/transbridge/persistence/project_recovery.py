@@ -24,7 +24,7 @@ class ProjectRecoverySnapshot:
 
 
 def source_recovery_diagnostic(source: dict, error: OSError | DomainError) -> Diagnostic:
-    """Retain the source failure as a warning attached to a read-only result."""
+    """Retain the original source failure as a warning alongside saved translations."""
 
     mapped = map_exception(error)
     if mapped.category in {ErrorCategory.INTERNAL, ErrorCategory.CANCELLED}:

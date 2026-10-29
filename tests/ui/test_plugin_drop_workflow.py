@@ -78,6 +78,7 @@ def test_add_plugin_keeps_unsaved_entries_and_survives_save_and_reopen(shared_pl
     case = shared_plugin_window
     _dirty(case)
     original_identity = case.window.context.active_version_identity
+    original_key = case.window.context.active_key
     other = write_plugin(case.root / "B.esp", [(0x900, "OtherNPC", "Other original")])
     original_bytes = case.plugin.read_bytes(), other.read_bytes()
 
@@ -87,9 +88,10 @@ def test_add_plugin_keeps_unsaved_entries_and_survives_save_and_reopen(shared_pl
 
     context = case.window.context
     assert context.active_version_identity == original_identity
-    assert set(context.slots) == {str(case.plugin), str(other)}
-    assert context.active_key == str(other)
-    assert next(iter(context.slots[str(case.plugin)].collection)).translation == "Unsaved A"
+    expected_keys = {item["source_id"] for item in context.project_sources}
+    assert set(context.slots) == expected_keys
+    assert context.active_key != original_key
+    assert next(iter(context.slots[original_key].collection)).translation == "Unsaved A"
     assert context.dirty
     assert not context.project_opening and not context.project_view_failed
     assert not context.authoritative_projection_diverged()
@@ -97,13 +99,13 @@ def test_add_plugin_keeps_unsaved_entries_and_survives_save_and_reopen(shared_pl
     path = case.services.projects.path_for(case.services.project_lifecycle.active.project_ref)
     case.window.project_coordinator.open_project_path(path)
     _until(lambda: case.window.project_open_worker is None)
-    assert set(context.slots) == {str(case.plugin), str(other)}
-    assert next(iter(context.slots[str(case.plugin)].collection)).translation == "Unsaved A"
+    assert set(context.slots) == expected_keys
+    assert next(iter(context.slots[original_key].collection)).translation == "Unsaved A"
     assert (case.plugin.read_bytes(), other.read_bytes()) == original_bytes
 
 
 @pytest.mark.parametrize("same_content", [False, True])
-def test_duplicate_path_is_disabled_and_duplicate_content_fails_without_changing_project(
+def test_duplicate_content_is_checked_by_application_without_a_reference_path_gate(
     shared_plugin_window, monkeypatch, same_content
 ):
     case = shared_plugin_window
@@ -116,19 +118,35 @@ def test_duplicate_path_is_disabled_and_duplicate_content_fails_without_changing
     messages = []
     monkeypatch.setattr(case.window, "show_message", lambda text, **_: messages.append(text))
 
-    _, enabled, message = _drop_choice(case, path, "add")
+    _, enabled, _message = _drop_choice(case, path, "add")
     _until(lambda: case.window.foreground_worker is None)
 
-    if same_content:
-        assert enabled
-        assert any("PROJECT_SOURCE_IDENTITY_DUPLICATE" in text for text in messages)
-    else:
-        assert not enabled
-        assert "该插件已在当前项目中" in message
+    assert enabled
+    assert any(
+        code in text for text in messages for code in ("PROJECT_SOURCE_IDENTITY_DUPLICATE", "PROJECT_SOURCE_DUPLICATE")
+    )
     assert case.services.project_lifecycle.active.variant.snapshot() == before
     assert case.window.context.active_slot is old_slot
     assert not case.window.context.project_view_failed
     assert not case.window.context.project_opening
+
+
+def test_changed_content_at_existing_reference_can_be_added_as_an_independent_source(shared_plugin_window):
+    case = shared_plugin_window
+    context = case.window.context
+    original_key = context.active_key
+    original_slot = context.active_slot
+    original_content = original_slot.source_snapshot.content
+    write_plugin(case.plugin, [(0x900, "OtherNPC", "Replacement original")])
+
+    _, enabled, _ = _drop_choice(case, case.plugin, "add")
+    assert enabled
+    _until(lambda: case.window.foreground_worker is None)
+
+    assert len(context.slots) == 2
+    assert context.active_key != original_key
+    assert context.slots[original_key].source_snapshot.content == original_content
+    assert context.active_slot.source_snapshot.content == case.plugin.read_bytes()
 
 
 @pytest.mark.parametrize("decision", [QMessageBox.StandardButton.Save, QMessageBox.StandardButton.Cancel])
@@ -191,6 +209,7 @@ def test_view_install_failure_is_explicit_and_does_not_leave_partial_content_edi
     _dirty(case)
     other = write_plugin(case.root / "B.esp", [(0x900, "OtherNPC", "Other original")])
     old_slot = case.window.context.active_slot
+    old_key = case.window.context.active_key
     messages = []
     monkeypatch.setattr(case.window, "show_message", lambda text, **_: messages.append(text))
 
@@ -218,8 +237,8 @@ def test_view_install_failure_is_explicit_and_does_not_leave_partial_content_edi
     case.window.project_coordinator.open_project_path(path)
     _until(lambda: case.window.project_open_worker is None)
     assert not case.window.context.project_view_failed, messages
-    assert set(case.window.context.slots) == {str(case.plugin), str(other)}
-    assert next(iter(case.window.context.slots[str(case.plugin)].collection)).translation == "Unsaved A"
+    assert set(case.window.context.slots) == {item["source_id"] for item in case.window.context.project_sources}
+    assert next(iter(case.window.context.slots[old_key].collection)).translation == "Unsaved A"
     assert not case.window.context.dirty
 
 

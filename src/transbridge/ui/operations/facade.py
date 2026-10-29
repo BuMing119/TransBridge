@@ -18,6 +18,7 @@ from transbridge.application.contracts import JobRef, OperationResult, RequestCo
 from transbridge.application.tasks import OwnerRef, TaskRuntime
 from transbridge.bootstrap.runtime import AppRuntime
 from transbridge.ui.presentation.task_projection import TaskProjectionBinding
+from transbridge.ui.source_input_state import SourceInputScope, ensure_source_input
 
 from .coordinator import OperationPlanCoordinator
 from .plan_dialog import OperationPlanDialog
@@ -156,7 +157,17 @@ class OperationPlanFacade:
         return self._coordinator.active_window_count + len(self._upload_windows) + len(self._download_windows)
 
     def begin_upload(self, context, *, batch: bool = False, **values):
-        window = self._upload_launcher(context, batch=batch, **values)
+        owner = getattr(context, "context", context)
+        keys = tuple(getattr(context, "slots", {})) if batch else (getattr(context, "active_key", None),)
+        scope = SourceInputScope(owner, keys) if hasattr(context, "slots") else context
+        if not ensure_source_input(
+            owner,
+            "originals",
+            source_keys=tuple(getattr(scope, "slots", {})),
+            resume=lambda: self.begin_upload(scope, batch=batch, **values),
+        ):
+            return None
+        window = self._upload_launcher(scope, batch=batch, **values)
         if window is not None:
             key = id(window)
             self._upload_windows[key] = window
@@ -172,7 +183,24 @@ class OperationPlanFacade:
         return window
 
     def begin_write(self, context, *, batch: bool = False, **values):
-        return self._coordinator.begin_write(context, batch=batch, **values)
+        owner = getattr(context, "context", context)
+        slots = getattr(context, "slots", {})
+        keys = tuple(slots) if batch else tuple(key for key, slot in slots.items() if slot is context.active_slot)
+        scope = SourceInputScope(owner, keys) if hasattr(context, "slots") else context
+        destination = values.get("output_directory") if batch else values.get("target_path")
+        operation_label = "本次批量写回" if batch else "本次写回"
+        operation_label += f" → {destination}" if destination else " · 下一步选择输出位置"
+        if not ensure_source_input(
+            owner,
+            "template",
+            source_keys=tuple(scope.slots) if batch else keys,
+            resume=lambda: self.begin_write(scope, batch=batch, **values),
+            on_scope_ready=lambda selected: self.begin_write(SourceInputScope(owner, selected), batch=batch, **values),
+            allow_partial=batch,
+            operation_label=operation_label,
+        ):
+            return None
+        return self._coordinator.begin_write(scope, batch=batch, **values)
 
     def begin_fomod(self, context, *, batch: bool = False, parent=None, **values):
         return self._coordinator.begin_fomod(context, batch=batch, parent=parent, **values)

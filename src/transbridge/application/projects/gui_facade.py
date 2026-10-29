@@ -64,9 +64,9 @@ class GuiProjectCommandFacade:
         self._categorized_uploads = categorized_uploads
         self._durable_variant_commits = durable_variant_commits
 
-    def categorized_upload_snapshot(self, context, *, endpoint: str, remote_project_id: int):
+    def categorized_upload_snapshot(self, context, *, endpoint: str, remote_project_id: int, source_ids=None):
         return self._categorized_upload_service().snapshot(
-            context, endpoint=endpoint, remote_project_id=remote_project_id
+            context, endpoint=endpoint, remote_project_id=remote_project_id, source_ids=source_ids
         )
 
     def categorized_upload_current(self, snapshot, context):

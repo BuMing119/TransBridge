@@ -59,6 +59,8 @@ class RequestBackground:
                 binding.delivered.emit(display)
             except RuntimeError:
                 logger.info("Application operation finished after the request view was destroyed")
+                if settled is not None:
+                    settled()
 
         future.add_done_callback(completed)
         return future

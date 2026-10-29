@@ -14,9 +14,10 @@ from transbridge.application.tasks import TaskCancelled
 from .base import ToolResult
 from .diagnostics import technical_error
 from .file_undo_capture import capture_file_command
+from .input_prerequisites import source_input_failure
 from .task_manager import TaskManager
 from .task_runtime_bridge import task_metadata
-from .write_back_preparation import prepare_write_back
+from .write_back_preparation import _selected_sources, prepare_write_back
 
 
 def _tool_write_back(args: dict, ctx) -> ToolResult:
@@ -96,6 +97,15 @@ def _tool_write_back(args: dict, ctx) -> ToolResult:
             started["path"] = prepared.paths[0]
         return ToolResult.ok("安全写回任务已启动", data=started)
     except RequestError as exc:
+        if exc.code == "SOURCE_SNAPSHOT_REQUIRED":
+            repair = source_input_failure(
+                ctx,
+                requirement="template",
+                source_keys=[key for key, _slot in _selected_sources(args, ctx)],
+                error_code=exc.code,
+            )
+            if repair is not None:
+                return repair
         return ToolResult.fail(str(exc), error_code=exc.code)
     except Exception as exc:
         return ToolResult.fail(f"无法创建写回计划: {technical_error(exc)}")
@@ -141,13 +151,20 @@ _PARAM_SCHEMAS = {
             "required": True,
             "description": "esp/eet/xt/strings, or auto with explicit source_keys; auto preserves each source's format",
         },
-        "path": {"type": "str", "required": False, "description": "Output file; defaults to the source path"},
+        "path": {
+            "type": "str",
+            "required": False,
+            "description": (
+                "Output file; defaults to the current optional reference. Required without it or output_dir."
+            ),
+        },
         "output_dir": {
             "type": "str",
             "required": False,
             "description": (
                 "Save selected sources together under their original names; supports all targets. "
-                "Required for strings. Omit to write in place. Single-file path takes precedence except for strings."
+                "Required for strings. Omit to use an available reference location. "
+                "Single-file path takes precedence except for strings."
             ),
         },
         "source_keys": {
@@ -198,7 +215,9 @@ def _register_writer_tools():
                     "③Returns {task_id,path} or {task_id,paths,source_keys}; task results include per-source outcomes, "
                     "actual artifacts and diagnostics. Independent batch members may complete when others fail. "
                     "Wait for the task terminal result before dependent actions. "
-                    "Requires admin confirmation and an authorized output root. Parse the matching source first."
+                    "Requires admin confirmation and an authorized output root. "
+                    "Uses saved source content; missing content must be supplied for the selected source. "
+                    "Without a current reference location, provide path or output_dir."
                 ),
                 "execute": _tool_write_back,
                 "permission": "admin",

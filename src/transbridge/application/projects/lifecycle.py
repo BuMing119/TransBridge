@@ -44,6 +44,7 @@ from .ports import (
     NullLifecycleLeasePort,
 )
 from .provisioning import ProjectProvisioningCommit
+from .source_inputs import MissingProjectSourceInput
 from .transition_preparation import (
     ActiveSignature,
     PreparedState,
@@ -599,6 +600,7 @@ class ProjectLifecycleService:
         persisted: bool = False,
         expected_generation: int | None = None,
         commit_mutation: Callable[[Callable[[], None]], None] | None = None,
+        missing_inputs: tuple[MissingProjectSourceInput, ...] | None = None,
     ) -> OperationResult[dict[str, Any]]:
         """Atomically replace active Project and Variant working-copy snapshots."""
 
@@ -677,6 +679,7 @@ class ProjectLifecycleService:
                 project.envelope.revision == expected_project_revision
                 and variant.revision == expected_variant_revision
                 and not (persisted and active.dirty)
+                and (missing_inputs is None or missing_inputs == active.missing_inputs)
             ):
                 if commit_mutation is not None:
                     executed = False
@@ -708,6 +711,7 @@ class ProjectLifecycleService:
                     if persisted
                     else active.persisted_project_revision,
                     persisted_variant_revision=variant.revision if persisted else active.persisted_variant_revision,
+                    missing_inputs=active.missing_inputs if missing_inputs is None else tuple(missing_inputs),
                 )
             except Exception as exc:  # noqa: BLE001
                 return _from_exception(exc, "ACTIVE_CONTENT_CHANGE_FAILED", context)

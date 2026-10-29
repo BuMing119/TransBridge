@@ -60,7 +60,7 @@ class HydratedWriteDraft:
             raise ValueError("hydrated write format must match its source snapshot")
         if not self.entries:
             raise ValueError("hydrated write requires immutable entry input")
-        if not self.target_path.strip() or self.variant_revision < 0:
+        if self.variant_revision < 0:
             raise ValueError("hydrated write target/revision is invalid")
         if any(not isinstance(item, (EntrySnapshot, TranslationEntry)) for item in self.entries):
             raise TypeError("hydrated write entries must be EntrySnapshot or TranslationEntry values")
@@ -138,6 +138,16 @@ class HydratedWritePreflightService:
         *,
         frozen_projection: FrozenWriteEntryProjection | None | object = _UNSET_PROJECTION,
     ) -> HydratedWritePreflight:
+        if not draft.target_path.strip():
+            return HydratedWritePreflight(
+                draft,
+                _write_digest(draft),
+                FileFingerprint.missing(),
+                (
+                    WritePreflightCheck("OUTPUT_WRITABLE", False, "请选择输出位置。"),
+                    WritePreflightCheck("ATOMIC_REPLACE_AVAILABLE", False, "尚未选择输出位置。"),
+                ),
+            )
         target = self._filesystem.canonicalize(draft.target_path)
         adapter = self._catalog.adapter(draft.format_id)
         checks: list[WritePreflightCheck] = []
@@ -399,7 +409,7 @@ def _write_digest(
     payload = {
         "source": draft.source_snapshot.sha256,
         "format": draft.format_id.value,
-        "target": str(Path(draft.target_path).resolve(strict=False)),
+        "target": str(Path(draft.target_path).resolve(strict=False)) if draft.target_path.strip() else "",
         "variant_revision": draft.variant_revision,
         "conflict": draft.conflict_policy.value,
         "backup": draft.backup_policy.value,

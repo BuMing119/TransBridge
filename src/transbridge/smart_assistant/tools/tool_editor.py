@@ -14,6 +14,7 @@ from transbridge.application.translation.entry_alias import ai_entry_key
 
 from .base import ToolResult, filter_entries, require_collection, require_runtime_context, validate_params
 from .diagnostics import technical_error
+from .input_prerequisites import original_available
 
 _VALID_STAGES = {0, 1, 2, 3, 5, 9, -1}
 
@@ -175,6 +176,7 @@ class EditorController:
                 "key": ai_entry_key(e),  # 操作标识；冲突项携带原文，源文件 key 不变
                 "id": e.id,  # 辅助标识（跨 ParaTranz 同步可能变化）
                 "original": e.original[:200] if e.original else "",
+                "original_known": original_available(e),
                 "translation": e.translation[:200] if e.translation else "",
                 "stage": e.stage,
             }

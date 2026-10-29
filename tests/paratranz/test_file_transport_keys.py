@@ -150,10 +150,12 @@ def test_download_adapter_decodes_but_legacy_upload_snapshot_keeps_real_remote_k
         _snapshot(replace(row, original="Changed"), NS, "project:7", decode_keys=True)
 
 
-def test_old_conflict_files_are_excluded_without_reading_their_contents():
+def test_old_split_names_inside_plugin_are_read_and_matched_by_content():
     entries = (qualified("One"), qualified("Two"))
     port, session = gateway(
         [{"id": index + 5, "name": f"A.esp/任务/任务日志__冲突_{index}.json"} for index in range(2)],
+        [wire_records(files()[0])[0]],
+        [wire_records(files()[0])[1]],
     )
     read = download(port, "A.esp.json", files()[0].path)
     assert not read.error
@@ -162,9 +164,9 @@ def test_old_conflict_files_are_excluded_without_reading_their_contents():
         LocalEntrySnapshot(entry.identity, EntryRevision(), entry.original, "", "QUST:CNAM", 0) for entry in entries
     )
     preview = plan(local, remote)
-    assert remote == ()
-    assert all(item.action is not SyncAction.UPDATE_LOCAL for item in preview.items)
-    assert len(session.calls) == 1
+    assert len(remote) == 2
+    assert sum(item.action is SyncAction.UPDATE_LOCAL for item in preview.items) == 2
+    assert len(session.calls) == 3
 
 
 def test_changed_cloud_original_fails_download_without_further_requests():

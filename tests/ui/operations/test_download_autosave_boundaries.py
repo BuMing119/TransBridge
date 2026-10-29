@@ -18,11 +18,6 @@ def assert_saved_current(case):
     assert not active.dirty
 
 
-def restore_points(case):
-    directory = case.session.result_store.directory(case.session.record["result_id"])
-    return tuple(sorted(directory.glob("merge-*.json")))
-
-
 def test_variant_replace_succeeded_but_save_reply_failed_is_verified_and_published(case, monkeypatch):
     compare(case)
     repository = case.services.variants
@@ -41,7 +36,7 @@ def test_variant_replace_succeeded_but_save_reply_failed_is_verified_and_publish
 
     assert lost_reply == [True] and receipt.updated == 2
     assert_saved_current(case)
-    assert restore_points(case)
+    assert not list(Path(case.services.root).rglob("merge-*.json"))
     assert {translation for translation, _stage in states(case).values()} == {"云端1", "云端2"}
 
 
@@ -91,13 +86,12 @@ def test_real_disk_save_failure_preserves_unsaved_state_restore_point_and_in_pla
         with pytest.raises(RuntimeError, match="磁盘空间"):
             case.session.apply(lambda *_: None, case.cancel)
 
-    retained = {path: path.read_bytes() for path in restore_points(case)}
-    assert retained
+    assert not list(Path(case.services.root).rglob("merge-*.json"))
     assert states(case) == before and variant_path.read_bytes() == disk_before
     assert case.services.project_lifecycle.active.dirty
+    compare(case)
     assert case.session.apply(lambda *_: None, case.cancel).updated == 2
-    assert tuple(case.gateway.calls) == calls_before
-    assert all(path.read_bytes() == payload for path, payload in retained.items())
+    assert len(case.gateway.calls) > len(calls_before)
     assert_saved_current(case)
 
 
@@ -162,5 +156,5 @@ def test_version_switch_before_publication_does_not_save_download_into_either_ve
     assert original_path.read_bytes() == original_disk
     assert {translation for translation, _stage in states(case).values()} == {""}
     assert case.services.variants.read_snapshot(current.formal_variant_ref) == current.variant.snapshot().to_dto()
-    assert not case.session.record.get("merges")
+    assert case.session.plan is None
     assert not list((Path(case.services.root) / "snapshots").glob("*.json"))

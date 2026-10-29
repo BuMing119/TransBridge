@@ -4,6 +4,7 @@ from dataclasses import replace
 
 from .models import EffectStatus, Evidence, ItemStatus, RequestError
 from .reducer import add_evidence, converge
+from .source_input_waiting import waits_only_for_source_input
 
 
 def record_dispatch_outcome(request, dispatch_id: str, *, status: str, sequence: int):
@@ -34,6 +35,10 @@ def reconcile_dispatches(request):
         if not effects:
             continue  # A batch of auxiliary reads never proves an execution goal complete.
         if any(e.status in ("prepared", "bound", "running", "outcome_unknown") for e in effects):
+            continue
+        if waits_only_for_source_input(effects, dispatch):
+            # Admission retains the actual failed receipt and waits on the affected
+            # item. Do not replay this old failure after its input has been supplied.
             continue
         if (
             dispatch.status == "completed"

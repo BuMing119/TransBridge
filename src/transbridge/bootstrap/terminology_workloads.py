@@ -64,6 +64,7 @@ class ProductionTerminologyCommands:
             expected=expected,
             build_key=key,
             config_digest=snapshot.config_digest,
+            input_snapshot=snapshot,
         )
         return self._entrypoint.submit(request, _owner(context)).ref
 
@@ -76,11 +77,11 @@ class ProductionTerminologyCommands:
     def publish(self, context: RequestContext, config=None) -> JobRef:
         return self._publication.publish(context, config)
 
-    def render_report(self, context: RequestContext) -> JobRef:
+    def render_report(self, context: RequestContext, config=None) -> JobRef:
         project_id, variant_id = _line(context)
         repository = self._repositories.for_project(project_id)
         build_ref = self._latest_build_ref(repository, project_id, variant_id)
-        snapshot = self._fresh_snapshot(context)
+        snapshot = self._fresh_snapshot(context, config)
         expected = expected_state(snapshot, repository)
         target = self._paths.artifact(project_id, self._ids.new_id(), ".xlsx")
         payload = {"build_ref": build_ref, "target": target}
@@ -99,11 +100,11 @@ class ProductionTerminologyCommands:
         )
         return self._entrypoint.submit(request, _owner(context)).ref
 
-    def render_changelog(self, context: RequestContext) -> JobRef:
-        return self._render_changelog(context, overwrite=False)
+    def render_changelog(self, context: RequestContext, config=None) -> JobRef:
+        return self._render_changelog(context, config=config, overwrite=False)
 
-    def retry_changelog(self, context: RequestContext) -> JobRef:
-        return self._render_changelog(context, overwrite=True)
+    def retry_changelog(self, context: RequestContext, config=None) -> JobRef:
+        return self._render_changelog(context, config=config, overwrite=True)
 
     def apply_decision(self, operation, context: RequestContext, **values):
         return self._review.apply_decision(operation, context, **values)
@@ -132,7 +133,7 @@ class ProductionTerminologyCommands:
     def restore(self, version_ref: TerminologyVersionRef, context: RequestContext, config=None) -> JobRef:
         return self._publication.restore(version_ref, context, config)
 
-    def compare(self, version_ref: TerminologyVersionRef, context: RequestContext) -> JobRef:
+    def compare(self, version_ref: TerminologyVersionRef, context: RequestContext, config=None) -> JobRef:
         """Compare a history version with current effective content in TaskRuntime."""
 
         project_id, variant_id = _line(context)
@@ -142,7 +143,7 @@ class ProductionTerminologyCommands:
         current_ref = repository.effective_version_ref(project_id, variant_id)
         if current_ref is None:
             raise RuntimeError("当前翻译版本还没有已发布术语库")
-        snapshot = self._fresh_snapshot(context)
+        snapshot = self._fresh_snapshot(context, config)
         expected = expected_state(snapshot, repository)
         payload = {"historical": version_ref, "current": current_ref}
         digest = canonical_digest(payload, namespace="terminology.production-compare-request.v1")
@@ -166,13 +167,13 @@ class ProductionTerminologyCommands:
     def task_result(self, run_id: str, context: RequestContext):
         return self._entrypoint.result_for_run(run_id, _owner(context))
 
-    def _render_changelog(self, context: RequestContext, *, overwrite: bool) -> JobRef:
+    def _render_changelog(self, context: RequestContext, *, overwrite: bool, config=None) -> JobRef:
         project_id, variant_id = _line(context)
         repository = self._repositories.for_project(project_id)
         effective = repository.effective_version(project_id, variant_id)
         if effective is None or effective.changelog_ref is None:
             raise RuntimeError("当前翻译版本还没有可导出的术语更新日志")
-        snapshot = self._fresh_snapshot(context)
+        snapshot = self._fresh_snapshot(context, config)
         expected = expected_state(snapshot, repository)
         base = self._paths.artifact_directory(project_id) / effective.ref.version_id
         payload = {
@@ -218,8 +219,8 @@ class ProductionTerminologyCommands:
     def review_counts(self, context: RequestContext):
         return self._review.review_counts(context)
 
-    def _fresh_snapshot(self, context: RequestContext) -> BuildInputSnapshot:
-        result = self._build_inputs.capture_build_input(context, config={})
+    def _fresh_snapshot(self, context: RequestContext, config=None) -> BuildInputSnapshot:
+        result = self._build_inputs.capture_build_input(context, config={} if config is None else config)
         if result.value is None:
             diagnostic = result.diagnostics[0] if result.diagnostics else None
             raise RuntimeError("无法确认当前工程术语状态" if diagnostic is None else diagnostic.message)

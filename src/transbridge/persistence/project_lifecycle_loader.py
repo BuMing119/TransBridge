@@ -9,14 +9,20 @@ from typing import Protocol
 
 from transbridge.application.contracts import DomainError, ErrorCategory, RequestContext
 from transbridge.application.projects.models import ActiveProject, TransitionTarget
+from transbridge.application.projects.source_inputs import missing_inputs_for
 
-from .prepared_project_read import prepared_project_sources, prepared_variant, verify_prepared_project
+from .prepared_project_read import (
+    prepared_missing_inputs,
+    prepared_project_sources,
+    prepared_source_hydrations,
+    prepared_variant,
+    verify_prepared_project,
+)
 from .v2.ids import ProjectRef, VariantRef
 from .v2.models import LoadedRecord, ProjectDto, VariantDto
 from .v2.variant import (
     SourceBaseline,
     VariantAggregate,
-    VariantMaterializer,
     VariantSnapshot,
 )
 
@@ -41,11 +47,13 @@ class V2ProjectCandidateLoader:
         baseline_provider: BaselineProvider,
         *,
         snapshot_loader: SnapshotLoader | None = None,
+        source_inputs_loader=None,
     ) -> None:
         self._projects = projects
         self._variants = variants
         self._baseline_provider = baseline_provider
         self._snapshot_loader = snapshot_loader
+        self._source_inputs_loader = source_inputs_loader
 
     def prepare_candidate(self, target: TransitionTarget, context: RequestContext) -> ActiveProject:
         if target.project_ref is None:
@@ -79,8 +87,28 @@ class V2ProjectCandidateLoader:
                 "The target Variant is not declared by the target Project.",
             )
         stored, formal_record = self._load_variant(target, context)
-        baselines = self._baseline_provider(project, target.variant_ref, context)
-        materialized = self._materialize(stored, baselines, context)
+        missing_inputs = prepared_missing_inputs()
+        hydrations = prepared_source_hydrations() or ()
+        baselines = None
+        if missing_inputs is None:
+            missing_inputs = ()
+            if self._source_inputs_loader is not None:
+                inputs = self._source_inputs_loader(project, stored, context)
+                missing_inputs = inputs.missing_inputs
+                hydrations = inputs.hydrations
+                baselines = inputs.baselines
+                if list(inputs.sources) != project.envelope.data.get("sources", []):
+                    data = {**project.envelope.data, "sources": list(inputs.sources)}
+                    project = ProjectDto(replace(project.envelope, revision=persisted_project_revision + 1, data=data))
+        if baselines is None:
+            baselines = self._baseline_provider(project, target.variant_ref, context)
+        materialized = self._materialize(stored, baselines)
+        missing_inputs = missing_inputs_for(
+            project,
+            materialized,
+            hydrations,
+            {item.source_id or item.namespace: item.diagnostic for item in missing_inputs},
+        )
         persisted_variant_revision = stored.revision if materialized == stored else None
         return ActiveProject(
             project=project,
@@ -92,6 +120,7 @@ class V2ProjectCandidateLoader:
             source_project_hash=project_record.source_hash,
             source_variant_hash=formal_record.source_hash,
             source_variant_revision=formal_record.value.envelope.revision,
+            missing_inputs=missing_inputs,
         )
 
     def _load_variant(self, target: TransitionTarget, context: RequestContext) -> tuple[VariantSnapshot, LoadedRecord]:
@@ -131,40 +160,37 @@ class V2ProjectCandidateLoader:
         self,
         stored: VariantSnapshot,
         baselines: tuple[SourceBaseline, ...],
-        context: RequestContext,
     ) -> VariantSnapshot:
-        if {item.namespace for item in stored.source_fingerprints} - {
-            baseline.fingerprint.namespace for baseline in baselines
-        }:
-            raise DomainError(
-                ErrorCategory.CONFLICT,
-                "VARIANT_SOURCE_IDENTITY_MISMATCH",
-                "Opening a Variant cannot remove a saved source identity; recover or update its source explicitly.",
-            )
-        baseline_entries = tuple(entry for baseline in baselines for entry in baseline.entries)
-        baseline_keys = {entry.entry_key for entry in baseline_entries}
-        if any(entry.entry_key not in baseline_keys and not entry.tombstone for entry in stored.entries):
-            raise DomainError(
-                ErrorCategory.CONFLICT,
-                "VARIANT_ENTRY_IDENTITY_MISMATCH",
-                "Opening a Variant cannot discard saved entries; recover or update its source explicitly.",
-            )
-        baseline_fingerprints = tuple(baseline.fingerprint for baseline in baselines)
-        temporary = VariantAggregate(VariantSnapshot(stored.ref, baseline_fingerprints, baseline_entries))
-        result = VariantMaterializer().materialize(stored, baselines, temporary, context)
-        if not result.committed:
-            code = result.diagnostics[-1].code if result.diagnostics else "VARIANT_MATERIALIZATION_FAILED"
-            category = ErrorCategory.CONFLICT if result.migration_plan is not None else ErrorCategory.PREREQUISITE
-            raise DomainError(
-                category,
-                code,
-                "The target Variant could not be materialized against the current source baseline.",
-            )
-        projected = temporary.snapshot()
+        """Add verified defaults without dropping any saved state or changing identity."""
+        fingerprints = {item.namespace: item for item in stored.source_fingerprints}
+        entries = {entry.entry_key: entry for entry in stored.entries}
+        seen = set()
+        for baseline in baselines:
+            namespace = baseline.fingerprint.namespace
+            if namespace in seen:
+                raise ValueError("duplicate source baseline namespace")
+            seen.add(namespace)
+            previous = fingerprints.get(namespace)
+            if previous is not None and previous != baseline.fingerprint:
+                continue
+            fingerprints[namespace] = baseline.fingerprint
+            for default in baseline.entries:
+                saved = entries.get(default.entry_key)
+                if saved is None:
+                    entries[default.entry_key] = default
+                elif not saved.tombstone:
+                    inferred = set(saved.inferred_fields) & {"stage", "provenance", "revision", "external_refs"}
+                    inferred = {field for field in inferred if getattr(saved, field) != getattr(default, field)}
+                    if inferred:
+                        entries[default.entry_key] = replace(
+                            saved,
+                            **{field: getattr(default, field) for field in inferred},
+                            inferred_fields=tuple(field for field in saved.inferred_fields if field not in inferred),
+                        )
         return VariantSnapshot(
             stored.ref,
-            projected.source_fingerprints,
-            projected.entries,
+            tuple(fingerprints.values()),
+            tuple(entries.values()),
             stored.revision,
             stored.label_library,
         )

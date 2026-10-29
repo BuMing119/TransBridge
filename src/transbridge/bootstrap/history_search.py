@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
-from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.history_search import (
     HistoryDiagnostic,
     HistoryEntryKind,
@@ -18,10 +17,13 @@ from transbridge.application.history_search import (
     ProviderResult,
     SourceRecord,
 )
-from transbridge.application.io import EntryKey, ParseRequest, SourceDescriptor, TranslationIoUseCase
+from transbridge.application.io import EntryKey, TranslationIoUseCase
 from transbridge.application.projects import variant_catalog
+from transbridge.application.projects.source_content import authoritative_baseline_sources
 from transbridge.application.projects.source_registry import SourceRegistrySnapshot
 from transbridge.persistence.history_search import SqliteHistorySearchIndex
+from transbridge.persistence.saved_project_sources import load_saved_project_source
+from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
 from transbridge.persistence.terminology import SqliteTerminologyRepository, TerminologyPaths
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantId, VariantRef
 from transbridge.persistence.v2.variant import VariantSnapshot
@@ -39,11 +41,11 @@ class ProductionHistorySearch:
 class ProjectVariantHistoryProvider:
     name = "Project/Variant"
 
-    def __init__(self, catalog, projects, variants, io: TranslationIoUseCase | None = None) -> None:
+    def __init__(self, catalog, projects, variants, io: TranslationIoUseCase | None = None, *, artifacts=None) -> None:
         self._catalog = catalog
         self._projects = projects
         self._variants = variants
-        self._io = io or TranslationIoUseCase()
+        self._artifacts = artifacts
 
     def collect(self, cancellation) -> ProviderResult:
         records: list[SourceRecord] = []
@@ -81,7 +83,7 @@ class ProjectVariantHistoryProvider:
                     unmatched = 0
                     for entry in snapshot.entries:
                         translation = entry.translation.strip()
-                        original = originals.get(entry.entry_key)
+                        original = originals.get(entry.entry_key, entry.entry_key.original)
                         if entry.tombstone or not translation:
                             continue
                         if original is None or not original.strip():
@@ -89,7 +91,12 @@ class ProjectVariantHistoryProvider:
                             continue
                         registration = source_by_namespace.get(entry.entry_key.namespace.value)
                         plugin_id = None if registration is None else registration.plugin_scope
-                        source_label = Path(registration.location).name if registration is not None else "未知来源"
+                        source_label = (
+                            registration.display_name
+                            or (Path(registration.location).name if registration.location else registration.source_id)
+                            if registration is not None
+                            else "未知来源"
+                        )
                         records.append(
                             SourceRecord(
                                 HistoryEntryKind.TRANSLATION,
@@ -129,29 +136,27 @@ class ProjectVariantHistoryProvider:
         originals = {}
         source_by_namespace = {}
         diagnostics: list[HistoryDiagnostic] = []
+        baseline_ids = {
+            item["source_id"]
+            for item in authoritative_baseline_sources(
+                tuple(item.to_dict() for item in registry.sources),
+                tuple(item.to_dict() for item in registry.relations),
+            )
+        }
         for registration in registry.sources:
             _raise_if_cancelled(cancellation)
-            if not registration.enabled:
+            if not registration.enabled or registration.source_id not in baseline_ids:
                 continue
-            source_name = registration.display_name or Path(registration.location).name
+            source_name = registration.display_name or (
+                Path(registration.location).name if registration.location else registration.source_id
+            )
             try:
-                path = Path(registration.location)
-                result = self._io.parse(
-                    ParseRequest(
-                        SourceDescriptor(str(path), source_name, path.stat().st_size),
-                        RequestContext("history-search", project_id=project_id),
-                        format_hint=registration.format_id,
-                        options=registration.format_options,
-                        cancellation=cancellation,
-                    )
-                )
-                if result.outcome not in {OperationOutcome.COMPLETED, OperationOutcome.PARTIAL}:
-                    message = result.diagnostics[0].message if result.diagnostics else "来源无法解析。"
-                    raise ValueError(message)
-                if registration.fingerprint and result.source_snapshot is not None:
-                    if result.source_snapshot.sha256 != registration.fingerprint:
-                        raise ValueError("来源内容已变化，与保存时指纹不一致。")
-                for parsed in result.entries:
+                if self._artifacts is None or registration.source_artifact_id is None:
+                    raise ValueError("工程尚未保存来源内容，请补充来源文件。")
+                prepared = load_saved_project_source(self._artifacts, registration.to_dict(), ())
+                if prepared.hydration is None:
+                    raise ValueError("工程保存的来源内容不可用，请补充来源文件。")
+                for parsed in prepared.hydration.entries:
                     key = getattr(parsed, "identity", None) or getattr(parsed, "entry_key", None)
                     if not isinstance(key, EntryKey):
                         continue
@@ -282,7 +287,12 @@ def build_production_history_search(
 ) -> ProductionHistorySearch:
     index = SqliteHistorySearchIndex(Path(persistence.root) / "history-search" / "history.sqlite3")
     providers = (
-        ProjectVariantHistoryProvider(persistence.project_catalog, persistence.projects, persistence.variants),
+        ProjectVariantHistoryProvider(
+            persistence.project_catalog,
+            persistence.projects,
+            persistence.variants,
+            artifacts=ProjectSourceArtifactStore(str(persistence.root)),
+        ),
         DictionaryHistoryProvider(translation_memory_root),
         TerminologyHistoryProvider(persistence.root, persistence.project_catalog, persistence.projects),
     )

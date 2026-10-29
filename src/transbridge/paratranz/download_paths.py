@@ -6,12 +6,21 @@ from pathlib import PurePosixPath
 import re
 
 
+def _path_families(path):
+    if not path.endswith(".json"):
+        return ()
+    first, separator, _ = path.partition("/")
+    if separator:
+        return (first,)
+    root = first[:-5]
+    split = re.fullmatch(r"(.+)_[1-9][0-9]*", root)
+    return (root, split[1]) if split else (root,)
+
+
 def matches_current_path(path, current_paths):
-    """Accept explicit files and their flat numeric partitions produced on 413."""
-    if path in current_paths:
-        return True
-    split = re.fullmatch(r"(.+)_[1-9][0-9]*\.json", path)
-    return split is not None and split[1] + ".json" in current_paths
+    """Match the plugin root and every JSON below its exact directory boundary."""
+    families = {candidate.partition("/")[0].removesuffix(".json") for candidate in current_paths}
+    return not families.isdisjoint(_path_families(path))
 
 
 def validate_download_path(path):
@@ -77,7 +86,9 @@ def select_download_files(inventory, current_paths, legacy_paths=(), *, blocked_
             groups[path.casefold()].append(path)
     result = []
     for variants in groups.values():
-        exact = [path for path in variants if matches_current_path(path, paths)]
+        exact = [path for path in variants if path in paths]
+        if not exact:
+            exact = [path for path in variants if matches_current_path(path, paths)]
         if len(exact) == 1:
             selected = exact[0]
         elif len(variants) == 1:

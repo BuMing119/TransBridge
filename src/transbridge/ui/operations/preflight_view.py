@@ -5,55 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from transbridge.application.security.hitl import ConfirmationToken
+from transbridge.application.preflight.operation import (
+    OperationPreflightResult as OperationPreflightResult,
+    PreflightCheckState as PreflightCheckState,
+    PreflightCheckStatus as PreflightCheckStatus,
+)
 
 from .plan_view import OperationKind
-
-
-class PreflightCheckStatus(StrEnum):
-    PASSED = "passed"
-    WARNING = "warning"
-    BLOCKED = "blocked"
-
-
-@dataclass(frozen=True, slots=True)
-class PreflightCheckState:
-    check_id: str
-    label: str
-    status: PreflightCheckStatus
-    reason: str = ""
-    repair_intent: str | None = None
-
-    def __post_init__(self) -> None:
-        if not self.check_id.strip() or not self.label.strip():
-            raise ValueError("preflight checks require an id and label")
-        if self.status is not PreflightCheckStatus.PASSED and not self.reason.strip():
-            raise ValueError("non-passing preflight checks require a reason")
-
-
-@dataclass(frozen=True, slots=True)
-class OperationPreflightResult:
-    kind: OperationKind
-    request_digest: str
-    target_revision: str
-    checks: tuple[PreflightCheckState, ...]
-    expected_side_effects: tuple[str, ...]
-    confirmation_token: ConfirmationToken | None = None
-    estimated_impact: tuple[tuple[str, int], ...] = ()
-
-    def __post_init__(self) -> None:
-        if len(self.request_digest) != 64 or not self.target_revision.strip():
-            raise ValueError("preflight requires a request digest and target revision")
-        if len({item.check_id for item in self.checks}) != len(self.checks):
-            raise ValueError("preflight check ids must be unique")
-        if len({key for key, _ in self.estimated_impact}) != len(self.estimated_impact):
-            raise ValueError("preflight impact keys must be unique")
-        if any(value < 0 for _, value in self.estimated_impact):
-            raise ValueError("preflight impact values must not be negative")
-
-    @property
-    def ready(self) -> bool:
-        return not any(item.status is PreflightCheckStatus.BLOCKED for item in self.checks)
 
 
 class OperationObjectStatus(StrEnum):

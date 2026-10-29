@@ -175,6 +175,23 @@ class TestUploadEntries(unittest.TestCase):
         self.assertFalse(r.success)
 
     @patch(_PT_PROJECT_API_PATH)
+    def test_unknown_original_requests_input_before_any_remote_write(self, mock_api):
+        from dataclasses import replace
+
+        from tests.smart_assistant.current_project_support import bind_current_project
+        from transbridge.application.preflight.inputs import ORIGINAL_KNOWN
+        from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+
+        entry = replace(next(iter(make_test_collection(1))), original="", metadata=((ORIGINAL_KNOWN, False),))
+        bind_current_project(self, TranslationEntryCollection([entry]))
+        result = self.func({"project_id": 1}, self.ctx)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.error_code, "SOURCE_INPUT_REQUIRED")
+        self.assertEqual(result.data["source_input_repair"]["requirement"], "originals")
+        mock_api.return_value.upsert_entry.assert_not_called()
+
+    @patch(_PT_PROJECT_API_PATH)
     def test_upload_all_entries(self, mock_api):
         from pathlib import Path
         from tempfile import TemporaryDirectory
@@ -228,17 +245,15 @@ class TestDownloadEntries(unittest.TestCase):
         r = self.func({}, self.ctx)
         self.assertFalse(r.success)
 
-    @patch(_PT_PROJECT_API_PATH)
-    def test_download_entries(self, mock_api):
-        mock_client = MagicMock()
-        mock_client.iter_entries.return_value = [
-            {"key": "NPC_:0001", "original": "Hello", "translation": "你好", "context": "NPC_:FULL", "stage": 1},
-        ]
-        mock_api.return_value = mock_client
+    @patch("transbridge.smart_assistant.tools._project_download.download_entries")
+    def test_download_entries(self, download):
+        from transbridge.smart_assistant.tools.base import ToolResult
 
+        download.return_value = ToolResult.ok("已保存", {"updated_count": 1})
         r = self.func({"project_id": 1}, self.ctx)
         self.assertTrue(r.success)
-        self.assertEqual(r.data["downloaded_count"], 1)
+        self.assertEqual(r.data["updated_count"], 1)
+        download.assert_called_once_with({"project_id": 1}, self.ctx)
 
 
 # ============================================================

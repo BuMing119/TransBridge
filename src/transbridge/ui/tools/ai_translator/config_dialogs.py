@@ -32,14 +32,15 @@ def show_connection_test(parent: QWidget, result: ConnectionTestResult) -> None:
         QMessageBox.information(parent, result.title, result.message)
 
 
-def open_term_editor(parent: QWidget, esp_path: str | None) -> None:
-    if not esp_path:
-        QMessageBox.warning(parent, "术语库", "尚未加载 ESP 文件。")
+def open_term_editor(parent: QWidget, esp_path: str | None, *, source_key: str | None = None) -> None:
+    if not esp_path and not source_key:
+        QMessageBox.warning(parent, "术语库", "尚未选择处理来源。")
         return
     from transbridge.ai_translator.term_database import DynamicTermDatabase
 
     from ._term_editor_dialog import _TermEditorDialog
+    from .source_terms import source_terminology_path
 
-    database = DynamicTermDatabase(esp_path)
+    database = DynamicTermDatabase(source_terminology_path(esp_path, source_key))
     database.load()
     _TermEditorDialog(database, parent=parent).exec()

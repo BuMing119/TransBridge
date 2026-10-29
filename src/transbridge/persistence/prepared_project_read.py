@@ -7,6 +7,7 @@ import hashlib
 import json
 
 from transbridge.application.contracts import DomainError, ErrorCategory
+from transbridge.application.projects.source_inputs import MissingProjectSourceInput
 
 from .v2.models import LoadedRecord
 from .v2.schema import serialize_document
@@ -104,10 +105,23 @@ class PreparedProjectRead:
     evidence: ValidatedReads
     bound_sources: bytes | None = None
     mutable_metadata: tuple[_MutableJsonEvidence, ...] = ()
+    missing_inputs: tuple[MissingProjectSourceInput, ...] = ()
+    hydrations: tuple = ()
 
     @classmethod
     def capture(
-        cls, projects, project, variants, variant, snapshot, evidence, *, bound_sources=None, source_baselines=()
+        cls,
+        projects,
+        project,
+        variants,
+        variant,
+        snapshot,
+        evidence,
+        *,
+        bound_sources=None,
+        source_baselines=(),
+        missing_inputs=(),
+        hydrations=(),
     ):
         return cls(
             _RecordIdentity.capture(projects, project),
@@ -116,6 +130,8 @@ class PreparedProjectRead:
             evidence,
             None if bound_sources is None else json.dumps(bound_sources, sort_keys=True, allow_nan=False).encode(),
             _mutable_snapshot_evidence(snapshot, source_baselines),
+            tuple(missing_inputs),
+            tuple(hydrations),
         )
 
 
@@ -141,6 +157,16 @@ def verify_prepared_project(repository, record: LoadedRecord):
 def prepared_project_sources():
     prepared = _PREPARED.get()
     return None if prepared is None or prepared.bound_sources is None else tuple(json.loads(prepared.bound_sources))
+
+
+def prepared_missing_inputs():
+    prepared = _PREPARED.get()
+    return None if prepared is None else prepared.missing_inputs
+
+
+def prepared_source_hydrations():
+    prepared = _PREPARED.get()
+    return None if prepared is None else prepared.hydrations
 
 
 def prepared_variant(repository, record: LoadedRecord) -> VariantSnapshot | None:

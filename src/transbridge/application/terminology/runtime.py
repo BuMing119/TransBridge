@@ -24,6 +24,7 @@ from transbridge.application.tasks import (
 
 from .workloads import (
     AnyTerminologyWorkloadRequest,
+    BuildWorkloadRequest,
     TerminologyExpectedState,
     TerminologyPhase,
     TerminologyProgress,
@@ -340,7 +341,9 @@ class TerminologyTaskEntrypoint:
         ref = deferred.ref
         run_id = ref.run_id or ref.job_id
         with self._lock:
-            self._requests[run_id] = request
+            self._requests[run_id] = (
+                replace(request, input_snapshot=None) if isinstance(request, BuildWorkloadRequest) else request
+            )
             self._refs[run_id] = ref
 
         def execute(cancellation: CancellationToken) -> None:

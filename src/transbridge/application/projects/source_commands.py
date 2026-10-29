@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, replace
+from hashlib import sha256
 import os
 
 from transbridge.application.contracts import (
@@ -138,11 +139,11 @@ class ProjectSourceMutationService:
                 active.project_ref.identity.value,
                 (prepared.to_dict(),),
             ).sources[0]
-            if any(
-                item.source_id == registration.source_id
-                or os.path.normcase(item.location) == os.path.normcase(registration.location)
-                for item in registry.sources
-            ):
+            registration = replace(
+                registration,
+                source_id=f"src-{sha256(prepared.baseline.fingerprint.namespace.value.encode()).hexdigest()[:24]}",
+            )
+            if any(item.source_id == registration.source_id for item in registry.sources):
                 raise DomainError(ErrorCategory.CONFLICT, "PROJECT_SOURCE_DUPLICATE", "该工程来源已经存在。")
 
             snapshot = active.variant.snapshot()

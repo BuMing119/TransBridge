@@ -65,10 +65,18 @@ def prepare_write_back(args: dict, ctx) -> PreparedWriteBack:
         if snapshot.format_id not in set(_FORMATS.values()):
             raise RequestError("SOURCE_FORMAT_UNSUPPORTED", f"来源格式不支持写回：{key}")
         source = Path(snapshot.source.uri)
+        reference_field = {
+            FormatId.PLUGIN_SSE: "esp_path",
+            FormatId.XML_EET: "eet_path",
+            FormatId.XML_XT: "xt_path",
+        }[snapshot.format_id]
+        reference = getattr(slot, reference_field, None)
+        if not directory and not file_path and not reference:
+            raise RequestError("OUTPUT", f"来源没有参考输出位置，请提供 path 或 output_dir：{key}")
         destination = (
             Path(directory) / source.name
             if directory and (target == "strings" or not file_path)
-            else Path(file_path or source)
+            else Path(file_path or reference)
         )
         # Keep lexical components for the authorization policy to reject links.
         path = str(Path(os.path.abspath(destination if destination.is_absolute() else base / destination)))
@@ -111,18 +119,25 @@ def prepare_write_back(args: dict, ctx) -> PreparedWriteBack:
 
 
 def _selected_sources(args, ctx) -> tuple:
-    if "source_keys" not in args:
+    override = getattr(ctx, "_source_input_selection", None) or {}
+    source_scope = override.get("source_scope")
+    frozen = source_scope["resolved_source_keys"] if source_scope is not None else None
+    if "source_keys" not in args and frozen is None:
         slot = getattr(ctx, "active_slot", None)
         if slot is None or not getattr(slot, "collection", None):
             raise RequestError("COLLECTION_NOT_LOADED", "当前没有加载翻译集合。")
         return ((getattr(ctx, "active_key", "") or "active", slot),)
-    keys = args["source_keys"]
+    keys = args.get("source_keys", frozen)
     if not isinstance(keys, list) or not keys or any(not isinstance(key, str) or not key.strip() for key in keys):
         raise RequestError(
             "WRITE_SOURCE_SELECTION_INVALID", "source_keys 必须是非空字符串列表，取自 list_collections。"
         )
     if len(keys) != len(set(keys)):
         raise RequestError("WRITE_SOURCE_SELECTION_DUPLICATE", "source_keys 不能重复。")
+    if frozen is not None:
+        if set(keys) != set(frozen):
+            raise RequestError("REQUEST_SCOPE_MISMATCH", "写回来源必须与已确认的补充输入范围一致，不能恢复已跳过来源。")
+        keys = frozen
     available = getattr(ctx, "slots", {}) or {}
     missing = tuple(key for key in keys if key not in available)
     if missing:

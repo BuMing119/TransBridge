@@ -24,3 +24,5 @@ class CollectionSlot:
     strings_lookup: object = None
     source_snapshot: object = None
     format_id: object = None
+    source_id: str | None = None
+    source_namespace: str | None = None

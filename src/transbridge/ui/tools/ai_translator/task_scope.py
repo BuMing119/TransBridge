@@ -43,18 +43,7 @@ class TaskScope:
         for slot in slots:
             if id(slot) not in by_object:
                 raise ValueError("处理来源已变化，请重新打开 AI 翻译任务。")
-            # Selection IDs may repeat across plugins. Never apply table shortcuts to another source.
-            if state.preset in {"selection", "table_view"} and slot is not self._active:
-                candidates = []
-            else:
-                presenter = ScopePresenter(
-                    collection_provider=lambda slot=slot: slot.collection,
-                    label_projection_provider=lambda: self._ctx.entry_labels,
-                    category_of=self._category_of,
-                    workbench=self._table if slot is self._active else SourceWorkbenchScope(),
-                )
-                presenter.restore(state)
-                candidates = presenter.candidates()
+            candidates = self.candidates(slot, state)
             candidates = [
                 entry
                 for entry in candidates
@@ -87,6 +76,19 @@ class TaskScope:
                 )
             )
         return tuple(tasks)
+
+    def candidates(self, slot, state):
+        """Resolve selected rows before source-text eligibility removes unknown originals."""
+        if state.preset in {"selection", "table_view"} and slot is not self._active:
+            return []
+        presenter = ScopePresenter(
+            collection_provider=lambda: slot.collection,
+            label_projection_provider=lambda: self._ctx.entry_labels,
+            category_of=self._category_of,
+            workbench=self._table if slot is self._active else SourceWorkbenchScope(),
+        )
+        presenter.restore(state)
+        return presenter.candidates()
 
 
 def estimate_tasks(tasks, config) -> str:

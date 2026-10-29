@@ -16,6 +16,7 @@ from ._entry_upload_associations import associate_upload_receipts, upload_result
 from ._project_tool_mutations import ProjectToolTarget
 from .base import ToolResult
 from .diagnostics import technical_error
+from .input_prerequisites import source_input_failure
 
 logger = logging.getLogger(__name__)
 _REJECTED = frozenset({
@@ -58,6 +59,9 @@ def upload_entries(
         logger.warning("PARATRANZ_ORIGINAL_MATCH_SKIPPED: project=%s skipped=%d", project_id, skipped)
         warnings.append(warning)
     entries = tuple(deepcopy(entry) for entry in entries if not entry.requires_original_match)
+    missing = source_input_failure(ctx, entries)
+    if missing is not None:
+        return missing
     overwrite = bool(args.get("force_overwrite", False))
     scope = f"project:{project_id}"
     inputs = [_input(entry, orders[entry.identity], scope, overwrite) for entry in entries]

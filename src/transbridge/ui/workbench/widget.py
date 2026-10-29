@@ -259,7 +259,7 @@ class WorkbenchWidget(QWidget):
                     open_recovery(win, recovery[0], restart=recovery[1])
             else:
                 _track_ai_progress(self._tool_windows, win)
-            return
+            return win
 
         if tool_id in self._tool_windows:
             show_and_activate(self._tool_windows[tool_id])

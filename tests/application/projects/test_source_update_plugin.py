@@ -179,7 +179,12 @@ def test_folded_plugin_pair_keeps_registration_scope_and_reopens_after_namespace
     current_translation = next(item for item in data["sources"] if item["legacy"]["role"] == "migration")
     previous_translation = next(item for item in old_data["sources"] if item["legacy"]["role"] == "migration")
     assert source_content_identity(current_primary) != old_namespace
-    assert current_translation == previous_translation
+    assert current_translation == {
+        **previous_translation,
+        "location": "",
+        "display_name": translated.name,
+        "legacy": {**previous_translation["legacy"], "path": ""},
+    }
     assert any(item.translation == "Existing translation" for item in active.variant.snapshot().entries)
     # Archive all original inputs from their captured artifacts after the fold
     # target moves to a new namespace and its live inputs disappear.

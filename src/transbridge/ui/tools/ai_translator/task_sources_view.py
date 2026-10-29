@@ -93,6 +93,10 @@ class TaskSourcesView(QWidget):
     def selected_slots(self) -> list[object]:
         return [self._slots[item.data(Qt.ItemDataRole.UserRole)] for item in self._items() if self._checked(item)]
 
+    def select_keys(self, keys) -> None:
+        selected = frozenset(keys)
+        self._set_checks(lambda item: item.data(Qt.ItemDataRole.UserRole) in selected)
+
     def set_counts(self, counts: dict[str, int]) -> None:
         """Apply current-mode candidate counts without changing selection or emitting selection signals."""
         previous = self.list.blockSignals(True)

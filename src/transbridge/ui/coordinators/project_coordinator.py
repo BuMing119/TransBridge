@@ -212,16 +212,11 @@ class ProjectCoordinator:
 
     def _restore_plugin_sources(self, sources, hydrations=None) -> str | None:
         if hydrations is not None:
-            from transbridge.ui.source_hydration import apply_variant_projection, slot_from_hydration
+            from transbridge.ui.source_hydration import prepare_project_slots
 
             projection = self._host.app_runtime.use_cases.resolve("project_projection").snapshot()
-            states = () if projection is None else projection.to_dict()["values"].get("entries", ())
-            prepared_slots = []
             try:
-                for hydration in hydrations:
-                    slot = slot_from_hydration(hydration)
-                    slot.collection = apply_variant_projection(slot.collection, states)
-                    prepared_slots.append((hydration.location, slot))
+                prepared_slots = prepare_project_slots(hydrations, projection)
             except Exception as exc:  # noqa: BLE001 - opening must surface a recoverable source error
                 message = f"工程来源界面数据恢复失败：{exc}。请重新打开工程或检查来源文件。"
                 self._host.show_message(message)
@@ -272,7 +267,7 @@ class ProjectCoordinator:
     def restore_parse_esp(self, esp_path: str, *, hydration=None):
         """后台解析 ESP 源文件（启动恢复用，不阻塞 UI）。"""
         from transbridge.parser.plugin_parser import PluginParser
-        from transbridge.ui.source_hydration import apply_variant_projection, slot_from_hydration
+        from transbridge.ui.source_hydration import apply_variant_projection, slot_from_hydration, source_slot_key
 
         if hydration is not None:
             try:
@@ -280,7 +275,7 @@ class ProjectCoordinator:
                 states = () if projection is None else projection.to_dict()["values"].get("entries", ())
                 slot = slot_from_hydration(hydration)
                 slot.collection = apply_variant_projection(slot.collection, states)
-                self._host.context.add_slot(hydration.location, slot)
+                self._host.context.add_slot(source_slot_key(hydration), slot)
             except Exception as exc:  # noqa: BLE001 - compatibility callers need an actionable error
                 self._host.show_message(f"工程来源界面数据恢复失败：{exc}。请重新打开工程或检查来源文件。")
             return

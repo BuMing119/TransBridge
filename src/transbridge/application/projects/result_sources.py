@@ -7,8 +7,10 @@ import logging
 
 from transbridge.application.translation.result_merge import source_locator_signature
 
+from .entry_source_text import available_source_baselines
 from .file_source_catalog import registered_file_sources
-from .provisioning import ProjectSourceRequest
+from .installed_source_request import InstalledSourceRequest
+from .result_merge import _target_records
 from .source_content import source_content_identity
 
 _logger = logging.getLogger(__name__)
@@ -26,12 +28,18 @@ class _InstalledBaselineIdentity:
 
 
 def read_result_source_texts(project, variant, keys, context, *, baselines, preparer, hydrations):
-    """Return verified text; unreadable sources remain absent and become pending."""
+    """Read installed metadata when available, retaining originals carried by saved identities."""
     namespaces = {key.namespace for key in keys}
     fingerprints = {value.namespace: value for value in variant.source_fingerprints}
-    available = baselines.provide(project, variant.ref, context)
-    result = {}
+    available = available_source_baselines(baselines, project, variant, context)
+    result = {
+        entry.entry_key: (entry.entry_key.original, None, None)
+        for entry in _target_records(variant.entries, keys).values()
+        if not entry.tombstone and entry.entry_key.original is not None
+    }
     for source, raw in registered_file_sources(project):
+        if source.source_artifact_id is None:
+            continue
         namespace = source_content_identity(raw)
         matches = tuple(
             baseline
@@ -50,13 +58,15 @@ def read_result_source_texts(project, variant, keys, context, *, baselines, prep
         try:
             prepared = hydrations.read_installed(
                 preparer,
-                ProjectSourceRequest(source.location, source.format_id, source.fingerprint, tuple(options.items())),
+                InstalledSourceRequest(source.location, source.format_id, source.fingerprint, tuple(options.items())),
                 context,
                 scope_key=(project.envelope.identity, variant.ref.identity.value, _InstalledBaselineIdentity(baseline)),
                 source=raw,
             )
         except Exception:
-            _logger.exception("Result source could not be verified; its entries remain pending: %s", source.location)
+            _logger.exception(
+                "Result source metadata is unavailable; only saved identity text remains: %s", source.location
+            )
             continue
         if prepared is None or prepared.fingerprint != fingerprint:
             continue
@@ -67,6 +77,6 @@ def read_result_source_texts(project, variant, keys, context, *, baselines, prep
                     entry.context or "",
                     source_locator_signature(entry.metadata, entry.string_id, prepared.fingerprint.sha256),
                 )
-    # Missing registrations and changed identities deliberately have no fallback
-    # to task-start text, which could otherwise authorize an obsolete result.
+    # Only saved EntryKey originals supplement missing sources. Context and
+    # locators remain unknown, so existing result guards still protect them.
     return result

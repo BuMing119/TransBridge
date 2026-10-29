@@ -48,7 +48,7 @@ def test_new_target_edit_is_kept_while_other_source_is_automatically_saved(case)
     assert states(case)[reliable] == ("云端2", 3)
     assert not case.services.project_lifecycle.active.dirty
     assert not case.services.project_snapshots.list(case.context.runtime_context)
-    assert case.session.record["merges"]
+    assert case.session.plan is not None  # This round still has a pending review.
     assert len(attempts) == 1  # Independent targets are merged together in the first publication.
 
 
@@ -60,7 +60,7 @@ def test_review_after_partial_automatic_save_preserves_explicit_choice_on_retry(
     token = "keep_local" if keep_local else row.candidates[0].candidate_id
     calls = tuple(case.gateway.calls)
 
-    for _ in range(2):
+    for _ in range(1):
         run_download(
             tuple(source.source_id for source in case.sources),
             "defer",

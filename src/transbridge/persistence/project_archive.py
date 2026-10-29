@@ -207,7 +207,7 @@ class ProjectArchiveService:
                 )
             elif requested_name is not None:
                 project = self._rename_project(project, requested_name)
-            return self._publish(archive, project, variants, snapshots, members, draft.assets)
+            return self._publish(archive, project, variants, snapshots, members, draft.assets, context=context)
 
     @contextmanager
     def _prepare_import(self, source: str, context: RequestContext):
@@ -258,7 +258,6 @@ class ProjectArchiveService:
         return renamed
 
     def _copy_identity(self, project, variants, snapshots, *, requested_name):
-        old_ref = ProjectRef(ProjectId(project.envelope.identity))
         new_ref = ProjectRef(ProjectId(self._ids()))
         variant_ids = {item.ref.identity.value: VariantId(self._ids()) for item in variants}
 
@@ -270,17 +269,6 @@ class ProjectArchiveService:
         data["active_variant_id"] = None if active_id is None else variant_ids[active_id].value
         if requested_name is not None:
             data["name"] = requested_name.strip()
-
-        old_owned = self._paths.guard(os.path.join(self._paths.root, "projects", old_ref.identity.encoded))
-        new_owned = self._paths.guard(os.path.join(self._paths.root, "projects", new_ref.identity.encoded))
-        for source in data["sources"]:
-            location = self._paths.guard(source["location"])
-            relative = os.path.relpath(location, old_owned)
-            if relative == os.pardir or relative.startswith(os.pardir + os.sep):
-                raise ValueError("项目包来源路径无法安全换用副本身份")
-            source["location"] = self._paths.guard(os.path.join(new_owned, relative))
-            if "path" in source.get("legacy", {}):
-                source["legacy"]["path"] = source["location"]
 
         project_copy = validate_v2(project_document, new_ref)
         if not isinstance(project_copy, ProjectDto):
@@ -366,14 +354,14 @@ class ProjectArchiveService:
             payload = archive.read(member)
             if item.get("fingerprint") and hashlib.sha256(payload).hexdigest() != item["fingerprint"]:
                 raise ValueError("项目包来源文件指纹不匹配")
-            item["location"] = self._paths.guard(member_destination(member, owned))
-            if "path" in item.get("legacy", {}):
-                item["legacy"]["path"] = item["location"]
+            from transbridge.application.preflight.sources import source_reference
+
+            item.update(source_reference(item))
         validate_v2(project.envelope.to_dict(), project_ref)
         validate_artifacts(archive, sources, locations)
         return project, tuple(variants), snapshots, members
 
-    def _publish(self, archive, project, variants, snapshots, members, assets=()):
+    def _publish(self, archive, project, variants, snapshots, members, assets=(), *, context=None):
         ref = ProjectRef(ProjectId(project.envelope.identity))
         owned = self._paths.guard(os.path.join(self._paths.root, "projects", ref.identity.encoded))
         catalog_path = self._documents.path("project-catalog.json")
@@ -413,6 +401,12 @@ class ProjectArchiveService:
                         raise ValueError("工程成果资产已存在，拒绝覆盖")
                     created.append(path)
                     self._documents.write_bytes(path, payload, token)
+                if "archive.json" in archive.namelist():
+                    from .archive_source_inputs import persist_imported_source_inputs
+
+                    persist_imported_source_inputs(
+                        archive, project, variants, owned, self._source_preparer, self._source_artifacts, context
+                    )
                 for variant in variants:
                     path = self._variants.path_for(variant.ref)
                     if self._filesystem.exists(path):

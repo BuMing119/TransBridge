@@ -68,7 +68,7 @@ def test_inventory_and_complete_file_reads_do_not_grow_with_entries(size):
     assert gateway.closed == 1
 
 
-def test_current_whitelist_excludes_old_quest_paths_and_unrelated_directories():
+def test_plugin_directory_includes_renamed_quests_and_other_categories_but_not_other_roots():
     gateway = Gateway(
         {
             "a.esp/任务/当前.json": 1,
@@ -77,13 +77,19 @@ def test_current_whitelist_excludes_old_quest_paths_and_unrelated_directories():
             "a.esp/其他.json": 4,
             "other/a.esp.json": 5,
         },
-        {1: [row()], 3: [row()]},
+        {file_id: [dict(row(), key=f"entry-{file_id}")] for file_id in (1, 2, 3, 4)},
     )
 
     result = reader(gateway).fetch(7, (scope("a", "a.esp.json", "a.esp/任务/当前.json"),))
 
-    assert result[0].paths == ("a.esp/任务/当前.json", "a.esp/任务/当前_2.json")
-    assert len(gateway.calls) == 3
+    assert result[0].paths == (
+        "a.esp/任务/当前.json",
+        "a.esp/任务/旧名称.json",
+        "a.esp/任务/当前_2.json",
+        "a.esp/其他.json",
+    )
+    assert {entry.entry_key.local_key for entry in result[0].entries} == {f"entry-{index}" for index in (1, 2, 3, 4)}
+    assert len(gateway.calls) == 5
 
 
 def test_source_with_failed_second_file_has_no_partial_entries_but_other_source_completes():

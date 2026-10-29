@@ -45,9 +45,11 @@ def get_last_report(ctx) -> dict | None:
 def _resolve_report_directory(ctx) -> Path:
     from transbridge.paratranz.config_manager import LLMConfig, ParatranzConfig
 
-    esp_path = getattr(ctx, "esp_path", None)
-    if esp_path:
-        return Path(LLMConfig.get_ai_translator_dir(Path(esp_path).stem)) / "reports"
+    snapshot = getattr(getattr(ctx, "active_slot", None), "source_snapshot", None)
+    source = getattr(snapshot, "source", None)
+    name = getattr(source, "display_name", None) or getattr(source, "uri", None) or getattr(ctx, "esp_path", None)
+    if name:
+        return Path(LLMConfig.get_ai_translator_dir(Path(name).stem)) / "reports"
     return Path(ParatranzConfig.get_data_dir()) / "reports" / "postprocess"
 
 
@@ -105,8 +107,6 @@ class ProofreaderController:
     def list_quality_reports(self, args: dict, ctx) -> ToolResult:
         """List historical post-process Excel reports."""
 
-        if not getattr(ctx, "esp_path", None):
-            return ToolResult.ok("未加载 ESP，无法定位报告目录", data={"files": []})
         reports_dir = _resolve_report_directory(ctx)
         limit = args.get("limit", 50)
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:

@@ -136,7 +136,7 @@ def test_real_cold_start_and_variant_combo_rehydrate_eet_and_allow_save(window_c
     assert not window.context.authoritative_projection_diverged()
 
 
-def test_failed_variant_source_restore_does_not_leave_old_variant_editable(window_case):
+def test_missing_reference_does_not_prevent_restoring_selected_variant(window_case):
     case = window_case
     case.source.unlink()
     combo = case.window.workbench.project_bar._variant_combo
@@ -148,7 +148,9 @@ def test_failed_variant_source_restore_does_not_leave_old_variant_editable(windo
         )
     )
 
-    assert not case.window.context.slots
+    assert case.window.context.slots
+    assert next(iter(case.window.context.collection)).translation == "Variant B"
+    assert case.window.context.active_slot.eet_path is None
     assert case.services.project_lifecycle.active.variant.snapshot().entries[0].translation == "Variant B"
 
 

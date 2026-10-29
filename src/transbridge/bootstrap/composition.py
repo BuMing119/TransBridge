@@ -170,6 +170,7 @@ def build_runtime(
         "project_snapshots": persistence.project_snapshots,
         "project_archive": persistence.project_archive,
         "project_source_updates": persistence.project_source_updates,
+        "project_source_supplements": persistence.project_source_supplements,
         "session_lifecycle": persistence.session_lifecycle,
         "gui_session_commands": persistence.gui_session_commands,
         "project_projection": persistence.project_projection,

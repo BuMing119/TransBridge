@@ -67,8 +67,8 @@ class ProjectRecoveryDialog(QDialog):
         self.resize(960, 600)
         layout = QVBoxLayout(self)
         notice = QLabel(
-            "来源文件暂不可用或已变化。这里显示已保存的译文，不会更改当前工程或覆盖文件。\n"
-            "可更新源文件并迁移已保存译文，或恢复原始来源后重新检查。原始正文未保存在版本中，因此不在此推测显示。",
+            "工程保存的来源内容缺失、损坏或无法与版本对应。这里仍可查看和复制已保存的译文。\n"
+            "需要原文或插件模板时，可选择文件补充来源；原始参考路径是否存在不会阻止完整工程使用。",
             self,
         )
         notice.setTextFormat(Qt.TextFormat.PlainText)

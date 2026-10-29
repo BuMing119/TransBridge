@@ -83,6 +83,12 @@ class TranslationController:
     def _launch(self, args, ctx, collection, targets, *, mode):
         from transbridge.paratranz.config_manager import LLMConfig
 
+        from .input_prerequisites import source_input_failure
+
+        missing = source_input_failure(ctx, targets)
+        if missing is not None:
+            return missing
+
         try:
             config = LLMConfig.load_from_file()
         except Exception as exc:
@@ -454,7 +460,7 @@ def _register_translator_tools():
                 "name": "merge_task_result",
                 "display_name": "重新合入任务成果",
                 "description": (
-                    "Merge saved AI, download, dictionary or parser results into their original version "
+                    "Merge saved AI, dictionary or parser results into their original version "
                     "without repeating computation."
                 ),
                 "execute": _tool_merge_task_result,

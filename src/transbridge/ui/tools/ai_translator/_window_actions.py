@@ -6,6 +6,7 @@ from PyQt6.QtCore import QSignalBlocker
 from PyQt6.QtWidgets import QMessageBox
 
 from transbridge.ui.foundation.components import ComponentStyle, SemanticState
+from transbridge.ui.source_input_state import original_known
 
 from ._theme_support import AiThemeBinding, set_widget_brush
 from .run_preparation import confirm_optional_retrieval
@@ -79,6 +80,11 @@ def update_window_quick_run(window: object, *, config=None, tasks=None) -> None:
         return
     if not hasattr(window, "_custom_profiles") or window._custom_profiles.block_unavailable_start():
         return
+    if missing_original_source_keys(window):
+        controls = window._view.controls
+        controls.start_btn.setText("补充原文…")
+        _render_quick_run(window, "所选保存译文缺少原文。选择输入文件并对应词条后，可继续准备 AI 任务。", ready=True)
+        return
     mode = window._view_port.mode
     from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
 
@@ -119,6 +125,24 @@ def update_window_quick_run(window: object, *, config=None, tasks=None) -> None:
         f"已选 {len(tasks)} 个插件，本次处理 {len(entries)} 条；译名方案：{naming_scheme}；流程：{profile.summary}"
     )
     _render_quick_run(window, text, ready=reason is None)
+
+
+def selected_source_keys(window):
+    slots = getattr(window._ctx, "slots", {})
+    panel = getattr(getattr(window, "_view", None), "sources_panel", None)
+    selected = tuple(slots.values()) if panel is None else tuple(panel.selected_slots())
+    return tuple(key for key, slot in slots.items() if any(slot is value for value in selected))
+
+
+def missing_original_source_keys(window):
+    return tuple(
+        key
+        for key in selected_source_keys(window)
+        if any(
+            not original_known(entry)
+            for entry in window._task_scope.candidates(window._ctx.slots[key], window._scope_presenter.state)
+        )
+    )
 
 
 def _render_quick_run(window, text: str, *, ready: bool) -> None:

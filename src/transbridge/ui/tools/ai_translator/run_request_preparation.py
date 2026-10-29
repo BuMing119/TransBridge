@@ -50,7 +50,6 @@ class PreparedRun:
             self.spec.owner != owner
             or self.spec.mode != mode
             or self.spec.overwrite != overwrite
-            or self.esp_path != esp_path
             or self.project_revision != project_revision
             or (run_id is not None and self.spec.run_id != run_id)
             or (terminology_snapshot_ref is not None and self.spec.terminology_snapshot != terminology_snapshot_ref)

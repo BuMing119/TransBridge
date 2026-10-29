@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.application.io import FormatId
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.parser.plugin_parser import PluginParser
 from transbridge.parser.strings_file import PluginStringsLookup
@@ -203,7 +204,9 @@ class Step1SourceWidget(QWidget):
         # 同步输入框并锁定（无论是否切换，只要指向已存在的 slot 就锁定）
         slot = self._ctx.slots.get(key) if key else None
         if slot:
-            is_eet_only = slot.esp_path is None and slot.eet_path is not None
+            is_eet_only = slot.format_id in {FormatId.XML_EET, FormatId.XML_XT} or (
+                slot.format_id is None and slot.esp_path is None and slot.eet_path is not None
+            )
             self._rb_esp.setChecked(not is_eet_only)
             self._rb_eet_only.setChecked(is_eet_only)
             self._esp_input.setText(slot.esp_path or "")

@@ -120,7 +120,7 @@ def test_prepared_admission_does_not_rebuild_or_refreeze(monkeypatch):
     assert request.request_budget.max_in_flight == 3
 
 
-@pytest.mark.parametrize("change", ["owner", "project", "variant", "path", "run_id", "revision", "entries"])
+@pytest.mark.parametrize("change", ["owner", "project", "variant", "run_id", "revision", "entries"])
 def test_prepared_admission_rejects_mismatched_scope(change):
     controller = RunController("owner", task_runtime=ai_task_runtime())
     value = prepared(controller)
@@ -143,13 +143,24 @@ def test_prepared_admission_rejects_mismatched_scope(change):
         key = {
             "project": "project_id",
             "variant": "variant_id",
-            "path": "esp_path",
             "revision": "project_revision",
         }.get(change, change)
         options[key] = 2 if change == "revision" else "changed"
     with pytest.raises(ValueError, match="不匹配"):
         admit(controller, value, **options)
     assert controller.active_request is None
+
+
+@pytest.mark.parametrize("reference", [None, "", "different-reference.esp"])
+def test_prepared_admission_ignores_external_reference_changes(reference):
+    controller = RunController("owner", task_runtime=ai_task_runtime())
+    value = prepared(controller)
+
+    request = admit(controller, value, esp_path=reference)
+
+    assert request.spec.input_ref == value.spec.input_ref
+    assert request.spec.input_fingerprint == value.spec.input_fingerprint
+    controller.close()
 
 
 def test_prepared_runtime_admission_keeps_gui_ownership_and_reuses_fingerprints(monkeypatch):

@@ -66,7 +66,7 @@ class SourceRegistration:
             )
         except ValueError as exc:
             raise ValueError("source registration contains an unsupported enum value") from exc
-        location = normalize_source_location(self.location)
+        location = self.location or ""
         if self.fingerprint is not None and not _SHA256.fullmatch(self.fingerprint):
             raise ValueError("source fingerprint must be a lowercase SHA-256 digest")
         if self.source_artifact_id is not None and not _SHA256.fullmatch(self.source_artifact_id):
@@ -112,7 +112,7 @@ class SourceRegistration:
             source_id=str(value["source_id"]),
             enabled=value.get("enabled", True),
             format_id=FormatId(str(value["format_id"])),
-            location=str(value["location"]),
+            location=str(value.get("location") or ""),
             kind=SourceKind(str(value["kind"])),
             bilingual_capability=BilingualCapability(str(value["bilingual_capability"])),
             fingerprint=value.get("fingerprint"),
@@ -187,11 +187,8 @@ class SourceRegistrySnapshot:
         relations = tuple(sorted(self.relations, key=lambda item: item.relation_id))
         source_ids = [item.source_id for item in sources]
         relation_ids = [item.relation_id for item in relations]
-        locations = [os.path.normcase(item.location) for item in sources]
         if len(source_ids) != len(set(source_ids)):
             raise ValueError("Project source identifiers must be unique")
-        if len(locations) != len(set(locations)):
-            raise ValueError("Project source locations must be unique")
         if len(relation_ids) != len(set(relation_ids)):
             raise ValueError("Project source relation identifiers must be unique")
         known = set(source_ids)
@@ -239,11 +236,13 @@ def migrate_legacy_source_registry(
     roles: dict[str, str] = {}
     for value in values:
         location = str(value.get("location") or value.get("path") or "").strip()
-        if not location:
-            raise ValueError("legacy Project source requires a location")
         format_id = _legacy_format_id(value, location)
         role = str(value.get("role") or "").strip().lower()
-        source_id = stable_source_id(project_id, location, format_id)
+        source_id = (
+            stable_source_id(project_id, location, format_id)
+            if location
+            else f"src-{_digest({'project': project_id, 'source': dict(value)})[:24]}"
+        )
         kind, bilingual = _source_shape(format_id)
         legacy = {
             "role": role or None,
@@ -328,27 +327,32 @@ def legacy_source_role(value: SourceRegistration | Mapping[str, Any]) -> str | N
     return normalized or None
 
 
-def plugin_source_location(value: SourceRegistration | Mapping[str, Any]) -> str | None:
-    """Return an enabled plugin location across legacy, V2, and current source shapes."""
-
+def is_plugin_source(value: SourceRegistration | Mapping[str, Any]) -> bool:
+    """Plugin capability is independent of the optional reference path."""
     if isinstance(value, SourceRegistration):
-        if not value.enabled or value.format_id is not FormatId.PLUGIN_SSE:
-            return None
-        return value.location
-
+        return value.enabled and value.format_id is FormatId.PLUGIN_SSE
     if value.get("enabled", True) is False:
-        return None
+        return False
     legacy = value.get("legacy")
     legacy_values = legacy if isinstance(legacy, Mapping) else {}
     format_id = str(value.get("format_id") or "").strip().lower()
     kind = str(value.get("kind") or "").strip().lower()
     legacy_type = str(value.get("type") or legacy_values.get("type") or "").strip().lower()
-    if (
-        format_id != FormatId.PLUGIN_SSE.value
-        and kind != SourceKind.PLUGIN.value
-        and legacy_type not in {"esp", "esm", "esl", "plugin"}
-    ):
+    return (
+        format_id == FormatId.PLUGIN_SSE.value
+        or kind == SourceKind.PLUGIN.value
+        or legacy_type in {"esp", "esm", "esl", "plugin"}
+    )
+
+
+def plugin_source_location(value: SourceRegistration | Mapping[str, Any]) -> str | None:
+    """Return an optional reference, never use it to determine plugin capability."""
+    if not is_plugin_source(value):
         return None
+    if isinstance(value, SourceRegistration):
+        return value.location or None
+    legacy = value.get("legacy")
+    legacy_values = legacy if isinstance(legacy, Mapping) else {}
     location = value.get("location") or value.get("path") or legacy_values.get("path")
     normalized = "" if location is None else str(location).strip()
     return normalized or None

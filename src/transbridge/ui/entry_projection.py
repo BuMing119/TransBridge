@@ -28,6 +28,13 @@ class EntryProjectionUpdate:
         changes = {name: value for name, value in values.items() if getattr(entry, name) != value}
         return replace(entry, **changes) if changes or not reuse_unchanged else entry
 
+    def saved_rows(self):
+        """Reuse canonical keys when projecting rows without available hydration."""
+        return self._states.items()
+
+    def is_tombstone(self, identity):
+        return bool(self._states.get(identity, {}).get("tombstone", False))
+
     def projected_values(self, identity, source):
         """Resolve one immutable hydration input before constructing its UI entry."""
         state = self._states.get(identity)

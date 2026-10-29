@@ -17,6 +17,7 @@ from transbridge.ui.windowing import show_and_activate
 from .run_preparation import confirm_optional_retrieval
 from .run_request_preparation import capture_terminology_owner, prepare_run_request
 from .run_spec import FrozenExecutionConfig, preflight_ai_run
+from .source_terms import source_terminology_path
 from .task_consistency import TaskConsistency
 from .task_result_preparation import TaskResultPreparation
 from .term_source_inspector import TermSourceInspector
@@ -60,7 +61,9 @@ def inspect_launch(mode, config, tasks, remote, owner_id, options):
         any(task.translate_entries for task in tasks)
         and options.get("restored_terminology_binding") is None
         and not remote
-        and all(TermSourceInspector.all_empty(config, task.esp_path) for task in tasks)
+        and all(
+            TermSourceInspector.all_empty(config, source_terminology_path(task.esp_path, task.key)) for task in tasks
+        )
     )
     prepared = prepare_run_request(owner_id, mode, config, (e for task in tasks for e in task.entries), **options)
     return (None, (), empty, prepared)

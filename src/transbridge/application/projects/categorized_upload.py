@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 
 from transbridge.application.categorized_upload import UploadSource
@@ -11,12 +12,15 @@ from transbridge.application.contracts import DomainError, ErrorCategory, Operat
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.persistence.v2.baselines import BaselineRegistry
 
+from .entry_source_text import available_source_baselines, known_original_entries, registered_source_namespace
 from .file_source_catalog import build_file_sources_catalog, registered_file_sources
+from .installed_source_request import InstalledSourceRequest
 from .lifecycle import ProjectLifecycleService
-from .provisioning import ProjectSourcePreparationPort, ProjectSourceRequest
+from .provisioning import ProjectSourcePreparationPort
 from .remote_binding import normalize_paratranz_endpoint
-from .source_content import source_content_identity
 from .source_hydration_cache import SourceHydrationCache
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,8 +81,9 @@ class ProjectCategorizedUploadService:
             generation = self._lifecycle.generation
             active = self._active(context)
             variant = active.variant.snapshot()
-            baselines = self._baselines.provide(active.project, active.formal_variant_ref, context)
+            baselines = available_source_baselines(self._baselines, active.project, variant, context)
             sources = registered_file_sources(active.project)
+            catalog = build_file_sources_catalog(active.project, variant)
             states = defaultdict(dict)
             for entry in variant.entries:
                 if not entry.tombstone:
@@ -107,6 +112,24 @@ class ProjectCategorizedUploadService:
                     if not tolerate_failures:
                         raise
                     failures.append((source.source_id, source.display_name or Path(source.location).name, str(exc)))
+            registered_ids = {source.source_id for source, _raw in sources}
+            for item in catalog:
+                if item.source_id in registered_ids or source_ids is not None and item.source_id not in source_ids:
+                    continue
+                try:
+                    entries = known_original_entries(
+                        states.get(item.namespace, {}).values(), include_external_refs=include_external_refs
+                    )
+                    if entries is None:
+                        _conflict(
+                            "CATEGORIZED_SOURCE_ENTRIES_MISSING",
+                            f"该来源仍有未保存原文的词条，请补充输入：{item.label}",
+                        )
+                    upload_sources.append(UploadSource(item.source_id, item.label, entries))
+                except Exception as exc:
+                    if not tolerate_failures:
+                        raise
+                    failures.append((item.source_id, item.label, str(exc)))
             snapshot = CategorizedUploadSnapshot(
                 active.project_ref.identity.value,
                 variant.ref.identity.value,
@@ -117,9 +140,7 @@ class ProjectCategorizedUploadService:
                 remote_project_id,
                 tuple(upload_sources),
                 tuple(failures),
-                tuple(
-                    (source.source_id, source.display_name or Path(source.location).name) for source, _raw in sources
-                ),
+                tuple((item.source_id, item.label) for item in catalog),
                 dirty=active.dirty,
             )
             self._assert_current(snapshot, context, require_revision=True)
@@ -140,32 +161,43 @@ class ProjectCategorizedUploadService:
         scope_key,
         include_external_refs,
     ):
-        namespace = source_content_identity(raw_source)
-        matches = tuple(
-            baseline
-            for baseline in baselines
-            if baseline.fingerprint.sha256 == source.fingerprint
-            and (namespace is None or baseline.fingerprint.namespace.value == namespace)
-        )
-        if len(matches) != 1 or matches[0].fingerprint not in variant.source_fingerprints:
+        namespace = registered_source_namespace(source, raw_source, variant)
+        if namespace is None:
             _conflict("CATEGORIZED_SOURCE_BASELINE_AMBIGUOUS", f"来源缺少唯一且有效的版本基线：{source.location}")
-        baseline = matches[0]
-        if baseline.fingerprint.namespace in used_namespaces:
+        if namespace in used_namespaces:
             _conflict("CATEGORIZED_SOURCE_NAMESPACE_AMBIGUOUS", f"多个来源对应同一份内容：{source.location}")
-        used_namespaces.add(baseline.fingerprint.namespace)
-        options = dict(source.format_options)
-        options["source_namespace"] = baseline.fingerprint.namespace.value
-        prepared = self._hydrations.read_installed(
-            self._source_preparer,
-            ProjectSourceRequest(source.location, source.format_id, source.fingerprint, tuple(options.items())),
-            context,
-            scope_key=scope_key,
-            source=raw_source,
-        )
-        if prepared is None or prepared.fingerprint != baseline.fingerprint:
-            _conflict("CATEGORIZED_SOURCE_CHANGED", f"来源内容已变化，请先更新工程来源：{source.location}")
+        used_namespaces.add(namespace)
+        source_states = states.get(namespace, {})
+        label = source.display_name or Path(source.location).name or source.source_id
+        try:
+            matches = tuple(
+                baseline
+                for baseline in baselines
+                if baseline.fingerprint.namespace == namespace
+                and baseline.fingerprint.sha256 == source.fingerprint
+                and baseline.fingerprint in variant.source_fingerprints
+            )
+            if len(matches) != 1 or not source.source_artifact_id:
+                _conflict("CATEGORIZED_SOURCE_BASELINE_AMBIGUOUS", f"来源的保存内容尚不可用，请补充输入：{label}")
+            baseline = matches[0]
+            options = dict(source.format_options)
+            options["source_namespace"] = namespace.value
+            prepared = self._hydrations.read_installed(
+                self._source_preparer,
+                InstalledSourceRequest(source.location, source.format_id, source.fingerprint, tuple(options.items())),
+                context,
+                scope_key=scope_key,
+                source=raw_source,
+            )
+            if prepared is None or prepared.fingerprint != baseline.fingerprint:
+                _conflict("CATEGORIZED_SOURCE_CHANGED", f"来源内容已变化，请先更新工程来源：{source.location}")
+        except (DomainError, OSError):
+            entries = known_original_entries(source_states.values(), include_external_refs=include_external_refs)
+            if entries is None:
+                raise
+            _logger.debug("Using saved identity originals for source %s", source.source_id, exc_info=True)
+            return UploadSource(source.source_id, label, entries)
         entries = []
-        source_states = states.get(baseline.fingerprint.namespace, {})
         for parsed in prepared.entries:
             state = source_states.get(parsed.entry_key)
             if state is not None:
@@ -185,10 +217,14 @@ class ProjectCategorizedUploadService:
                         external_refs=state.external_refs if include_external_refs else (),
                     )
                 )
-        expected = set(source_states)
-        if expected != {entry.identity for entry in entries}:
+        present = {entry.identity for entry in entries}
+        remaining = known_original_entries(
+            (state for key, state in source_states.items() if key not in present),
+            include_external_refs=include_external_refs,
+        )
+        if remaining is None:
             _conflict("CATEGORIZED_SOURCE_ENTRIES_MISSING", f"来源解析结果无法覆盖版本中的全部词条：{source.location}")
-        return UploadSource(source.source_id, source.display_name or Path(source.location).name, tuple(entries))
+        return UploadSource(source.source_id, label, (*entries, *remaining))
 
     def current(
         self, snapshot: CategorizedUploadSnapshot, context: RequestContext

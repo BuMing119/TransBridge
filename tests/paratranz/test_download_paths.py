@@ -28,7 +28,7 @@ def test_any_current_layout_match_excludes_all_old_layout_files(preferred):
     assert select_download_files(inventory, current, legacy_plugin_paths(current)) == ((preferred, 3),)
 
 
-def test_legacy_layout_keeps_the_exact_category_and_numeric_partition_whitelist():
+def test_legacy_layout_reads_every_category_within_the_plugin_directory():
     current = ("Base.esm.json", "Base.esm/任务/当前.json")
     inventory = {
         "Base_1.json": 1,
@@ -42,7 +42,30 @@ def test_legacy_layout_keeps_the_exact_category_and_numeric_partition_whitelist(
     assert select_download_files(inventory, current, legacy_plugin_paths(current)) == (
         ("Base_1.json", 1),
         ("Base/任务/当前_2.json", 2),
+        ("Base/任务/旧名.json", 3),
+        ("Base/人名.json", 5),
     )
+
+
+def test_plugin_root_includes_named_quests_without_local_titles_and_excludes_similar_roots():
+    inventory = {
+        "Dragonborn.esm/任务/对话_[Discerning the Transmundane].json": 1,
+        "Dragonborn.esm/任务/对话_[Fight! Fight!].json": 2,
+        "Dragonborn.esm/新分类/任意名称_2.json": 3,
+        "Dragonborn.esm.backup/任务/对话_[Fight! Fight!].json": 4,
+        "Dragonborn.esm_1/任务/对话_[Fight! Fight!].json": 5,
+        "Skyrim.esm/任务/对话_[Discerning the Transmundane].json": 6,
+        "Dragonborn/任务/旧目录.json": 7,
+        "Dragonborn.esm/说明.txt": 8,
+    }
+    assert select_download_files(inventory, ("Dragonborn.esm.json",), ("Dragonborn.json",)) == tuple(
+        (path, file_id) for path, file_id in inventory.items() if file_id <= 3
+    )
+
+
+def test_ambiguous_legacy_directory_is_reported_even_without_an_exact_local_category():
+    with pytest.raises(ValueError, match="旧版路径同时对应多个插件"):
+        select_download_files({"Base/任务/未知名称.json": 1}, ("Base.esm.json",), blocked_legacy_paths=("Base.json",))
 
 
 def test_unique_case_insensitive_match_preserves_actual_inventory_spelling():

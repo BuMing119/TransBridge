@@ -108,7 +108,7 @@ class ProjectionConsistency:
         entries = () if snapshot is None else snapshot.values.get("entries", ())
         if entries is self._entries:
             return set()
-        rows = {EntryKey.from_dict(item["entry_key"]): item for item in entries}
+        rows = {EntryKey.from_dict(item["entry_key"]): item for item in entries if not item.get("tombstone", False)}
         authority = {}
         for key, item in rows.items():
             authority[key] = (

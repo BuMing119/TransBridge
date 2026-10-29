@@ -14,8 +14,6 @@ from transbridge.application.io.paratranz_mapping import paratranz_record_from_e
 from transbridge.application.projects import EntryStatePatch
 from transbridge.application.tasks import JobState, OwnerRef, TaskCancelled
 from transbridge.paratranz.batch_download_snapshot import (
-    BatchDownloadRead,
-    BatchDownloadScope,
     BatchDownloadSnapshotReader,
 )
 from transbridge.ui.operations.batch_download_session import BatchDownloadSession
@@ -219,7 +217,7 @@ def test_batch_file_reads_and_one_real_commit_with_unsaved_state(case, monkeypat
 
     assert receipt.updated == 2 and not receipt.requires_review
     assert len(captures) == 0
-    assert case.session.record["merges"]
+    assert case.session.plan is None and not case.session._reads
     assert case.services.project_lifecycle.active.variant.revision == before + 1
     assert {translation for translation, _stage in states(case).values()} == {"云端1", "云端2"}
     assert case.gateway.calls == [("inventory", 42), ("file", 1), ("file", 2)]
@@ -246,10 +244,10 @@ def test_same_entry_new_edit_is_preserved_while_independent_results_are_publishe
 
     first = case.session.apply(lambda *_: None, case.cancel)
 
-    assert first.requires_review and first.updated == 1 and first.preview.deferred == 0
+    assert not first.requires_review and first.updated == 1
     assert states(case)[key] == ("刚改的", 1)
     assert "刚改的" in {translation for translation, _stage in states(case).values()}
-    assert case.session.apply(lambda *_: None, case.cancel).updated == 0
+    assert case.session.plan is None
     assert states(case)[key] == ("刚改的", 1)
     assert len(case.gateway.calls) == 3
 
@@ -283,31 +281,6 @@ def test_normal_verification_status_upgrade_is_not_a_false_identity_change(case)
     case.context.target.status.value = "available"
     assert compare(case).updates == 2
     assert session.apply(lambda *_: None, case.cancel).updated == 2
-
-
-@pytest.mark.parametrize("phase", ["evidence", "commit"])
-def test_failed_publication_preserves_every_source_and_can_retry(case, monkeypatch, phase):
-    compare(case)
-    before = states(case)
-    with monkeypatch.context() as patch:
-        if phase == "evidence":
-
-            def fail(*args, **kwargs):
-                raise OSError("测试磁盘失败")
-
-            patch.setattr(case.session.result_store, "save_merge", fail)
-        else:
-            patch.setattr(
-                case.context.project_commands,
-                "merge_entry_states",
-                lambda *args, **kwargs: OperationResult.failed(
-                    DomainError(ErrorCategory.INTERNAL, "DISK_FAILURE", "测试磁盘失败"),
-                ),
-            )
-        with pytest.raises(RuntimeError):
-            case.session.apply(lambda *_: None, case.cancel)
-    assert states(case) == before
-    assert case.session.apply(lambda *_: None, case.cancel).updated == 2
 
 
 def test_cancel_before_commit_cannot_update_any_plugin(case, monkeypatch):
@@ -457,7 +430,7 @@ def test_target_change_inside_runtime_guard_cannot_mutate_any_source(case, monke
 
 
 def test_preview_hashes_only_actual_merge_candidates(case, monkeypatch):
-    from transbridge.ui.operations import batch_download_results as results
+    from transbridge.application.sync import download_merge as results
 
     case.gateway.rows[1] = [{**row, "translation": ""} for row in case.gateway.rows[1]]
     signature = results.source_locator_signature
@@ -523,15 +496,11 @@ def test_preview_invalidates_review_when_source_locator_changes(case, field):
     )
     assert any(conflict.entry_key == key and conflict.reason == "decision_stale" for conflict in plan.pending)
     assert states(case)[key] == ("手改的", 1)
-    assert case.session.result_store.sources(
-        case.session.record,
-        scope_factory=BatchDownloadScope,
-        read_factory=BatchDownloadRead,
-    )
+    assert case.session.plan is not None
 
 
 def test_concurrent_new_edit_can_be_explicitly_kept_in_existing_review(case):
-    compare(case)
+    compare(case, policy="defer")
     key = case.sources[0].entries[0].identity
     case.context.project_commands.update_entry(key, case.context.runtime_context, translation="手改的", stage=1)
     receipt = case.session.apply(lambda *_: None, case.cancel)

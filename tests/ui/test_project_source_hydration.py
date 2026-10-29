@@ -64,7 +64,7 @@ def test_prepared_slots_preserve_sources_and_exact_identity_without_copying_whol
 
     slots = source_hydration.prepare_project_slots((first, second), snapshot)
 
-    assert tuple(location for location, _ in slots) == ("first.esp", "second.xml")
+    assert tuple(identity for identity, _ in slots) == ("source-one", "source-two")
     one, two = (slot for _, slot in slots)
     assert one.esp_path == "first.esp" and two.xt_path == "second.xml"
     assert one.source_snapshot is first.source_snapshot
@@ -105,13 +105,60 @@ def test_multiple_sources_share_one_state_index_and_construct_each_entry_once(mo
     assert all(next(iter(slot.collection)).translation == "saved" for _, slot in slots)
 
 
-def test_duplicate_source_locations_are_rejected_without_mutating_inputs():
-    first = _source("same.esp", "first")
-    second = _source("same.esp", "second")
-    with pytest.raises(ValueError, match="Duplicate project source location"):
-        source_hydration.prepare_project_slots((first, second), _snapshot([]))
+@pytest.mark.parametrize("reference", ["same.esp", ""])
+def test_duplicate_reference_locations_do_not_merge_distinct_sources(reference):
+    first = _source(reference, "first")
+    second = _source(reference, "second")
+    slots = source_hydration.prepare_project_slots((first, second), _snapshot([]))
+    assert tuple(key for key, _ in slots) == ("first", "second")
     assert first.entries[0].translation == second.entries[0].translation == "source translation"
 
 
 def test_empty_project_has_no_slots():
     assert source_hydration.prepare_project_slots((), _snapshot([])) == ()
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_registered_primary_identity_survives_folded_source_and_empty_content(empty):
+    from transbridge.application.projects.provisioning_models import PreparedSourceHydration
+
+    first = _source("Original.esp", "shared")
+    fingerprint = "a" * 64
+    hydration = PreparedSourceHydration(
+        first.location,
+        fingerprint,
+        first.format_id,
+        SimpleNamespace(sha256=fingerprint),
+        () if empty else first.entries,
+    )
+    primary = {
+        "source_id": "src-primary",
+        "format_id": FormatId.PLUGIN_SSE.value,
+        "location": "",
+        "fingerprint": fingerprint,
+        "legacy": {"role": "primary", "namespace": "shared"},
+    }
+    translation = {
+        **primary,
+        "source_id": "src-migration",
+        "location": "Translated.esp",
+        "legacy": {"role": "migration", "namespace": "shared"},
+    }
+    snapshot = SimpleNamespace(
+        values={
+            "entries": (),
+            "sources": (primary, translation),
+            "source_relations": (
+                {
+                    "from_source_id": "src-migration",
+                    "to_source_id": "src-primary",
+                    "kind": "translation_for",
+                    "folded_into_baseline": True,
+                },
+            ),
+        }
+    )
+    slots = source_hydration.prepare_project_slots((hydration,), snapshot)
+    assert slots[0][0] == "src-primary"
+    assert slots[0][1].esp_path is None
+    assert slots[0][1].label == "Original"

@@ -133,6 +133,8 @@ class PreparedSourceHydration:
     format_id: FormatId
     source_snapshot: SourceSnapshot
     entries: tuple[EntrySnapshot, ...]
+    source_id: str | None = None
+    reference_location: str | None = None
 
     def __post_init__(self) -> None:
         if not self.location.strip():

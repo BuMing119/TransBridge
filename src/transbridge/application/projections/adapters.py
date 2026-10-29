@@ -35,6 +35,7 @@ def project_projection(
     values.update({
         "project_name": str(active.project.envelope.data.get("name", "")),
         "sources": [dict(value) for value in active.project.envelope.data.get("sources", ())],
+        "missing_inputs": [item.to_dict() for item in active.missing_inputs],
         "active_variant_id": active.project.envelope.data.get("active_variant_id"),
         "variants": [item.to_dict() for item in variants],
         "entries": (

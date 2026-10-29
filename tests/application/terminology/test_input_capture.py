@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import (
@@ -16,6 +16,8 @@ from transbridge.application.projects.source_registry import (
     SourceKind,
     SourceRegistration,
     SourceRegistrySnapshot,
+    SourceRelation,
+    SourceRelationKind,
 )
 from transbridge.application.terminology.input_capture import (
     BuildInputCaptureService,
@@ -140,6 +142,28 @@ def test_capture_rejects_source_changed_after_lease() -> None:
 
     assert result.outcome is OperationOutcome.FAILED
     assert result.diagnostics[0].code == "TERMINOLOGY_SOURCE_CHANGED_DURING_CAPTURE"
+
+
+def test_explicit_source_scope_captures_only_selected_inputs_and_their_relation_graph():
+    first = _registry().sources[0]
+    second = replace(first, source_id="source-second", location="C:/mods/second.esp")
+    relation = SourceRelation("translated", SourceRelationKind.TRANSLATION_FOR, second.source_id, first.source_id)
+    leases = _Leases()
+    service = BuildInputCaptureService(
+        _Projects(_state(SourceRegistrySnapshot((first, second), (relation,)))),
+        leases,
+        _Capabilities(),
+        _Baselines(),
+        max_unstreamed_source_count=1,
+    )
+    result = service.capture_build_input(RequestContext("test"), config={"source_ids": [first.source_id]})
+    assert result.is_success, result.diagnostics
+    assert leases.acquired == [first.source_id]
+    assert tuple(item.registration.source_id for item in result.value.sources) == (first.source_id,)
+    assert result.value.relations == ()
+    assert result.value.canonical_payload()["sources"][0]["source_id"] == first.source_id
+    all_sources = service.capture_build_input(RequestContext("test"), config={})
+    assert not all_sources.is_success and all_sources.diagnostics[0].code == "TERMINOLOGY_STREAMING_REQUIRED"
 
 
 def test_capture_rejects_unstreamed_source_above_the_production_memory_boundary() -> None:

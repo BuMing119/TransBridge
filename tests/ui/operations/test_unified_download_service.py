@@ -174,6 +174,29 @@ def test_default_service_factory_reaches_permissions_and_current_file_reads_with
     ]
 
 
+@pytest.mark.parametrize("project", [3], indirect=True)
+def test_named_plugin_subdirectory_is_downloaded_and_saved_without_local_classification(default_download, monkeypatch):
+    from transbridge.application.io import paratranz_classification
+
+    data = default_download
+    selected = next(source for source in data.case.sources if len(source.entries) == 3)
+    old = selected.label + ".json"
+    file_id = data.case.gateway.files.pop(old)
+    data.case.gateway.files[selected.label + "/任务/对话_[Discerning the Transmundane].json"] = file_id
+    monkeypatch.setattr(
+        paratranz_classification,
+        "classify_entries",
+        lambda *_: pytest.fail("Download must not rebuild local category names"),
+    )
+    assert compare(data, (selected.source_id,)).updates == 3
+    assert data.session.apply(lambda *_: None, data.case.cancel).updated == 3
+    assert all(states(data.case)[entry.identity][0] for entry in selected.entries)
+    assert_persisted(data)
+    assert data.session.plan is None and not data.session._reads
+    assert not list(Path(data.case.services.root).rglob("download-results"))
+    assert paths(data).count(f"/api/projects/42/files/{file_id}/translation") == 1
+
+
 def test_real_service_policy_changes_and_successful_save_reuse_the_complete_cloud_read(default_download):
     data = default_download
     assert compare(data).updates == 2
@@ -191,7 +214,7 @@ def test_real_service_policy_changes_and_successful_save_reuse_the_complete_clou
     assert {translation for translation, _stage in states(data.case).values()} == {"云端1", "云端2"}
     assert_persisted(data)
     assert not list((Path(data.case.services.root) / "snapshots").glob("*.json"))
-    assert data.session.record["merges"]
+    assert data.session.plan is None and not data.session._reads
 
 
 def test_real_file_api_partial_read_failure_retries_only_the_failed_source(default_download):
@@ -241,9 +264,10 @@ def test_real_service_save_failure_preserves_review_and_retries_without_http(def
     assert states(data.case) == before
     assert data.case.services.variants.save_if_revision == original
 
+    assert compare(data).updates == 2
     assert data.session.apply(lambda *_: None, data.case.cancel).updated == 2
 
-    assert tuple(data.calls) == calls
+    assert len(data.calls) > len(calls)
     assert_persisted(data)
 
 
@@ -292,7 +316,7 @@ def test_source_rename_keeps_frozen_selected_result_without_cross_source_reads(d
     assert_persisted(data)
 
 
-def test_cached_cloud_content_cannot_hide_a_selected_source_file_change(default_download):
+def test_download_uses_saved_authoritative_source_until_an_explicit_source_update(default_download):
     data = default_download
     first = data.case.sources[0]
     assert compare(data, (first.source_id,)).updates == 1
@@ -303,8 +327,8 @@ def test_cached_cloud_content_cannot_hide_a_selected_source_file_change(default_
 
     preview = compare(data, (first.source_id,))
 
-    assert preview.updates == 0
-    assert any("读取失败" in detail for detail in preview.details)
+    assert preview.updates == 1
+    assert not any("读取失败" in detail for detail in preview.details)
     assert tuple(data.calls) == calls
     selected_path.write_bytes(source_bytes)
     assert compare(data, (first.source_id,)).updates == 1
@@ -381,7 +405,7 @@ def test_default_facade_real_dialog_worker_http_review_and_save_are_one_complete
 
         assert "并保存到当前本地版本" in dialog._status.text()
         assert "已更新 1 条" in dialog._status.text()
-        assert "下载成果与覆盖前内容已保留" in dialog._summary.text()
+        assert "临时下载数据已清理" in dialog._summary.text()
         assert states(data.case)[selected.entries[0].identity] == ("云端1", 3)
         assert states(data.case)[other.entries[0].identity] == ("", 0)
         assert_persisted(data)
@@ -424,14 +448,14 @@ def test_real_one_click_disk_failure_retries_same_button_without_http_or_another
         assert dialog._primary_button.isEnabled() and dialog._primary_button.text() == "重试未完成项"
         initial_http = tuple(data.calls)
         restore_points = {path: path.read_bytes() for path in merge_evidence_files(data)}
-        assert len(restore_points) == 1
+        assert not restore_points
 
         dialog._primary_button.click()
         wait_for_dialog(dialog, lambda: dialog._worker is None)
 
         assert "并保存到当前本地版本" in dialog._status.text()
         assert states(data.case)[selected.entries[0].identity] == ("云端1", 3)
-        assert tuple(data.calls) == initial_http
+        assert len(data.calls) > len(initial_http)
         assert {path: path.read_bytes() for path in merge_evidence_files(data)} == restore_points
         assert attempts == [True, True]
         assert_persisted(data)
@@ -498,7 +522,7 @@ def test_real_one_click_saves_dirty_current_version_when_remote_content_already_
         active = data.case.services.project_lifecycle.active
         assert data.case.services.variants.read_snapshot(active.formal_variant_ref) != old_disk
         assert not list((Path(data.case.services.root) / "snapshots").glob("*.json"))
-        assert merge_evidence_files(data)
+        assert not merge_evidence_files(data)
         assert paths(data) == [
             "/api/projects",
             "/api/projects/42/files",
@@ -553,7 +577,7 @@ def test_real_one_click_all_conflicts_can_save_existing_local_edits_and_keep_pen
         assert not dialog._preview.can_save
         assert dialog._review_button.isVisible() and dialog._review_button.isEnabled()
         assert not list((Path(data.case.services.root) / "snapshots").glob("*.json"))
-        assert merge_evidence_files(data)
+        assert not merge_evidence_files(data)
 
 
 @pytest.mark.parametrize("legacy_path", ["LegacyPlugin.json", "legacyplugin.json"])
@@ -780,7 +804,7 @@ def test_real_partial_content_download_retries_only_unfinished_source_after_succ
         assert_persisted(data)
         assert dialog._primary_button.isEnabled() and dialog._primary_button.text() == "重试未完成项"
         original_restore_points = {path: path.read_bytes() for path in merge_evidence_files(data)}
-        assert original_restore_points
+        assert not original_restore_points
         data.failures.clear()
 
         dialog._primary_button.click()
@@ -790,7 +814,7 @@ def test_real_partial_content_download_retries_only_unfinished_source_after_succ
         assert states(data.case)[second.entries[0].identity][0] == "云端2"
         assert_persisted(data)
         assert not dialog._primary_button.isEnabled() and dialog._primary_button.text() == "已保存"
-        assert paths(data).count("/api/projects") == 1
-        assert paths(data).count("/api/projects/42/files/1/translation") == 1
+        assert paths(data).count("/api/projects") == 2
+        assert paths(data).count("/api/projects/42/files/1/translation") == 2
         assert paths(data).count("/api/projects/42/files/2/translation") == 2
         assert all(path.read_bytes() == content for path, content in original_restore_points.items())

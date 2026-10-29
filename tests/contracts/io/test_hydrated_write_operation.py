@@ -19,6 +19,31 @@ from transbridge.ui.operations import OperationKind, OperationTaskAdapter, Opera
 FIXTURE = Path("tests/contracts/io/fixtures/eet-small.xml")
 
 
+def test_empty_write_target_is_reported_without_resolving_a_filesystem_path(tmp_path: Path) -> None:
+    source = tmp_path / "source.xml"
+    shutil.copyfile(FIXTURE, source)
+    parsed = TranslationIoUseCase().parse(
+        ParseRequest(SourceDescriptor(str(source)), RequestContext("gui"), FormatId.XML_EET)
+    )
+    draft = HydratedWriteDraft(
+        parsed.source_snapshot, FormatId.XML_EET, (parsed.entries[0],), "", 1, RequestContext("gui")
+    )
+
+    class NoOutputFilesystem:
+        def canonicalize(self, path):
+            raise AssertionError(f"Unselected output must not resolve to a filesystem path: {path!r}")
+
+    checked = HydratedWritePreflightService(filesystem=NoOutputFilesystem()).preflight(draft)
+
+    assert not checked.ready
+    assert {item.code for item in checked.checks if not item.passed} == {
+        "OUTPUT_WRITABLE",
+        "ATOMIC_REPLACE_AVAILABLE",
+    }
+    assert checked.artifact_fingerprints == ()
+    assert checked.draft.target_path == ""
+
+
 class Ids:
     def __init__(self) -> None:
         self.value = 0

@@ -44,6 +44,7 @@ class VariantCatalogCommands:
                 active.persisted_project_revision,
                 None,
                 source_project_hash=project_record.source_hash,
+                missing_inputs=active.missing_inputs if copy_active else (),
             )
             activation = replace(
                 LifecycleActivation.capture(active, candidate),

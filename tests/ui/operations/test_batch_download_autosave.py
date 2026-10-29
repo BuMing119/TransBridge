@@ -18,7 +18,7 @@ def disk_snapshot(case):
     return VariantSnapshot.from_dto(repository.read_snapshot(active.formal_variant_ref), active.formal_variant_ref)
 
 
-def test_download_automatically_saves_current_version_and_can_restore_unsaved_previous_content(case):
+def test_download_automatically_saves_current_version_without_retaining_previous_content(case):
     key = case.sources[0].entries[0].identity
     assert case.context.project_commands.update_entry(
         key,
@@ -40,8 +40,8 @@ def test_download_automatically_saves_current_version_and_can_restore_unsaved_pr
     assert {entry.translation for entry in disk_snapshot(case).entries} == {"云端1", "云端2"}
     snapshots = case.services.project_snapshots.list(case.context.runtime_context)
     assert not snapshots
-    assert case.session.restore_previous(lambda *_: None, case.cancel).updated == 2
-    assert states(case)[key] == ("下载前未保存的编辑", 1)
+    assert case.session.plan is None
+    assert not list(Path(case.services.root).rglob("download-results"))
     assert any("已更新并保存" in detail for detail in receipt.details)
 
 
@@ -82,12 +82,13 @@ def test_disk_failure_preserves_original_state_and_retries_same_download_and_rec
     assert not snapshots_before_retry
     reads_before_retry = tuple(case.gateway.calls)
 
+    compare(case)
     receipt = case.session.apply(lambda *_: None, case.cancel)
 
     assert receipt.updated == 2
     assert not case.services.project_lifecycle.active.dirty
     assert disk_snapshot(case) == case.services.project_lifecycle.active.variant.snapshot()
-    assert tuple(case.gateway.calls) == reads_before_retry
+    assert len(case.gateway.calls) > len(reads_before_retry)
     assert case.services.project_snapshots.list(case.context.runtime_context) == snapshots_before_retry
 
 

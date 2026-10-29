@@ -9,6 +9,7 @@ from transbridge.application.contracts import JobRef
 from transbridge.application.tasks import JobState, OwnerRef
 from transbridge.application.terminology.conflict_queries import ConflictFilter, ConflictQuery
 from transbridge.application.terminology.workloads import TerminologyWorkloadType
+from transbridge.ui.source_input_state import SourceInputScope, ensure_source_input
 
 from .asset_presentation import WorkbenchAssetPresentation
 from .asset_refresh import AssetRefreshCoordinator
@@ -73,6 +74,7 @@ class TerminologyWindow(QWidget):
         self._invalidated = False
         self._sync_tasks: TerminologySyncTaskAdapter | None = None
         self._ui_context = ui_context
+        self._input_source_keys = None
         self._context_binding = TerminologyWindowContext(
             self, ui_context, profile_controller, (presenter.context.project_id, presenter.context.variant_id)
         )
@@ -211,9 +213,21 @@ class TerminologyWindow(QWidget):
         self.workspace.add_area(TerminologyArea.VERSIONS, self.versions_view)
         self.workspace.add_area(TerminologyArea.REPORTS, self.reports_view)
 
-    def run_preflight(self) -> None:
+    def run_preflight(self, *, repair=True) -> None:
         if not self.context_is_current:
             return
+        if repair:
+            if self._input_source_keys is None:
+                self._input_source_keys = tuple(getattr(self._ui_context, "slots", {}))
+            scope = SourceInputScope(self._ui_context, self._input_source_keys)
+            if not ensure_source_input(
+                self._ui_context, "template", source_keys=tuple(scope.slots), resume=self.run_preflight, parent=self
+            ):
+                return
+            if self._ui_context is not None:
+                self.presenter.set_source_scope(
+                    tuple(dict.fromkeys(slot.source_id for slot in scope.slots.values() if slot.source_id))
+                )
         self._preflight_started = True
         self.build_view.preflight_button.setEnabled(False)
         self.operation_notice.show_message("正在检查当前工程、翻译版本和来源…")
@@ -245,7 +259,7 @@ class TerminologyWindow(QWidget):
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().showEvent(event)
         if self.presenter.snapshot is None and not self._preflight_started:
-            self.run_preflight()
+            self.run_preflight(repair=False)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
         if not self._closed and not self._save_close.allow_close():

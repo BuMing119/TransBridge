@@ -6,6 +6,7 @@ from pathlib import Path
 
 from transbridge.application.io.identity import SourceNamespace
 
+from .entry_source_text import namespace_source_id
 from .source_content import authoritative_baseline_sources, source_content_identity
 from .source_registry import SourceRegistration, SourceRegistrySnapshot, migrate_legacy_source_registry
 
@@ -37,6 +38,15 @@ def build_file_sources_catalog(project, variant):
     for fingerprint in variant.source_fingerprints:
         by_digest[fingerprint.sha256].append(fingerprint.namespace)
     result = []
+    registered_namespaces = set()
+    for raw in project.envelope.data.get("sources", ()):
+        identity = source_content_identity(raw)
+        if identity is not None:
+            registered_namespaces.add(SourceNamespace(identity))
+        else:
+            matches = by_digest.get(raw.get("fingerprint"), ())
+            if len(matches) == 1:
+                registered_namespaces.add(matches[0])
     for source, raw in registered_file_sources(project):
         namespace = source_content_identity(raw)
         if namespace is not None:
@@ -47,9 +57,15 @@ def build_file_sources_catalog(project, variant):
         result.append(
             FileSourceCatalogItem(
                 source.source_id,
-                source.display_name or Path(source.location).name,
+                source.display_name or Path(source.location).name or source.source_id,
                 counts.get(namespace, 0),
                 namespace,
+            )
+        )
+    for namespace in sorted(counts.keys() - registered_namespaces):
+        result.append(
+            FileSourceCatalogItem(
+                namespace_source_id(namespace), f"来源内容 · {namespace.value}", counts[namespace], namespace
             )
         )
     return tuple(result)

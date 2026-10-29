@@ -369,9 +369,9 @@ def test_authoritative_hydrations_restore_all_sources_without_reparsing() -> Non
     error = coordinator._restore_plugin_sources((), tuple(hydrations))
 
     assert error is None
-    assert set(context.slots) == {"D:/mods/Plugin1.esp", "D:/mods/Plugin2.esp"}
+    assert set(context.slots) == {"source:plugin:1", "source:plugin:2"}
     assert [next(iter(slot.collection)).translation for slot in context.slots.values()] == ["权威译文 1", "权威译文 2"]
-    first = next(iter(context.slots["D:/mods/Plugin1.esp"].collection))
+    first = next(iter(context.slots["source:plugin:1"].collection))
     assert first.external_refs == (ExternalEntryRef("paratranz", "project:42", 99),)
     assert first.revision.value == 3
     assert all(slot.plugin is None for slot in context.slots.values())

@@ -12,6 +12,7 @@ from transbridge.application.io.migration_import import MigrationImportError
 from transbridge.application.io.migration_snapshot import detached_entries
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
+from transbridge.ui.source_input_state import SourceInputScope, ensure_source_input
 from transbridge.ui.workers import ApiWorker
 
 logger = logging.getLogger(__name__)
@@ -55,15 +56,29 @@ def _paths(slot):
     )
 
 
-def run_migration(host, slot, config) -> None:
+def run_migration(host, slot, config, *, source_keys=None) -> None:
     context = host.context
+    keys = (
+        tuple(context.slots)
+        if bool(config.strings_apply_all and config.strings_dir)
+        else tuple(key for key, value in context.slots.items() if value is slot)
+    )
+    scope = SourceInputScope(context, keys if source_keys is None else source_keys)
+    if not ensure_source_input(
+        context,
+        "originals",
+        source_keys=tuple(scope.slots),
+        resume=lambda: run_migration(host, context.active_slot, config, source_keys=scope.source_keys),
+        parent=host,
+    ):
+        return
     cfg = deepcopy(config)
     runtime_context = context.runtime_context
     authoritative = context.uses_authoritative_projection
     authority = _authority(context)
     active_slot = context.active_slot
     apply_all = bool(cfg.strings_apply_all and cfg.strings_dir)
-    slots = tuple(context.slots.values()) if apply_all else (slot,)
+    slots = tuple(scope.slots.values()) if apply_all else (slot,)
     targets = tuple(_Target.capture(value) for value in slots)
     sources = tuple(
         (path, hint)

@@ -23,6 +23,7 @@ from transbridge.application.projects import (
 )
 from transbridge.application.projects.durable_variant import DurableVariantCommitService
 from transbridge.application.projects.snapshots import ProjectSnapshotCommands
+from transbridge.application.projects.source_supplement import ProjectSourceSupplementService
 from transbridge.application.projects.source_update import ProjectSourceUpdateService
 from transbridge.application.sessions import GuiSessionCommandFacade, SessionLifecycleService
 from transbridge.persistence.current_project import CurrentProjectOpener
@@ -82,6 +83,7 @@ class PersistenceV2Services:
     project_snapshots: ProjectSnapshotCommands
     project_archive: ProjectArchiveService
     project_source_updates: ProjectSourceUpdateService
+    project_source_supplements: ProjectSourceSupplementService
     session_lifecycle: SessionLifecycleService
     gui_session_commands: GuiSessionCommandFacade
     project_projection: ProjectionStore
@@ -133,7 +135,17 @@ def build_persistence_v2_services(
     project_projection = ProjectionStore()
     project_publisher = ProjectProjectionPublisher(project_projection)
     project_uow = RepositoryLifecycleUnitOfWorkFactory(project_store, id_factory)
-    project_loader = V2ProjectCandidateLoader(projects, variants, baselines.provide)
+    source_artifacts = ProjectSourceArtifactStore(resolved_root, adapter)
+    from transbridge.persistence.project_source_inputs import load_project_source_inputs
+
+    project_loader = V2ProjectCandidateLoader(
+        projects,
+        variants,
+        baselines.provide,
+        source_inputs_loader=lambda project, snapshot, context: load_project_source_inputs(
+            project, snapshot, source_artifacts, context
+        ),
+    )
     project_lifecycle = ProjectLifecycleService(
         project_loader,
         project_uow,
@@ -151,7 +163,6 @@ def build_persistence_v2_services(
     project_management = ProjectManagementCommands(project_lifecycle, project_management_store, baselines)
     snapshot_repository = ProjectSnapshotRepository(resolved_root, adapter)
     project_snapshots = ProjectSnapshotCommands(project_lifecycle, snapshot_repository)
-    source_artifacts = ProjectSourceArtifactStore(resolved_root, adapter)
     resolved_source_preparer = SavedProjectSourcePreparer(
         source_preparer or TranslationIoProjectSourcePreparer(), source_artifacts
     )
@@ -184,6 +195,9 @@ def build_persistence_v2_services(
         source_update_store,
         baselines,
         resolved_source_preparer,
+    )
+    project_source_supplements = ProjectSourceSupplementService(
+        project_lifecycle, projects, source_update_store, baselines, resolved_source_preparer
     )
     project_remote_bindings = ProjectRemoteBindingService(project_lifecycle)
     project_catalog = V2ProjectCatalog(resolved_root, adapter, projects)
@@ -266,6 +280,7 @@ def build_persistence_v2_services(
         project_snapshots=project_snapshots,
         project_archive=project_archive,
         project_source_updates=project_source_updates,
+        project_source_supplements=project_source_supplements,
         session_lifecycle=session_lifecycle,
         gui_session_commands=gui_session_commands,
         project_projection=project_projection,

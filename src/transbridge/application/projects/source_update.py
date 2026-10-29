@@ -3,37 +3,22 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, replace
-import os
+from dataclasses import replace
 from pathlib import Path
 import secrets
 from threading import RLock
 
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
-from transbridge.application.io.identity import SourceNamespace
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef
 from transbridge.persistence.v2.models import ProjectDto
 from transbridge.persistence.v2.schema import parse_json_bytes
 
 from .provisioning import ProjectSourceRequest
 from .source_content import authoritative_baseline_sources, folded_plugin_pairs, source_content_identity
+from .source_input_publication import PreparedSourcePublication, publish_source_input
 from .source_registry import SourceRegistrySnapshot, migrate_legacy_source_registry
 from .source_update_migration import compare_source, migrate_variant
-from .source_update_models import SourceUpdatePreview, SourceUpdateResult, SourceUpdateTarget
-
-
-@dataclass(frozen=True)
-class _Candidate:
-    owner: str
-    generation: int
-    expected: object
-    project: ProjectDto
-    variants: tuple
-    request: ProjectSourceRequest
-    source: object
-    old_namespace: SourceNamespace
-    path: str
-    preview: SourceUpdatePreview
+from .source_update_models import SourceUpdatePreview, SourceUpdateTarget
 
 
 class ProjectSourceUpdateService:
@@ -43,7 +28,7 @@ class ProjectSourceUpdateService:
         self._store = store
         self._baselines = baselines
         self._preparer = preparer
-        self._pending: dict[str, _Candidate] = {}
+        self._pending: dict[str, PreparedSourcePublication] = {}
         self._lock = RLock()
 
     def active_project_path(self, context) -> str | None:
@@ -91,11 +76,6 @@ class ProjectSourceUpdateService:
             if not targets.is_success or source_id not in {item.source_id for item in targets.value or ()}:
                 raise ValueError("所选来源不是独立的工程源文件，请更新其对应的原始来源。")
             path = str(Path(replacement_path).resolve(strict=True))
-            if any(
-                item.source_id != source_id and os.path.normcase(item.location) == os.path.normcase(path)
-                for item in registry.sources
-            ):
-                raise ValueError("新版文件已被工程中的其他来源使用。")
             request = ProjectSourceRequest(path, source.format_id, options=source.format_options)
             prepared = self._preparer.prepare_source(request, context, role="primary", common_options=())
             identity = source_content_identity(source.to_dict())
@@ -137,7 +117,7 @@ class ProjectSourceUpdateService:
                 len(changes.reordered),
                 warnings,
             )
-            candidate = _Candidate(
+            candidate = PreparedSourcePublication(
                 context.owner_id,
                 generation,
                 expected,
@@ -168,59 +148,15 @@ class ProjectSourceUpdateService:
                 ref = ProjectRef(ProjectId(candidate.project.envelope.identity))
                 self._check_context(ref, context)
                 del self._pending[token]
-            # Reparse and fingerprint-check all members, including localized plugin sidecars.
-            refreshed = self._preparer.prepare_source(candidate.request, context, role="primary", common_options=())
-            if refreshed != candidate.source:
-                raise ValueError("新版源文件在预览后发生变化，请重新预览。")
-            backup = []
-
-            def publish():
-                backup.append(
-                    self._store.commit(
-                        candidate.expected,
-                        candidate.project,
-                        candidate.variants,
-                        token,
-                        backup_metadata={
-                            "source": candidate.preview.source_name,
-                            "replacement": candidate.preview.replacement_path,
-                        },
-                    )
-                )
-
-            active = self._lifecycle.active
-            if active is not None and active.project_ref == ref:
-                if active.dirty or active.variant is None:
-                    raise ValueError("预览后工程有未保存修改，请保存并重新预览。")
-                variant = next(item for item in candidate.variants if item.ref == active.formal_variant_ref)
-                baselines = self._baselines.provide(active.project, active.formal_variant_ref, context)
-                new_baselines = tuple(
-                    item for item in baselines if item.fingerprint.namespace != candidate.old_namespace
-                )
-
-                def publish_active():
-                    publish()
-                    self._baselines.replace_many(
-                        ref, tuple(item.ref for item in candidate.variants), (*new_baselines, refreshed.baseline)
-                    )
-
-                result = self._lifecycle.commit_active_content(
-                    candidate.project,
-                    variant,
-                    context,
-                    expected_project_revision=candidate.expected.project.envelope.revision,
-                    expected_variant_revision=variant.revision - 1,
-                    expected_generation=candidate.generation,
-                    before_publish=publish_active,
-                    persisted=True,
-                )
-                if not result.is_success:
-                    return result
-            else:
-                self._lifecycle.commit_detached_content(ref, candidate.generation, publish)
-                for variant in candidate.variants:
-                    self._baselines.remove(ref, variant.ref)
-            return OperationResult.completed(SourceUpdateResult(candidate.path, backup[0]), run_id=context.run_id)
+            return publish_source_input(
+                candidate,
+                token,
+                context,
+                lifecycle=self._lifecycle,
+                store=self._store,
+                baselines=self._baselines,
+                preparer=self._preparer,
+            )
         except Exception as exc:
             return OperationResult.from_exception(exc, run_id=context.run_id)
 
@@ -253,26 +189,7 @@ class ProjectSourceUpdateService:
                 if exc.category is not ErrorCategory.PREREQUISITE:
                     raise
                 return None, ("旧来源成果不可用，已有译文将保留并标为待复核。",)
-        if source.fingerprint is not None:
-            try:
-                old = self._preparer.prepare_source(
-                    ProjectSourceRequest(source.location, source.format_id, source.fingerprint, source.format_options),
-                    context,
-                    role="primary",
-                    common_options=(),
-                )
-                metadata = {} if old.hydration is None else dict(old.hydration.source_snapshot.metadata)
-                if metadata.get("localized_sources") or metadata.get("localized_lookup_detected"):
-                    return None, (
-                        "旧插件的配套 Strings 文件版本没有独立保存，无法核实旧原文；已有译文将保留并标为待复核。",
-                    )
-                return old, ()
-            except OSError:
-                pass
-            except DomainError as exc:
-                if exc.category not in {ErrorCategory.INPUT, ErrorCategory.CONFLICT, ErrorCategory.PREREQUISITE}:
-                    raise
-        return None, ("旧源文件已变化或不可读取，无法核实原文和旧顺序；匹配的已有译文将保留并标为待复核。",)
+        return None, ("旧来源成果未保存，无法核实原文和旧顺序；匹配的已有译文将保留并标为待复核。",)
 
 
 def _registry(project):

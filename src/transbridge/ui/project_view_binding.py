@@ -226,7 +226,7 @@ class ProjectViewBinding:
         prepared_slots = {}
         for key, slot in slots:
             if not isinstance(key, str) or not key or key in prepared_slots or not isinstance(slot, CollectionSlot):
-                raise ValueError("Project slots require unique non-empty locations and CollectionSlot values")
+                raise ValueError("Project slots require unique non-empty source identities and CollectionSlot values")
             prepared_slots[key] = slot
         if state is not None and (not isinstance(state, ProjectViewState) or state.snapshot is not snapshot):
             raise ValueError("Prepared project view must belong to the exact installation snapshot")

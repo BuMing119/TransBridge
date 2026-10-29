@@ -104,9 +104,10 @@ def test_selected_migrations_reach_every_parsed_source_and_authority(project, pa
     cfg = _inputs(project.root, source, batch)
     _run(project, parsing, cfg, "batch_parse_esp" if batch else "parse_esp")
 
-    assert list(project.ctx.slots) == cfg.esp_paths, parsing.messages
-    for index, path in enumerate(cfg.esp_paths, 1):
-        slot = project.ctx.slots[path]
+    keys = parse_fixtures.source_keys(project, cfg.esp_paths)
+    assert list(project.ctx.slots) == keys, parsing.messages
+    for index, key in enumerate(keys, 1):
+        slot = project.ctx.slots[key]
         assert [entry.translation for entry in slot.collection] == [f"Target {index}"]
         assert slot.migrate_count == 1
         if source != "tp":
@@ -139,8 +140,9 @@ def test_invalid_migration_source_is_reported_and_retry_targets_existing_collect
 
     _run(project, parsing, cfg, "batch_parse_esp" if batch else "parse_esp")
 
-    assert list(project.ctx.slots) == cfg.esp_paths
-    first = project.ctx.slots[cfg.esp_paths[0]]
+    keys = parse_fixtures.source_keys(project, cfg.esp_paths)
+    assert list(project.ctx.slots) == keys
+    first = project.ctx.slots[keys[0]]
     assert all(not entry.translation for slot in project.ctx.slots.values() for entry in slot.collection)
     assert not project.ctx.authoritative_projection_diverged()
     if source != "tp":
@@ -150,7 +152,7 @@ def test_invalid_migration_source_is_reported_and_retry_targets_existing_collect
     assert options["error"] is True and not opened
     options["retry"]()
     assert opened == [first]
-    project.ctx.remove_slot(cfg.esp_paths[0])
+    project.ctx.remove_slot(keys[0])
     options["retry"]()
     assert opened == [first]
     assert "原集合已变化" in notices[-1][0]
@@ -179,7 +181,7 @@ def test_eet_primary_source_is_retained_when_selected_migration_fails(project, p
     parsing.host.show_message = lambda message, **options: notices.append((message, options))
     _run(project, parsing, cfg, "parse_eet")
 
-    assert list(project.ctx.slots) == [str(project.source)]
+    assert list(project.ctx.slots) == parse_fixtures.source_keys(project, [str(project.source)])
     assert not project.ctx.authoritative_projection_diverged()
     message, options = notices[-1]
     assert "迁移部分失败" in message and str(bad) in message
@@ -195,7 +197,7 @@ def test_wrong_xml_format_is_reported_instead_of_registering_completed_migration
 
     _run(project, parsing, cfg, "batch_parse_esp" if batch else "parse_esp")
 
-    assert list(project.ctx.slots) == cfg.esp_paths
+    assert list(project.ctx.slots) == parse_fixtures.source_keys(project, cfg.esp_paths)
     for slot in project.ctx.slots.values():
         assert getattr(slot, f"{source}_path") is None
         assert slot.migrate_count == 0

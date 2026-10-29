@@ -34,17 +34,44 @@ class TestReportSystem(unittest.TestCase):
         self.assertFalse(hasattr(ProofreaderController, "_summarize_polish_results"))
         self.assertFalse(hasattr(ProofreaderController, "_summarize_decisions"))
 
-    def test_list_quality_reports_without_esp_is_empty(self):
+    def test_list_quality_reports_without_esp_uses_saved_fallback_reports(self):
         from transbridge.smart_assistant.tools.tool_proofreader import _tool_list_quality_reports
 
         ctx = MockAppContext(collection=None)
         ctx.esp_path = None
 
-        result = _tool_list_quality_reports({}, ExecutionContext(app_context=ctx))
+        with (
+            tempfile.TemporaryDirectory() as data_dir,
+            patch("transbridge.paratranz.config_manager.ParatranzConfig.get_data_dir", return_value=data_dir),
+        ):
+            reports = Path(data_dir) / "reports" / "postprocess"
+            reports.mkdir(parents=True)
+            (reports / "fallback.xlsx").write_bytes(b"report")
+            result = _tool_list_quality_reports({}, ExecutionContext(app_context=ctx))
 
         self.assertTrue(result.success)
-        self.assertIn("未加载 ESP", result.message)
-        self.assertEqual(result.data["files"], [])
+        self.assertEqual([item["name"] for item in result.data["files"]], ["fallback.xlsx"])
+
+    def test_saved_source_name_locates_reports_when_reference_is_missing_or_changed(self):
+        from transbridge.application.io import FormatId, SourceDescriptor, SourceSnapshot
+        from transbridge.smart_assistant.tools.tool_proofreader import _tool_list_quality_reports
+
+        ctx = MockAppContext(collection=make_test_collection(1))
+        ctx.active_slot.source_snapshot = SourceSnapshot.from_bytes(
+            SourceDescriptor("C:/old/Demo.esp", "Demo.esp"), FormatId.PLUGIN_SSE, b"captured plugin"
+        )
+        with tempfile.TemporaryDirectory() as data_dir:
+            reports = Path(data_dir) / "reports"
+            reports.mkdir()
+            (reports / "saved.xlsx").write_bytes(b"report")
+            for reference in (None, "C:/other/Changed.esp"):
+                ctx.esp_path = reference
+                with patch(
+                    "transbridge.paratranz.config_manager.LLMConfig.get_ai_translator_dir", return_value=data_dir
+                ) as resolve:
+                    result = _tool_list_quality_reports({}, ExecutionContext(app_context=ctx))
+                resolve.assert_called_once_with("Demo")
+                self.assertEqual([item["name"] for item in result.data["files"]], ["saved.xlsx"])
 
     def test_report_directory_without_esp_falls_back_under_data_dir(self):
         from transbridge.smart_assistant.tools.tool_proofreader import _resolve_report_directory

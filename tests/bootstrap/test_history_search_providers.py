@@ -1,19 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from hashlib import sha256
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from transbridge.application.io import (
     EntryKey,
     FormatId,
-    ParseResult,
     SourceDescriptor,
     SourceNamespace,
     SourceSnapshot,
     Stage,
 )
 from transbridge.application.projects import ProjectCatalogEntry, ProjectCatalogSnapshot
+from transbridge.application.projects.prepared_source_results import prepare_parsed_source
 from transbridge.application.projects.source_registry import (
     BilingualCapability,
     SourceKind,
@@ -27,6 +30,7 @@ from transbridge.bootstrap.history_search import (
     TerminologyHistoryProvider,
 )
 from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
 from transbridge.persistence.terminology import TerminologyPaths
 from transbridge.persistence.v2.ids import EntityKind, ProjectId, VariantId, VariantRef
 from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
@@ -104,13 +108,19 @@ def _project(source: SourceRegistration, variant_id: str = "variant-1") -> Proje
     )
 
 
-def test_project_provider_restores_original_by_exact_entry_key(tmp_path) -> None:
+@pytest.mark.parametrize("clear_reference", [False, True])
+def test_project_provider_restores_original_by_exact_entry_key(tmp_path, clear_reference) -> None:
     payload = b"source"
     digest = sha256(payload).hexdigest()
     namespace = SourceNamespace.from_fingerprint(FormatId.JSON_TRANSBRIDGE.value, digest)
     key = EntryKey(namespace, "record-1")
     path = tmp_path / "source.json"
     path.write_bytes(payload)
+    parsed_entry = TranslationEntry("record-1", "record-1", "Skyrim", "", 0, None, entry_key=key)
+    snapshot = SourceSnapshot.from_bytes(SourceDescriptor(str(path)), FormatId.JSON_TRANSBRIDGE, payload)
+    saved = prepare_parsed_source(str(path), (parsed_entry,), snapshot, FormatId.JSON_TRANSBRIDGE)
+    artifacts = ProjectSourceArtifactStore(str(tmp_path / "state"))
+    artifact_id = artifacts.put(saved)
     source = SourceRegistration(
         "source-1",
         True,
@@ -120,6 +130,7 @@ def test_project_provider_restores_original_by_exact_entry_key(tmp_path) -> None
         BilingualCapability.SELF_CONTAINED,
         fingerprint=digest,
         display_name="source.json",
+        source_artifact_id=artifact_id,
     )
     project = _project(source)
     variant_ref = VariantRef(VariantId("variant-1"), ProjectId("project-1"))
@@ -128,18 +139,22 @@ def test_project_provider_restores_original_by_exact_entry_key(tmp_path) -> None
         (SourceFingerprint(namespace, digest),),
         (VariantEntryState(key, "天际", Stage.TRANSLATED),),
     ).to_dto()
-    parsed_entry = TranslationEntry("record-1", "record-1", "Skyrim", "", 0, None, entry_key=key)
-    snapshot = SourceSnapshot.from_bytes(SourceDescriptor(str(path)), FormatId.JSON_TRANSBRIDGE, payload)
 
     class Io:
         def parse(self, request):
-            return ParseResult.completed(request.format_hint, request.source, snapshot, (parsed_entry,))
+            raise AssertionError("history must use saved source entries")
+
+    path.unlink()
+    if clear_reference:
+        source = replace(source, location="")
+        project = _project(source)
 
     result = ProjectVariantHistoryProvider(
         _Catalog(),
         _Repository(project),
         _Repository(variant),
         Io(),
+        artifacts=artifacts,
     ).collect(None)
 
     assert [(item.original, item.translation) for item in result.records] == [("Skyrim", "天际")]
@@ -157,9 +172,43 @@ def test_project_provider_restores_original_by_exact_entry_key(tmp_path) -> None
         _Repository(project),
         _Repository(unmatched_variant),
         Io(),
+        artifacts=artifacts,
     ).collect(None)
     assert not unmatched.records
     assert any(item.code == "HISTORY_ENTRY_UNMATCHED" for item in unmatched.diagnostics)
+
+    missing_saved = ProjectVariantHistoryProvider(
+        _Catalog(),
+        _Repository(_project(replace(source, source_artifact_id=None))),
+        _Repository(variant),
+        Io(),
+        artifacts=artifacts,
+    ).collect(None)
+    assert not missing_saved.records
+    assert any(item.code == "HISTORY_SOURCE_PARSE_FAILED" for item in missing_saved.diagnostics)
+
+
+def test_saved_original_in_identity_remains_searchable_without_a_source_artifact(tmp_path) -> None:
+    source = SourceRegistration(
+        "source-1", True, FormatId.XML_EET, "", SourceKind.BILINGUAL, BilingualCapability.SELF_CONTAINED
+    )
+    namespace = SourceNamespace.legacy()
+    variant = VariantSnapshot(
+        VariantRef(VariantId("variant-1"), ProjectId("project-1")),
+        (SourceFingerprint(namespace, None),),
+        (
+            VariantEntryState(EntryKey(namespace, "known", "Saved original"), "已存译文", Stage.TRANSLATED),
+            VariantEntryState(EntryKey(namespace, "unknown"), "原文未知的译文", Stage.TRANSLATED),
+        ),
+    )
+    result = ProjectVariantHistoryProvider(
+        _Catalog(),
+        _Repository(_project(source)),
+        _Repository(variant.to_dto()),
+        artifacts=ProjectSourceArtifactStore(str(tmp_path)),
+    ).collect(None)
+    assert [(row.original, row.translation) for row in result.records] == [("Saved original", "已存译文")]
+    assert any(row.code == "HISTORY_ENTRY_UNMATCHED" for row in result.diagnostics)
 
 
 def test_terminology_provider_reads_only_effective_decisions_and_preserves_scope(tmp_path, monkeypatch) -> None:

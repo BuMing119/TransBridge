@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 from PyQt6.QtWidgets import QMessageBox
@@ -5,6 +6,7 @@ from PyQt6.QtWidgets import QMessageBox
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 from ..context import CollectionSlot
+from ..source_hydration import source_slot_key
 from ..workers import ApiWorker
 from .parse_migration import prepare_parse_migrations
 
@@ -162,7 +164,11 @@ class ParseCoordinator:
                 format_id=None if hydration is None else hydration.format_id,
             )
             self._finish_parse(
-                esp_path, slot, collection, expected_authority=publication[0], migration_failures=migration.failures
+                source_slot_key(hydration) if hydration is not None else esp_path,
+                slot,
+                collection,
+                expected_authority=publication[0],
+                migration_failures=migration.failures,
             )
 
         def _on_error(msg: str):
@@ -249,9 +255,10 @@ class ParseCoordinator:
                     source_snapshot=None if hydration is None else hydration.source_snapshot,
                     format_id=None if hydration is None else hydration.format_id,
                 )
-                results.append((esp_path, slot, collection))
+                key = source_slot_key(hydration) if hydration is not None else esp_path
+                results.append((key, slot, collection))
                 if migration.failures:
-                    migration_failures.append((esp_path, slot, migration.failures))
+                    migration_failures.append((key, slot, migration.failures))
                 current[0] += 1
                 _parse_next()
 
@@ -275,13 +282,13 @@ class ParseCoordinator:
                 return
             success_count = sum(1 for _, slot, _ in results if slot is not None)
             fail_count = total - success_count
-            for esp_path, slot, collection in results:
+            for slot_key, slot, collection in results:
                 if slot:
-                    self._host.context.add_slot(esp_path, slot)
+                    self._host.context.add_slot(slot_key, slot)
             if results:
-                for esp_path, slot, _ in reversed(results):
+                for slot_key, slot, _ in reversed(results):
                     if slot:
-                        self._host.context.activate_slot(esp_path)
+                        self._host.context.activate_slot(slot_key)
                         break
             msg = f"批量解析完成：成功 {success_count} 个"
             if fail_count > 0:
@@ -344,7 +351,11 @@ class ParseCoordinator:
                 format_id=None if hydration is None else hydration.format_id,
             )
             self._finish_parse(
-                eet_path, slot, collection, expected_authority=publication[0], migration_failures=migration.failures
+                source_slot_key(hydration) if hydration is not None else eet_path,
+                slot,
+                collection,
+                expected_authority=publication[0],
+                migration_failures=migration.failures,
             )
 
         def _on_error(msg: str):
@@ -448,7 +459,10 @@ class ParseCoordinator:
         if committed_authority is not None:
             committed_authority[0] = identity, added.value.project_revision, added.value.variant_revision
 
-        return collection_from_hydration(added.value.hydration), added.value.hydration
+        hydration = replace(
+            added.value.hydration, source_id=added.value.source_id, reference_location=added.value.location
+        )
+        return collection_from_hydration(hydration), hydration
 
     def _can_publish_authoritative_source(self, expected_authority) -> bool:
         context = self._host.context

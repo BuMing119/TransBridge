@@ -110,7 +110,7 @@ def test_mixed_local_checks_run_without_llm_credentials_or_translation_dependenc
     assert entries == before
 
 
-def test_mixed_translation_still_requires_credentials_source_and_translation_dependencies() -> None:
+def test_mixed_translation_still_requires_credentials_and_translation_dependencies() -> None:
     config = _local_config()
     config.action_rules = [ActionRule(action="translate")]
 
@@ -119,7 +119,6 @@ def test_mixed_translation_still_requires_credentials_source_and_translation_dep
     assert {issue.code for issue in result.issues} == {
         AiPreflightCode.MISSING_API_KEY,
         AiPreflightCode.MISSING_MODEL,
-        AiPreflightCode.MISSING_SOURCE,
         AiPreflightCode.MISSING_DEPENDENCY,
     }
 

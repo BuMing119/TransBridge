@@ -30,6 +30,7 @@ class PlanExecutionBinding:
         on_task_started: Callable[[str, str], None] | None = None,
         on_lifecycle_changed: Callable[[], None] | None = None,
         on_execution_failed: Callable[[str], None] | None = None,
+        on_tool_result: Callable[[dict, object], None] | None = None,
     ) -> None:
         self._context = context
         self._execution_context = execution_context or (lambda: self._context)
@@ -38,6 +39,7 @@ class PlanExecutionBinding:
         )
         self._on_lifecycle_changed = on_lifecycle_changed or (lambda: None)
         self._failure_callback = on_execution_failed
+        self._on_tool_result = on_tool_result or (lambda _step, _result: None)
         self._controller = controller
         self._middlewares = middlewares
         self._observability = observability
@@ -91,6 +93,17 @@ class PlanExecutionBinding:
 
     def _start_engine(self, engine, runtime, steps, confirmation_view) -> None:
         generation = self._generation
+        engine.on_step_finished(
+            lambda result: confirmation_view.dispatch(
+                lambda: (
+                    self._on_tool_result(
+                        next((step for step in steps if str(step.get("id")) == str(result.step_id)), {}), result
+                    )
+                    if not self._closed and self._engine is engine and self._generation == generation
+                    else None
+                )
+            )
+        )
         engine.on_step_requires_confirmation(
             lambda node_id, prompt, choices, e=engine, g=generation: self._request_engine_decision(
                 e, g, confirmation_view, node_id, prompt, choices

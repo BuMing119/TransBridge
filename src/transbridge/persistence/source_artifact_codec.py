@@ -155,6 +155,8 @@ def decode_prepared_artifact(
         if key_count != 2 or "$type" not in value or "fields" not in value or value["$type"] not in _TYPES:
             raise ValueError("unknown source artifact type tag")
         name, attributes = value["$type"], value["fields"]
+        if name == "PreparedSourceHydration" and isinstance(attributes, dict):
+            attributes = {"source_id": None, "reference_location": None, **attributes}
         if not isinstance(attributes, dict) or attributes.keys() != _FIELD_SETS[name]:
             raise ValueError(f"source artifact contract fields differ: {name}")
         attributes = {key: decode(item) for key, item in attributes.items()}

@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from .source_registry import SourceRelationKind, legacy_source_role, plugin_source_location
+from .source_registry import SourceRelationKind, is_plugin_source, legacy_source_role
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +49,7 @@ def folded_plugin_pairs(
     pairs: list[FoldedPluginPair] = []
     by_id = {source.get("source_id"): source for source in sources}
     for translation in sources:
-        if legacy_source_role(translation) != "migration" or plugin_source_location(translation) is None:
+        if legacy_source_role(translation) != "migration" or not is_plugin_source(translation):
             continue
         links = tuple(item for item in relations if item.get("from_source_id") == translation.get("source_id"))
         if (
@@ -59,7 +59,7 @@ def folded_plugin_pairs(
         ):
             continue
         primary = by_id.get(links[0].get("to_source_id"))
-        if primary is None or legacy_source_role(primary) != "primary" or plugin_source_location(primary) is None:
+        if primary is None or legacy_source_role(primary) != "primary" or not is_plugin_source(primary):
             continue
         identity = source_content_identity(translation)
         if identity is not None and any(
@@ -78,7 +78,7 @@ def folded_plugin_pairs(
             and item.get("to_source_id") == primary.get("source_id")
             and (member := by_id.get(item.get("from_source_id"))) is not None
             and legacy_source_role(member) == "migration"
-            and plugin_source_location(member) is not None
+            and is_plugin_source(member)
         )
         if len(incoming) == 1:
             pairs.append(FoldedPluginPair(primary, translation))
@@ -91,7 +91,7 @@ def folded_plugin_pairs(
         if identity is not None:
             groups.setdefault(identity, []).append(source)
     for members in groups.values():
-        if len(members) != 2 or any(plugin_source_location(source) is None for source in members):
+        if len(members) != 2 or any(not is_plugin_source(source) for source in members):
             continue
         primaries = [source for source in members if legacy_source_role(source) == "primary"]
         translations = [source for source in members if legacy_source_role(source) == "migration"]

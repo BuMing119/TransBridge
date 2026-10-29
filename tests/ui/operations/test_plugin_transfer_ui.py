@@ -67,7 +67,7 @@ def transfer_ui(tmp_path, qapp):
     qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
-def test_plugin_picker_and_clear_choose_default_output_without_parsing(transfer_ui, monkeypatch):
+def test_plugin_picker_and_clear_require_separate_output_selection_without_parsing(transfer_ui, monkeypatch):
     case = transfer_ui
     dialog = case.dialog
 
@@ -81,11 +81,11 @@ def test_plugin_picker_and_clear_choose_default_output_without_parsing(transfer_
     assert isinstance(dialog._overwrite, QCheckBox)
     assert not dialog._overwrite.isChecked()
     assert dict(dialog.edited_values())["plugin_path"] == str(case.target)
-    assert dict(dialog.edited_values())["target_path"] == str(case.target)
+    assert dict(dialog.edited_values())["target_path"] == ""
     assert not any(editor.text() in {"true", "false"} for editor in dialog.findChildren(QLineEdit))
     dialog._select_plugin("")
     assert dict(dialog.edited_values())["plugin_path"] == ""
-    assert dict(dialog.edited_values())["target_path"] == str(case.source)
+    assert dict(dialog.edited_values())["target_path"] == ""
     assert not case.workers
 
 
@@ -121,6 +121,7 @@ def test_transfer_preflight_is_deferred_and_submit_reuses_frozen_check(transfer_
 
     monkeypatch.setattr(SsePluginAdapter, "parse", track_parse)
     dialog._select_plugin(str(case.target))
+    dialog._field_edits["target_path"].setText(str(case.target))
     dialog._overwrite.setChecked(True)
     dialog._preflight_button.click()
     assert not parsed_paths
@@ -169,6 +170,7 @@ def test_changing_output_invalidates_old_confirmation(transfer_ui):
     case = transfer_ui
     dialog = case.dialog
     dialog._select_plugin(str(case.target))
+    dialog._field_edits["target_path"].setText(str(case.target))
     dialog._overwrite.setChecked(True)
     dialog._preflight_button.click()
     case.workers[-1].complete()

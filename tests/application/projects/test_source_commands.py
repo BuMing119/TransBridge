@@ -156,6 +156,48 @@ def test_duplicate_source_is_rejected_without_partial_state() -> None:
     assert len(registry.provide(lifecycle.active.project, variant_ref, context)) == 1
 
 
+def test_new_registration_identity_depends_on_content_namespace_instead_of_reference() -> None:
+    first, *_first_context, first_context = _setup()
+    second, *_second_context, second_context = _setup()
+    original = second._preparer.prepared
+    descriptor = original.to_dict()
+    descriptor["location"] = "D:/other/reference.esp"
+    second._preparer.prepared = replace(original, descriptor=tuple(descriptor.items()))
+
+    first_result = first.add_source(ProjectSourceRequest("D:/fixtures/plugin.esp", FormatId.PLUGIN_SSE), first_context)
+    second_result = second.add_source(
+        ProjectSourceRequest("D:/other/reference.esp", FormatId.PLUGIN_SSE), second_context
+    )
+
+    assert first_result.is_success and second_result.is_success
+    assert first_result.value.source_id == second_result.value.source_id
+
+
+def test_same_reference_with_new_content_preserves_existing_registration_identity() -> None:
+    service, lifecycle, _registry, _project, _variant, context = _setup()
+    request = ProjectSourceRequest("D:/fixtures/plugin.esp", FormatId.PLUGIN_SSE)
+    assert service.add_source(request, context).is_success
+    lifecycle.active.project.envelope.data["sources"][0]["source_id"] = "existing-saved-id"
+    original = service._preparer.prepared
+    namespace = SourceNamespace("source:replacement")
+    descriptor = original.to_dict()
+    descriptor["source_id"] = namespace.value
+    descriptor["fingerprint"] = "b" * 64
+    baseline = SourceBaseline(
+        SourceFingerprint(namespace, "b" * 64), (VariantEntryState(EntryKey(namespace, "other"), "另一译文", 1),)
+    )
+    service._preparer.prepared = replace(original, descriptor=tuple(descriptor.items()), baseline=baseline)
+
+    added = service.add_source(request, context)
+
+    assert added.is_success, added.diagnostics
+    sources = lifecycle.active.project.envelope.data["sources"]
+    assert len(sources) == 2
+    assert sources[0]["source_id"] == "existing-saved-id"
+    assert sources[1]["source_id"] == added.value.source_id
+    assert sources[0]["location"] == sources[1]["location"] == request.location
+
+
 def test_add_source_applies_initial_import_states_in_the_same_authoritative_commit() -> None:
     service, lifecycle, _registry, _project_ref, _variant_ref, context = _setup()
     request = source_request_with_initial_entry_states(

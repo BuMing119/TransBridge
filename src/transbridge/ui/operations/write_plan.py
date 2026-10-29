@@ -19,7 +19,9 @@ def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPla
     transfer = isinstance(value, PluginTransferDraft)
     request = value.write if transfer else value
     artifact_paths = (
-        (request.target_path,)
+        ()
+        if not request.target_path.strip()
+        else (request.target_path,)
         if transfer
         else plugin_artifact_paths(request.source_snapshot, request.target_path, request.options)
     )
@@ -39,7 +41,7 @@ def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPla
     )
     return OperationPlanDraft(
         request=value,
-        target=request.target_path,
+        target=request.target_path if request.target_path.strip() else "请选择输出位置",
         target_revision="existing" if target_exists else "missing",
         input_fingerprint=request.source_snapshot.sha256,
         scope_summary=f"{len(request.entries)} 个项目条目",
@@ -77,6 +79,7 @@ def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPla
                 control=EditableControl.BOOLEAN,
             ),
         ),
+        output_ready=bool(request.target_path.strip()),
         locked_count=sum(stage == 9 for stage in stages),
         hidden_count=sum(stage == -1 for stage in stages),
         overwrite_risk=target_exists,

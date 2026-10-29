@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.io.stage_policy import Stage
 from transbridge.application.projects.source_registry import SourceRelation, SourceRelationKind
@@ -213,3 +215,28 @@ def test_variant_overlay_refuses_same_entry_key_when_source_fingerprint_changed(
 
     assert result.evidence[0].translation == "parsed"
     assert result.diagnostics == ("VARIANT_FINGERPRINT_MISMATCH:plugin-a:plugin:a",)
+
+
+def test_folded_translation_keeps_its_fingerprint_and_current_original_variant_evidence() -> None:
+    original = _fragment("primary", (_entry("plugin:a", "one", "Dragon", "Merged translation"),))
+    translated = replace(
+        _fragment("migration", (_entry("plugin:a", "one", "Imported translation", "", Stage.UNTRANSLATED),)),
+        fingerprint="b" * 64,
+    )
+    relation = SourceRelation(
+        "folded", SourceRelationKind.TRANSLATION_FOR, "migration", "primary", folded_into_baseline=True
+    )
+    variant = _variant(VariantEntryState(original.entries[0].entry_key, "Current translation", Stage.REVIEWED))
+
+    result = EvidenceAssembler().assemble(
+        project_id="project-1",
+        variant_id="main",
+        fragments=(original, translated),
+        relations=(relation,),
+        variant_snapshot=variant,
+    )
+
+    assert not result.diagnostics
+    assert {(item.original, item.translation) for item in result.evidence} == {("Dragon", "Current translation")}
+    assert all(item.from_current_variant for item in result.evidence)
+    assert any(item.source_chain == ("migration", "primary") for item in result.evidence)

@@ -10,12 +10,17 @@ from threading import RLock
 from uuid import uuid4
 
 from transbridge.application.contracts import RequestContext
+from transbridge.application.preflight.inputs import SOURCE_CONTEXT_KNOWN
 from transbridge.application.translation.result_merge import ResultConflictPolicy
 from transbridge.application.translation.task_config_snapshot import execution_signature, execution_snapshot
 from transbridge.application.translation.task_entry_results import TaskEntryResults
 from transbridge.application.translation.task_merge_evidence import TaskMergeEvidenceStore
 from transbridge.application.translation.task_recovery import TaskRecoveryStore
-from transbridge.application.translation.task_result_recovery import load_recovery_results, save_recovery_results
+from transbridge.application.translation.task_result_recovery import (
+    load_recovery_results,
+    save_recovery_results,
+    source_context_known,
+)
 from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.task_results import TaskResultPreferences
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -240,8 +245,20 @@ class AssistantTaskResults:
         self.policy = ResultConflictPolicy(provider().ai_policy)
         self.config = config.copy_for_execution() if hasattr(config, "copy_for_execution") else deepcopy(config)
         self.terminology = terminology
-        self.esp_path = str(getattr(ctx, "esp_path", None) or "")
-        detached = TranslationEntryCollection(deepcopy(tuple(collection)))
+        from .task_source_identity import capture_source_identity
+
+        source_identity = capture_source_identity(ctx, collection)
+        self.esp_path = source_identity.resource_path
+        self.report_context = source_identity.report_context()
+        from .input_prerequisites import source_slot_for
+
+        def captured_entry(entry):
+            slot = source_slot_for(ctx, entry)
+            if slot is not None and getattr(slot, "source_snapshot", None) is None and entry.context is None:
+                return replace(entry, metadata=tuple({**dict(entry.metadata), SOURCE_CONTEXT_KNOWN: False}.items()))
+            return entry
+
+        detached = TranslationEntryCollection(captured_entry(entry) for entry in deepcopy(tuple(collection)))
         entries = tuple(detached.get(entry.identity) for entry in targets)
         translate_entries, polish_entries, postprocess_entries = entries, (), ()
         if mode == "polish":
@@ -261,10 +278,7 @@ class AssistantTaskResults:
             polish_entries = tuple(
                 entry for entry in entries if actions.get(ai_entry_id(entry)) == "polish" and entry.translation
             )
-        source = next(
-            (str(key) for key, slot in getattr(self.app, "slots", {}).items() if slot.collection is collection),
-            "assistant",
-        )
+        source = source_identity.key
         self.task = SourceTask(
             source,
             source,
@@ -285,6 +299,7 @@ class AssistantTaskResults:
                 "translation": entry.translation,
                 "stage": entry.stage,
                 "context": entry.context or "",
+                "context_known": source_context_known(entry),
                 "revision": entry.revision.value,
                 "entry": entry.to_dict(),
             }

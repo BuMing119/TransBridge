@@ -182,7 +182,7 @@ def test_import_rejects_unpackaged_inputs_without_publishing(tmp_path, services_
         assert _file_state(target.root) == before
 
 
-def test_roundtrip_keeps_all_variants_snapshots_and_relocates_sources_without_activation(
+def test_roundtrip_keeps_all_variants_snapshots_and_saved_content_without_relocating_reference(
     tmp_path,
     services_factory,
     exported_project,
@@ -202,10 +202,12 @@ def test_roundtrip_keeps_all_variants_snapshots_and_relocates_sources_without_ac
     assert target.project_projection.snapshot() is None
     assert not (Path(target.root) / "active-project.json").exists()
     project = target.projects.read_snapshot(source.project_ref).envelope.data
-    relocated = Path(project["sources"][0]["location"])
-    assert relocated.is_relative_to(Path(target.root) / "projects" / source.project_ref.identity.encoded / "sources")
-    assert relocated.read_bytes() == source_bytes
-    assert project["sources"][0]["legacy"]["path"] == str(relocated)
+    assert project["sources"][0]["location"] == ""
+    assert project["sources"][0]["legacy"]["path"] == ""
+    from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
+
+    captured = ProjectSourceArtifactStore(target.root).get(project["sources"][0]["source_artifact_id"])
+    assert captured.hydration.source_snapshot.content == source_bytes
     for ref in source.variant_refs:
         assert target.variants.read_snapshot(ref).envelope.to_dict() == expected[ref]
         repository = ProjectSnapshotRepository(target.root, target.filesystem)

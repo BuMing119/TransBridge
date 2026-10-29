@@ -8,6 +8,7 @@ from pathlib import Path
 
 from transbridge.ai_translator.term_source_reader import ConfiguredTermSourceReader, TermSourceReadRequest
 from transbridge.paratranz.config_manager import LLMConfig, ParatranzConfig
+from transbridge.ui.dynamic_terminology_source import dynamic_terminology_source
 from transbridge.ui.paratranz.target_context import bound_paratranz_project
 
 
@@ -34,17 +35,18 @@ def configured_source_selections(context) -> tuple[TerminologySourceSelection, .
         location = str(source.get("location") or "").strip()
         if not source.get("enabled", True) or not _is_plugin_source(source, location):
             continue
-        path_key = str(Path(location)).casefold()
-        if not location or path_key in seen_plugin_paths:
+        dynamic = dynamic_terminology_source(context, source)
+        path_key = str(Path(dynamic.cache_path)).casefold()
+        if (not dynamic.reference and not dynamic.source_key) or path_key in seen_plugin_paths:
             continue
         seen_plugin_paths.add(path_key)
-        plugin_name = str(source.get("name") or source.get("label") or Path(location).stem)
+        plugin_name = Path(dynamic.display_name).stem
         label = f"动态词库 · {plugin_name}"
         selections.append(
             TerminologySourceSelection(
-                TermSourceReadRequest("dynamic", label, esp_path=location),
+                TermSourceReadRequest("dynamic", label, esp_path=dynamic.cache_path),
                 f"{plugin_name}译名方案",
-                f"读取项目插件 {Path(location).name} 对应的动态术语库。",
+                f"读取项目插件 {dynamic.display_name} 对应的动态术语库。",
             )
         )
 

@@ -15,6 +15,7 @@ from transbridge.smart_assistant.tools.task_manager import TaskManager
 from transbridge.smart_assistant.tools.tool_writer import _tool_write_back
 from transbridge.smart_assistant.tools.types import ExecutionContext
 from transbridge.ui.coordinators import parse_coordinator as parse_module
+from transbridge.ui.source_hydration import prepare_project_slots
 from transbridge.ui.workers import ApiWorker
 
 project = source_fixtures.project
@@ -28,6 +29,11 @@ def _until(project, predicate):
         time.sleep(0.005)
     project.app.processEvents()
     assert predicate()
+
+
+def source_keys(project, paths):
+    by_location = {source["location"]: source["source_id"] for source in project.ctx.project_sources}
+    return [by_location[path] for path in paths]
 
 
 def _plugin(path: Path, index: int) -> None:
@@ -106,8 +112,10 @@ def test_gui_parse_publishes_authoritative_hydration_usable_by_safe_writer(proje
     assert len(project.ctx.slots) == len(paths), parsing.messages
     authority = project.services.project_lifecycle.active.variant.snapshot()
     expected = {entry.entry_key: entry for entry in authority.entries}
-    for path in paths:
-        slot = project.ctx.slots[path]
+    keys = source_keys(project, paths)
+    assert list(project.ctx.slots) == keys
+    for key in keys:
+        slot = project.ctx.slots[key]
         assert slot.source_snapshot is not None
         assert slot.format_id is (FormatId.XML_EET if kind == "eet" else FormatId.PLUGIN_SSE)
         assert set(entry.identity for entry in slot.collection) <= expected.keys()
@@ -116,7 +124,7 @@ def test_gui_parse_publishes_authoritative_hydration_usable_by_safe_writer(proje
             assert entry.translation == expected[entry.identity].translation
     assert not project.ctx.authoritative_projection_diverged()
 
-    project.ctx.activate_slot(paths[-1])
+    project.ctx.activate_slot(keys[-1])
     target = project.root / ("written.xml" if kind == "eet" else "written.esp")
     result = _tool_write_back(
         {"target": "eet" if kind == "eet" else "esp", "path": str(target)},
@@ -128,6 +136,14 @@ def test_gui_parse_publishes_authoritative_hydration_usable_by_safe_writer(proje
     assert TaskManager().get_status(result.data["task_id"])["status"] == "completed"
     assert target.is_file()
     assert project.services.gui_project_commands.save(project.request).is_success
+    for path in paths:
+        Path(path).unlink()
+    reopened = project.services.current_project_opener.prepare_active(project.request)
+    assert reopened.is_success and reopened.value.recovery is None, reopened.diagnostics
+    values = dict(project.services.project_projection.snapshot().values)
+    values["sources"] = reopened.value.sources
+    reloaded_slots = prepare_project_slots(reopened.value.hydrations, SimpleNamespace(values=values))
+    assert {key for key, _slot in reloaded_slots} == set(keys)
 
 
 @pytest.mark.parametrize("kind", ["eet", "esp", "batch"])
@@ -152,7 +168,7 @@ def test_late_parse_callback_cannot_publish_stale_hydration(project, parsing, mo
         return ApiWorker(work)
 
     monkeypatch.setattr(parse_module, "ApiWorker", delayed_worker)
-    paths = parsing.start(kind)
+    parsing.start(kind)
     try:
         _until(project, committed.is_set)
         assert not project.ctx.slots
@@ -170,7 +186,7 @@ def test_late_parse_callback_cannot_publish_stale_hydration(project, parsing, mo
         before = project.services.project_lifecycle.active.variant.snapshot()
         release.set()
         _until(project, lambda: not parsing.state["parsing"])
-        assert all(path not in project.ctx.slots for path in paths)
+        assert not project.ctx.slots
         assert project.services.project_lifecycle.active.variant.snapshot() == before
         assert any("未发布过期集合" in message for message in parsing.messages)
     finally:
@@ -189,7 +205,8 @@ def test_batch_parse_continues_after_invalid_source_without_discarding_valid_hyd
     monkeypatch.setattr("tests.ui.test_parse_hydration_authority._plugin", source_file)
     paths = parsing.start("batch")
     _until(project, lambda: not parsing.state["parsing"])
-    assert list(project.ctx.slots) == paths[1:]
-    assert project.ctx.slots[paths[1]].source_snapshot is not None
+    keys = source_keys(project, paths[1:])
+    assert list(project.ctx.slots) == keys
+    assert project.ctx.slots[keys[0]].source_snapshot is not None
     assert len(project.services.project_lifecycle.active.variant.snapshot().entries) == 1
     assert any("成功 1 个，失败 1 个" in message for message in parsing.messages)

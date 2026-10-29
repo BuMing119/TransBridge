@@ -82,6 +82,8 @@ class TranslationIoRegisteredSourceParser:
         self._io = io
 
     def parse(self, source: CapturedSource, context: RequestContext) -> ParseResult:
+        if source.lease.saved_result is not None:
+            return source.lease.saved_result
         request = ParseRequest(
             source=source.lease.snapshot.source,
             context=context,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,21 +15,16 @@ from transbridge.application.contracts import (
     OperationResult,
     RequestContext,
 )
-from transbridge.application.io import FormatId
 from transbridge.application.projects import (
     DirtyDecision,
     GuiProjectCommandFacade,
     PreparedProjectSource,
     PreparedSourceHydration,
-    ProjectSourceRequest,
 )
-from transbridge.application.projects.source_content import authoritative_baseline_sources, source_content_identity
-from transbridge.application.projects.source_registry import legacy_source_role
+from transbridge.application.projects.source_inputs import MissingProjectSourceInput
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
 from transbridge.persistence.project_recovery import (
     ProjectRecoverySnapshot,
-    load_recovery_snapshot,
-    source_recovery_diagnostic,
     validate_recovery_context,
 )
 from transbridge.persistence.v2 import (
@@ -51,7 +45,8 @@ from transbridge.persistence.v2.schema import parse_json_bytes, version_of
 from transbridge.persistence.v2.validated_reads import reuse_validated_reads
 
 from .prepared_project_read import PreparedProjectRead, use_prepared_project
-from .saved_project_sources import SavedProjectSourcePreparer, load_saved_project_source
+from .project_source_inputs import load_project_source_inputs
+from .saved_project_sources import SavedProjectSourcePreparer
 from .source_artifact_store import ProjectSourceArtifactStore
 
 PROJECT_FILE_FILTER = "项目 JSON (*.json);;所有文件 (*)"
@@ -69,6 +64,7 @@ class PreparedCurrentProject:
     hydrations: tuple[PreparedSourceHydration, ...] = ()
     recovery: ProjectRecoverySnapshot | None = None
     prepared_read: PreparedProjectRead | None = None
+    missing_inputs: tuple[MissingProjectSourceInput, ...] = ()
 
 
 class CurrentProjectOpener:
@@ -202,114 +198,23 @@ class CurrentProjectOpener:
                     "保存的版本记录不可读取，无法打开工程或恢复视图。",
                     cause=exc,
                 ) from exc
-            sources = tuple(project.envelope.data.get("sources", ()))
-            baseline_sources = authoritative_baseline_sources(
-                sources, tuple(project.envelope.data.get("source_relations", ()))
+            inputs = load_project_source_inputs(
+                project, stored, self._source_artifacts, context, baseline_loader=self._baseline_loader
             )
-            loaded_sources = []
-            bound_sources = [dict(source) for source in sources]
-            source_diagnostics = []
-            for source in baseline_sources:
-                try:
-                    loaded = (
-                        load_saved_project_source(self._source_artifacts, source, stored.source_fingerprints)
-                        if source.get("source_artifact_id")
-                        else self._baseline_loader(source, context)
-                        if self._baseline_loader is not None
-                        else _load_baseline(
-                            source,
-                            context,
-                            source_preparer=self._source_preparer,
-                            source_fingerprints=stored.source_fingerprints,
-                        )
-                    )
-                    loaded_sources.append(loaded)
-                    if isinstance(loaded, PreparedProjectSource):
-                        artifact_id = loaded.to_dict().get("source_artifact_id")
-                        if artifact_id:
-                            index = next(index for index, item in enumerate(sources) if item is source)
-                            bound_sources[index]["source_artifact_id"] = artifact_id
-                            bound_sources[index]["fingerprint"] = loaded.baseline.fingerprint.sha256
-                            if source_content_identity(source) != loaded.baseline.fingerprint.namespace.value:
-                                legacy = dict(source.get("legacy") or {})
-                                legacy["namespace"] = loaded.baseline.fingerprint.namespace.value
-                                bound_sources[index]["legacy"] = legacy
-                except (OSError, DomainError) as exc:
-                    source_diagnostics.append(source_recovery_diagnostic(source, exc))
-                    # Recovery only needs persisted translations, not more source diagnostics.
-                    break
-            baselines = tuple(
-                item.baseline if isinstance(item, PreparedProjectSource) else item for item in loaded_sources
-            )
-            hydrations = tuple(
-                item.hydration
-                for item in loaded_sources
-                if isinstance(item, PreparedProjectSource) and item.hydration is not None
-            )
-            if sources and not baselines and not source_diagnostics:
-                raise DomainError(
-                    ErrorCategory.PREREQUISITE,
-                    "SOURCE_BASELINE_REQUIRED",
-                    "项目没有可验证的源文件基线。",
-                )
             variant_refs = tuple(
                 VariantRef(VariantId(str(value)), project_ref.identity)
                 for value in project.envelope.data.get("variant_ids", ())
             )
-            recovery = None
-            missing_namespaces = {item.namespace for item in stored.source_fingerprints} - {
-                baseline.fingerprint.namespace for baseline in baselines
-            }
-            baseline_keys = {entry.entry_key for baseline in baselines for entry in baseline.entries}
-            missing_entries = any(
-                entry.entry_key not in baseline_keys and not entry.tombstone for entry in stored.entries
-            )
-            if (missing_namespaces or missing_entries) and not source_diagnostics:
-                source_diagnostics.append(
-                    source_recovery_diagnostic(
-                        {},
-                        DomainError(
-                            ErrorCategory.CONFLICT,
-                            "PROJECT_SOURCE_IDENTITY_MISMATCH",
-                            "无法可靠匹配已保存的来源或词条身份；已保留原记录并打开只读恢复视图。"
-                            "可通过更新源文件核对迁移结果。",
-                        ),
-                    )
-                )
-            unverified = any(
-                item.sha256 is None or item.namespace.value == "legacy:v1" for item in stored.source_fingerprints
-            )
-            recovery_required = project.envelope.data.get("legacy", {}).get("archive_recovery")
-            if unverified or recovery_required or (not sources and (stored.entries or stored.source_fingerprints)):
-                source_diagnostics.append(
-                    source_recovery_diagnostic(
-                        {},
-                        DomainError(
-                            ErrorCategory.PREREQUISITE,
-                            "SOURCE_BASELINE_REQUIRED",
-                            "保存的版本尚未映射到可靠源文件基线；已打开只读恢复视图，原始数据未改变。",
-                        ),
-                    )
-                )
-            if source_diagnostics:
-                recovery = load_recovery_snapshot(
-                    str(selected),
-                    str(project.envelope.data["name"]),
-                    variant_ref,
-                    self._variants,
-                    tuple(source_diagnostics),
-                    context,
-                )
             return OperationResult.completed(
                 PreparedCurrentProject(
                     project_ref,
                     variant_ref,
                     variant_refs,
-                    baselines,
+                    inputs.baselines,
                     str(project.envelope.data["name"]),
-                    tuple(bound_sources),
-                    hydrations,
-                    recovery,
+                    inputs.sources,
+                    inputs.hydrations,
+                    None,
                     PreparedProjectRead.capture(
                         self._projects,
                         project_record,
@@ -317,11 +222,14 @@ class CurrentProjectOpener:
                         variant_record,
                         stored,
                         evidence,
-                        bound_sources=tuple(bound_sources) if not source_diagnostics else None,
-                        source_baselines=baselines,
+                        bound_sources=inputs.sources,
+                        source_baselines=inputs.baselines,
+                        missing_inputs=inputs.missing_inputs,
+                        hydrations=inputs.hydrations,
                     ),
+                    inputs.missing_inputs,
                 ),
-                diagnostics=tuple(source_diagnostics),
+                diagnostics=inputs.diagnostics,
                 run_id=context.run_id,
             )
         except Exception as exc:
@@ -397,12 +305,14 @@ class CurrentProjectOpener:
                 prepared.project_ref,
                 prepared.variant_refs,
                 prepared.baselines,
-                allow_empty=not prepared.sources,
+                allow_empty=True,
             )
             view_payload = None
+            missing_inputs = prepared.missing_inputs
 
             def prepare_candidate(candidate):
-                nonlocal view_payload
+                nonlocal view_payload, missing_inputs
+                missing_inputs = candidate.missing_inputs
                 if prepare_view is not None:
                     from transbridge.application.projections.adapters import project_projection
 
@@ -431,7 +341,9 @@ class CurrentProjectOpener:
                     "sources": prepared.sources,
                     "hydrations": prepared.hydrations,
                     "view_payload": view_payload,
+                    "missing_inputs": missing_inputs,
                 },
+                diagnostics=tuple(item.diagnostic for item in missing_inputs),
                 run_id=context.run_id,
             )
         except Exception as exc:
@@ -441,57 +353,6 @@ class CurrentProjectOpener:
                 self._discard_prepared_projection()
             if captured is not None and not committed:
                 self._baselines.restore_catalog(prepared.project_ref, captured, expected_baselines=prepared.baselines)
-
-
-def _load_baseline(
-    source: dict,
-    context: RequestContext,
-    *,
-    source_preparer=None,
-    source_fingerprints=(),
-) -> PreparedProjectSource:
-    path = Path(str(source.get("location") or source.get("path") or "")).resolve(strict=True)
-    raw_format = source.get("format_id", FormatId.PLUGIN_SSE.value)
-    try:
-        format_id = FormatId(str(raw_format))
-    except ValueError as exc:
-        raise DomainError(
-            ErrorCategory.INPUT,
-            "SOURCE_FORMAT_UNSUPPORTED",
-            "项目来源记录包含不支持的格式。",
-        ) from exc
-    options = dict(source.get("format_options") or source.get("options") or {})
-    expected_fingerprint = source.get("fingerprint")
-    if source_fingerprints:
-        fingerprint = expected_fingerprint
-        if fingerprint is None:
-            with path.open("rb") as stream:
-                fingerprint = hashlib.file_digest(stream, "sha256").hexdigest()
-            expected_fingerprint = fingerprint
-        matches = {item.namespace.value for item in source_fingerprints if item.sha256 == fingerprint}
-        recorded = options.get("source_namespace") or source_content_identity(source)
-        namespace = recorded if recorded in matches else next(iter(matches)) if len(matches) == 1 else None
-        if matches and (namespace is None or options.get("source_namespace", namespace) != namespace):
-            raise DomainError(
-                ErrorCategory.CONFLICT,
-                "PROJECT_SOURCE_IDENTITY_AMBIGUOUS",
-                "来源内容对应多个或冲突的已保存身份，无法安全恢复译文；请在恢复视图中核对来源。",
-            )
-        if namespace is not None:
-            options["source_namespace"] = namespace
-    role = legacy_source_role(source) or "primary"
-    preparer = source_preparer or TranslationIoProjectSourcePreparer()
-    return preparer.prepare_source(
-        ProjectSourceRequest(
-            str(path),
-            format_hint=format_id,
-            expected_fingerprint=expected_fingerprint,
-            options=tuple(options.items()),
-        ),
-        context,
-        role=role,
-        common_options=(),
-    )
 
 
 __all__ = ["CurrentProjectOpener", "PreparedCurrentProject", "PROJECT_FILE_FILTER"]

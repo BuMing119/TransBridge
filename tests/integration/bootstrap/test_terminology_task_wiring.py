@@ -206,7 +206,8 @@ def test_composition_exposes_project_repository_reporting_ports(tmp_path):
         app.close()
 
 
-def test_production_runtime_closes_build_decision_publish_history_restore_and_render_loop(tmp_path):
+@pytest.mark.parametrize("scoped_reports", [False, True])
+def test_production_runtime_closes_build_decision_publish_history_restore_and_render_loop(tmp_path, scoped_reports):
     source = tmp_path / "terms.xml"
     source.write_text(
         """<?xml version="1.0" encoding="utf-8"?>
@@ -236,6 +237,7 @@ def test_production_runtime_closes_build_decision_publish_history_restore_and_re
         )
         assert prepared.outcome is OperationOutcome.COMPLETED and prepared.value is not None
         assert provisioning.commit(prepared.value.token, owner_context).is_success
+        source.unlink()
         context = app.context(
             "operator",
             project_id=prepared.value.project_id,
@@ -249,7 +251,20 @@ def test_production_runtime_closes_build_decision_publish_history_restore_and_re
         assert preflight.ready
         assert preflight.action_label == "创建术语库"
         assert not any("发布验证" in detail.label for detail in preflight.technical_details)
-        captured = services.build_inputs.capture_build_input(context, config={})
+        config = None
+        if scoped_reports:
+            lifecycle = app.use_cases.resolve("project_lifecycle")
+            data = lifecycle.active.project.envelope.data
+            available = data["sources"][0]
+            data["sources"].append({
+                **available,
+                "source_id": "missing-source",
+                "location": "",
+                "source_artifact_id": "f" * 64,
+            })
+            config = {"source_ids": [available["source_id"]]}
+            assert not services.build_inputs.capture_build_input(context, config={}).is_success
+        captured = services.build_inputs.capture_build_input(context, config=config or {})
         assert captured.outcome is OperationOutcome.COMPLETED and captured.value is not None
 
         first_build = services.commands.start_build(captured.value, context)
@@ -266,12 +281,12 @@ def test_production_runtime_closes_build_decision_publish_history_restore_and_re
         )
         assert edited.ref.revision == 1
         assert repository.list_draft_terms(edited.ref).items == edited.decisions
-        first_publish = services.commands.publish(context)
+        first_publish = services.commands.publish(context, config=config)
         assert _wait_for_job(app, first_publish, context).committed
         first_version = repository.effective_version(context.project_id, context.variant_id)
         assert first_version is not None and first_version.decisions[0].translation == "龙裔"
 
-        recaptured = services.build_inputs.capture_build_input(context, config={})
+        recaptured = services.build_inputs.capture_build_input(context, config=config or {})
         assert recaptured.value is not None
         second_build = services.commands.start_build(recaptured.value, context)
         assert _wait_for_job(app, second_build, context).committed
@@ -284,30 +299,30 @@ def test_production_runtime_closes_build_decision_publish_history_restore_and_re
             term_id=second_draft.decisions[0].term_id,
             translation="飞龙",
         )
-        second_publish = services.commands.publish(context)
+        second_publish = services.commands.publish(context, config=config)
         assert _wait_for_job(app, second_publish, context).committed
         second_version = repository.effective_version(context.project_id, context.variant_id)
         assert second_version is not None and second_version.ref != first_version.ref
 
-        comparison = services.commands.compare(first_version.ref, context)
+        comparison = services.commands.compare(first_version.ref, context, config=config)
         assert _wait_for_job(app, comparison, context).committed
         compared = services.commands.latest_comparison(context.project_id, context.variant_id)
         assert compared is not None and compared.changes
-        restored = services.commands.restore(first_version.ref, context)
+        restored = services.commands.restore(first_version.ref, context, config=config)
         assert _wait_for_job(app, restored, context).committed
         restored_version = repository.effective_version(context.project_id, context.variant_id)
         assert restored_version is not None
         assert restored_version.ref.version_id not in {first_version.ref.version_id, second_version.ref.version_id}
         assert restored_version.decisions == first_version.decisions
 
-        report = services.commands.render_report(context)
+        report = services.commands.render_report(context, config=config)
         assert _wait_for_job(app, report, context).committed
-        changelog = services.commands.render_changelog(context)
+        changelog = services.commands.render_changelog(context, config=config)
         changelog_result = _wait_for_job(app, changelog, context)
         assert changelog_result.committed
         markdown = repositories.paths.artifact_directory(context.project_id) / f"{restored_version.ref.version_id}.md"
         assert markdown.is_file()
-        retry = services.commands.retry_changelog(context)
+        retry = services.commands.retry_changelog(context, config=config)
         assert _wait_for_job(app, retry, context).committed
         assert len(repository.list_versions(context.project_id, context.variant_id).items) == 3
     finally:

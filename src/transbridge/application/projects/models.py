@@ -11,6 +11,8 @@ from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantRef
 from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
 from transbridge.persistence.v2.variant import SourceBaseline, VariantAggregate, VariantSnapshot
 
+from .source_inputs import MissingProjectSourceInput
+
 
 class DirtyDecision(StrEnum):
     SAVE = "save"
@@ -70,6 +72,7 @@ class ActiveProject:
     source_project_hash: str | None = None
     source_variant_hash: str | None = None
     source_variant_revision: int | None = None
+    missing_inputs: tuple[MissingProjectSourceInput, ...] = ()
 
     def __post_init__(self) -> None:
         project_ref = self.project_ref

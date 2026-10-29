@@ -1,8 +1,7 @@
-"""Real commands retain parser, dictionary and remote candidates across local changes."""
+"""Real commands retain parser and dictionary candidates across local changes."""
 
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -12,68 +11,12 @@ from transbridge.smart_assistant.tools import _dictionary_application as diction
 from transbridge.smart_assistant.tools._project_tool_mutations import ProjectToolTarget
 from transbridge.smart_assistant.tools.entry_task_results import EntryResultStore
 from transbridge.smart_assistant.tools.tool_migrator import _tool_apply_dictionary
-from transbridge.smart_assistant.tools.tool_paratranz import _tool_download_entries
 from transbridge.smart_assistant.tools.tool_parser import _tool_import_json, _tool_parse_eet
 from transbridge.smart_assistant.tools.tool_translator import _tool_get_task_result, _tool_merge_task_result
 from transbridge.smart_assistant.tools.types import ExecutionContext
 
 project = project_fixture
 _LOCALES = {"source_locale": "en", "target_locale": "zh-CN"}
-
-
-def _remote(monkeypatch, entries):
-    client = SimpleNamespace(iter_entries=lambda *a, **kw: entries, close=lambda: None)
-    monkeypatch.setattr("transbridge.paratranz.service.ParaTranzService.from_config", lambda _config: client)
-    return client
-
-
-def test_download_saved_before_merge_and_recovers_without_remote(project, monkeypatch):
-    entry = load_source(project)
-    client = _remote(monkeypatch, [{"key": entry.key, "original": entry.original, "translation": "Remote", "stage": 1}])
-    context = ExecutionContext(app_context=project.ctx)
-    downloaded = _tool_download_entries({"project_id": 7}, context)
-    assert downloaded.success, downloaded.message
-    assert next(iter(project.ctx.collection)).translation == ""
-    result_id = downloaded.data["result_id"]
-    client.iter_entries = lambda *a, **kw: pytest.fail("recovery must not request remote")
-    viewed = _tool_get_task_result({"result_id": result_id}, context)
-    assert viewed.success and viewed.data["entries"][0]["translation"] == "Remote"
-    merged = _tool_merge_task_result({"result_id": result_id}, context)
-    assert merged.success, merged.message
-    assert merged.data["merge"]["applied_count"] == 1
-    assert next(iter(project.ctx.collection)).translation == "Remote"
-    assert _tool_merge_task_result({"result_id": result_id}, context).data["merge"]["unchanged_count"] == 1
-
-
-def test_partial_download_retains_acquired_rows(project, monkeypatch):
-    entry = load_source(project)
-
-    def partial():
-        yield {"key": entry.key, "original": entry.original, "translation": "Partial", "stage": 1}
-        raise OSError("remote page failed")
-
-    _remote(monkeypatch, partial())
-    result = _tool_download_entries({"project_id": 7}, ExecutionContext(app_context=project.ctx))
-    assert result.partial and result.data["downloaded_count"] == 1
-    recovered = _tool_merge_task_result(
-        {"result_id": result.data["result_id"]}, ExecutionContext(app_context=project.ctx)
-    )
-    assert recovered.success, recovered.message
-    assert next(iter(project.ctx.collection)).translation == "Partial"
-
-
-def test_download_duplicate_candidates_all_remain_pending(project, monkeypatch):
-    entry = load_source(project)
-    _remote(
-        monkeypatch,
-        [{"key": entry.key, "original": entry.original, "translation": text, "stage": 1} for text in ("One", "Two")],
-    )
-    ctx = ExecutionContext(app_context=project.ctx)
-    result = _tool_download_entries({"project_id": 7}, ctx)
-    assert result.data["downloaded_count"] == 2 and result.data["unmapped_count"] == 2
-    merged = _tool_merge_task_result({"result_id": result.data["result_id"]}, ctx)
-    assert merged.success and merged.data["merge"]["applied_count"] == 0
-    assert next(iter(project.ctx.collection)).translation == ""
 
 
 def test_dictionary_unrelated_edit_is_preserved(project, monkeypatch):
@@ -144,25 +87,6 @@ def test_append_preserves_refs_and_rejects_locator_replacement(project):
     assert project.ctx.collection.get(entry.identity).string_id == entry.string_id
 
 
-def test_download_business_metadata_and_empty_translation_survive(project, monkeypatch):
-    entry = load_source(project)
-    raw = {
-        "key": entry.key,
-        "original": entry.original,
-        "translation": "",
-        "stage": 0,
-        "metadata": {"token": "game-token", "secret": "quest password"},
-    }
-    _remote(monkeypatch, [raw])
-    ctx = ExecutionContext(app_context=project.ctx)
-    result = _tool_download_entries({"project_id": 7}, ctx)
-    assert result.success, result.message
-    viewed = _tool_get_task_result({"result_id": result.data["result_id"]}, ctx)
-    assert viewed.success and viewed.data["entries"] == [raw]
-    merged = _tool_merge_task_result({"result_id": result.data["result_id"]}, ctx)
-    assert merged.success, merged.message
-
-
 def test_source_receipt_failure_retry_recognizes_committed_source(project, monkeypatch):
     update = EntryResultStore.update_metadata
 
@@ -182,56 +106,6 @@ def test_source_receipt_failure_retry_recognizes_committed_source(project, monke
     )
     assert recovered.success, (recovered.message, project.ctx.project_sources)
     assert recovered.data["merge"]["registered"] and len(project.ctx.project_sources) == 1
-
-
-def test_download_equal_keys_match_exact_original(project, monkeypatch):
-    from transbridge.application.io.identity import EntryKey
-    from transbridge.converter.translation_entry import TranslationEntry
-    from transbridge.smart_assistant.tools.entry_task_results import EntryTaskResults
-
-    entry = load_source(project)
-    entries = [
-        TranslationEntry(
-            "same", "same", original, "", 0, "", entry_key=EntryKey(entry.identity.namespace, "same", original)
-        )
-        for original in ("One", "Two")
-    ]
-    task = EntryTaskResults(ExecutionContext(app_context=project.ctx), entries, kind="download")
-    task.candidates(
-        [
-            {"key": "same", "original": original, "translation": original + " result", "stage": 1}
-            for original in ("One", "Two")
-        ],
-        remote=True,
-    )
-    assert task.finish(auto_merge=False).success
-    rows = task.store.load_results(task.result_id)["rows"]
-    assert {row["entry_key"]["original"]: row["text"] for row in rows} == {"One": "One result", "Two": "Two result"}
-
-
-def test_real_remote_pagination_delivers_first_page_before_failure(project, monkeypatch):
-    from transbridge.paratranz.service import ParaTranzService
-
-    entry = load_source(project)
-    service = object.__new__(ParaTranzService)
-
-    def page(project_id, *, page, **kwargs):
-        if page == 2:
-            raise OSError("second page unavailable")
-        return {
-            "page": 1,
-            "pageSize": 1,
-            "rowCount": 2,
-            "pageCount": 2,
-            "results": [{"key": entry.key, "original": entry.original, "translation": "First", "stage": 1}],
-        }
-
-    service._strings = SimpleNamespace(list_strings=page)
-    service.close = lambda: None
-    monkeypatch.setattr(ParaTranzService, "from_config", lambda _config: service)
-    result = _tool_download_entries({"project_id": 7}, ExecutionContext(app_context=project.ctx))
-    assert result.partial and result.data["downloaded_count"] == 1
-    assert result.data["entries"][0]["translation"] == "First"
 
 
 def test_source_locator_change_is_pending_under_prefer_incoming():

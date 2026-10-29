@@ -5,14 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
-from typing import Protocol
+
+from transbridge.application.preflight.operation import (
+    DomainPreflightPort as DomainPreflightPort,
+    DomainPreflightResult as DomainPreflightResult,
+    OperationPreflightFacts,
+    OperationPreflightResult,
+    OperationPreflightService,
+)
 
 from .plan_view import EditableFieldState, OperationKind, OperationPlanViewState
-from .preflight_view import (
-    OperationPreflightResult,
-    PreflightCheckState,
-    PreflightCheckStatus,
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,16 +70,6 @@ class OperationPlanDraft:
         return hashlib.sha256(data).hexdigest()
 
 
-class DomainPreflightPort(Protocol):
-    def __call__(self, request: object) -> DomainPreflightResult | tuple[PreflightCheckState, ...]: ...
-
-
-@dataclass(frozen=True, slots=True)
-class DomainPreflightResult:
-    checks: tuple[PreflightCheckState, ...]
-    estimated_impact: tuple[tuple[str, int], ...] = ()
-
-
 class _OperationMapper:
     kind: OperationKind
     title: str
@@ -106,22 +98,21 @@ class _OperationMapper:
 
     def preflight(self, draft: object) -> OperationPreflightResult:
         value = self._draft(draft)
-        domain = self._domain_preflight(value.request)
-        if isinstance(domain, DomainPreflightResult):
-            domain_checks = domain.checks
-            estimated_impact = domain.estimated_impact or value.estimated_impact
-        else:
-            domain_checks = tuple(domain)
-            estimated_impact = value.estimated_impact
-        checks = (*self._shared_checks(value), *self._specific_checks(value), *domain_checks)
-        return OperationPreflightResult(
-            self.kind,
-            value.request_digest,
-            value.target_revision,
-            tuple(checks),
-            value.expected_side_effects,
-            estimated_impact=estimated_impact,
+        facts = OperationPreflightFacts(
+            request_digest=value.request_digest,
+            target_revision=value.target_revision,
+            estimated_impact=value.estimated_impact,
+            expected_side_effects=value.expected_side_effects,
+            input_ready=value.input_ready,
+            output_ready=value.output_ready,
+            locked_count=value.locked_count,
+            hidden_count=value.hidden_count,
+            overwrite_risk=value.overwrite_risk,
+            overwrite_confirmed=value.overwrite_confirmed,
+            backup_required=value.backup_required,
+            backup_enabled=value.backup_enabled,
         )
+        return OperationPreflightService().evaluate(self.kind, facts, self._domain_preflight(value.request))
 
     @staticmethod
     def _draft(value: object) -> OperationPlanDraft:
@@ -129,64 +120,12 @@ class _OperationMapper:
             raise TypeError("operation mapper requires an OperationPlanDraft")
         return value
 
-    @staticmethod
-    def _shared_checks(value: OperationPlanDraft) -> tuple[PreflightCheckState, ...]:
-        return (
-            _check("INPUT", "输入有效", value.input_ready, "输入不存在、已变化或不完整"),
-            _check("OUTPUT", "输出可用", value.output_ready, "输出路径不可写或不支持安全提交"),
-            _check(
-                "OVERWRITE",
-                "覆盖策略",
-                not value.overwrite_risk or value.overwrite_confirmed,
-                "目标已存在，必须显式确认覆盖",
-            ),
-            _check(
-                "BACKUP",
-                "备份策略",
-                not value.backup_required or value.backup_enabled,
-                "该覆盖操作要求先创建备份",
-            ),
-        )
-
-    def _specific_checks(self, value: OperationPlanDraft) -> tuple[PreflightCheckState, ...]:
-        del value
-        return ()
-
 
 class WriteOperationMapper(_OperationMapper):
     kind = OperationKind.WRITE
     title = "写回计划"
 
-    def _specific_checks(self, value: OperationPlanDraft) -> tuple[PreflightCheckState, ...]:
-        return (_stage_check(value),)
-
 
 class FomodOperationMapper(_OperationMapper):
     kind = OperationKind.FOMOD
     title = "FOMOD 构建计划"
-
-
-def _check(
-    check_id: str,
-    label: str,
-    passed: bool,
-    reason: str,
-    repair_intent: str | None = None,
-) -> PreflightCheckState:
-    return PreflightCheckState(
-        check_id,
-        label,
-        PreflightCheckStatus.PASSED if passed else PreflightCheckStatus.BLOCKED,
-        "" if passed else reason,
-        repair_intent,
-    )
-
-
-def _stage_check(value: OperationPlanDraft) -> PreflightCheckState:
-    detail = f"锁定 {value.locked_count}，隐藏 {value.hidden_count}"
-    return PreflightCheckState(
-        "LOCKED_HIDDEN",
-        "锁定/隐藏条目策略",
-        PreflightCheckStatus.WARNING if (value.locked_count or value.hidden_count) else PreflightCheckStatus.PASSED,
-        detail if (value.locked_count or value.hidden_count) else "",
-    )

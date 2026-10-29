@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from transbridge.application.contracts import (
     Diagnostic,
+    JobRef,
     OperationCounts,
     OperationOutcome,
     OperationResult,
@@ -41,6 +42,66 @@ def test_preflight_maps_prerequisite_failure_to_business_language() -> None:
     assert state.title == "没有可用来源"
     assert "已有历史" in state.message
     assert state.diagnostic_code == "TERMINOLOGY_SOURCE_REQUIRED"
+
+
+def test_repaired_source_scope_survives_preflight_and_publication_without_losing_configuration():
+    captured = []
+    result = OperationResult(
+        OperationOutcome.FAILED,
+        diagnostics=(Diagnostic("TERMINOLOGY_SOURCE_REQUIRED", "missing"),),
+        counts=OperationCounts(failed=1),
+    )
+
+    def capture(_context, *, config):
+        captured.append(config)
+        return result
+
+    presenter = TerminologyPresenter(
+        TerminologyUiServices(
+            build_inputs=SimpleNamespace(capture_build_input=capture),
+            commands=SimpleNamespace(preview_publish=lambda _ctx, *, config: captured.append(config)),
+        ),
+        RequestContext("operator", project_id="project", variant_id="variant"),
+    )
+    presenter.preflight(config={"existing_setting": "preserved"})
+    presenter.set_source_scope(("repaired-source",))
+    presenter.preflight()
+    presenter.preview_publish()
+    assert captured[1:] == [
+        {"existing_setting": "preserved", "source_ids": ["repaired-source"]},
+        {"existing_setting": "preserved", "source_ids": ["repaired-source"]},
+    ]
+
+
+def test_reports_comparison_and_changelog_keep_the_repaired_scope():
+    captured = []
+
+    def submit(*args, config):
+        captured.append((args, config))
+        return JobRef("task", "operator", "report-run")
+
+    presenter = TerminologyPresenter(
+        TerminologyUiServices(
+            commands=SimpleNamespace(
+                render_report=submit,
+                render_changelog=submit,
+                retry_changelog=submit,
+                compare=submit,
+            )
+        ),
+        RequestContext("operator", project_id="project", variant_id="variant"),
+    )
+    presenter.set_source_scope(("repaired-source",))
+    presenter.render_report()
+    presenter.render_changelog()
+    presenter.retry_changelog()
+    presenter.compare("historical-version")
+    assert len(captured) == 4
+    assert all(config == {"source_ids": ["repaired-source"]} for _args, config in captured)
+    assert captured[-1][0][0] == "historical-version"
+    captured[0][1]["source_ids"].append("unrelated-source")
+    presenter.render_report()
+    assert captured[-1][1] == {"source_ids": ["repaired-source"]}
 
 
 def test_preflight_projects_scope_without_reading_sqlite_or_counting_rows() -> None:

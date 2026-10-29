@@ -8,6 +8,7 @@ from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal
 
 from transbridge.converter.translation_entry import STAGE_LABELS
 from transbridge.ui.project_labels import entry_label_key
+from transbridge.ui.source_input_state import original_known
 
 from .filters_presenter import entry_category
 from .table_presenter import RenderSession
@@ -137,6 +138,8 @@ class TranslationTableModel(QAbstractTableModel):
             if column == COL_KEY:
                 return full_text_tooltip(entry.key or "")
             if column == COL_ORIGINAL:
+                if not original_known(entry):
+                    return "此条目仅保存了译文；需要原文的操作可选择文件补充输入。"
                 return full_text_tooltip(entry.original or "")
             if column == COL_TRANSLATION:
                 return self._translation_content(entry)[1]
@@ -153,7 +156,7 @@ class TranslationTableModel(QAbstractTableModel):
         if column == COL_KEY:
             return entry.key or ""
         if column == COL_ORIGINAL:
-            return entry.original or ""
+            return (entry.original or "") if original_known(entry) else "原文待补充"
         if column == COL_TRANSLATION:
             return self._translation_content(entry)[0]
         projected = self._projected_translation(entry)

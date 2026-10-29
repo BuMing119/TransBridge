@@ -5,12 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-
-class OperationKind(StrEnum):
-    UPLOAD = "upload"
-    DOWNLOAD = "download"
-    WRITE = "write"
-    FOMOD = "fomod"
+from transbridge.application.preflight.operation import OperationKind as OperationKind
 
 
 class EditableControl(StrEnum):

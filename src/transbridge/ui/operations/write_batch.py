@@ -30,13 +30,13 @@ class _HydratedWriteBatch:
     output_directory: str = ""
 
     def __post_init__(self) -> None:
-        if len(self.drafts) + len(self.failures) < 2:
-            raise ValueError("批量写回至少需要两个来源文件")
+        if not self.drafts and not self.failures:
+            raise ValueError("批量写回至少需要一个来源文件")
 
 
 def batch_write_target(source: Path, output_directory: str) -> str:
     """Keep source filenames when collecting several outputs in one directory."""
-    return str(Path(output_directory) / source.name if output_directory else source)
+    return str(Path(output_directory) / source.name) if output_directory else ""
 
 
 def retarget_write_batch(
@@ -48,7 +48,9 @@ def retarget_write_batch(
         drafts=tuple(
             replace(
                 item,
-                target_path=batch_write_target(Path(item.source_snapshot.source.uri), output_directory)
+                target_path=batch_write_target(
+                    Path(item.source_snapshot.source.display_name or item.source_snapshot.source.uri), output_directory
+                )
                 if changed
                 else item.target_path,
                 conflict_policy=PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL,
@@ -70,7 +72,7 @@ def retarget_write_batch(
 
 def _write_batch_plan(request: _HydratedWriteBatch) -> OperationPlanDraft:
     targets = tuple(item.target_path for item in (*request.drafts, *request.failures))
-    existing = tuple(path for path in targets if Path(path).exists())
+    existing = tuple(path for path in targets if path and Path(path).exists())
     entries = tuple(entry for item in request.drafts for entry in item.entries)
     overwrite = all(item.conflict_policy is PublishConflictPolicy.EXPLICIT_OVERWRITE for item in request.drafts)
     resource_mode = (
@@ -88,18 +90,18 @@ def _write_batch_plan(request: _HydratedWriteBatch) -> OperationPlanDraft:
     ).hexdigest()
     return OperationPlanDraft(
         request=request,
-        target="；".join(targets),
+        target="；".join(path for path in targets if path) or "请选择输出目录",
         target_revision=f"{len(existing)} existing / {len(targets) - len(existing)} missing",
         input_fingerprint=fingerprint,
         scope_summary=f"{len(targets)} 个来源文件，{len(entries)} 个条目",
-        mode_summary=("另存到指定目录，保留各来源原名" if request.output_directory else "写回各来源原位置，保留原名")
+        mode_summary=("另存到指定目录，保留各来源原名" if request.output_directory else "选择输出目录，保留各来源原名")
         + resource_mode,
         conflict_summary="全部覆盖已确认" if overwrite else "保留已有输出，继续写出其他文件",
         backup_summary="覆盖输出文件前创建备份",
         is_batch=True,
         estimated_impact=(("objects", len(entries)), ("files", len(targets))),
         editable_fields=(
-            EditableFieldState("output_directory", "另存目录（可选）", request.output_directory),
+            EditableFieldState("output_directory", "输出目录", request.output_directory, required=True),
             *(
                 (
                     EditableFieldState(
@@ -123,6 +125,7 @@ def _write_batch_plan(request: _HydratedWriteBatch) -> OperationPlanDraft:
         ),
         locked_count=sum(getattr(item, "stage", 0) == 9 for item in entries),
         hidden_count=sum(getattr(item, "stage", 0) == -1 for item in entries),
+        output_ready=any(bool(path.strip()) for path in targets),
         # Coverage is checked per source by the domain preflight and publisher.
         # An unrelated existing target must not block the whole batch.
         overwrite_risk=False,

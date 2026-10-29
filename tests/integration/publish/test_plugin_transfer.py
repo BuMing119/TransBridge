@@ -65,6 +65,30 @@ def _case(tmp_path):
     return source, target, tmp_path / "output.esp"
 
 
+def test_unselected_output_stays_empty_and_never_resolves_to_working_directory(tmp_path, monkeypatch):
+    from transbridge.application.io import plugin_transfer
+
+    source, target, _output = _case(tmp_path)
+    draft = _draft(source, target, "", {"First": "一", "Second": "二"})
+    original = plugin_transfer.canonical
+
+    def require_selected_path(path):
+        assert str(path).strip(), "An unselected output must not resolve to the working directory"
+        return original(path)
+
+    monkeypatch.setattr(plugin_transfer, "canonical", require_selected_path)
+    checked = PluginTransferPreflightService().preflight(draft)
+
+    assert not checked.ready
+    assert checked.write_preflight is not None
+    assert checked.write_preflight.draft.target_path == ""
+    assert checked.write_preflight.artifact_fingerprints == ()
+    assert {item.code for item in checked.checks if not item.passed and not item.warning} == {
+        "OUTPUT_WRITABLE",
+        "ATOMIC_REPLACE_AVAILABLE",
+    }
+
+
 def test_transfer_uses_target_identity_and_does_not_change_project_or_inputs(tmp_path):
     source, target, output = _case(tmp_path)
     draft = _draft(source, target, output, {"First": "一", "Second": "二"})

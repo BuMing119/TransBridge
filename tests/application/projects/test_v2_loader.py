@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
 from transbridge.application.contracts import DomainError, RequestContext
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.projects import TransitionTarget
@@ -78,7 +82,7 @@ def test_v2_loader_prepares_isolated_clean_candidate_from_verified_baseline() ->
     assert not candidate.dirty
 
 
-def test_v2_loader_marks_materialized_content_change_for_persistence() -> None:
+def test_v2_loader_adds_verified_source_defaults_to_an_empty_saved_variant() -> None:
     project_ref, variant_ref, project, _stored, baseline = _records()
     stored = VariantSnapshot(variant_ref, (), (), revision=8)
     loader = V2ProjectCandidateLoader(
@@ -94,11 +98,60 @@ def test_v2_loader_marks_materialized_content_change_for_persistence() -> None:
 
     assert candidate.variant is not None
     assert candidate.variant.snapshot().entries == baseline.entries
+    assert candidate.variant.snapshot().source_fingerprints == (baseline.fingerprint,)
     assert candidate.persisted_variant_revision is None
     assert candidate.dirty
 
 
-def test_v2_loader_refuses_fingerprint_conflict_without_blind_local_key_overlay() -> None:
+@pytest.mark.parametrize("snapshot_ref", [None, "saved-snapshot"])
+def test_v2_loader_losslessly_unions_sparse_verified_defaults_with_unavailable_saved_rows(snapshot_ref) -> None:
+    project_ref, variant_ref, project, stored, baseline = _records()
+    missing_namespace = SourceNamespace("missing:source")
+    missing_fingerprint = SourceFingerprint(missing_namespace, None)
+    missing = VariantEntryState(EntryKey(missing_namespace, "old"), "keep missing", labels=("saved",))
+    tombstone = replace(baseline.entries[0], tombstone=True, translation="keep deleted")
+    new_default = replace(baseline.entries[0], entry_key=EntryKey(baseline.fingerprint.namespace, "new"))
+    baseline = replace(baseline, entries=(*baseline.entries, new_default))
+    stored = replace(
+        stored, source_fingerprints=(*stored.source_fingerprints, missing_fingerprint), entries=(tombstone, missing)
+    )
+    loader = V2ProjectCandidateLoader(
+        _Repository(LoadedRecord(project_ref, project, "project-hash")),
+        _Repository(LoadedRecord(variant_ref, stored.to_dto(), "variant-hash")),
+        lambda *_: (baseline,),
+        snapshot_loader=lambda *_: stored,
+    )
+    candidate = loader.prepare_candidate(
+        TransitionTarget(project_ref, variant_ref, snapshot_ref=snapshot_ref),
+        RequestContext(owner_id="owner", run_id="run"),
+    )
+    result = candidate.variant.snapshot()
+    assert set(result.entries) == {tombstone, missing, new_default}
+    assert result.source_fingerprints == stored.source_fingerprints
+    assert candidate.dirty
+    assert missing_namespace.value in {item.namespace for item in candidate.missing_inputs}
+
+
+def test_v2_loader_only_fills_inferred_fields_from_a_verified_baseline() -> None:
+    project_ref, variant_ref, project, stored, baseline = _records()
+    saved = replace(stored.entries[0], inferred_fields=("stage", "external_refs"), labels=("explicit",))
+    stored = replace(stored, entries=(saved,))
+    baseline = replace(baseline, entries=(replace(baseline.entries[0], stage=5, labels=("baseline",)),))
+    loader = V2ProjectCandidateLoader(
+        _Repository(LoadedRecord(project_ref, project, "project-hash")),
+        _Repository(LoadedRecord(variant_ref, stored.to_dto(), "variant-hash")),
+        lambda *_: (baseline,),
+    )
+    candidate = loader.prepare_candidate(
+        TransitionTarget(project_ref, variant_ref), RequestContext(owner_id="owner", run_id="run")
+    )
+    result = candidate.variant.snapshot().entries[0]
+    assert result.stage.value == 5 and result.inferred_fields == ("external_refs",)
+    assert result.translation == saved.translation and result.labels == saved.labels
+    assert candidate.dirty
+
+
+def test_v2_loader_preserves_saved_fingerprint_and_keys_without_overlaying_changed_source() -> None:
     project_ref, variant_ref, project, stored, baseline = _records()
     changed = SourceBaseline(
         SourceFingerprint(baseline.fingerprint.namespace, "b" * 64),
@@ -110,15 +163,15 @@ def test_v2_loader_refuses_fingerprint_conflict_without_blind_local_key_overlay(
         lambda _project, _variant, _context: (changed,),
     )
 
-    try:
-        loader.prepare_candidate(
-            TransitionTarget(project_ref, variant_ref),
-            RequestContext(owner_id="owner", run_id="run"),
-        )
-    except DomainError as error:
-        assert error.code == "VARIANT_SOURCE_FINGERPRINT_CONFLICT"
-    else:
-        raise AssertionError("fingerprint conflict must fail closed")
+    candidate = loader.prepare_candidate(
+        TransitionTarget(project_ref, variant_ref),
+        RequestContext(owner_id="owner", run_id="run"),
+    )
+
+    assert candidate.variant.snapshot() == stored
+    assert candidate.variant.snapshot().source_fingerprints != (changed.fingerprint,)
+    assert candidate.variant.snapshot().entries[0].translation == "translated"
+    assert not candidate.dirty
 
 
 def test_v2_loader_refuses_future_project_schema() -> None:

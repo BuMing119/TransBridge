@@ -3,8 +3,8 @@
 Example: uv run python scripts/benchmark_project_open.py --output result.json
 Use --source-root for another checkout (only src/ is needed). Real projects are
 opt-in with --data-root; project/variant records and referenced source artifacts
-are copied. Sources without saved artifacts use the normal parser. Original
-input hashes are checked afterwards.
+are copied. Records without saved source content use the normal recovery view.
+Original input hashes are checked afterwards.
 No application configuration, credentials, network or LLM services are loaded.
 """
 
@@ -116,11 +116,13 @@ def _services(root: Path):
 
 
 def create_fixture(root: Path, count: int) -> Path:
-    """Build synthetic records with the same source parser used when opening."""
+    """Build synthetic records with captured input for normal project opening."""
     from transbridge.application.contracts import RequestContext
     from transbridge.application.io import FormatId
     from transbridge.application.projects import ProjectSourceRequest
     from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
+    from transbridge.persistence.saved_project_sources import SavedProjectSourcePreparer
+    from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
     from transbridge.persistence.v2 import (
         ProjectDto,
         ProjectId,
@@ -148,7 +150,9 @@ def create_fixture(root: Path, count: int) -> Path:
         ]),
         encoding="utf-8",
     )
-    prepared = TranslationIoProjectSourcePreparer().prepare_source(
+    prepared = SavedProjectSourcePreparer(
+        TranslationIoProjectSourcePreparer(), ProjectSourceArtifactStore(str(root))
+    ).prepare_source(
         ProjectSourceRequest(str(source), format_hint=FormatId.JSON_PARATRANZ),
         RequestContext("benchmark", run_id="fixture"),
         role="primary",
