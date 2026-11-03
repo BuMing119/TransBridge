@@ -47,7 +47,7 @@ class ProjectSourceArtifactStore:
         self._filesystem = filesystem if filesystem is not None else OsPersistenceFilesystem()
         self._paths = RepositoryPaths(str(root), self._filesystem)
 
-    def put(self, prepared: PreparedProjectSource) -> str:
+    def put(self, prepared: PreparedProjectSource, *, repair_corrupt: bool = False) -> str:
         collector = _BlobCollector()
         payload = encode_prepared_artifact(prepared, collector.capture)
         blobs = collector.finish()
@@ -61,8 +61,8 @@ class ProjectSourceArtifactStore:
         raw = _json_bytes(manifest)
         artifact_id = _digest(raw)
         for digest, data in blobs.items():
-            self._publish(f"blobs/{digest}.bin", data)
-        self._publish(f"manifests/{artifact_id}.json", raw)
+            self._publish(f"blobs/{digest}.bin", data, repair_corrupt=repair_corrupt)
+        self._publish(f"manifests/{artifact_id}.json", raw, repair_corrupt=repair_corrupt)
         return artifact_id
 
     def get(self, artifact_id: str, *, location: str | None = None) -> PreparedProjectSource:
@@ -133,12 +133,20 @@ class ProjectSourceArtifactStore:
             raise FileNotFoundError(path)
         return self._filesystem.read_bytes(path)
 
-    def _publish(self, relative: str, data: bytes) -> None:
+    def _publish(self, relative: str, data: bytes, *, repair_corrupt: bool = False) -> None:
         destination = self._path(relative)
         if self._filesystem.exists(destination):
-            if self._filesystem.read_bytes(destination) != data:
+            previous = self._filesystem.read_bytes(destination)
+            if previous == data:
+                return
+            if not repair_corrupt:
                 raise SourceArtifactCorruptError(f"immutable source artifact record differs: {relative}")
-            return
+            # Repair knows the exact content-addressed bytes from a complete
+            # recapture. Retain the corrupt evidence before replacing that one
+            # record; every existing reference then regains its correct closure.
+            self._publish(f"quarantine/{_digest(previous)}.bin", previous)
+            if self._filesystem.read_bytes(destination) != previous:
+                raise SourceArtifactCorruptError(f"source artifact changed during recovery: {relative}")
         stage = self._path(f".staging/{uuid4().hex}.tmp")
         self._filesystem.make_dirs(os.path.dirname(destination))
         self._filesystem.make_dirs(os.path.dirname(stage))

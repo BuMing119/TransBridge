@@ -237,7 +237,8 @@ def test_cached_model_retains_no_source_bytes_and_obeys_estimated_memory_budget(
     second = cache.prepare(preparer, request, context, scope_key="project")
 
     assert isinstance(first, SourceReadHydration)
-    assert {field.name for field in fields(first)} == {"fingerprint", "entries"}
+    assert {field.name for field in fields(first)} == {"fingerprint", "entries", "dialogue_order"}
+    assert first.dialogue_order is None  # Ordinary source reads do not derive or retain dialogue relations.
     assert first == second and preparer.calls == 2
     assert cache._estimated_bytes == cache._entry_count == len(cache._items) == 0
 

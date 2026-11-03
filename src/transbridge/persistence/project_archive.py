@@ -16,7 +16,13 @@ import zipfile
 from transbridge.application.contracts import RequestContext
 from transbridge.application.projects.snapshots import ProjectSnapshotPort
 
-from .project_archive_files import capture_owned_assets, capture_sources, member_destination, validate_archive
+from .project_archive_files import (
+    capture_owned_assets,
+    capture_sources,
+    is_business_asset,
+    member_destination,
+    validate_archive,
+)
 from .project_catalog_document import (
     ProjectCatalogRecord,
     build_project_catalog,
@@ -138,8 +144,17 @@ class ProjectArchiveService:
                         sources = capture_sources(
                             archive, project["data"]["sources"], source_artifacts=self._source_artifacts
                         )
-                        capture_artifacts(archive, project["data"]["sources"], self._source_artifacts)
                         owned = Path(self._paths.root) / "projects" / ref.identity.encoded
+                        from .source_update_archive import capture_backups
+
+                        backup_sources = capture_backups(
+                            archive,
+                            Path(self._paths.project_backup_data(ref)) / "source-updates",
+                            owned / "source-updates",
+                        )
+                        capture_artifacts(
+                            archive, (*project["data"]["sources"], *backup_sources), self._source_artifacts
+                        )
                         capture_owned_assets(archive, owned)
                         archive.writestr(
                             "archive.json",
@@ -335,14 +350,19 @@ class ProjectArchiveService:
         owned = self._paths.guard(os.path.join(self._paths.root, "projects", project_ref.identity.encoded))
         from .source_artifact_archive import is_artifact_member, validate_artifacts
 
-        members = tuple(
+        candidates = tuple(
             info.filename
             for info in archive.infolist()
             if not info.is_dir() and info.filename != "archive.json" and not is_artifact_member(info.filename)
         )
-        destinations = [self._paths.guard(member_destination(name, owned)) for name in members]
+        destinations = [self._paths.guard(member_destination(name, owned)) for name in candidates]
         if len({os.path.normcase(path) for path in destinations}) != len(destinations):
             raise ValueError("项目包资产目标重复")
+        members = tuple(
+            name
+            for name in candidates
+            if name.startswith("sources/") or is_business_asset(name.removeprefix("assets/"))
+        )
         locations = {item["source_id"]: item["member"] for item in manifest["sources"]}
         sources = project.envelope.data["sources"]
         if len(locations) != len(manifest["sources"]) or set(locations) != {item["source_id"] for item in sources}:
@@ -358,7 +378,9 @@ class ProjectArchiveService:
 
             item.update(source_reference(item))
         validate_v2(project.envelope.to_dict(), project_ref)
-        validate_artifacts(archive, sources, locations)
+        from .source_update_archive import archive_backup_sources
+
+        validate_artifacts(archive, sources, locations, backup_sources=archive_backup_sources(archive))
         return project, tuple(variants), snapshots, members
 
     def _publish(self, archive, project, variants, snapshots, members, assets=(), *, context=None):
@@ -388,7 +410,13 @@ class ProjectArchiveService:
                 from .source_artifact_archive import import_artifacts
 
                 if "archive.json" in archive.namelist():
-                    import_artifacts(archive, project.envelope.data["sources"], self._source_artifacts)
+                    from .source_update_archive import archive_backup_sources
+
+                    import_artifacts(
+                        archive,
+                        (*project.envelope.data["sources"], *archive_backup_sources(archive)),
+                        self._source_artifacts,
+                    )
                 for member in members:
                     path = self._paths.guard(member_destination(member, owned))
                     if self._filesystem.exists(path):

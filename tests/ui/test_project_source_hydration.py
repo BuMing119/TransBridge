@@ -78,6 +78,22 @@ def test_prepared_slots_preserve_sources_and_exact_identity_without_copying_whol
     assert one.collection.get(first.entries[1].entry_key).snapshot() == first.entries[1]
     assert two.collection.get(second.entries[0].entry_key).external_refs == second.entries[0].external_refs
     assert first.entries[0].translation == "source translation"
+    assert tuple(item.identity for item in one.reading_source_entries) == tuple(
+        item.entry_key for item in first.entries
+    )
+    assert two.reading_source_entries is None
+
+
+def test_hidden_variant_rows_remain_in_full_source_reading_structure():
+    source = _source("fixture.esp", "source-one", ("A", "B"))
+    hidden = source.entries[0].entry_key
+    snapshot = _snapshot([{"entry_key": hidden.to_dict(), "tombstone": True}])
+    ((_, slot),) = source_hydration.prepare_project_slots((source,), snapshot)
+    assert tuple(entry.identity for entry in slot.collection) == (source.entries[1].entry_key,)
+    assert tuple(entry.identity for entry in slot.reading_source_entries) == tuple(
+        item.entry_key for item in source.entries
+    )
+    assert slot.reading_source_entries[0].metadata == source.entries[0].metadata
 
 
 def test_multiple_sources_share_one_state_index_and_construct_each_entry_once(monkeypatch):

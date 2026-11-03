@@ -64,9 +64,23 @@ class GuiProjectCommandFacade:
         self._categorized_uploads = categorized_uploads
         self._durable_variant_commits = durable_variant_commits
 
-    def categorized_upload_snapshot(self, context, *, endpoint: str, remote_project_id: int, source_ids=None):
+    def categorized_upload_snapshot(
+        self,
+        context,
+        *,
+        endpoint: str,
+        remote_project_id: int,
+        source_ids=None,
+        include_dialogue_order=True,
+        cancellation=None,
+    ):
         return self._categorized_upload_service().snapshot(
-            context, endpoint=endpoint, remote_project_id=remote_project_id, source_ids=source_ids
+            context,
+            endpoint=endpoint,
+            remote_project_id=remote_project_id,
+            source_ids=source_ids,
+            include_dialogue_order=include_dialogue_order,
+            cancellation=cancellation,
         )
 
     def categorized_upload_current(self, snapshot, context):
@@ -81,6 +95,7 @@ class GuiProjectCommandFacade:
             source_ids=source_ids,
             tolerate_failures=True,
             include_external_refs=True,
+            include_dialogue_order=False,
         )
 
     def file_sources_catalog(self, context):
@@ -278,7 +293,7 @@ class GuiProjectCommandFacade:
         active = self._lifecycle.active
         previous_summary = None if active is None else active.summary()
         result = self._lifecycle.save_active(context, **options)
-        if result.is_success and self._projection_rebuild is not None and result.value != previous_summary:
+        if result.value is not None and self._projection_rebuild is not None and result.value != previous_summary:
             self._projection_rebuild()
         return result
 

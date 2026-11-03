@@ -10,7 +10,8 @@ from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.projects import ProjectSourceRequest
 from transbridge.application.projects.source_supplement_mapping import supplement_variants
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
-from transbridge.persistence.v2.variant import SourceBaseline, SourceFingerprint, VariantSnapshot
+from transbridge.persistence.project_source_inputs import load_project_source_inputs
+from transbridge.persistence.v2.variant import SourceBaseline, SourceFingerprint, VariantAggregate, VariantSnapshot
 
 
 @pytest.fixture
@@ -18,11 +19,32 @@ def project(source_project):  # noqa: F811 - imported pytest fixture
     return source_project
 
 
+def _install_saved_fixture_state(services, context):
+    active = services.project_lifecycle.active
+    project = services.projects.read_snapshot_record(active.project_ref)
+    record = services.variants.read_snapshot_record(active.formal_variant_ref)
+    snapshot = VariantSnapshot.from_dto(record.value, active.formal_variant_ref)
+    inputs = load_project_source_inputs(
+        project.value, snapshot, services.current_project_opener._source_artifacts, context
+    )
+    services.project_lifecycle._active = replace(
+        active,
+        project=project.value,
+        variant=VariantAggregate(snapshot),
+        persisted_variant_revision=snapshot.revision,
+        source_variant_revision=snapshot.revision,
+        source_variant_hash=record.source_hash,
+        source_project_hash=project.source_hash,
+        missing_inputs=inputs.missing_inputs,
+    )
+
+
 def _missing_artifact(case):
     services, _, context, _, _, source_id = case
     active = services.project_lifecycle.active
     for source in active.project.envelope.data["sources"]:
         source.pop("source_artifact_id", None)
+        source["content_state"] = "missing"
         source["location"] = ""
     services.projects.save(active.project_ref, active.project)
     return services.project_source_supplements, context, source_id
@@ -52,7 +74,8 @@ def test_supplement_keeps_unmatched_translations_and_supplies_actual_input(proje
     assert services.project_lifecycle.active.missing_inputs
     assert Path(result.value.backup_path).exists()
     reopened = services.current_project_opener.open_path(path, context)
-    assert reopened.is_success and "recovery" not in reopened.value, reopened.diagnostics
+    assert not reopened.is_success
+    assert reopened.diagnostics[0].code == "PROJECT_CONTENT_REPAIR_FAILED"
     assert services.project_lifecycle.active.variant.snapshot() == saved
 
 
@@ -73,9 +96,8 @@ def test_user_mapping_can_resolve_legacy_identity_without_dropping_other_rows(pr
     )
     services.variants.save(legacy_snapshot.ref, legacy_snapshot.to_dto())
     _missing_artifact(project)
-    # Reopening makes the actual persisted nullable identities the edit authority.
-    opened = services.current_project_opener.open_path(path, context)
-    assert opened.is_success and "recovery" not in opened.value, opened.diagnostics
+    # Simulate an already-active legacy view; normal opening now rejects missing content.
+    _install_saved_fixture_state(services, context)
     replacement = source.with_name("chosen.xml")
     _xml(replacement, [(9, "Chosen original")])
     service = services.project_source_supplements
@@ -157,8 +179,7 @@ def test_unregistered_saved_rows_can_choose_a_file_and_format_then_continue(proj
     active.project.envelope.data["sources"] = []
     active.project.envelope.data["source_relations"] = []
     services.projects.save(active.project_ref, active.project)
-    reopened = services.current_project_opener.open_path(path, context)
-    assert reopened.is_success and "recovery" not in reopened.value
+    _install_saved_fixture_state(services, context)
     assert services.project_lifecycle.active.missing_inputs[0].source_id is None
     service = services.project_source_supplements
     prepared = service.prepare(path, None, namespace, str(source), context, format_id=FormatId.XML_EET)
@@ -201,8 +222,7 @@ def test_supplement_partial_source_preserves_its_already_available_originals(pro
     )
     with_orphan = replace(saved, entries=(*saved.entries, orphan), revision=saved.revision + 1)
     services.variants.save(with_orphan.ref, with_orphan.to_dto())
-    opened = services.current_project_opener.open_path(path, context)
-    assert opened.is_success and "recovery" not in opened.value
+    _install_saved_fixture_state(services, context)
     service = services.project_source_supplements
     result = service.prepare(path, source_id, orphan.entry_key.namespace.value, str(selected), context)
     assert result.is_success, result.diagnostics

@@ -14,6 +14,7 @@ from transbridge.application.file_upload import execute_file_upload, file_key, u
 from transbridge.application.projects.remote_binding import normalize_paratranz_endpoint
 from transbridge.application.projects.source_content import source_content_identity
 from transbridge.paratranz.file_publication import FilePublicationGateway
+from transbridge.paratranz.file_transport import UploadCancellation
 
 from .categorized_upload_dialog import (
     CategorizedUploadDialog,
@@ -97,7 +98,7 @@ class CategorizedUploadSession:
         if cancel.is_set():
             return ()
         progress(0, 0, "正在读取当前版本的工程来源…")
-        snapshot = self._capture()
+        snapshot = self._capture(cancel)
         sources = self._sources_in_scope(snapshot)
         files = upload_files(snapshot.sources, categorized=self.categorized)
         return tuple(
@@ -155,7 +156,7 @@ class CategorizedUploadSession:
                 0, 0, details=("已取消，尚未读取云端或上传内容。",), retry_count=len(selection.file_keys)
             )
         progress(0, 0, "正在读取本次上传的工程来源和分类…")
-        snapshot = self._capture()
+        snapshot = self._capture(cancel)
         files = upload_files(snapshot.sources, categorized=self.categorized)
         available = {file_key(file): file for file in files}
         source_ids = set(selection.source_ids)
@@ -208,13 +209,15 @@ class CategorizedUploadSession:
             raise ValueError("无法唯一定位当前插件的工程来源，请重新打开分类上传。")
         return sources
 
-    def _capture(self):
+    def _capture(self, cancel=None):
         return _value(
             self.commands.categorized_upload_snapshot(
                 self.request_context,
                 endpoint=self.target.endpoint,
                 remote_project_id=self.target.project_id,
                 source_ids=self.source_ids,
+                include_dialogue_order=self.categorized,
+                cancellation=UploadCancellation(cancel) if cancel is not None else None,
             )
         )
 

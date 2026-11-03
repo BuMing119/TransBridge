@@ -19,13 +19,25 @@ class SavedProjectSourcePreparer:
             self._preparer.prepare_source(request, context, role=role, common_options=common_options)
         )
 
-    def persist_prepared_source(self, prepared):
-        # Protocol-only preparers used by non-I/O callers may omit hydration;
-        # only a complete parsed result can become a durable source artifact.
+    def prepare_recovery_source(self, request, context, *, role, common_options):
+        """Recapture authorized recovery input and retain any corrupt artifact bytes."""
+        return self.persist_prepared_source(
+            self._preparer.prepare_source(request, context, role=role, common_options=common_options),
+            repair_corrupt=True,
+        )
+
+    def persist_prepared_source(self, prepared, *, repair_corrupt=False):
         if prepared.hydration is None:
-            return prepared
+            raise DomainError(
+                ErrorCategory.PREREQUISITE,
+                "PROJECT_SOURCE_CONTENT_REQUIRED",
+                "来源尚未捕获完整内容，无法发布到工程。",
+            )
         descriptor = prepared.to_dict()
-        descriptor["source_artifact_id"] = self._artifacts.put(prepared)
+        descriptor["source_artifact_id"] = (
+            self._artifacts.put(prepared, repair_corrupt=True) if repair_corrupt else self._artifacts.put(prepared)
+        )
+        descriptor["content_state"] = "captured"
         return replace(prepared, descriptor=tuple(descriptor.items()))
 
     def load_saved_source(self, source):
@@ -39,6 +51,7 @@ def load_saved_project_source(artifacts, source, source_fingerprints):
         validate_saved_source(prepared, source, source_fingerprints)
         descriptor = prepared.to_dict()
         descriptor["source_artifact_id"] = source["source_artifact_id"]
+        descriptor["content_state"] = "captured"
         hydration = replace(
             prepared.hydration,
             source_id=source.get("source_id"),

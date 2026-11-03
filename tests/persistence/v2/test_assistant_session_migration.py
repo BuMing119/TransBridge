@@ -6,6 +6,7 @@ import json
 import pytest
 
 from transbridge.persistence.v2 import (
+    SCHEMA_VERSION,
     LoadedRecord,
     ProjectId,
     ProjectRef,
@@ -47,7 +48,7 @@ def test_session_migration_preserves_only_known_history_and_stable_ids(tmp_path)
     loaded = repository.load(ref)
 
     assert isinstance(loaded, LoadedRecord)
-    assert loaded.value.envelope.schema_version == 4
+    assert loaded.value.envelope.schema_version == SCHEMA_VERSION
     assert loaded.migration_report.from_version == 3
     assert fs.read_bytes(loaded.migration_report.backup_path) == raw
     data = loaded.value.envelope.data
@@ -69,7 +70,7 @@ def test_migration_chain_runs_distinct_two_to_three_and_three_to_four_steps() ->
     assert intermediate.document["schema_version"] == 3
     assert "assistant_state" not in intermediate.document["data"]
     current = migrate_to_current(original, ref)
-    assert current.document["schema_version"] == 4
+    assert current.document["schema_version"] == SCHEMA_VERSION
     assert "assistant_state" in current.document["data"]
     assert original == before
 

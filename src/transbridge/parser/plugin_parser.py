@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from io import BytesIO
 import logging
 from pathlib import Path
 
@@ -35,6 +36,7 @@ class PluginParser:
         language: str = "english",
         discover_sibling_strings: bool = True,
         raise_on_error: bool = False,
+        captured_content: bytes | None = None,
     ) -> list[TranslationEntry]:
         """
         Parse a plugin file and return all translatable strings as TranslationItem objects.
@@ -50,6 +52,8 @@ class PluginParser:
                 can distinguish failure from a valid plugin with no strings.
                 Also require a complete TES4 header whose declared contents fit
                 within the source file, before invoking the binary parser.
+            captured_content: Parse these immutable plugin bytes instead of
+                opening path. The path still identifies sibling string resources.
 
         Returns:
             List of TranslationEntry objects.
@@ -63,14 +67,21 @@ class PluginParser:
 
         try:
             if raise_on_error:
-                with path.open("rb") as stream:
-                    header = stream.read(24)
-                    file_size = stream.seek(0, 2)
+                if captured_content is not None:
+                    header, file_size = captured_content[:24], len(captured_content)
+                else:
+                    with path.open("rb") as stream:
+                        header = stream.read(24)
+                        file_size = stream.seek(0, 2)
                 if len(header) < 24 or header[:4] != b"TES4":
                     raise ValueError(f"Plugin is missing a complete TES4 header: {path}")
                 if int.from_bytes(header[4:8], "little") > file_size - 24:
                     raise ValueError(f"Plugin TES4 header data exceeds the source file: {path}")
-            self._plugin = SSEPluginWithContext.from_file(path)
+            self._plugin = (
+                SSEPluginWithContext.from_stream(BytesIO(captured_content), path.name)
+                if captured_content is not None
+                else SSEPluginWithContext.from_file(path)
+            )
         except Exception as e:
             self.log.error("Failed to parse plugin %s: %s", path, e)
             if raise_on_error:
@@ -80,12 +91,15 @@ class PluginParser:
         # Try to load external strings files for localised plugins (e.g. Skyrim.esm)
         discover_archive = True
         if discover_sibling_strings:
-            try:
-                with path.open("rb") as source:
-                    header = source.read(12)
-            except FileNotFoundError:
-                # Legacy callers may provide an already-loaded/mocked plugin.
-                header = b""
+            if captured_content is not None:
+                header = captured_content[:12]
+            else:
+                try:
+                    with path.open("rb") as source:
+                        header = source.read(12)
+                except FileNotFoundError:
+                    # Legacy callers may provide an already-loaded/mocked plugin.
+                    header = b""
             if len(header) == 12 and header[:4] == b"TES4":
                 discover_archive = bool(int.from_bytes(header[8:12], "little") & RecordFlags.Localized)
         strings_lookup = None
@@ -100,6 +114,7 @@ class PluginParser:
             self.log.info("Loaded strings lookup with %d entries for %s", len(strings_lookup), path.name)
 
         strings_with_context = self._plugin.extract_strings_with_context(strings_lookup=strings_lookup)
+        self._plugin.require_resolved_strings()
         items = self.create_entries(strings_with_context, progress_callback=progress_callback, skip_empty=False)
         items, self.conflict_diagnostics = resolve_plugin_entry_conflicts(items)
         self.conflict_skipped_count = len(self.conflict_diagnostics)

@@ -34,6 +34,7 @@ from transbridge.persistence.project_catalog_repair import (
     ProjectCatalogRepairService,
     ProjectCatalogRepairStatus,
 )
+from transbridge.persistence.project_content_migration import ProjectContentMigration
 from transbridge.persistence.project_lifecycle_loader import V2ProjectCandidateLoader
 from transbridge.persistence.project_lifecycle_uow import RepositoryLifecycleUnitOfWorkFactory
 from transbridge.persistence.project_management import ProjectManagementStore
@@ -136,6 +137,12 @@ def build_persistence_v2_services(
     project_publisher = ProjectProjectionPublisher(project_projection)
     project_uow = RepositoryLifecycleUnitOfWorkFactory(project_store, id_factory)
     source_artifacts = ProjectSourceArtifactStore(resolved_root, adapter)
+    resolved_source_preparer = SavedProjectSourcePreparer(
+        source_preparer or TranslationIoProjectSourcePreparer(), source_artifacts
+    )
+    content_migration = ProjectContentMigration(
+        resolved_root, adapter, source_update_store, resolved_source_preparer, source_artifacts
+    )
     from transbridge.persistence.project_source_inputs import load_project_source_inputs
 
     project_loader = V2ProjectCandidateLoader(
@@ -145,6 +152,7 @@ def build_persistence_v2_services(
         source_inputs_loader=lambda project, snapshot, context: load_project_source_inputs(
             project, snapshot, source_artifacts, context
         ),
+        repair_missing_sources=content_migration.repair,
     )
     project_lifecycle = ProjectLifecycleService(
         project_loader,
@@ -163,9 +171,6 @@ def build_persistence_v2_services(
     project_management = ProjectManagementCommands(project_lifecycle, project_management_store, baselines)
     snapshot_repository = ProjectSnapshotRepository(resolved_root, adapter)
     project_snapshots = ProjectSnapshotCommands(project_lifecycle, snapshot_repository)
-    resolved_source_preparer = SavedProjectSourcePreparer(
-        source_preparer or TranslationIoProjectSourcePreparer(), source_artifacts
-    )
     project_archive = ProjectArchiveService(
         resolved_root,
         adapter,
@@ -223,10 +228,10 @@ def build_persistence_v2_services(
         variants,
         baselines,
         gui_project_commands,
-        source_preparer=resolved_source_preparer,
         prepare_projection=project_publisher.prepare,
         source_artifacts=source_artifacts,
         discard_prepared_projection=project_publisher.discard_prepared,
+        content_migration=content_migration,
     )
 
     session_projection = ProjectionStore()

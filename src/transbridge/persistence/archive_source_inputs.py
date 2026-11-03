@@ -66,6 +66,7 @@ def persist_imported_source_inputs(archive, project, variants, owned, preparer, 
                 raise ValueError("当前服务无法保存项目包提供的来源内容")
             artifact_id = artifacts.put(prepared)
         source["source_artifact_id"] = artifact_id
+        source["content_state"] = "captured"
         source["fingerprint"] = prepared.baseline.fingerprint.sha256
         source["format_options"] = descriptor["format_options"]
         source.setdefault("legacy", {})["namespace"] = prepared.baseline.fingerprint.namespace.value

@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import QMessageBox
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 from ..context import CollectionSlot
-from ..source_hydration import source_slot_key
+from ..source_hydration import reading_entries_from_hydration, source_slot_key
 from ..workers import ApiWorker
 from .parse_migration import prepare_parse_migrations
 
@@ -142,10 +142,18 @@ class ParseCoordinator:
                 expected_authority=authority,
                 committed_authority=publication,
             )
-            return collection, migrate_count, parser.get_plugin(), parser.get_strings_lookup(), hydration, migration
+            return (
+                collection,
+                migrate_count,
+                parser.get_plugin(),
+                parser.get_strings_lookup(),
+                hydration,
+                migration,
+                reading_entries_from_hydration(hydration),
+            )
 
         def _on_done(result):
-            collection, migrate_count, plugin, strings_lookup, hydration, migration = result
+            collection, migrate_count, plugin, strings_lookup, hydration, migration, reading_entries = result
             self._host.workbench.hide_step2_progress()
             self._host.workbench.set_step2_parsing(False)
             label = Path(esp_path).stem
@@ -162,6 +170,7 @@ class ParseCoordinator:
                 strings_lookup=strings_lookup,
                 source_snapshot=None if hydration is None else hydration.source_snapshot,
                 format_id=None if hydration is None else hydration.format_id,
+                reading_source_entries=reading_entries,
             )
             self._finish_parse(
                 source_slot_key(hydration) if hydration is not None else esp_path,
@@ -236,10 +245,18 @@ class ParseCoordinator:
                     expected_authority=authority,
                     committed_authority=publication,
                 )
-                return collection, migrate_count, parser.get_plugin(), parser.get_strings_lookup(), hydration, migration
+                return (
+                    collection,
+                    migrate_count,
+                    parser.get_plugin(),
+                    parser.get_strings_lookup(),
+                    hydration,
+                    migration,
+                    reading_entries_from_hydration(hydration),
+                )
 
             def _on_one_done(result):
-                collection, migrate_count, plugin, strings_lookup, hydration, migration = result
+                collection, migrate_count, plugin, strings_lookup, hydration, migration, reading_entries = result
                 label = Path(esp_path).stem
                 slot = CollectionSlot(
                     label=label,
@@ -254,6 +271,7 @@ class ParseCoordinator:
                     strings_lookup=strings_lookup,
                     source_snapshot=None if hydration is None else hydration.source_snapshot,
                     format_id=None if hydration is None else hydration.format_id,
+                    reading_source_entries=reading_entries,
                 )
                 key = source_slot_key(hydration) if hydration is not None else esp_path
                 results.append((key, slot, collection))

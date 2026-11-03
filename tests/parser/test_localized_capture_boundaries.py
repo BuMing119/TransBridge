@@ -14,9 +14,9 @@ from transbridge.application.io.plugin_localized_sources import _localized_sourc
 from transbridge.parser.plugin_parser import PluginParser
 
 
-def _plugin(tmp_path, *, localized):
+def _plugin(tmp_path, *, localized, string_id=1):
     path = tmp_path / "mod.esp"
-    text = struct.pack("<I", 1) if localized else b"Inline text\0"
+    text = struct.pack("<I", string_id) if localized else b"Inline text\0"
     path.write_bytes(
         _record("TES4", 0, _field("HEDR", struct.pack("<fII", 1.7, 1, 0x801)), 0x80 if localized else 0)
         + _group("WEAP", _record("WEAP", 0x800, _field("EDID", b"Weapon\0") + _field("FULL", text)))
@@ -90,7 +90,7 @@ def test_localized_partial_loose_table_still_rejects_corrupt_archive_dependency(
 
 @pytest.mark.parametrize("storage", ["archive", "loose"])
 def test_empty_localized_tables_are_captured_even_without_a_lookup(tmp_path, storage):
-    path = _plugin(tmp_path, localized=True)
+    path = _plugin(tmp_path, localized=True, string_id=0)
     content = {f"mod_english.{suffix}": _strings({}, suffix) for suffix in ("strings", "dlstrings", "ilstrings")}
     if storage == "archive":
         write_bsa(tmp_path / "mod.bsa", {f"strings/{name}": raw for name, raw in content.items()})
@@ -106,6 +106,64 @@ def test_empty_localized_tables_are_captured_even_without_a_lookup(tmp_path, sto
     sources = dict(parsed.source_snapshot.metadata)["localized_sources"]
     assert len(sources) == 3
     assert all(snapshot.content == struct.pack("<II", 0, 0) and entries == () for snapshot, entries in sources)
+
+
+@pytest.mark.parametrize("resources", ["absent", "empty", "wrong-id"])
+@pytest.mark.parametrize("skip_empty", [False, True])
+def test_missing_referenced_localized_text_fails_before_a_snapshot_is_created(tmp_path, resources, skip_empty):
+    path = _plugin(tmp_path, localized=True)
+    if resources != "absent":
+        strings = tmp_path / "Strings"
+        strings.mkdir()
+        records = {} if resources == "empty" else {2: b"Unrelated text"}
+        (strings / "mod_English.strings").write_bytes(_strings(records, "strings"))
+
+    parsed = SsePluginAdapter().parse(replace(_request(path), options=(("skip_empty", skip_empty),)))
+
+    assert parsed.outcome is OperationOutcome.FAILED
+    assert parsed.source_snapshot is None
+    assert parsed.entries == ()
+    diagnostic = next(item for item in parsed.diagnostics if item.code == "PLUGIN_PARSE_FAILED")
+    assert "mod.esp" in diagnostic.message
+    assert "0x00000001" in diagnostic.message
+    assert "WEAP FULL (00000800|mod.esp)" in diagnostic.message
+    assert "Strings files or BSA" in diagnostic.message
+
+
+@pytest.mark.parametrize("skip_empty", [False, True])
+def test_one_needed_table_with_resolved_empty_text_is_valid(tmp_path, skip_empty):
+    path = _plugin(tmp_path, localized=True)
+    strings = tmp_path / "Strings"
+    strings.mkdir()
+    (strings / "mod_English.strings").write_bytes(_strings({1: b""}, "strings"))
+
+    parsed = SsePluginAdapter().parse(replace(_request(path), options=(("skip_empty", skip_empty),)))
+
+    assert parsed.outcome is OperationOutcome.COMPLETED, parsed.diagnostics
+    assert [entry.original for entry in parsed.entries] == ([] if skip_empty else [""])
+    assert len(dict(parsed.source_snapshot.metadata)["localized_sources"]) == 1
+
+
+@pytest.mark.parametrize("skip_empty", [False, True])
+def test_zero_localized_id_is_a_valid_empty_reference_without_tables(tmp_path, skip_empty):
+    path = _plugin(tmp_path, localized=True, string_id=0)
+
+    entries = PluginParser().parse_plugin(path, skip_empty=skip_empty)
+
+    assert [entry.original for entry in entries] == ([] if skip_empty else [""])
+
+
+def test_legacy_parser_reports_missing_text_instead_of_returning_a_partial_plugin(tmp_path):
+    path = _plugin(tmp_path, localized=True)
+    parser = PluginParser()
+    with pytest.raises(ValueError, match="unresolved localized string"):
+        parser.parse_plugin(path)
+
+    strings = tmp_path / "Strings"
+    strings.mkdir()
+    (strings / "mod_English.strings").write_bytes(_strings({1: b"Recovered name"}, "strings"))
+
+    assert [entry.original for entry in parser.parse_plugin(path)] == ["Recovered name"]
 
 
 def test_cancellation_during_localized_capture_is_reported_as_cancelled(tmp_path, monkeypatch):

@@ -74,6 +74,8 @@ class ProjectCategorizedUploadService:
         source_ids: tuple[str, ...] | None = None,
         tolerate_failures: bool = False,
         include_external_refs: bool = False,
+        include_dialogue_order: bool = True,
+        cancellation=None,
     ) -> OperationResult[CategorizedUploadSnapshot]:
         try:
             endpoint = normalize_paratranz_endpoint(endpoint)
@@ -106,9 +108,13 @@ class ProjectCategorizedUploadService:
                             used_namespaces,
                             scope_key=(active.project_ref.identity.value, variant.ref.identity.value),
                             include_external_refs=include_external_refs,
+                            include_dialogue_order=include_dialogue_order,
+                            cancellation=cancellation,
                         )
                     )
                 except Exception as exc:
+                    if isinstance(exc, DomainError) and exc.category is ErrorCategory.CANCELLED:
+                        raise
                     if not tolerate_failures:
                         raise
                     failures.append((source.source_id, source.display_name or Path(source.location).name, str(exc)))
@@ -160,6 +166,8 @@ class ProjectCategorizedUploadService:
         *,
         scope_key,
         include_external_refs,
+        include_dialogue_order,
+        cancellation,
     ):
         namespace = registered_source_namespace(source, raw_source, variant)
         if namespace is None:
@@ -188,18 +196,37 @@ class ProjectCategorizedUploadService:
                 context,
                 scope_key=scope_key,
                 source=raw_source,
+                include_dialogue_order=include_dialogue_order,
+                cancellation=cancellation,
             )
             if prepared is None or prepared.fingerprint != baseline.fingerprint:
                 _conflict("CATEGORIZED_SOURCE_CHANGED", f"来源内容已变化，请先更新工程来源：{source.location}")
-        except (DomainError, OSError):
+        except (DomainError, OSError) as exc:
+            if isinstance(exc, DomainError) and exc.category is ErrorCategory.CANCELLED:
+                raise
             entries = known_original_entries(source_states.values(), include_external_refs=include_external_refs)
             if entries is None:
                 raise
             _logger.debug("Using saved identity originals for source %s", source.source_id, exc_info=True)
             return UploadSource(source.source_id, label, entries)
         entries = []
+        complete_entries = []
         for parsed in prepared.entries:
             state = source_states.get(parsed.entry_key)
+            if state is None:
+                complete_entries.append(
+                    TranslationEntry(
+                        id=parsed.legacy_id,
+                        key=parsed.entry_key.local_key,
+                        original=parsed.original,
+                        translation="",
+                        stage=0,
+                        context=parsed.context,
+                        entry_key=parsed.entry_key,
+                        metadata=parsed.metadata,
+                        string_id=parsed.string_id,
+                    )
+                )
             if state is not None:
                 entries.append(
                     TranslationEntry(
@@ -217,6 +244,7 @@ class ProjectCategorizedUploadService:
                         external_refs=state.external_refs if include_external_refs else (),
                     )
                 )
+                complete_entries.append(entries[-1])
         present = {entry.identity for entry in entries}
         remaining = known_original_entries(
             (state for key, state in source_states.items() if key not in present),
@@ -224,7 +252,13 @@ class ProjectCategorizedUploadService:
         )
         if remaining is None:
             _conflict("CATEGORIZED_SOURCE_ENTRIES_MISSING", f"来源解析结果无法覆盖版本中的全部词条：{source.location}")
-        return UploadSource(source.source_id, label, (*entries, *remaining))
+        return UploadSource(
+            source.source_id,
+            label,
+            (*entries, *remaining),
+            prepared.dialogue_order,
+            (*complete_entries, *remaining),
+        )
 
     def current(
         self, snapshot: CategorizedUploadSnapshot, context: RequestContext

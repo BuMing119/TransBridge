@@ -89,10 +89,12 @@ def test_restart_and_variant_switch_use_saved_hydration_without_live_reads(saved
 
 
 @pytest.mark.parametrize("missing_fingerprint", [False, True])
-def test_legacy_record_does_not_backfill_from_reference_during_open(saved, missing_fingerprint):
+def test_legacy_record_recovers_owned_artifact_without_reading_reference(saved, missing_fingerprint):
     root, source, path, context, expected = saved
     document = json.loads(path.read_text(encoding="utf-8"))
+    document["schema_version"] = 4
     for item in document["data"]["sources"]:
+        item.pop("content_state")
         item.pop("source_artifact_id")
         if missing_fingerprint:
             item.pop("fingerprint")
@@ -102,36 +104,34 @@ def test_legacy_record_does_not_backfill_from_reference_during_open(saved, missi
     services = _services(root, preparer)
     try:
         prepared = services.current_project_opener.prepare_path(path, context)
-        assert prepared.is_success and prepared.value.recovery is None
-        assert prepared.value.missing_inputs
+        assert prepared.is_success and prepared.value.recovery is None, prepared.diagnostics
+        assert not prepared.value.missing_inputs
         assert prepared.value.prepared_read.snapshot.entries == expected.entries
         assert preparer.calls == 0
-        assert path.read_bytes() == before
+        assert path.read_bytes() != before
+        assert tuple((root / "backups").rglob("*.json"))
         activated = services.current_project_opener.activate(prepared.value, context)
         assert activated.is_success and "read_only" not in activated.value
         assert services.project_lifecycle.active.variant.snapshot().entries == expected.entries
-        assert services.project_lifecycle.active.missing_inputs
-        assert all(
-            "source_artifact_id" not in item
-            for item in services.project_lifecycle.active.project.envelope.data["sources"]
-        )
+        assert not services.project_lifecycle.active.missing_inputs
     finally:
         services.close()
     source.unlink()
     services = _services(root, CountingPreparer(forbidden=True))
     try:
         restored = services.current_project_opener.prepare_active(context)
-        assert restored.is_success and restored.value.recovery is None
+        assert restored.is_success and restored.value.recovery is None, restored.diagnostics
         assert restored.value.prepared_read.snapshot.entries == expected.entries
-        assert restored.value.missing_inputs
+        assert not restored.value.missing_inputs
     finally:
         services.close()
 
 
-def test_missing_source_prepares_an_editable_view_with_the_complete_saved_variant(saved):
+def test_missing_artifact_reference_is_repaired_before_preparing_editable_view(saved):
     root, _source, path, context, expected = saved
     document = json.loads(path.read_text(encoding="utf-8"))
     document["data"]["sources"][0].pop("source_artifact_id")
+    document["data"]["sources"][0]["content_state"] = "missing"
     path.write_text(json.dumps(document), encoding="utf-8")
     services = _services(root)
     try:
@@ -142,36 +142,32 @@ def test_missing_source_prepares_an_editable_view_with_the_complete_saved_varian
         assert activated.is_success and "read_only" not in activated.value
         assert services.project_lifecycle.active.variant.snapshot().entries == expected.entries
         assert len(seen) == 1 and len(seen[0].values["entries"]) == len(expected.entries)
-        assert seen[0].values["missing_inputs"]
+        assert not seen[0].values["missing_inputs"]
     finally:
         services.close()
 
 
-@pytest.mark.parametrize("mutation", ["missing", "options", "namespace", "fingerprint"])
-def test_invalid_saved_reference_preserves_editable_variant_without_parsing(saved, mutation):
+@pytest.mark.parametrize("mutation", ["missing", "fingerprint"])
+def test_missing_or_conflicting_reference_recovers_only_when_identity_is_verified(saved, mutation):
     root, _source, path, context, expected = saved
     document = json.loads(path.read_text(encoding="utf-8"))
     registration = document["data"]["sources"][0]
-    if mutation == "missing":
-        registration["source_artifact_id"] = "f" * 64
-    elif mutation == "options":
-        registration["format_options"]["skip_empty"] = True
-    elif mutation == "namespace":
-        registration["legacy"]["source_id"] = "different-namespace"
-    else:
-        registration["fingerprint"] = "f" * 64
+    registration["source_artifact_id" if mutation == "missing" else "fingerprint"] = "f" * 64
     path.write_text(json.dumps(document), encoding="utf-8")
     before = path.read_bytes()
     services = _services(root, CountingPreparer(forbidden=True))
     try:
         result = services.current_project_opener.prepare_path(path, context)
-        assert result.is_success and result.value.recovery is None
-        assert result.diagnostics[0].code == "PROJECT_SOURCE_ARTIFACT_UNAVAILABLE"
-        assert result.value.prepared_read.snapshot.entries == expected.entries
-        assert result.value.missing_inputs
-        assert path.read_bytes() == before
-        assert services.current_project_opener.activate(result.value, context).is_success
-        assert services.project_lifecycle.active.variant.snapshot().entries == expected.entries
+        if mutation == "missing":
+            assert result.is_success and result.value.recovery is None, result.diagnostics
+            assert not result.value.missing_inputs
+            assert result.value.prepared_read.snapshot.entries == expected.entries
+            assert services.current_project_opener.activate(result.value, context).is_success
+        else:
+            assert not result.is_success
+            assert result.diagnostics[0].code == "PROJECT_CONTENT_REPAIR_FAILED"
+            assert path.read_bytes() == before
+            assert services.project_lifecycle.active is None
     finally:
         services.close()
 

@@ -251,12 +251,14 @@ class ProjectBar(QWidget):
             SavePhase.SAVING: "running",
             SavePhase.DIRTY: "paused",
             SavePhase.FAILED: "failed",
+            SavePhase.INCOMPLETE: "paused",
         }
         semantic_states = {
             SavePhase.CLEAN: SemanticState.SUCCESS,
             SavePhase.SAVING: SemanticState.INFO,
             SavePhase.DIRTY: SemanticState.WARNING,
             SavePhase.FAILED: SemanticState.ERROR,
+            SavePhase.INCOMPLETE: SemanticState.WARNING,
         }
         if self._domain is not None:
             palette = self._save_status.palette()
@@ -372,6 +374,11 @@ class ProjectBar(QWidget):
             if self._save_presenter.state.phase is not SavePhase.SAVING:
                 self._save_presenter.begin(target)
             self._apply_save_state(self._save_presenter.fail(target, diagnostic))
+
+    def set_save_incomplete(self, diagnostic: str) -> None:
+        target = self._target()
+        if target is not None:
+            self._apply_save_state(self._save_presenter.incomplete(target, diagnostic))
 
     def _apply_theme(self, snapshot) -> None:
         try:

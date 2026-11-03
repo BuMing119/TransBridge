@@ -13,6 +13,7 @@ from tests.dialogue_support import dialogue_entries
 from transbridge.application.dialogue.index import build_dialogue_index
 from transbridge.application.dialogue.loading import DialogueIndexLoader
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.parser.plugin.dialogue_order_binary import DialogueOrderCancelled
 from transbridge.ui import context as context_module
 from transbridge.ui.dialogue.controller import DialogueEditorController
 from transbridge.ui.workbench.step2 import Step2PreviewWidget
@@ -57,3 +58,49 @@ def test_late_index_result_does_not_call_destroyed_controller_and_releases_worke
             QTest.qWait(1)
     assert not workers
     assert not deliveries
+
+
+@pytest.mark.parametrize("invalidation", ["source", "version", "close", "destroy"])
+def test_actual_index_worker_is_cooperatively_cancelled_on_owner_invalidation(monkeypatch, invalidation):
+    started, cancelled = Event(), Event()
+
+    def build(*_args, **kwargs):
+        token = kwargs["cancellation"]
+        started.set()
+        assert token.event.wait(3), "Owner invalidation must cancel the active index worker"
+        assert token.is_cancelled
+        cancelled.set()
+        raise DialogueOrderCancelled("Cancelled test index")
+
+    monkeypatch.setattr(DialogueIndexLoader, "build", build)
+    monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: SimpleNamespace(token=""))
+    context = context_module.AppContext()
+    collection = TranslationEntryCollection(dialogue_entries())
+    context.add_slot("fixture.esp", context_module.CollectionSlot("Test", collection, esp_path="fixture.esp"))
+    parent = QWidget()
+    preview = Step2PreviewWidget(context, parent)
+    workers, deliveries = [], []
+    controller = DialogueEditorController(context, parent, preview, workers)
+    controller.open_entry(dialogue_entries()[2].identity)
+    monkeypatch.setattr(controller, "_loaded", lambda *_args: deliveries.append("loaded"))
+    monkeypatch.setattr(controller, "_failed", lambda *_args: deliveries.append("failed"))
+    try:
+        assert started.wait(3)
+        if invalidation == "source":
+            context.add_slot("other.xml", context_module.CollectionSlot("Other", collection, eet_path="other.xml"))
+        elif invalidation == "version":
+            controller._version_changed("new-version")
+        elif invalidation == "close":
+            controller.close()
+        else:
+            sip.delete(parent)
+        assert cancelled.wait(3)
+        deadline = monotonic() + 5
+        while workers and monotonic() < deadline:
+            _APP.processEvents()
+            QTest.qWait(1)
+        assert not workers and not deliveries
+    finally:
+        if not sip.isdeleted(parent):
+            controller.close()
+            sip.delete(parent)

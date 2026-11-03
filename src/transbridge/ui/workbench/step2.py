@@ -22,6 +22,7 @@ from transbridge.converter.translation_entry_collection import TranslationEntryC
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
 from transbridge.ui.project_labels import entry_label_key
+from transbridge.ui.workbench.dialogue_reading_order import DialogueReadingOrderCoordinator
 from transbridge.ui.workbench.entry_action_scope import resolve_entry_action_scope
 from transbridge.ui.workbench.entry_menu import build_entry_menu
 from transbridge.ui.workbench.entry_refresh import EntryRefresh
@@ -98,6 +99,9 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._summary = StatisticsSummary(0, 0, 0, 0)
         self._tag_buttons: dict[str | int | None, QPushButton] = {}  # 标签按钮
         self._init_ui()
+        self._dialogue_reading_order = DialogueReadingOrderCoordinator(self)
+        ctx.project_changed.connect(self._dialogue_reading_order.invalidate_context)
+        ctx.variant_changed.connect(self._dialogue_reading_order.invalidate_context)
         self._terminology_preview = TerminologyPreviewCoordinator(
             self, identity=lambda: preview_identity(ctx, self._filter_scope)
         )
@@ -276,6 +280,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             self._summary = StatisticsSummary(0, 0, 0, 0)
             self._summary_view.set_summary(self._summary)
             self._entries = []
+            self._dialogue_reading_order.set_entries(())
             self._category_filters.clear()
             self._stage_filters.clear()
             self._entry_labels.clear()
@@ -301,6 +306,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
         self._progress.setValue(100)
         self._entries = list(collection)
+        self._dialogue_reading_order.set_entries(self._entries)
         self._terminology_preview.set_entries(self._entries)
         self._summary = StatisticsSummary.from_entries(self._entries)
         self._summary_view.set_summary(self._summary)
@@ -689,5 +695,6 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         """Release owned debounce and incremental-render callbacks before hide."""
         self._filters_view.search_timer.stop()
         self._terminology_preview.close()
+        self._dialogue_reading_order.close()
         self._table.close_rendering()
         super().closeEvent(event)

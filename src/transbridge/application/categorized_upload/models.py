@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.parser.plugin.dialogue_order_evidence import DialogueOrderEvidence
 
 
 @dataclass(frozen=True, slots=True)
@@ -10,6 +11,8 @@ class UploadSource:
     source_id: str
     label: str
     entries: tuple[TranslationEntry, ...]
+    dialogue_order: DialogueOrderEvidence | None = None
+    classification_entries: tuple[TranslationEntry, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)

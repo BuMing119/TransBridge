@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 import os
 import time
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -331,3 +331,101 @@ def test_clicking_header_commits_the_active_editor_before_reordering(monkeypatch
         project.close()
         widget.deleteLater()
         _APP.processEvents()
+
+
+def test_repeated_default_render_reuses_indices_and_looks_up_current_entries(table):
+    class CountingRanks(dict):
+        lookups = 0
+
+        def get(self, key, default=None):
+            self.lookups += 1
+            return super().get(key, default)
+
+    entries = _entries(12)
+    keys = tuple(entry.identity for entry in reversed(entries))
+    ranks = CountingRanks({key: rank for rank, key in enumerate(keys)})
+    table.set_default_entry_order(keys, ranks=ranks, render=False)
+    table.start_render(RenderSession(1, None, entries, ("fixture",)), {}, {})
+    assert _ids(table) == [entry.id for entry in reversed(entries)]
+    assert ranks.lookups == len(entries)
+    order, row_lookup = table._display_order, table._entry_rows
+    replaced = tuple(replace(entry, translation="fresh") for entry in entries)
+    ranks.lookups = 0
+    table.set_default_entry_order(keys, ranks=ranks, render=False)
+    table.start_render(RenderSession(2, None, replaced, ("fixture",)), {}, {})
+    assert ranks.lookups == 0
+    assert table._display_order is order and table._entry_rows is row_lookup
+    assert table.entry_at_row(0) is replaced[-1]
+    assert table.model().index(0, COL_TRANSLATION).data() == "fresh"
+    # Membership and source-position changes invalidate the index cache.
+    filtered = replaced[::2]
+    table.start_render(RenderSession(3, None, filtered, ("fixture",)), {}, {})
+    assert _ids(table) == [entry.id for entry in reversed(filtered)]
+    assert ranks.lookups == len(filtered)
+    table.start_render(RenderSession(4, None, tuple(reversed(filtered)), ("fixture",)), {}, {})
+    assert _ids(table) == [entry.id for entry in reversed(filtered)]
+    assert ranks.lookups == 2 * len(filtered)
+    added = TranslationEntry("added", "new-key", "New source", "fresh", 1, "NPC_:FULL")
+    table.start_render(RenderSession(5, None, (*filtered, added), ("fixture",)), {}, {})
+    assert _ids(table) == [entry.id for entry in reversed(filtered)] + [added.id]
+    assert table.entry_at_row(len(filtered)) is added
+
+
+def test_mutable_key_input_is_recaptured_and_legacy_row_labels_stay_current(table):
+    entries = _entries(3)
+    keys = [entry.identity for entry in entries]
+    table.set_default_entry_order(keys, render=False)
+    table.start_render(RenderSession(1, None, entries, ("fixture",)), {}, {})
+    keys.reverse()
+    table.set_default_entry_order(keys)
+    assert _ids(table) == [entry.id for entry in reversed(entries)]
+    # Exact domain identity can be retained while the legacy label id changes.
+    replaced = (replace(entries[0], id="new-label-id"), *entries[1:])
+    table.start_render(RenderSession(2, None, replaced, ("fixture",)), {}, {})
+    assert table.find_entry_row(-1, "new-label-id") == 2
+    assert table.find_entry_row(-1, entries[0].id) == -1
+    assert table.entry_at_row(2) is replaced[0]
+
+
+def test_prepared_source_indices_and_manual_ties_use_default_ranks(table):
+    entries = _entries(6)
+    keys = tuple(entry.identity for entry in reversed(entries))
+    ranks = MappingProxyType({key: rank for rank, key in enumerate(keys)})
+    source_keys = tuple(entry.identity for entry in entries)
+    source_rows = tuple(reversed(range(len(entries))))
+    table.start_render(RenderSession(1, None, entries), {}, {})
+    table.set_default_entry_order(keys, ranks=ranks, source_keys=source_keys, source_rows=source_rows)
+    assert table._sorting.default_ranks is ranks
+    assert table._display_order is source_rows
+    # Every translation ties; both directions must retain the default rank order.
+    _click(table, COL_TRANSLATION)
+    assert _ids(table) == [entry.id for entry in reversed(entries)]
+    _click(table, COL_TRANSLATION)
+    assert _ids(table) == [entry.id for entry in reversed(entries)]
+    _click(table, COL_TRANSLATION)
+    assert table._display_order is source_rows
+    # Replacing the complete-source ranks must invalidate the prepared projection.
+    table.set_default_entry_order(tuple(entry.identity for entry in entries))
+    assert _ids(table) == [entry.id for entry in entries]
+
+
+def test_repeated_manual_sort_reuses_indices_but_rechecks_in_place_values(table):
+    entries = _entries(3)
+    table.start_render(RenderSession(1, None, entries, ("fixture",)), {}, {})
+    _click(table, COL_TRANSLATION)
+    order = table._display_order
+    replacement = tuple(replace(entry, stage=3) for entry in entries)
+    table.start_render(RenderSession(2, None, replacement, ("fixture",)), {}, {})
+    assert table._display_order is order
+    assert table.entry_at_row(0) is replacement[0]
+    with pytest.warns(DeprecationWarning):
+        replacement[0].translation = "zzz"
+    table.start_render(RenderSession(3, None, replacement, ("fixture",)), {}, {})
+    assert _ids(table) == [replacement[1].id, replacement[2].id, replacement[0].id]
+    labels = {replacement[0].id: {"a"}}
+    table.start_render(RenderSession(4, None, replacement, ("fixture",)), labels, {})
+    _click(table, COL_MARK)
+    assert _ids(table)[-1] == replacement[0].id
+    labels[replacement[1].id] = {"a", "b"}
+    table.start_render(RenderSession(5, None, replacement, ("fixture",)), labels, {})
+    assert _ids(table)[-1] == replacement[1].id

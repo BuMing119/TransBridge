@@ -86,7 +86,7 @@ def encode_prepared_artifact(
         for field_name in _FIELDS[name]:
             item = getattr(value, field_name)
             if isinstance(value, PreparedProjectSource) and field_name == "descriptor":
-                item = tuple((key, data) for key, data in item if key != "source_artifact_id")
+                item = tuple((key, data) for key, data in item if key not in {"source_artifact_id", "content_state"})
             attributes[field_name] = encode(item)
         return {"$type": name, "fields": attributes}
 

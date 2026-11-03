@@ -44,6 +44,7 @@ class DialogueEditorController(QObject):
         self._closed = False
         self._index = DialogueIndex((), {})
         self._loader = DialogueIndexLoader()
+        self._delivery = None
         self._node_identity = None
         self._scope = None
         self._quest = self._topic = self._row = 0
@@ -76,6 +77,7 @@ class DialogueEditorController(QObject):
 
     def _version_changed(self, _variant) -> None:
         # Do not expose the old source under a newly activated Variant.
+        self._cancel_index()
         self._generation += 1
         self._scope = None
         self._index_structure = IndexStructure()
@@ -105,6 +107,7 @@ class DialogueEditorController(QObject):
         slot = self.context.active_slot
         reason = unavailable_reason(self.context)
         if self._index_structure.source_changed(scope, slot, reason):
+            self._cancel_index()
             self._generation += 1
             self._index = DialogueIndex((), {})
             self._entry_keys = ()
@@ -125,6 +128,7 @@ class DialogueEditorController(QObject):
         reason = unavailable_reason(self.context)
         rebuild = collection is not None and self._index_structure.changed(collection)
         if rebuild:
+            self._cancel_index()
             self._generation += 1
             self._index = DialogueIndex((), {})
             self._context_reason = reason or "正在建立任务与话题索引…"
@@ -145,7 +149,7 @@ class DialogueEditorController(QObject):
         generation, scope = self._generation, self._scope
         slot = self.context.active_slot
         entries = tuple(collection)
-        IndexDelivery(
+        self._delivery = IndexDelivery(
             self._loader,
             entries,
             self,
@@ -154,7 +158,13 @@ class DialogueEditorController(QObject):
             scope,
             plugin=slot.plugin,
             snapshot=slot.source_snapshot,
+            reading_entries=getattr(slot, "reading_source_entries", None),
         )
+
+    def _cancel_index(self):
+        if self._delivery is not None:
+            self._delivery.cancel()
+            self._delivery = None
 
     def _loaded(self, generation, scope, index, *, complete=True) -> None:
         if self._closed or generation != self._generation or scope != content_scope(self.context):
@@ -394,6 +404,7 @@ class DialogueEditorController(QObject):
     def close(self) -> None:
         if self._closed:
             return
+        self._cancel_index()
         self._closed = True
         self._generation += 1
         self.dialog.hide()

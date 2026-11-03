@@ -26,15 +26,18 @@ from .plugin_string_with_context import PluginStringWithContext
 
 
 class _UnresolvedStrings:
-    """Count one recursive scan and retain a bounded DEBUG-only locator sample."""
+    """Retain the first missing locator and a bounded DEBUG-only sample."""
 
     def __init__(self, logger, plugin_name):
         self._logger, self._plugin_name = logger, plugin_name
         self.count = 0
+        self.first = None
         self._samples = [] if logger.isEnabledFor(logging.DEBUG) else None
 
     def missing(self, string_id, record_type, subrecord_type, formid):
         self.count += 1
+        if self.first is None:
+            self.first = (string_id, record_type, subrecord_type, formid)
         if self._samples is not None and len(self._samples) < 5:
             self._samples.append((string_id, record_type, subrecord_type, formid))
 
@@ -64,6 +67,7 @@ class SSEPluginWithContext(SSEPlugin):
         """
         super().__init__(name)
         self._string_subrecords: list[tuple[PluginStringWithContext, StringSubrecord]] | None = None
+        self._unresolved_strings: _UnresolvedStrings | None = None
 
     @property
     def plugin_name(self) -> str:
@@ -330,6 +334,7 @@ class SSEPluginWithContext(SSEPlugin):
         strings = self._extract_group_string_pairs(
             group, extract_localized, dial_context, dial_context_map, dlbr_map, strings_lookup, unresolved
         )
+        self._unresolved_strings = unresolved
         unresolved.report()
         return strings
 
@@ -432,6 +437,10 @@ class SSEPluginWithContext(SSEPlugin):
 
                     if isinstance(string, RawString):
                         string_text = str(string)
+                    elif string == 0 and (strings_lookup is not None or not extract_localized):
+                        # A zero localized ID is an empty value, not a missing resource.
+                        raw_string_id = 0
+                        string_text = ""
                     elif strings_lookup is not None:
                         # Localized plugin: string is an integer index into external strings files
                         raw_string_id = string  # 保存 int ID
@@ -449,6 +458,7 @@ class SSEPluginWithContext(SSEPlugin):
                         # No lookup available but caller wants raw indices
                         string_text = str(string)
                     else:
+                        unresolved.missing(string, record.type, subrecord.type, formid)
                         continue
 
                     string_data = PluginStringWithContext(
@@ -480,8 +490,20 @@ class SSEPluginWithContext(SSEPlugin):
                     group, extract_localized, None, None, dlbr_map, strings_lookup, unresolved
                 )
             )
+        self._unresolved_strings = unresolved
         unresolved.report()
         return pairs
+
+    def require_resolved_strings(self) -> None:
+        """Reject a parsed source whose referenced localized text is unavailable."""
+        unresolved = self._unresolved_strings
+        if unresolved is not None and unresolved.first is not None:
+            string_id, record_type, subrecord_type, formid = unresolved.first
+            raise ValueError(
+                f"Plugin {self.plugin_name} has {unresolved.count} unresolved localized string reference(s); "
+                f"first missing ID {string_id:#010x} in {record_type} {subrecord_type} ({formid}). "
+                "Provide the matching language Strings files or BSA containing this ID."
+            )
 
     def extract_strings_with_context(
         self,

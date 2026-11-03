@@ -13,6 +13,7 @@ from tests.dialogue_support import dialogue_entries
 from tests.ui.test_dialogue_editor import drain
 from transbridge.application.dialogue import loading
 from transbridge.application.io.contracts import FormatId, SourceDescriptor, SourceSnapshot
+from transbridge.application.io.dialogue_reading_view import ReadingEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui import context as context_module
 from transbridge.ui.dialogue.controller import DialogueEditorController
@@ -163,6 +164,29 @@ def test_structural_metadata_change_rebuilds_but_reuses_source_catalog(lazy_edit
     drain(editor)
     assert editor._generation > generation
     assert editor._index is not old_index
+    assert len(reads) == 1
+
+
+def test_complete_reading_scope_change_invalidates_index_without_reopening_source(lazy_editor, monkeypatch):
+    editor = lazy_editor
+    reads = []
+    actual_read = loading.read_dialogue_catalog
+
+    def read_catalog(plugin):
+        reads.append(True)
+        return actual_read(plugin)
+
+    monkeypatch.setattr(loading, "read_dialogue_catalog", read_catalog)
+    target = dialogue_entries()[2].identity
+    editor.open_entry(target)
+    drain(editor)
+    before = editor._generation
+    editor.context.active_slot.reading_source_entries = tuple(
+        ReadingEntry(entry.identity, entry.context, entry.metadata) for entry in dialogue_entries()
+    )
+    editor.refresh()
+    drain(editor)
+    assert editor._generation > before
     assert len(reads) == 1
 
 

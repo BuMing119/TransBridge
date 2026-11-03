@@ -90,7 +90,7 @@ def test_catalog_labels_and_scene_contents_keep_canonical_entry_locations():
     assert result.locations[entries[5].identity] == (0, 2, 1)
 
 
-def test_left_record_order_uses_formid_while_right_responses_keep_source_order():
+def test_scenes_keep_their_navigation_slots_while_right_responses_keep_source_order():
     catalog = DialogueCatalog((
         DialogueRecord("SCEN", "0000000F", "SceneBeforeTopic", "00000001", topic_ids=("00000010",)),
         DialogueRecord("DIAL", "00000010", "InternalTopic", "00000001"),
@@ -100,6 +100,48 @@ def test_left_record_order_uses_formid_while_right_responses_keep_source_order()
     quest = build_dialogue_index([second, first], catalog=catalog).quests[0]
     assert [topic.kind for topic in quest.topics] == ["SCEN", "DIAL"]
     assert quest.topics[1].entries == (first.identity, second.identity)
+
+
+def test_missing_complete_source_projection_keeps_existing_navigation_order():
+    first = dialogue_entry("DIAL", "00000030", order=1)
+    second = dialogue_entry("DIAL", "00000010", order=2)
+    quest = build_dialogue_index([second, first]).quests[0]
+    assert [topic.identity[2] for topic in quest.topics] == ["00000010", "00000030"]
+
+
+def test_complete_source_topic_order_includes_no_full_empty_nodes_and_preserves_scenes():
+    journal = dialogue_entry("QUST", "00000001", order=0)
+    later = dialogue_entry(parent="00000010", order=1)
+    first = dialogue_entry(form="00000021", parent="00000030", order=2)
+    first_reply = dialogue_entry(form="00000021", parent="00000030", order=3, index=2)
+    catalog = DialogueCatalog((
+        DialogueRecord("DIAL", "00000010", "Later", "00000001"),
+        DialogueRecord("SCEN", "00000015", "Scene", "00000001", topic_ids=("00000010", "00000030")),
+        DialogueRecord("DIAL", "00000020", "EmptyBridge", "00000001"),
+        DialogueRecord("DIAL", "00000030", "First", "00000001"),
+    ))
+    entries = [journal, later, first, first_reply]
+    quest_key = (first.identity.namespace.value, "00000001")
+    layout = {quest_key: ("00000030", "00000020", "00000010")}
+    index = build_dialogue_index(entries, catalog=catalog, topic_orders=layout)
+    quest = index.quests[0]
+    assert [topic.identity[2] for topic in quest.topics if topic.kind == "DIAL"] == list(layout[quest_key])
+    assert [topic.kind for topic in quest.topics] == ["QUST", "DIAL", "SCEN", "DIAL", "DIAL"]
+    assert quest.topics[1].entries == (first.identity, first_reply.identity)
+    assert quest.topics[2].entries == (later.identity, first.identity, first_reply.identity)
+    assert quest.topics[3].entries == ()
+    assert index.locations[first_reply.identity] == (0, 1, 1)
+    assert entries == [journal, later, first, first_reply]
+
+
+def test_topic_order_is_scoped_to_source_namespace_and_does_not_mix_unknown_nodes():
+    first = dialogue_entry("DIAL", "00000030", order=1)
+    second = dialogue_entry("DIAL", "00000010", order=2)
+    unknown = replace(dialogue_entry(form="00000021", parent=None, order=3), metadata=())
+    index = build_dialogue_index(
+        [first, second, unknown], topic_orders={("another-source", "00000001"): ("00000010", "00000030")}
+    )
+    assert [topic.identity[2] for topic in index.quests[0].topics] == ["00000010", "00000030", "unknown"]
 
 
 def test_scene_can_reference_a_topic_without_full_text_and_an_explicit_other_quest():

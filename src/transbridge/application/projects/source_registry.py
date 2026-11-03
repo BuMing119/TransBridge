@@ -50,6 +50,7 @@ class SourceRegistration:
     format_options: tuple[tuple[str, Any], ...] = ()
     legacy: tuple[tuple[str, Any], ...] = ()
     source_artifact_id: str | None = None
+    content_state: str | None = None
 
     def __post_init__(self) -> None:
         if not _valid_id(self.source_id):
@@ -71,6 +72,12 @@ class SourceRegistration:
             raise ValueError("source fingerprint must be a lowercase SHA-256 digest")
         if self.source_artifact_id is not None and not _SHA256.fullmatch(self.source_artifact_id):
             raise ValueError("source artifact identifier must be a lowercase SHA-256 digest")
+        content_state = self.content_state or ("captured" if self.source_artifact_id is not None else "missing")
+        if content_state not in {"captured", "missing"} or (content_state == "captured") != (
+            self.source_artifact_id is not None
+        ):
+            raise ValueError("source content state must agree with its persisted artifact reference")
+        object.__setattr__(self, "content_state", content_state)
         options = _canonical_items(self.format_options, "format option")
         legacy = _canonical_items(self.legacy, "legacy field")
         display_name = _optional_text(self.display_name, "display_name")
@@ -93,6 +100,7 @@ class SourceRegistration:
             "kind": self.kind.value,
             "bilingual_capability": self.bilingual_capability.value,
             "format_options": dict(self.format_options),
+            "content_state": self.content_state,
         }
         for key, value in (
             ("fingerprint", self.fingerprint),
@@ -121,6 +129,7 @@ class SourceRegistration:
             format_options=tuple((value.get("format_options") or {}).items()),
             legacy=tuple((value.get("legacy") or {}).items()),
             source_artifact_id=value.get("source_artifact_id"),
+            content_state=value["content_state"],
         )
 
 

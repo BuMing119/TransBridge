@@ -46,15 +46,23 @@ class TranslationTableModel(QAbstractTableModel):
         self._header_tooltips = {}
         self._generation = 1
         self._editing_allowed = True
+        self.default_ranks = {}
+        self._source_keys = ()
 
-    def install(self, session, order, entry_labels, label_library) -> bool:
+    def install(self, session, order, entry_labels, label_library, *, source_keys=None) -> bool:
         """Install data and report whether existing Qt indexes were invalidated."""
-        current_keys = tuple(self.session.entries[row].identity for row in self.order)
-        incoming_keys = tuple(session.entries[row].identity for row in order)
+        if source_keys is None:
+            source_keys = tuple(entry.identity for entry in session.entries)
+        same_rows = source_keys == self._source_keys and order == self.order
+        if not same_rows:
+            current_keys = tuple(self._source_keys[row] for row in self.order)
+            incoming_keys = tuple(source_keys[row] for row in order)
+            same_rows = bool(current_keys) and current_keys == incoming_keys
         same_scope = session.content_scope is not None and session.content_scope == self.session.content_scope
         same_editability = self._editing_allowed == (self.profile_label is None)
         self._editing_allowed = self.profile_label is None
-        if same_scope and same_editability and current_keys and current_keys == incoming_keys:
+        self._source_keys = source_keys
+        if same_scope and same_editability and self.order and same_rows:
             # Legacy callers can mutate entries in place. Always notify readers;
             # equality against the old session would miss these mutations.
             self.session, self.order = session, order
@@ -149,7 +157,7 @@ class TranslationTableModel(QAbstractTableModel):
         if column == COL_CHECK:
             return ""
         if column == COL_INDEX:
-            return str(self.order[index.row()] + 1)
+            return str(self.default_ranks.get(entry.identity, self.order[index.row()]) + 1)
         if column == COL_MARK:
             count = len(self._labels(entry))
             return str(count) if count else ""

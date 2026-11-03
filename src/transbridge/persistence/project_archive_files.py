@@ -13,6 +13,21 @@ import zipfile
 MAX_ARCHIVE_BYTES = 2 * 1024**3
 
 
+def is_business_asset(relative: str) -> bool:
+    """Only canonical terminology data and inert source-update preimages are portable."""
+    path = PurePosixPath(relative)
+    parts = path.parts
+    if len(parts) == 2 and parts[0] == "source-updates":
+        return path.suffix == ".json"
+    if len(parts) != 3 or parts[0] != "terminology":
+        return False
+    if parts[1] == "db":
+        return parts[2] == "terminology.sqlite3"
+    if parts[1] == "backup":
+        return path.suffix == ".sqlite3"
+    return parts[1] == "artifacts" and path.suffix.lower() not in {".log", ".tmp", ".lock"}
+
+
 def validate_archive(archive: zipfile.ZipFile) -> None:
     seen = set()
     total = 0
@@ -62,9 +77,8 @@ def capture_owned_assets(archive: zipfile.ZipFile, directory: Path) -> None:
         if not source.is_file():
             continue
         relative = source.relative_to(directory)
-        # Sources are captured from the current registry, while staging is never an archive asset.
-        parts = tuple(part.casefold() for part in relative.parts)
-        if parts[0] in {"sources", "variants"} or "staging" in parts or ".staging" in parts:
+        # Source-update preimages are captured separately with their old source closure.
+        if not is_business_asset(relative.as_posix()) or relative.parts[0] == "source-updates":
             continue
         if not source.resolve().is_relative_to(root):
             raise ValueError(f"工程资产链接超出目录: {relative}")

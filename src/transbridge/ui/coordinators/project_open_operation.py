@@ -9,6 +9,7 @@ from PyQt6.QtCore import QObject, QTimer
 from PyQt6.QtWidgets import QMessageBox
 
 from transbridge.application.projects import DirtyDecision
+from transbridge.application.projects.save_result import translations_were_saved
 from transbridge.ui.project_view_binding import ProjectViewState, prepare_project_view
 from transbridge.ui.source_hydration import prepare_project_slots
 from transbridge.ui.workers import ApiWorker
@@ -41,6 +42,7 @@ class ProjectOpenOperation(QObject):
         self.outcome = None
         self.error = None
         self._authority_committed = False
+        self._save_warning = None
 
     def start(
         self,
@@ -68,6 +70,7 @@ class ProjectOpenOperation(QObject):
         self.on_failure = on_failure
         self.outcome = self.error = None
         self._authority_committed = False
+        self._save_warning = None
         self.token = None
         begin = getattr(host.context, "begin_project_open", None)
         projection = None
@@ -95,8 +98,10 @@ class ProjectOpenOperation(QObject):
                 # plugins just added to this same project. Guard the user's
                 # save choice against navigation or edits before the worker runs.
                 saved = host.project_commands.save(execution_context, expected_active_signature=expected)
-                if not saved.is_success:
+                if not saved.is_success and not translations_were_saved(saved):
                     return OpenedProjectView(saved)
+                if translations_were_saved(saved):
+                    self._save_warning = saved.diagnostics[0].message
             prepared = prepare()
             if not prepared.is_success or prepared.value is None:
                 return OpenedProjectView(prepared)
@@ -216,6 +221,8 @@ class ProjectOpenOperation(QObject):
             if recovery is not None:
                 self._show_recovery(recovery)
             else:
+                if self._save_warning is not None:
+                    self.host.show_message(self._save_warning)
                 self.host.show_message(f"项目「{opened['name']}」{self.success_verb}")
                 if self.on_success is not None:
                     self.on_success(opened)

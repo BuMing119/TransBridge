@@ -6,6 +6,7 @@ from __future__ import annotations
 class IndexStructure:
     def __init__(self) -> None:
         self._scope = self._source = self._snapshot = self._reason = None
+        self._reading_entries = None
         self._collection = self._version = None
         self._entries = {}
 
@@ -13,13 +14,16 @@ class IndexStructure:
         """Invalidate source ownership without walking an unused collection."""
         source = None if slot is None else slot.plugin
         snapshot = None if slot is None else slot.source_snapshot
+        reading_entries = getattr(slot, "reading_source_entries", None)
         changed = (
             scope != self._scope
             or source is not self._source
             or snapshot is not self._snapshot
+            or reading_entries is not self._reading_entries
             or reason != self._reason
         )
         self._scope, self._source, self._snapshot, self._reason = scope, source, snapshot, reason
+        self._reading_entries = reading_entries
         if changed:
             self._collection = self._version = None
             self._entries = {}

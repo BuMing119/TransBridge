@@ -41,6 +41,7 @@ _SOURCE_REGISTRATION_SCHEMA: dict[str, Any] = {
         "kind",
         "bilingual_capability",
         "format_options",
+        "content_state",
     ],
     "properties": {
         "source_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
@@ -51,12 +52,20 @@ _SOURCE_REGISTRATION_SCHEMA: dict[str, Any] = {
         "bilingual_capability": {"enum": ["none", "self_contained", "requires_relation"]},
         "fingerprint": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
         "source_artifact_id": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "content_state": {"enum": ["captured", "missing"]},
         "display_name": {"type": ["string", "null"], "minLength": 1},
         "plugin_scope": {"type": ["string", "null"], "minLength": 1},
         "format_options": {"type": "object"},
         "legacy": {"type": "object"},
     },
     "additionalProperties": False,
+    "allOf": [
+        {
+            "if": {"properties": {"content_state": {"const": "captured"}}},
+            "then": {"required": ["source_artifact_id"], "properties": {"source_artifact_id": {"type": "string"}}},
+            "else": {"properties": {"source_artifact_id": {"type": "null"}}},
+        }
+    ],
 }
 
 _SOURCE_RELATION_SCHEMA: dict[str, Any] = {

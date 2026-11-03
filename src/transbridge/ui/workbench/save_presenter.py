@@ -15,6 +15,7 @@ class SavePhase(StrEnum):
     SAVING = "saving"
     DIRTY = "dirty"
     FAILED = "failed"
+    INCOMPLETE = "incomplete"
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +77,7 @@ class SaveStatePresenter:
             self._state = self._dirty(target) if dirty else self._clean(target)
         elif dirty:
             self.mark_dirty(target)
-        elif self._state.phase is not SavePhase.SAVING:
+        elif self._state.phase not in {SavePhase.SAVING, SavePhase.INCOMPLETE}:
             self._state = self._clean(target, self._state.saved_at)
         return self._state
 
@@ -126,6 +127,17 @@ class SaveStatePresenter:
     def clear(self) -> SaveViewState:
         self._dirty_after_begin = False
         self._state = SaveViewState(SavePhase.CLEAN, None, "未打开工程")
+        return self._state
+
+    def incomplete(self, target: SaveTarget, diagnostic: str) -> SaveViewState:
+        self._dirty_after_begin = False
+        self._state = SaveViewState(
+            SavePhase.INCOMPLETE,
+            target,
+            f"译文已保存，来源待补充 · {target.display_name}",
+            datetime.now().astimezone(),
+            diagnostic,
+        )
         return self._state
 
     def _same_identity(self, target: SaveTarget) -> bool:

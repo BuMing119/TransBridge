@@ -23,7 +23,7 @@ class LoadedProjectSourceInputs:
     diagnostics: tuple[Diagnostic, ...]
 
 
-def load_project_source_inputs(project, snapshot, artifacts, context, *, baseline_loader=None):
+def load_project_source_inputs(project, snapshot, artifacts, context):
     """Inspect every registered saved artifact; optional references are never parsed."""
     sources = tuple(source_reference(source) for source in project.envelope.data.get("sources", ()))
     baseline_sources = authoritative_baseline_sources(sources, tuple(project.envelope.data.get("source_relations", ())))
@@ -33,10 +33,8 @@ def load_project_source_inputs(project, snapshot, artifacts, context, *, baselin
     warnings = []
     for source in baseline_sources:
         try:
-            if source.get("source_artifact_id"):
+            if source["content_state"] == "captured":
                 loaded = load_saved_project_source(artifacts, source, snapshot.source_fingerprints)
-            elif baseline_loader is not None:
-                loaded = baseline_loader(source, context)
             else:
                 raise DomainError(
                     ErrorCategory.PREREQUISITE,
@@ -54,6 +52,7 @@ def load_project_source_inputs(project, snapshot, artifacts, context, *, baselin
                 artifact_id = loaded.to_dict().get("source_artifact_id")
                 if artifact_id:
                     bound_sources[index]["source_artifact_id"] = artifact_id
+                    bound_sources[index]["content_state"] = "captured"
                     bound_sources[index]["fingerprint"] = loaded.baseline.fingerprint.sha256
                     if source_content_identity(source) != loaded.baseline.fingerprint.namespace.value:
                         legacy = dict(source.get("legacy") or {})

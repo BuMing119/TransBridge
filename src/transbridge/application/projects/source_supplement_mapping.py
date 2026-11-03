@@ -8,15 +8,14 @@ from transbridge.persistence.v2.variant import VariantSnapshot
 from .source_supplement_models import SourceSupplementChoice, SourceSupplementRow
 
 
-def supplement_rows(variants, prepared, namespace, *, active_variant_id=None, covered_keys=()):
+def supplement_rows(
+    variants, prepared, namespace, *, active_variant_id=None, covered_keys=(), additional_namespaces=()
+):
+    namespaces = {namespace, *additional_namespaces} - {None}
     saved = {}
     for variant in sorted(variants, key=lambda item: item.ref.identity.value != active_variant_id):
         for row in variant.entries:
-            if (
-                namespace is not None
-                and row.entry_key.namespace.value == namespace
-                and row.entry_key not in covered_keys
-            ):
+            if row.entry_key.namespace.value in namespaces and row.entry_key not in covered_keys:
                 saved.setdefault(row.entry_key, row)
     aliases = defaultdict(set)
     choices = []

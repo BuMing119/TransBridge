@@ -19,7 +19,6 @@ from transbridge.application.contracts import (
     DiagnosticSeverity,
     DomainError,
     ErrorCategory,
-    OperationOutcome,
     OperationResult,
     RequestContext,
 )
@@ -44,6 +43,7 @@ from .ports import (
     NullLifecycleLeasePort,
 )
 from .provisioning import ProjectProvisioningCommit
+from .save_result import active_save_result, translations_were_saved
 from .source_inputs import MissingProjectSourceInput
 from .transition_preparation import (
     ActiveSignature,
@@ -166,7 +166,7 @@ class ProjectLifecycleService:
                     )
                 if dirty_decision is DirtyDecision.SAVE:
                     saved = self.save_active(context)
-                    if saved.outcome is not OperationOutcome.COMPLETED:
+                    if not saved.is_success and not translations_were_saved(saved):
                         return cast(OperationResult[dict[str, Any]], saved)
 
             try:
@@ -460,10 +460,7 @@ class ProjectLifecycleService:
                     context,
                 )
             if active is None or not active.dirty:
-                return OperationResult.completed(
-                    None if active is None else active.summary(),
-                    run_id=context.run_id,
-                )
+                return active_save_result(active, context)
             uow = None
             save = LifecycleSave.capture(active)
             try:
@@ -489,7 +486,7 @@ class ProjectLifecycleService:
                     ErrorCategory.CONFLICT,
                     context,
                 )
-            return OperationResult.completed(self._active.summary(), run_id=context.run_id)
+            return active_save_result(self._active, context)
 
     def commit_active_variant(
         self,

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from transbridge.application.categorized_upload import UploadSource, categorize_sources
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import FormatId, ParatranzJsonAdapter, SourceDescriptor, WriteRequest
-from transbridge.application.io.paratranz_classification import classify_entries
+from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.parser.plugin.dialogue_order_evidence import DialogueOrderEvidence
 
 
 def export_to_categorized_json_files(
@@ -16,6 +18,8 @@ def export_to_categorized_json_files(
     *,
     ensure_ascii: bool = False,
     indent: int = 2,
+    dialogue_order: DialogueOrderEvidence | None = None,
+    classification_entries: tuple[TranslationEntry, ...] | None = None,
 ) -> None:
     """Export the same relative files as categorized upload, beneath ``output_dir``.
 
@@ -24,11 +28,13 @@ def export_to_categorized_json_files(
     writing individual files must not reassign their order positions.
     """
     output_dir = Path(output_dir)
-    groups = classify_entries(tuple(collection))
+    groups = categorize_sources((
+        UploadSource("local", "local", tuple(collection), dialogue_order, classification_entries),
+    ))
     output_dir.mkdir(parents=True, exist_ok=True)
     adapter = ParatranzJsonAdapter()
     for group in groups:
-        file_path = output_dir / group.path
+        file_path = output_dir / group.path.partition("/")[2]
         file_path.parent.mkdir(parents=True, exist_ok=True)
         result = adapter.write(
             WriteRequest(

@@ -2,6 +2,7 @@ from pathlib import Path as PathLib
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
+from transbridge.application.io.dialogue_reading_view import ReadingEntry
 from transbridge.application.projects.source_registry import plugin_source_location, select_workbench_source
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence import (
@@ -286,14 +287,15 @@ class ProjectCoordinator:
             parser = PluginParser()
             parsed_entries = parser.parse_plugin(PathLib(esp_path))
             collection = TranslationEntryCollection(parsed_entries)
+            reading_entries = tuple(ReadingEntry(entry.identity, entry.context, entry.metadata) for entry in collection)
             if self._host.context.uses_authoritative_projection:
                 projection = self._host.app_runtime.use_cases.resolve("project_projection").snapshot()
                 states = () if projection is None else projection.to_dict()["values"].get("entries", ())
                 collection = apply_variant_projection(collection, states)
-            return collection, parser.get_plugin()
+            return collection, parser.get_plugin(), reading_entries
 
         def _on_done(result):
-            collection, plugin = result
+            collection, plugin, reading_entries = result
             try:
                 # 应用已缓存的翻译数据（必须在 add_slot 之前，否则 collection_changed 触发时表格仍为空）
                 label = PathLib(esp_path).stem
@@ -302,6 +304,7 @@ class ProjectCoordinator:
                     collection=collection,
                     esp_path=esp_path,
                     plugin=plugin,
+                    reading_source_entries=reading_entries,
                 )
                 self._host.context.add_slot(esp_path, slot)
             finally:

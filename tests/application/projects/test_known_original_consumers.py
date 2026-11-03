@@ -11,6 +11,7 @@ from transbridge.application.io import FormatId
 from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
 from transbridge.application.projects.entry_source_text import namespace_source_id
 from transbridge.application.translation.result_merge import ResultEntryChange, ResultEntryState
+from transbridge.persistence.project_source_inputs import load_project_source_inputs
 
 
 def _saved(root, *, qualified=True, extra=False):
@@ -45,9 +46,27 @@ def _saved(root, *, qualified=True, extra=False):
                 state.entry_key, context, translation="Saved", stage=5
             ).is_success
         assert services.gui_project_commands.save(context).is_success
-        return path, project_path, context
+        return path, project_path, context, project_path.read_bytes()
     finally:
         services.close()
+
+
+def _lose_content_after_open(services, path, context, complete):
+    """Exercise consumers after an already-active source becomes unavailable."""
+    incomplete = path.read_bytes()
+    path.write_bytes(complete)
+    opened = services.current_project_opener.open_path(path, context)
+    assert opened.is_success, opened.diagnostics
+    path.write_bytes(incomplete)
+    active = services.project_lifecycle.active
+    record = services.projects.read_snapshot_record(active.project_ref)
+    inputs = load_project_source_inputs(
+        record.value, active.variant.snapshot(), services.current_project_opener._source_artifacts, context
+    )
+    services.baselines.replace_many(active.project_ref, (active.formal_variant_ref,), (), allow_empty=True)
+    services.project_lifecycle._active = replace(
+        active, project=record.value, source_project_hash=record.source_hash, missing_inputs=inputs.missing_inputs
+    )
 
 
 @pytest.mark.parametrize("kind", ["no_artifact", "unavailable_artifact", "unregistered"])
@@ -55,7 +74,7 @@ def _saved(root, *, qualified=True, extra=False):
 def test_original_qualified_saved_rows_support_upload_and_result_text_without_source_input(
     tmp_path, monkeypatch, kind, reference
 ):
-    source, project_path, context = _saved(tmp_path)
+    source, project_path, context, complete = _saved(tmp_path)
     document = json.loads(project_path.read_bytes())
     if kind == "unregistered":
         document["data"]["sources"] = []
@@ -65,6 +84,7 @@ def test_original_qualified_saved_rows_support_upload_and_result_text_without_so
         registered["legacy"]["path"] = registered["location"]
         if kind == "no_artifact":
             registered.pop("source_artifact_id")
+            registered["content_state"] = "missing"
         else:
             registered["source_artifact_id"] = "f" * 64
     project_path.write_text(json.dumps(document), encoding="utf-8")
@@ -78,8 +98,7 @@ def test_original_qualified_saved_rows_support_upload_and_result_text_without_so
     preparer = CountingPreparer(forbidden=True)
     services = _services(tmp_path / "store", preparer)
     try:
-        opened = services.current_project_opener.open_path(project_path, context)
-        assert opened.is_success, opened.diagnostics
+        _lose_content_after_open(services, project_path, context, complete)
         active = services.project_lifecycle.active
         variant = active.variant.snapshot()
         assert all(state.entry_key.original is not None for state in variant.entries)
@@ -106,14 +125,15 @@ def test_original_qualified_saved_rows_support_upload_and_result_text_without_so
 
 
 def test_bare_saved_keys_still_require_original_input(tmp_path):
-    _source, path, context = _saved(tmp_path, qualified=False)
+    _source, path, context, complete = _saved(tmp_path, qualified=False)
     document = json.loads(path.read_bytes())
     document["data"]["sources"][0].pop("source_artifact_id")
+    document["data"]["sources"][0]["content_state"] = "missing"
     path.write_text(json.dumps(document), encoding="utf-8")
     preparer = CountingPreparer(forbidden=True)
     services = _services(tmp_path / "store", preparer)
     try:
-        assert services.current_project_opener.open_path(path, context).is_success
+        _lose_content_after_open(services, path, context, complete)
         captured = services.gui_project_commands.categorized_upload_snapshot(
             context, endpoint="https://paratranz.cn", remote_project_id=42
         )
@@ -130,14 +150,15 @@ def test_bare_saved_keys_still_require_original_input(tmp_path):
 
 
 def test_selected_known_source_is_not_blocked_by_an_unselected_unknown_source(tmp_path):
-    _source, path, context = _saved(tmp_path, extra=True)
+    _source, path, context, complete = _saved(tmp_path, extra=True)
     document = json.loads(path.read_bytes())
     for registered in document["data"]["sources"]:
         registered.pop("source_artifact_id")
+        registered["content_state"] = "missing"
     path.write_text(json.dumps(document), encoding="utf-8")
     services = _services(tmp_path / "store", CountingPreparer(forbidden=True))
     try:
-        assert services.current_project_opener.open_path(path, context).is_success
+        _lose_content_after_open(services, path, context, complete)
         catalog = services.gui_project_commands.file_sources_catalog(context).value
         known = next(item for item in catalog if item.namespace.value == "source:known")
         captured = services.gui_project_commands.categorized_upload_snapshot(
@@ -151,13 +172,13 @@ def test_selected_known_source_is_not_blocked_by_an_unselected_unknown_source(tm
 
 @pytest.mark.parametrize("required_metadata", [None, "context", "locator"])
 def test_known_original_result_merge_keeps_existing_context_and_locator_protection(tmp_path, required_metadata):
-    _source, path, context = _saved(tmp_path)
+    _source, path, context, complete = _saved(tmp_path)
     document = json.loads(path.read_bytes())
     document["data"]["sources"] = []
     path.write_text(json.dumps(document), encoding="utf-8")
     services = _services(tmp_path / "store", CountingPreparer(forbidden=True))
     try:
-        assert services.current_project_opener.open_path(path, context).is_success
+        _lose_content_after_open(services, path, context, complete)
         active = services.project_lifecycle.active
         entry = active.variant.snapshot().entries[0]
         base = ResultEntryState(

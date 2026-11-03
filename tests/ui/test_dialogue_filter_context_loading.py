@@ -1,6 +1,7 @@
 """Filtered dialogue entries retain task context while a source catalog loads."""
 
 from threading import Event
+from time import monotonic
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
@@ -49,7 +50,10 @@ def test_filtered_double_click_shows_task_tree_before_slow_catalog_finishes(
     preview.show()
     target = dialogue_entries()[3]
     QTest.keyClicks(preview._filters_view.search_all, target.original)
-    QTest.qWait(200)
+    deadline = monotonic() + 3
+    while preview.filtered_entries() != (target,) and monotonic() < deadline:
+        QApplication.processEvents()
+        QTest.qWait(1)
     assert preview.filtered_entries() == (target,)
     table = preview._table
     point = table.visualRect(table.model().index(0, COL_ORIGINAL)).center()

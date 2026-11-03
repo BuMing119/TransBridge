@@ -158,7 +158,7 @@ def test_results_without_history_remain_visible_and_foreign_scope_is_only_viewab
         services.close()
 
 
-def test_real_resume_and_download_writer_assets_are_retained_without_execution(tmp_path):
+def test_legacy_resume_assets_are_preserved_on_upgrade_but_excluded_from_current_archive(tmp_path):
     old = _directory(tmp_path / "old", _project(), {"主版本/current.json": {"translations": {}}})
     proofreading = ProofreadCheckpoint(
         old / "ai-proofread-resume", project="old", variant="main", source="source", settings={}, task_id="old-task"
@@ -200,10 +200,11 @@ def test_real_resume_and_download_writer_assets_are_retained_without_execution(t
         restored = target.project_archive.import_project(str(bundle), _context())
         restored_id = json.loads(Path(restored).read_bytes())["id"]
         restored_owned = tmp_path / "target" / "projects" / ProjectId(restored_id).encoded
-        restored_index = json.loads((restored_owned / "legacy-ai" / "index.json").read_bytes())
-        assert restored_index == index
-        for original in restored_index["original_files"]:
-            assert (restored_owned / original["asset"]).read_bytes() == before[original["member"]]
+        assert not (restored_owned / "legacy-ai").exists()
+        assert target.current_project_opener.prepare_path(restored, _context()).is_success
+        assert ProjectTaskHistoryReader(Path(restored).parent, restored_id).list_records() == ()
+        # The exclusion applies only to portable output; upgrade evidence remains local.
+        assert json.loads((owned / "legacy-ai" / "index.json").read_bytes()) == index
         assert _contents(old) == before
     finally:
         target.close()
@@ -252,9 +253,7 @@ def test_variant_named_like_sidecar_directory_keeps_its_manual_history(tmp_path)
         services.close()
 
 
-def test_imported_task_index_survives_current_archive_roundtrip_and_copy(tmp_path):
-    # This test exercises self-contained reports. Missing translation input is
-    # covered separately by read-only legacy recovery tests.
+def test_imported_task_index_stays_local_when_current_project_is_exported_and_copied(tmp_path):
     old = _directory(tmp_path / "old", _project(), {"主版本/current.json": {"translations": {}}})
     _history(old)
     services = build_persistence_v2_services(
@@ -265,6 +264,9 @@ def test_imported_task_index_survives_current_archive_roundtrip_and_copy(tmp_pat
     )
     try:
         imported = services.project_archive.import_project(str(_source(old)), _context())
+        project_id = json.loads(Path(imported).read_bytes())["id"]
+        original_reports = ProjectTaskHistoryReader(Path(imported).parent, project_id).list_records()
+        assert len(original_reports) == 1 and original_reports[0]["project_id"] is None
         assert services.current_project_opener.open_path(imported, _context()).is_success
         bundle = tmp_path / "current.transbridge"
         services.project_archive.export_project(str(bundle), _context())
@@ -275,7 +277,8 @@ def test_imported_task_index_survives_current_archive_roundtrip_and_copy(tmp_pat
         for path in (first, second):
             identity = target.current_project_opener.prepare_path(path, _context()).value.project_ref.identity.value
             reports = ProjectTaskHistoryReader(Path(path).parent, identity).list_records()
-            assert len(reports) == 1 and reports[0]["project_id"] is None
+            assert reports == ()
+        assert ProjectTaskHistoryReader(Path(imported).parent, project_id).list_records() == original_reports
     finally:
         target.close()
         services.close()

@@ -6,9 +6,10 @@ import hashlib
 import re
 
 from transbridge.converter.context_categories import EXPORT_CATEGORIES
-from transbridge.converter.plugin_entry_metadata import restore_plugin_source_order
 from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.parser.plugin.dialogue_order_evidence import DialogueOrderEvidence
 
+from .dialogue_order_projection import project_dialogue_order, restore_dialogue_source_order
 from .paratranz_context_order import (
     PARATRANZ_CONTEXT_ORDER_METADATA,
     context_orders,
@@ -32,14 +33,18 @@ class ClassifiedGroup:
     entries: tuple[TranslationEntry, ...]
 
 
-def classify_entries(entries: tuple[TranslationEntry, ...]) -> tuple[ClassifiedGroup, ...]:
+def classify_entries(
+    entries: tuple[TranslationEntry, ...], *, dialogue_order: DialogueOrderEvidence | None = None
+) -> tuple[ClassifiedGroup, ...]:
     """Classify a complete source before selection; never mutate its identities."""
-    ordered = _ordered_entries(tuple(entries))
+    ordered = restore_dialogue_source_order(tuple(entries))
+    ordered, projected = project_dialogue_order(ordered, dialogue_order)
     titles = _quest_titles(ordered)
     quests = {_quest(entry) for entry in ordered if _quest(entry) is not None}
     filenames = _dialogue_filenames(quests, titles)
     groups = defaultdict(list)
-    for entry, order in zip(ordered, context_orders(ordered), strict=True):
+    orders = range(len(ordered)) if projected else context_orders(ordered)
+    for entry, order in zip(ordered, orders, strict=True):
         quest = _quest(entry)
         if quest is not None:
             category, path = f"dialogue:{quest or '未关联任务'}", filenames[quest]
@@ -48,7 +53,7 @@ def classify_entries(entries: tuple[TranslationEntry, ...]) -> tuple[ClassifiedG
             base = (context or "").partition("|")[0]
             category, path = _CATEGORY_BY_CONTEXT.get(base, ("其他", "其他.json"))
         metadata = dict(entry.metadata)
-        if PARATRANZ_CONTEXT_ORDER_METADATA in metadata:
+        if projected or PARATRANZ_CONTEXT_ORDER_METADATA in metadata:
             metadata[PARATRANZ_CONTEXT_ORDER_METADATA] = order
         groups[category, path].append(
             replace(entry, context=format_ordered_context(entry.context, order), metadata=tuple(metadata.items()))
@@ -115,21 +120,6 @@ def _dialogue_filenames(quests, titles):
         for quest in collisions:
             names[quest] += "_" + suffixes[quest]
     return {quest: f"任务/对话_[{name}].json" for quest, name in names.items()}
-
-
-def _ordered_entries(entries):
-    """Keep source slots; restore dialogue order only with complete unique metadata."""
-    groups = defaultdict(list)
-    for index, entry in enumerate(entries):
-        quest = _quest(entry)
-        if quest is not None:
-            groups[quest].append((index, entry))
-    ordered = list(entries)
-    for members in groups.values():
-        restored = restore_plugin_source_order(entry for _, entry in members)
-        for (index, _), entry in zip(members, restored, strict=True):
-            ordered[index] = entry
-    return tuple(ordered)
 
 
 def _digest(value):

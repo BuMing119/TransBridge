@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from transbridge.application.io.identity import EntryKey
@@ -86,10 +86,31 @@ def _record_order(identity: str) -> tuple[int, int, str]:
         return (2, 0, identity)
 
 
+def _ordered_nodes(nodes, definitions, topic_order):
+    """Replace DIAL positions only; journals/scenes retain their navigation slots."""
+    result = sorted(nodes, key=_record_order)
+    if not topic_order:
+        return result
+    dial_nodes = {
+        node
+        for node in nodes
+        if node not in {"journal", "unknown"} and (node not in definitions or definitions[node].kind == "DIAL")
+    }
+    baseline = [node for node in nodes if node in dial_nodes]
+    preferred = list(dict.fromkeys(node for node in topic_order if node in dial_nodes))
+    selected = set(preferred)
+    ordered = iter(preferred + [node for node in baseline if node not in selected])
+    return [next(ordered) if node in dial_nodes else node for node in result]
+
+
 def build_dialogue_index(
-    entries: Iterable[TranslationEntry], *, catalog: DialogueCatalog = DialogueCatalog()
+    entries: Iterable[TranslationEntry],
+    *,
+    catalog: DialogueCatalog = DialogueCatalog(),
+    topic_orders: Mapping[QuestId, tuple[str, ...]] | None = None,
 ) -> DialogueIndex:
     entries = tuple(entries)
+    topic_orders = topic_orders or {}
     namespaces = {entry.identity.namespace.value for entry in entries}
     # Raw FormIDs belong to one source. A mixed collection cannot safely attach
     # the same catalog to every namespace, so keep only its per-entry metadata.
@@ -167,8 +188,12 @@ def build_dialogue_index(
                 )
             else:
                 nodes.setdefault(node_id, [])
+        for node_id in topic_orders.get(quest_key, ()):
+            # The complete-source layout includes valid topics without strings.
+            # Their absence from visible entries must not erase graph nodes.
+            nodes.setdefault(node_id, [])
         topics = []
-        for node_id in sorted(nodes, key=_record_order):
+        for node_id in _ordered_nodes(nodes, definitions, topic_orders.get(quest_key, ())):
             record = definitions.get(node_id)
             kind = record.kind if record else ("QUST" if node_id == "journal" else "DIAL")
             label = labels.get((*quest_key, node_id), _label("DIAL", node_id))

@@ -10,6 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 import pytest  # noqa: E402
 
+from transbridge.application.contracts import Diagnostic, OperationCounts, OperationResult  # noqa: E402
 from transbridge.ui.main_window import MainWindow  # noqa: E402
 from transbridge.ui.workbench._project_bar import ProjectBar  # noqa: E402
 from transbridge.ui.workbench.save_presenter import SavePhase  # noqa: E402
@@ -188,3 +189,63 @@ def test_save_completion_does_not_acknowledge_another_clean_project(save_host):
     _wait_until(lambda: bool(completed))
     assert completed == [False]
     assert host.messages == []
+
+
+def _partial_save_receipt():
+    return OperationResult.partial(
+        {"dirty": False, "source_content_complete": False},
+        counts=OperationCounts(succeeded=1, failed=1),
+        diagnostics=(Diagnostic("PROJECT_SAVE_SOURCE_CONTENT_MISSING", "译文已保存，来源待补充"),),
+    )
+
+
+@pytest.mark.parametrize("automatic", [True, False])
+@pytest.mark.parametrize("closing", [True, False])
+def test_partial_save_acknowledges_persistence_without_claiming_complete_project(save_host, automatic, closing):
+    host = save_host
+    host._close_pending = closing
+    completed = []
+
+    def save():
+        host._ctx.dirty = False
+        return _partial_save_receipt()
+
+    host._save_current_project = save
+    assert MainWindow.save_current_project_async(host, automatic=automatic, on_finished=completed.append)
+    _wait_until(lambda: bool(completed))
+
+    assert completed == [True], "Close must not ask for a recovery backup after translation persistence succeeded"
+    assert host._workbench.project_bar.save_state.phase is SavePhase.INCOMPLETE
+    assert host._workbench.project_bar._save_btn.text() != "已保存"
+    assert host.errors == []
+    assert any("来源待补充" in message for message in host.messages)
+    assert "项目已保存" not in host.messages
+
+
+def test_partial_save_does_not_acknowledge_edits_after_the_saved_revision(save_host):
+    host = save_host
+    completed = []
+    host._save_current_project = _partial_save_receipt
+    assert MainWindow.save_current_project_async(host, automatic=True, on_finished=completed.append)
+    assert host._save_worker.wait(5_000)
+    host._ctx.dirty = True
+    _wait_until(lambda: bool(completed))
+
+    assert completed == [False]
+    assert host._workbench.project_bar.save_state.requires_dirty_decision
+    assert "项目已保存" not in host.messages
+
+
+def test_unrelated_partial_failure_does_not_authorize_close(save_host):
+    host = save_host
+    host._ctx.dirty = False
+    completed = []
+    host._save_current_project = lambda: OperationResult.partial(
+        {"dirty": False},
+        counts=OperationCounts(succeeded=1, failed=1),
+        diagnostics=(Diagnostic("PROJECT_WRITE_FAILED", "部分内容无法写入"),),
+    )
+    assert MainWindow.save_current_project_async(host, automatic=True, on_finished=completed.append)
+    _wait_until(lambda: bool(completed))
+    assert completed == [False]
+    assert host._workbench.project_bar.save_state.phase is SavePhase.FAILED

@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection  # noqa: E402
 from transbridge.converter.translation_entry_collection_export import export_to_categorized_json_files  # noqa: E402
+from transbridge.parser.plugin.dialogue_order_evidence import read_dialogue_order_evidence  # noqa: E402
 from transbridge.parser.plugin_parser import PluginParser  # noqa: E402
 
 
@@ -29,12 +30,20 @@ def plugin_eet_to_json(
     directory, including the ``任务/`` subdirectory for dialogue files.
     """
     print(f"正在从插件文件创建词条: {plugin_path}")
-    collection = TranslationEntryCollection(
-        PluginParser().parse_plugin(Path(plugin_path), skip_empty=skip_empty, raise_on_error=True)
-    )
+    plugin_parser = PluginParser()
+    complete = tuple(plugin_parser.parse_plugin(Path(plugin_path), skip_empty=False, raise_on_error=True))
+    collection = TranslationEntryCollection(entry for entry in complete if not skip_empty or entry.original.strip())
+    evidence = read_dialogue_order_evidence(plugin_parser.get_plugin())
     print(f"正在使用 EET XML 更新译文: {eet_xml_path}")
     updated_count = collection.update_from_eet_xml(eet_xml_path)
-    export_to_categorized_json_files(collection, json_path, ensure_ascii=ensure_ascii, indent=indent)
+    export_to_categorized_json_files(
+        collection,
+        json_path,
+        ensure_ascii=ensure_ascii,
+        indent=indent,
+        dialogue_order=evidence,
+        classification_entries=complete,
+    )
     print(f"已更新 {updated_count} 条译文，导出 {len(collection)} 条词条到: {json_path}")
 
 

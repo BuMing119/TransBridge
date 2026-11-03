@@ -125,13 +125,19 @@ def test_update_without_previous_artifact_never_reads_optional_reference(project
     registration["legacy"] = {**registration["legacy"], "path": registration["location"]}
     if artifact == "absent":
         registration.pop("source_artifact_id")
+        registration["content_state"] = "missing"
     else:
         registration["source_artifact_id"] = "f" * 64
     updated = ProjectDto(replace(active.project.envelope, revision=active.project.envelope.revision + 1, data=data))
     assert services.project_lifecycle.commit_project_update(
         updated, active.project.envelope.revision, context
     ).is_success
-    assert services.gui_project_commands.save(context).is_success
+    saved = services.gui_project_commands.save(context)
+    if artifact == "absent":
+        assert saved.diagnostics[0].code == "PROJECT_SAVE_SOURCE_CONTENT_MISSING"
+        assert not services.project_lifecycle.active.dirty
+    else:
+        assert saved.is_success
     replacement = source.with_name("replacement.xml")
     _xml(replacement, [(1, "One changed"), (2, "Two"), (3, "Three")])
     requests = []

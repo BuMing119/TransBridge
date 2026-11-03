@@ -4,6 +4,8 @@ import logging
 
 from PyQt6.QtCore import QObject, QTimer
 
+from transbridge.application.projects.save_result import translations_were_saved
+
 _logger = logging.getLogger(__name__)
 
 
@@ -90,11 +92,15 @@ class ProjectSaveCoordinator(QObject):
         self._launch(host._save_current_project, context, self._automatic)
 
     def _launch(self, operation, context, automatic):
-        host, worker, succeeded = self._host, None, False
+        host, worker, succeeded, incomplete = self._host, None, False, None
 
         def saved(result):
-            nonlocal succeeded
+            nonlocal succeeded, incomplete
             if hasattr(result, "is_success") and not result.is_success:
+                if translations_were_saved(result):
+                    succeeded = True
+                    incomplete = result.diagnostics[0].message
+                    return
                 diagnostic = result.diagnostics[0]
                 self._error(f"{diagnostic.code}: {diagnostic.message}", display=diagnostic.message)
                 return
@@ -103,7 +109,7 @@ class ProjectSaveCoordinator(QObject):
         def finished():
             if host._save_worker is worker:
                 host._save_worker = None
-            self._finish(succeeded, context, automatic)
+            self._finish(succeeded, context, automatic, incomplete=incomplete)
 
         try:
             worker = self._worker_factory(operation, route_http_errors=False)
@@ -129,7 +135,7 @@ class ProjectSaveCoordinator(QObject):
             failed(message if display is None else display)
         self._host.show_message(f"保存失败：{message}" if display is None else message, error=True)
 
-    def _finish(self, succeeded, context, automatic, *, cancelled=False):
+    def _finish(self, succeeded, context, automatic, *, cancelled=False, incomplete=None):
         self._waiting = False
         if not self._closed:
             self._timer.stop()
@@ -144,9 +150,15 @@ class ProjectSaveCoordinator(QObject):
                 auto_saver = getattr(host, "_auto_saver", None)
                 if auto_saver is not None and not cancelled:
                     auto_saver.record_save_result(succeeded)
-                if succeeded or cancelled:
+                if incomplete is not None and not cancelled:
+                    if dirty:
+                        host._workbench.project_bar.set_save_completed(dirty=True)
+                    else:
+                        host._workbench.project_bar.set_save_incomplete(incomplete)
+                    host.show_message(incomplete)
+                elif succeeded or cancelled:
                     host._workbench.project_bar.set_save_completed(dirty=dirty)
-                if succeeded and not automatic and not cancelled:
+                if succeeded and incomplete is None and not automatic and not cancelled:
                     if current:
                         host._workbench.project_bar.flash_saved()
                         host.show_message("项目已保存")

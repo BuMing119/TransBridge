@@ -10,6 +10,7 @@ from transbridge.persistence.assistant_transcript_store import AssistantTranscri
 from transbridge.persistence.v2.filesystem import OsPersistenceFilesystem
 from transbridge.persistence.v2.ids import EntityKind, SessionId, SessionRef
 from transbridge.persistence.v2.models import (
+    SCHEMA_VERSION,
     BackupVerificationError,
     PathBoundaryError,
     ReadOnlyWriteRefused,
@@ -24,7 +25,7 @@ from transbridge.persistence.v2.session_write_lease import session_write_lease
 
 def _document(sid, manifest, **values):
     return {
-        "schema_version": 4,
+        "schema_version": SCHEMA_VERSION,
         "entity_type": "session",
         "id": sid,
         "revision": 0,
@@ -43,7 +44,7 @@ def _save(root, sid, manifest, **values):
     document = _document(sid, manifest, **values)
     repository = SessionRepository(str(root), OsPersistenceFilesystem())
     ref = SessionRef(SessionId(sid))
-    repository.save(ref, SessionDto(SchemaEnvelope(4, EntityKind.SESSION, sid, 0, document["data"])))
+    repository.save(ref, SessionDto(SchemaEnvelope(SCHEMA_VERSION, EntityKind.SESSION, sid, 0, document["data"])))
     return repository, ref
 
 
@@ -61,7 +62,11 @@ def test_cleanup_preserves_current_backup_and_retained_references_without_age_ru
     repository, ref = _save(tmp_path, "s", TranscriptManifest(artifacts=(refs[0],)))
     backup = serialize_document(_document("s", TranscriptManifest(artifacts=(refs[1],))))
     _write(
-        tmp_path / "backups" / "sessions" / SessionId("s").encoded / f"{hashlib.sha256(backup).hexdigest()}.v4.json",
+        tmp_path
+        / "backups"
+        / "sessions"
+        / SessionId("s").encoded
+        / f"{hashlib.sha256(backup).hexdigest()}.v{SCHEMA_VERSION}.json",
         backup,
     )
     _write(
@@ -135,7 +140,7 @@ def test_unknown_or_corrupt_source_aborts_before_deleting_any_attachment(tmp_pat
         current.write_bytes(serialize_document(document))
     elif damage == "backup-hash":
         _write(
-            tmp_path / "backups" / "sessions" / SessionId("s").encoded / f"{'0' * 64}.v4.json",
+            tmp_path / "backups" / "sessions" / SessionId("s").encoded / f"{'0' * 64}.v{SCHEMA_VERSION}.json",
             serialize_document(document),
         )
     elif damage == "unknown-manifest":
@@ -215,7 +220,11 @@ def test_backup_archive_remains_hydratable_after_current_archive_replacement_and
     )
     backup = serialize_document(_document("s", manifest, assistant_state=state))
     _write(
-        tmp_path / "backups" / "sessions" / SessionId("s").encoded / f"{hashlib.sha256(backup).hexdigest()}.v4.json",
+        tmp_path
+        / "backups"
+        / "sessions"
+        / SessionId("s").encoded
+        / f"{hashlib.sha256(backup).hexdigest()}.v{SCHEMA_VERSION}.json",
         backup,
     )
     hydrated = hydrate_request_state(state, "s", store)

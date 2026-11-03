@@ -46,3 +46,29 @@ def test_background_refresh_keeps_uncommitted_input_method_composition(editor):
     commit.setCommitString("寒")
     editor_tests._APP.sendEvent(field, commit)
     assert field.toPlainText() == "寒"
+
+
+def test_plugin_reading_order_delivery_preserves_selected_entry_and_pending_draft(editor):
+    entries = dialogue_entries()
+    selected = entries[2]
+    editor.open_entry(selected.identity)
+    field = editor.view.translation
+    QTest.keyClicks(field, "keep this draft")
+    cursor = field.textCursor()
+    cursor.setPosition(4)
+    field.setTextCursor(cursor)
+    before = [entry.to_dict() for entry in editor.context.collection]
+    topic_orders = {(selected.identity.namespace.value, "00000001"): ("00000011", "00000010")}
+
+    editor._loaded(editor._generation, editor._scope, build_dialogue_index(entries, topic_orders=topic_orders))
+    editor_tests._APP.processEvents()
+
+    assert editor._selected_key == selected.identity
+    assert editor._current.before.entry_key == selected.identity
+    assert editor._index.quests[0].topics[editor._topic].identity[2] == "00000010"
+    assert editor._topic == 2
+    assert field.hasFocus() and field.toPlainText() == "keep this draft"
+    assert field.textCursor().position() == 4
+    assert [entry.to_dict() for entry in editor.context.collection] == before
+    field.undo()
+    assert field.toPlainText() == ""

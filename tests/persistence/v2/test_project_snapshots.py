@@ -2,23 +2,28 @@ from dataclasses import replace
 import json
 from uuid import uuid4
 
+from tests.application.projects.test_source_update import _xml
 from transbridge.application.contracts import RequestContext
-from transbridge.application.io.identity import EntryKey, SourceNamespace
-from transbridge.application.projects import ProjectProvisioningRequest
+from transbridge.application.io import FormatId
+from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
 from transbridge.bootstrap.persistence import build_persistence_v2_services
-from transbridge.persistence.v2 import SourceBaseline, SourceFingerprint, VariantChangeSet, VariantEntryState
+from transbridge.persistence.v2 import VariantChangeSet
 
 
 def test_snapshot_restores_complete_variant_and_survives_save_and_reopen(tmp_path):
     services = build_persistence_v2_services(tmp_path, id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now")
     context = RequestContext("gui", run_id="snapshot")
     commands = services.gui_project_commands
-    assert commands.create_project(ProjectProvisioningRequest("快照工程"), context).is_success
+    source = tmp_path / "snapshot-source.xml"
+    _xml(source, [(1, "One"), (2, "Two")])
+    assert commands.create_project(
+        ProjectProvisioningRequest("快照工程", source=ProjectSourceRequest(str(source), FormatId.XML_EET)), context
+    ).is_success
     active = services.project_lifecycle.active
-    namespace = SourceNamespace("test:source")
-    fingerprint = SourceFingerprint(namespace, "a" * 64)
-    first = VariantEntryState(EntryKey(namespace, "first"), "原始译文", 3, ("review",))
-    second = VariantEntryState(EntryKey(namespace, "second"), "", 0)
+    initial = active.variant.snapshot()
+    fingerprint = initial.source_fingerprints[0]
+    first = replace(initial.entries[0], translation="原始译文", stage=3, labels=("review",))
+    second = replace(initial.entries[1], translation="", stage=0)
     content = VariantChangeSet(
         active.formal_variant_ref,
         active.variant.revision,
@@ -60,9 +65,6 @@ def test_snapshot_restores_complete_variant_and_survives_save_and_reopen(tmp_pat
     assert persisted.envelope.data["entries"][0]["translation"] == "原始译文"
     assert persisted.envelope.data["label_library"]["review"]["name"] == "已审核"
     restarted = build_persistence_v2_services(tmp_path, id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now")
-    restarted.baselines.register(
-        active.project_ref, active.formal_variant_ref, (SourceBaseline(fingerprint, (first, second)),)
-    )
     assert restarted.gui_project_commands.switch_v2(active.project_ref, active.formal_variant_ref, context).is_success
     assert restarted.project_lifecycle.active.variant.snapshot() == restored
 

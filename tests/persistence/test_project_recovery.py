@@ -83,7 +83,11 @@ def test_optional_reference_prepare_preserves_edits_then_activates_the_saved_var
     assert active.dirty
     assert active.variant.snapshot().entries[0].translation == "尚未保存的修改"
     assert services.baselines.provide(active.project, active.formal_variant_ref, context) is before_baselines
-    assert _data_tree(services.root) == persisted
+    if project_schema == 2:
+        assert json.loads(Path(path).read_bytes())["schema_version"] == SCHEMA_VERSION
+        assert tuple((Path(services.root) / "backups").rglob("*.json"))
+    else:
+        assert _data_tree(services.root) == persisted
     activated = services.current_project_opener.activate(result.value, context, dirty_decision=DirtyDecision.DISCARD)
     assert activated.is_success and "read_only" not in activated.value, activated.diagnostics
     assert services.project_lifecycle.active.variant.snapshot().entries[0].translation == "已保存译文"
@@ -139,7 +143,7 @@ def test_invalid_saved_project_is_rejected_without_quarantine_or_migration(proje
 
 
 @pytest.mark.parametrize("legacy_schema", [2, 3])
-def test_normal_prepare_leaves_legacy_records_unchanged_until_activation(project, legacy_schema):
+def test_legacy_prepare_repairs_missing_content_and_preserves_active_state(project, legacy_schema):
     services, context, _source, _raw, path, _key = project
     variant_path = services.variants.path_for(services.project_lifecycle.active.formal_variant_ref)
     _set_schema(path, legacy_schema)
@@ -150,7 +154,11 @@ def test_normal_prepare_leaves_legacy_records_unchanged_until_activation(project
 
     assert prepared.is_success, prepared.diagnostics
     assert prepared.value.recovery is None
-    assert _data_tree(services.root) == persisted
+    if legacy_schema == 2:
+        assert json.loads(Path(path).read_bytes())["schema_version"] == SCHEMA_VERSION
+        assert tuple((Path(services.root) / "backups").rglob("*.json"))
+    else:
+        assert _data_tree(services.root) == persisted
 
     activated = services.current_project_opener.activate(prepared.value, context)
 
@@ -203,14 +211,14 @@ def test_missing_saved_input_does_not_skip_later_available_sources(project, monk
 
     def load(artifact_id, **options):
         calls.append(artifact_id)
-        if artifact_id == first_id:
-            raise FileNotFoundError("unavailable saved input")
+        if artifact_id == first_id and calls.count(first_id) == 1:
+            raise FileNotFoundError("temporarily unavailable saved input")
         return get(artifact_id, **options)
 
     monkeypatch.setattr(services.current_project_opener._source_artifacts, "get", load)
     result = services.current_project_opener.prepare_path(path, context)
 
     assert result.is_success and result.value.recovery is None, result.diagnostics
-    assert calls == [item["source_artifact_id"] for item in registrations]
-    assert len(result.value.hydrations) == 1 and len(result.value.missing_inputs) == 1
+    assert calls[:2] == [item["source_artifact_id"] for item in registrations]
+    assert len(result.value.hydrations) == 2 and not result.value.missing_inputs
     assert len(result.value.prepared_read.snapshot.entries) == 2

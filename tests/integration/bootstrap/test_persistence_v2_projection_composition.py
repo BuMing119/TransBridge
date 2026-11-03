@@ -1,26 +1,39 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from transbridge.application.contracts import RequestContext
-from transbridge.application.io import FormatId
+from transbridge.application.io import FormatId, SourceDescriptor, SourceSnapshot
 from transbridge.application.io.identity import EntryKey, ExternalEntryRef, SourceNamespace
-from transbridge.application.projects import DirtyDecision, EntryStatePatch, PreparedProjectSource, ProjectSourceRequest
+from transbridge.application.projects import DirtyDecision, EntryStatePatch, ProjectSourceRequest
+from transbridge.application.projects.prepared_source_results import prepare_parsed_source
+from transbridge.application.projects.source_registry import migrate_legacy_source_registry
 from transbridge.bootstrap import build_runtime
 from transbridge.bootstrap.persistence import build_persistence_v2_services
+from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.persistence.current_project import PROJECT_FILE_FILTER, CurrentProjectOpener
+from transbridge.persistence.saved_project_sources import SavedProjectSourcePreparer
+from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
 from transbridge.persistence.v2 import (
+    SCHEMA_VERSION,
     ProjectDto,
     ProjectId,
     ProjectRef,
     SchemaEnvelope,
-    SourceBaseline,
-    SourceFingerprint,
-    VariantEntryState,
     VariantId,
     VariantRef,
     VariantSnapshot,
 )
+
+
+def _captured_source(location, namespace, key, translation):
+    entry = TranslationEntry(
+        key, key, "Original", translation, 1, "FULL", entry_key=EntryKey(SourceNamespace(namespace), key)
+    )
+    snapshot = SourceSnapshot.from_bytes(SourceDescriptor(location), FormatId.PLUGIN_SSE, b"fixture")
+    prepared = prepare_parsed_source(location, (entry,), snapshot, FormatId.PLUGIN_SSE)
+    return replace(prepared, descriptor=(*prepared.descriptor, ("display_name", Path(location).name)))
 
 
 class _Ids:
@@ -35,22 +48,7 @@ class _Ids:
 class _StaticSourcePreparer:
     def __init__(self, location: str) -> None:
         self.location = location
-        namespace = SourceNamespace("source:plugin:new")
-        fingerprint = SourceFingerprint(namespace, "b" * 64)
-        self.prepared = PreparedProjectSource(
-            (
-                ("enabled", True),
-                ("fingerprint", fingerprint.sha256),
-                ("format_id", FormatId.PLUGIN_SSE.value),
-                ("location", location),
-                ("role", "primary"),
-                ("source_id", namespace.value),
-            ),
-            SourceBaseline(
-                fingerprint,
-                (VariantEntryState(EntryKey(namespace, "new-entry"), "导入的新译文", 1),),
-            ),
-        )
+        self.prepared = _captured_source(location, "source:plugin:new", "new-entry", "导入的新译文")
 
     def prepare_source(self, request, context, *, role, common_options):
         assert request.location == self.location
@@ -60,47 +58,58 @@ class _StaticSourcePreparer:
 def _records(services):
     project_ref = ProjectRef(ProjectId("project-a"))
     variant_ref = VariantRef(VariantId("variant-a"), project_ref.identity)
-    namespace = SourceNamespace("source-a")
-    entry = VariantEntryState(EntryKey(namespace, "entry-a"), "old", 1)
-    fingerprint = SourceFingerprint(namespace, "a" * 64)
+    path = Path(services.root) / "source.esp"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"fixture")
+    prepared = _captured_source(str(path), "source-a", "entry-a", "old")
+    prepared = SavedProjectSourcePreparer(None, ProjectSourceArtifactStore(services.root)).persist_prepared_source(
+        prepared
+    )
+    registry = migrate_legacy_source_registry(project_ref.identity.value, (prepared.to_dict(),))
     project = ProjectDto(
         SchemaEnvelope(
-            2,
+            SCHEMA_VERSION,
             project_ref.kind,
             project_ref.identity.value,
             0,
             {
                 "name": "Project A",
-                "sources": [{"type": "esp", "path": "source.esp"}],
+                **registry.to_project_data(),
                 "variant_ids": [variant_ref.identity.value],
                 "active_variant_id": variant_ref.identity.value,
             },
         )
     )
-    variant = VariantSnapshot(variant_ref, (fingerprint,), (entry,), 0)
+    variant = VariantSnapshot(variant_ref, (prepared.baseline.fingerprint,), prepared.baseline.entries, 0)
     services.projects.save(project_ref, project)
     services.variants.save(variant_ref, variant.to_dto())
-    return project_ref, variant_ref, SourceBaseline(fingerprint, (entry,))
+    return project_ref, variant_ref, prepared.baseline
 
 
-def test_authoritative_baseline_is_required_before_active_changes(tmp_path: Path) -> None:
+def test_missing_source_reference_is_repaired_before_saved_translations_become_editable(tmp_path: Path) -> None:
     ids = _Ids()
     services = build_persistence_v2_services(
         tmp_path / "projects-v2",
         id_factory=ids,
         timestamp_factory=lambda: "2026-08-18T00:00:00+00:00",
     )
-    project_ref, variant_ref, baseline = _records(services)
+    project_ref, variant_ref, _baseline = _records(services)
+    project = services.projects.read_snapshot(project_ref)
+    source = project.envelope.data["sources"][0]
+    source.pop("source_artifact_id")
+    source["content_state"] = "missing"
+    services.projects.save(project_ref, project)
     context = RequestContext("gui", run_id="run")
 
-    missing_baseline = services.gui_project_commands.switch_v2(project_ref, variant_ref, context)
-    assert services.project_lifecycle.active is None
-    services.baselines.register(project_ref, variant_ref, (baseline,))
     activated = services.gui_project_commands.switch_v2(project_ref, variant_ref, context)
 
-    assert missing_baseline.diagnostics[0].code == "LEGACY_SOURCE_BASELINE_REQUIRED"
     assert activated.is_success
     assert services.project_lifecycle.active is not None
+    assert not services.project_lifecycle.active.missing_inputs
+    assert services.gui_project_commands.update_entry("entry-a", context, translation="rescued").is_success
+    saved = services.gui_project_commands.save(context)
+    assert saved.is_success, saved.diagnostics
+    assert not services.project_lifecycle.active.dirty
     projection = services.project_projection.snapshot()
     assert projection is not None
     assert projection.to_dict()["values"]["variant_id"] == "variant-a"
@@ -347,14 +356,13 @@ def test_current_project_file_opens_but_variant_file_is_rejected(tmp_path: Path,
         id_factory=_Ids(),
         timestamp_factory=lambda: "2026-08-18T00:00:00+00:00",
     )
-    project_ref, variant_ref, baseline = _records(services)
+    project_ref, variant_ref, _baseline = _records(services)
     opener = CurrentProjectOpener(
         str(tmp_path),
         services.projects,
         services.variants,
         services.baselines,
         services.gui_project_commands,
-        baseline_loader=lambda source, context: baseline,
     )
     context = RequestContext("gui", run_id="open")
 

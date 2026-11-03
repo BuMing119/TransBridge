@@ -48,14 +48,19 @@ class V2ProjectCandidateLoader:
         *,
         snapshot_loader: SnapshotLoader | None = None,
         source_inputs_loader=None,
+        repair_missing_sources=None,
     ) -> None:
         self._projects = projects
         self._variants = variants
         self._baseline_provider = baseline_provider
         self._snapshot_loader = snapshot_loader
         self._source_inputs_loader = source_inputs_loader
+        self._repair_missing_sources = repair_missing_sources
 
     def prepare_candidate(self, target: TransitionTarget, context: RequestContext) -> ActiveProject:
+        return self._prepare_candidate(target, context, repair_attempted=False)
+
+    def _prepare_candidate(self, target, context, *, repair_attempted):
         if target.project_ref is None:
             raise ValueError("candidate loader cannot prepare a close transition")
         project_record = self._projects.load(target.project_ref)
@@ -94,6 +99,18 @@ class V2ProjectCandidateLoader:
             missing_inputs = ()
             if self._source_inputs_loader is not None:
                 inputs = self._source_inputs_loader(project, stored, context)
+                needs_repair = inputs.missing_inputs or any(
+                    source.get("content_state") == "missing" for source in project.envelope.data.get("sources", ())
+                )
+                if needs_repair and self._repair_missing_sources is not None:
+                    if repair_attempted or target.snapshot_ref is not None:
+                        raise DomainError(
+                            ErrorCategory.PREREQUISITE,
+                            "PROJECT_CONTENT_REPAIR_FAILED",
+                            "保存的来源内容无法完整还原此版本，已废弃本次打开；工程原件与备份已保留。",
+                        )
+                    self._repair_missing_sources(target.project_ref, context)
+                    return self._prepare_candidate(target, context, repair_attempted=True)
                 missing_inputs = inputs.missing_inputs
                 hydrations = inputs.hydrations
                 baselines = inputs.baselines

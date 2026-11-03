@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import PureWindowsPath
 
 from transbridge.application.io import FormatId
+from transbridge.application.io.dialogue_reading_view import ReadingEntry
 from transbridge.application.projects.source_content import authoritative_baseline_sources, source_content_identity
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -52,7 +53,19 @@ def slot_from_hydration(source, *, plugin=None, projection_update=None) -> Colle
         format_id=format_id,
         source_id=getattr(source, "source_id", None),
         source_namespace=source.entries[0].entry_key.namespace.value if source.entries else None,
+        reading_source_entries=reading_entries_from_hydration(source),
     )
+
+
+def reading_entries_from_hydration(source):
+    """Capture full source structure before variant tombstones hide visible rows.
+
+    Called during existing background hydration/parse preparation. These values
+    are only display inputs, never replacement entries or persisted metadata.
+    """
+    if source is None or source.format_id is not FormatId.PLUGIN_SSE:
+        return None
+    return tuple(ReadingEntry(item.entry_key, item.context, item.metadata) for item in source.entries)
 
 
 def prepare_project_slots(hydrations, snapshot) -> tuple[tuple[str, CollectionSlot], ...]:

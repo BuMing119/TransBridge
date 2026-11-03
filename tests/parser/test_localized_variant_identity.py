@@ -97,8 +97,8 @@ def test_shared_id_does_not_fall_back_to_another_existing_variant_when_its_type_
     lookup = PluginStringsLookup.from_plugin(plugin)
 
     assert lookup.get_for_type(148, "NAM1") is None
-    entries = PluginParser().parse_plugin(plugin, raise_on_error=True)
-    assert {entry.dsd_type for entry in entries} == {"NPC_ FULL", "BOOK DESC"}
+    with pytest.raises(ValueError, match="0x00000094 in INFO NAM1"):
+        PluginParser().parse_plugin(plugin, raise_on_error=True)
 
 
 def test_typed_lookup_reuses_the_existing_writer_classification(tmp_path, monkeypatch):

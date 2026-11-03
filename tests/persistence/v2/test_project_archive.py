@@ -19,7 +19,7 @@ from transbridge.application.io import FormatId
 from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
 from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.persistence.project_snapshots import ProjectSnapshotRepository
-from transbridge.persistence.v2 import OsPersistenceFilesystem, ProjectId, VariantId, VariantRef
+from transbridge.persistence.v2 import SCHEMA_VERSION, OsPersistenceFilesystem, ProjectId, VariantId, VariantRef
 
 
 @pytest.fixture
@@ -138,24 +138,24 @@ def test_import_upgrades_project_variants_and_history_together(
     inspection = target.project_archive.inspect_import(str(bundle), source.context)
     assert inspection.name == manifest["project"]["data"]["name"]
     imported = target.project_archive.import_project(str(bundle), source.context)
-    assert json.loads(Path(imported).read_bytes())["schema_version"] == 4
+    assert json.loads(Path(imported).read_bytes())["schema_version"] == SCHEMA_VERSION
     repository = ProjectSnapshotRepository(target.root, target.filesystem)
     for ref in source.variant_refs:
-        assert target.variants.read_snapshot(ref).envelope.to_dict()["schema_version"] == 4
+        assert target.variants.read_snapshot(ref).envelope.to_dict()["schema_version"] == SCHEMA_VERSION
         histories = repository.list(ref)
         expected = [row for row in manifest["snapshots"] if row["variant"]["id"] == ref.identity.value]
         assert {row.name for row in histories} == {row["name"] for row in expected}
         for history in histories:
             restored = repository.load(history.identity, ref).to_dto().envelope.to_dict()
             old = next(row["variant"] for row in expected if row["name"] == history.name)
-            assert restored == {**old, "schema_version": 4}
+            assert restored == {**old, "schema_version": SCHEMA_VERSION}
     _ok(target.current_project_opener.open_path(imported, source.context))
     current_package = tmp_path / "current.transbridge"
     target.project_archive.export_project(str(current_package), source.context)
     current, _ = _bundle_content(current_package)
-    assert current["project"]["schema_version"] == 4
-    assert all(row["schema_version"] == 4 for row in current["variants"])
-    assert all(row["variant"]["schema_version"] == 4 for row in current["snapshots"])
+    assert current["project"]["schema_version"] == SCHEMA_VERSION
+    assert all(row["schema_version"] == SCHEMA_VERSION for row in current["variants"])
+    assert all(row["variant"]["schema_version"] == SCHEMA_VERSION for row in current["snapshots"])
     assert bundle.read_bytes() == original_bytes
 
 
@@ -264,7 +264,8 @@ def test_plugin_strings_and_sqlite_wal_assets_survive_portable_roundtrip(tmp_pat
     )
     project_ref = services.project_lifecycle.active.project_ref
     owned = Path(services.root) / "projects" / project_ref.identity.encoded
-    asset = owned / "terminology.sqlite3"
+    asset = owned / "terminology" / "db" / "terminology.sqlite3"
+    asset.parent.mkdir(parents=True, exist_ok=True)
     (owned / "notes.txt").write_bytes(b"project-owned")
     (owned / "staging").mkdir()
     (owned / "staging" / "unfinished.txt").write_bytes(b"do not export")
@@ -283,8 +284,8 @@ def test_plugin_strings_and_sqlite_wal_assets_survive_portable_roundtrip(tmp_pat
         services.project_archive.export_project(str(bundle), context)
         with zipfile.ZipFile(bundle) as archive:
             names = archive.namelist()
-            assert "assets/terminology.sqlite3" in names
-            assert "assets/notes.txt" in names
+            assert "assets/terminology/db/terminology.sqlite3" in names
+            assert "assets/notes.txt" not in names
             assert not any("staging" in name or "OtherMod" in name or "global-secret" in name for name in names)
             assert not any(name.endswith(("-wal", "-shm", "-journal")) for name in names)
             assert not any(name.startswith("assets/variants/") for name in names)
@@ -292,7 +293,7 @@ def test_plugin_strings_and_sqlite_wal_assets_survive_portable_roundtrip(tmp_pat
         target = services_factory("plugin-import")
         target_path = target.project_archive.import_project(str(bundle), context)
         target_owned = Path(target.root) / "projects" / project_ref.identity.encoded
-        with closing(sqlite3.connect(target_owned / "terminology.sqlite3")) as restored:
+        with closing(sqlite3.connect(target_owned / "terminology" / "db" / "terminology.sqlite3")) as restored:
             assert restored.execute("PRAGMA quick_check").fetchone() == ("ok",)
             assert restored.execute("SELECT * FROM terms").fetchall() == [("Sword", "长剑")]
         relocated = Path(target.projects.read_snapshot(project_ref).envelope.data["sources"][0]["location"])
@@ -511,11 +512,13 @@ def test_import_publishes_catalog_without_switching_an_existing_active_project(s
 
 def test_existing_project_asset_is_preserved_after_rejecting_import(tmp_path, services_factory, exported_project):
     manifest, members = _bundle_content(exported_project.bundle)
-    bundle = _write_bundle(tmp_path / "asset.transbridge", manifest, [*members, ("assets/notes.txt", b"incoming")])
+    member = "assets/terminology/artifacts/notes.txt"
+    bundle = _write_bundle(tmp_path / "asset.transbridge", manifest, [*members, (member, b"incoming")])
     target = services_factory("target")
     owned = Path(target.root) / "projects" / exported_project.project_ref.identity.encoded
-    owned.mkdir(parents=True)
-    (owned / "notes.txt").write_bytes(b"existing asset")
+    artifact = owned / "terminology" / "artifacts" / "notes.txt"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"existing asset")
     before = _file_state(target.root)
 
     with pytest.raises(ValueError, match="覆盖"):

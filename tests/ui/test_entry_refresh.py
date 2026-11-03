@@ -15,7 +15,7 @@ from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui import context as context_module
 from transbridge.ui.workbench.step2 import Step2PreviewWidget
-from transbridge.ui.workbench.translation_table_columns import COL_KEY, COL_TRANSLATION
+from transbridge.ui.workbench.translation_table_columns import COL_CONTEXT, COL_INDEX, COL_KEY, COL_TRANSLATION
 
 _APP = QApplication.instance() or QApplication([])
 
@@ -78,6 +78,68 @@ def test_translation_sort_change_falls_back_and_navigation_uses_sorted_full_resu
     change(context, entries, 0, translation="zzz")
     assert not item.isValid()
     assert len(view.editor_navigation_keys()) == 600
+    assert view.editor_navigation_keys()[-1] == entries[0].identity
+
+
+@pytest.mark.parametrize("column", [None, COL_INDEX, COL_KEY, COL_CONTEXT, COL_TRANSLATION])
+def test_edit_unrelated_to_active_sort_keeps_current_rows_without_full_sort(preview, monkeypatch, column):
+    view, context, entries = preview
+    table = view._table
+    keys = tuple(entry.identity for entry in reversed(entries))
+    table.set_default_entry_order(keys)
+    if column is not None:
+        table.horizontalHeader().sectionClicked.emit(column)
+    if column == COL_TRANSLATION:
+        values = {"stage": 3}
+    elif column == COL_CONTEXT:
+        values = {"translation": "fresh"}
+    else:
+        values = {"translation": "fresh", "stage": 3}
+    identities = view.editor_navigation_keys()
+    row = table.find_entry_row(-1, entries[0].id)
+    persistent = QPersistentModelIndex(table.model().index(row, COL_TRANSLATION))
+
+    sort_calls, actual_sort = [], table._sorting.order
+
+    def capture_sort(*args, **kwargs):
+        sort_calls.append(True)
+        return actual_sort(*args, **kwargs)
+
+    monkeypatch.setattr(table._sorting, "order", capture_sort)
+    change(context, entries, 0, **values)
+    assert persistent.isValid()
+    assert view.editor_navigation_keys() == identities
+    assert table.entry_at_row(row) is entries[0]
+    assert table.entry_at_row(row).stage == values.get("stage", 1)
+    assert persistent.data() == values.get("translation", "old")
+    assert sort_calls == []
+
+
+def test_case_only_translation_change_preserves_sort_without_full_sort(preview, monkeypatch):
+    view, context, entries = preview
+    table = view._table
+    table.horizontalHeader().sectionClicked.emit(COL_TRANSLATION)
+    item = QPersistentModelIndex(table.model().index(0, COL_TRANSLATION))
+
+    sort_calls, actual_sort = [], table._sorting.order
+
+    def capture_sort(*args, **kwargs):
+        sort_calls.append(True)
+        return actual_sort(*args, **kwargs)
+
+    monkeypatch.setattr(table._sorting, "order", capture_sort)
+    change(context, entries, 0, translation="OLD")
+    assert item.isValid() and item.data() == "OLD"
+    assert view.editor_navigation_keys()[0] == entries[0].identity
+    assert sort_calls == []
+
+
+def test_stage_edit_reorders_when_context_column_is_active(preview):
+    view, context, entries = preview
+    view._table.horizontalHeader().sectionClicked.emit(COL_CONTEXT)
+    item = QPersistentModelIndex(view._table.model().index(0, COL_TRANSLATION))
+    change(context, entries, 0, stage=3)
+    assert not item.isValid()
     assert view.editor_navigation_keys()[-1] == entries[0].identity
 
 

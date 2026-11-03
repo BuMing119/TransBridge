@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from transbridge.application.io.dialogue_reading_view import ReadingEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 
@@ -26,3 +27,4 @@ class CollectionSlot:
     format_id: object = None
     source_id: str | None = None
     source_namespace: str | None = None
+    reading_source_entries: tuple[ReadingEntry, ...] | None = None

@@ -10,6 +10,8 @@ from pathlib import Path
 from types import EllipsisType
 
 from transbridge.application.contracts import (
+    Diagnostic,
+    DiagnosticSeverity,
     DomainError,
     ErrorCategory,
     OperationResult,
@@ -18,11 +20,9 @@ from transbridge.application.contracts import (
 from transbridge.application.projects import (
     DirtyDecision,
     GuiProjectCommandFacade,
-    PreparedProjectSource,
     PreparedSourceHydration,
 )
 from transbridge.application.projects.source_inputs import MissingProjectSourceInput
-from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
 from transbridge.persistence.project_recovery import (
     ProjectRecoverySnapshot,
     validate_recovery_context,
@@ -46,11 +46,9 @@ from transbridge.persistence.v2.validated_reads import reuse_validated_reads
 
 from .prepared_project_read import PreparedProjectRead, use_prepared_project
 from .project_source_inputs import load_project_source_inputs
-from .saved_project_sources import SavedProjectSourcePreparer
 from .source_artifact_store import ProjectSourceArtifactStore
 
 PROJECT_FILE_FILTER = "项目 JSON (*.json);;所有文件 (*)"
-BaselineLoader = Callable[[dict, RequestContext], SourceBaseline | PreparedProjectSource]
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,28 +74,20 @@ class CurrentProjectOpener:
         baselines: BaselineRegistry,
         commands: GuiProjectCommandFacade,
         *,
-        baseline_loader: BaselineLoader | None = None,
-        source_preparer=None,
         prepare_projection=None,
         discard_prepared_projection=None,
         source_artifacts=None,
+        content_migration=None,
     ) -> None:
         self._active_pointer = Path(root) / "active-project.json"
         self._projects = projects
         self._variants = variants
         self._baselines = baselines
         self._commands = commands
-        self._baseline_loader = baseline_loader
         self._source_artifacts = source_artifacts or ProjectSourceArtifactStore(root)
-        self._source_preparer = (
-            source_preparer
-            if isinstance(source_preparer, SavedProjectSourcePreparer)
-            else SavedProjectSourcePreparer(
-                source_preparer or TranslationIoProjectSourcePreparer(), self._source_artifacts
-            )
-        )
         self._prepare_projection = prepare_projection
         self._discard_prepared_projection = discard_prepared_projection
+        self._content_migration = content_migration
 
     @property
     def directory(self) -> str:
@@ -116,6 +106,16 @@ class CurrentProjectOpener:
         *,
         dirty_decision: DirtyDecision | None = None,
     ) -> OperationResult[dict]:
+        if dirty_decision == DirtyDecision.CANCEL:
+            return OperationResult.cancelled(
+                Diagnostic(
+                    "LIFECYCLE_TRANSITION_CANCELLED",
+                    "The lifecycle transition was cancelled before target loading.",
+                    DiagnosticSeverity.INFO,
+                    ErrorCategory.CANCELLED,
+                ),
+                run_id=context.run_id,
+            )
         prepared = self.prepare_path(path, context)
         if not prepared.is_success or prepared.value is None:
             return OperationResult(
@@ -198,9 +198,28 @@ class CurrentProjectOpener:
                     "保存的版本记录不可读取，无法打开工程或恢复视图。",
                     cause=exc,
                 ) from exc
-            inputs = load_project_source_inputs(
-                project, stored, self._source_artifacts, context, baseline_loader=self._baseline_loader
-            )
+            inputs = load_project_source_inputs(project, stored, self._source_artifacts, context)
+            if inputs.missing_inputs or any(
+                source.get("content_state") == "missing" for source in project.envelope.data.get("sources", ())
+            ):
+                if self._content_migration is None:
+                    raise DomainError(
+                        ErrorCategory.PREREQUISITE,
+                        "PROJECT_CONTENT_REPAIR_FAILED",
+                        "工程缺少来源内容，当前入口无法自动恢复，工程未打开；原件与译文已保留。",
+                    )
+                self._content_migration.repair(project_ref, context)
+                project_record = self._projects.read_snapshot_record(project_ref)
+                project = project_record.value
+                variant_record = self._variants.read_snapshot_record(variant_ref)
+                stored = VariantSnapshot.from_dto(variant_record.value, variant_ref)
+                inputs = load_project_source_inputs(project, stored, self._source_artifacts, context)
+                if inputs.missing_inputs:
+                    raise DomainError(
+                        ErrorCategory.PREREQUISITE,
+                        "PROJECT_CONTENT_REPAIR_FAILED",
+                        "恢复后的来源内容仍不可用，工程未打开；工程原件和备份已保留。",
+                    )
             variant_refs = tuple(
                 VariantRef(VariantId(str(value)), project_ref.identity)
                 for value in project.envelope.data.get("variant_ids", ())

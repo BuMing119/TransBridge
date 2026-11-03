@@ -1,4 +1,5 @@
 from dataclasses import replace
+import json
 from pathlib import Path
 from uuid import uuid4
 import zipfile
@@ -162,14 +163,20 @@ def test_pure_record_legacy_import_preserves_translation_without_reading_referen
     def no_parse(*_args, **_kwargs):
         pytest.fail("A record-only archive must not parse its external reference")
 
-    monkeypatch.setattr(TranslationIoProjectSourcePreparer, "prepare_source", no_parse)
-    path = target.project_archive.import_project(str(archive), context)
+    with monkeypatch.context() as import_guard:
+        import_guard.setattr(TranslationIoProjectSourcePreparer, "prepare_source", no_parse)
+        path = target.project_archive.import_project(str(archive), context)
     source.unlink()
+    original = Path(path).read_bytes()
     result = target.current_project_opener.open_path(path, context)
-    assert result.is_success, result.diagnostics
-    assert result.value["read_only"]
+    assert not result.is_success
+    assert result.diagnostics[0].code == "PROJECT_CONTENT_REPAIR_FAILED"
     assert target.project_lifecycle.active is None
-    assert result.value["recovery"].variant.entries[0].translation == "Recovered"
+    assert Path(path).read_bytes() == original
+    saved_variants = tuple((Path(target.root) / "projects").rglob("variants/*.json"))
+    assert any(
+        json.loads(item.read_bytes())["data"]["entries"][0]["translation"] == "Recovered" for item in saved_variants
+    )
 
 
 def test_older_portable_bundle_persists_only_its_captured_source_input(tmp_path, services, monkeypatch):
@@ -178,8 +185,10 @@ def test_older_portable_bundle_persists_only_its_captured_source_input(tmp_path,
     bundle = tmp_path / "current.transbridge"
     origin.project_archive.export_project(str(bundle), context)
     manifest, members = _bundle_content(bundle)
+    manifest["project"]["schema_version"] = 4
     for registration in manifest["project"]["data"]["sources"]:
         registration.pop("source_artifact_id")
+        registration.pop("content_state")
     older = _write_bundle(
         tmp_path / "older.transbridge",
         manifest,

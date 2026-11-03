@@ -121,6 +121,12 @@ def migrate_to_current(document: dict[str, Any], ref: EntityRef) -> MigrationDra
         defaults.extend(draft.defaults)
         dropped.extend(draft.dropped_fields)
         conflicts.extend(draft.conflicts)
+        version = 4
+    if version == 4:
+        draft = migrate_v4_to_v5(source, ref)
+        source = draft.document
+        defaults.extend(draft.defaults)
+        conflicts.extend(draft.conflicts)
         version = SCHEMA_VERSION
     if version != SCHEMA_VERSION:
         raise SchemaValidationError("UNSUPPORTED_MIGRATION_PATH", "No migration path exists for this schema version.")
@@ -130,6 +136,27 @@ def migrate_to_current(document: dict[str, Any], ref: EntityRef) -> MigrationDra
         dropped_fields=tuple(dropped),
         conflicts=tuple(conflicts),
     )
+
+
+def migrate_v4_to_v5(document: dict[str, Any], ref: EntityRef) -> MigrationDraft:
+    """Declare captured source content using only references already owned by the Project."""
+    source = deepcopy(document)
+    if source.get("schema_version") != 4:
+        raise SchemaValidationError("MIGRATION_VERSION_MISMATCH", "V4 to V5 migration requires schema_version 4.")
+    _check_v2_identity(source, ref)
+    data = source.get("data")
+    if not isinstance(data, dict):
+        raise SchemaValidationError("INVALID_V4_DATA", "V4 persistence data must be an object.")
+    defaults = ()
+    if ref.kind is EntityKind.PROJECT:
+        sources = data.get("sources", [])
+        if not isinstance(sources, list) or not all(isinstance(item, dict) for item in sources):
+            raise SchemaValidationError("INVALID_V4_SOURCES", "V4 Project sources must be an array of objects.")
+        for registration in sources:
+            registration["content_state"] = "captured" if registration.get("source_artifact_id") else "missing"
+        defaults = ("source_content_state=existing_artifact_or_missing",)
+    source["schema_version"] = SCHEMA_VERSION
+    return MigrationDraft(source, defaults=defaults)
 
 
 def _migrate_project(source: dict[str, Any], ref: EntityRef) -> MigrationDraft:

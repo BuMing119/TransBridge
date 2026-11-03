@@ -65,7 +65,7 @@ def capture_artifacts(archive, sources, store):
                 written.add(relative)
 
 
-def validate_artifacts(archive, sources, locations):
+def validate_artifacts(archive, sources, locations, *, backup_sources=()):
     """Validate package-owned artifacts without trusting any existing local cache."""
     declared = set()
 
@@ -98,6 +98,11 @@ def validate_artifacts(archive, sources, locations):
                 raise ValueError("项目包缺少来源成果中的字符串文件") from exc
             if actual != content:
                 raise ValueError("项目包来源文件与解析成果不一致")
+    for source in backup_sources:
+        artifact_id = source.get("source_artifact_id")
+        if artifact_id is not None:
+            prepared = ProjectSourceArtifactStore.read_records(artifact_id, read)
+            validate_saved_source(prepared, source)
     actual = {item.filename for item in archive.infolist() if not item.is_dir() and item.filename.startswith(_PREFIX)}
     if actual != declared:
         raise ValueError("项目包包含未引用的来源成果文件")

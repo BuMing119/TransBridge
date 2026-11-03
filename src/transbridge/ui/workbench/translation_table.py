@@ -47,6 +47,7 @@ class TranslationTable(QTableView):
         self._on_progress, self._on_batch = on_progress, on_batch
         self._session = RenderSession(0, None, ())
         self._display_order: tuple[int, ...] = ()
+        self._label_keys = ()
         self._entry_rows: dict[str, int] = {}
         self._entry_labels: Mapping[str, set[str]] = {}
         self._label_library: Mapping[str, Mapping[str, str]] = {}
@@ -156,11 +157,14 @@ class TranslationTable(QTableView):
         self._closed = False
         self._session = session
         self._entry_labels, self._label_library = entry_labels, label_library
-        self._display_order = self._sorting.order(session.entries, entry_labels)
-        self._entry_rows = {
-            entry_label_key(session.entries[source_row]): row for row, source_row in enumerate(self._display_order)
-        }
-        reset = self._translation_model.install(session, self._display_order, entry_labels, label_library)
+        order = self._sorting.order(session.entries, entry_labels)
+        source_keys = self._sorting.source_keys
+        label_keys = tuple(entry_label_key(entry) for entry in session.entries)
+        if label_keys != self._label_keys or order != self._display_order:
+            self._entry_rows = {label_keys[source_row]: row for row, source_row in enumerate(order)}
+        self._label_keys = label_keys
+        self._display_order = order
+        reset = self._translation_model.install(session, order, entry_labels, label_library, source_keys=source_keys)
         if reset:
             self._restore_view_state(
                 selected, current, top if preserve_scroll else None, scroll if preserve_scroll else 0
@@ -174,6 +178,13 @@ class TranslationTable(QTableView):
         self._translation_model.replace_session(session)
         self._session = session
 
+    def set_default_entry_order(self, keys, *, ranks=None, source_keys=None, source_rows=None, render=True) -> None:
+        """Change display indices while retaining current source objects and intent."""
+        self._sorting.set_default_order(keys, ranks=ranks, source_keys=source_keys, source_rows=source_rows)
+        self._translation_model.default_ranks = self._sorting.default_ranks
+        if render and not self._closed:
+            self.start_render(self._session, self._entry_labels, self._label_library)
+
     def _sort_display(self) -> None:
         self.start_render(self._session, self._entry_labels, self._label_library, preserve_scroll=False)
         self.scrollToTop()
@@ -184,6 +195,9 @@ class TranslationTable(QTableView):
         self._closed = True
         self._entry_labels, self._label_library = {}, {}
         self._display_order = ()
+        self._label_keys = ()
+        self._sorting.clear()
+        self._translation_model.default_ranks = {}
         self._entry_rows.clear()
         self._session = RenderSession(self._session.generation + 1, None, ())
         self._translation_model.install(self._session, (), {}, {})

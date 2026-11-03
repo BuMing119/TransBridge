@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection  # noqa: E402
 from transbridge.converter.translation_entry_collection_export import export_to_categorized_json_files  # noqa: E402
+from transbridge.parser.plugin.dialogue_order_evidence import read_dialogue_order_evidence  # noqa: E402
 from transbridge.parser.plugin_parser import PluginParser  # noqa: E402
 
 
@@ -23,8 +24,18 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--indent", type=int, default=2, help="JSON 缩进空格数（默认 2）")
     args = parser.parse_args(argv)
     print(f"正在从插件加载词条: {args.plugin_path}")
-    collection = TranslationEntryCollection(PluginParser().parse_plugin(args.plugin_path, raise_on_error=True))
-    export_to_categorized_json_files(collection, args.output_dir, ensure_ascii=args.ensure_ascii, indent=args.indent)
+    plugin_parser = PluginParser()
+    complete = tuple(plugin_parser.parse_plugin(args.plugin_path, skip_empty=False, raise_on_error=True))
+    collection = TranslationEntryCollection(entry for entry in complete if entry.original.strip())
+    evidence = read_dialogue_order_evidence(plugin_parser.get_plugin())
+    export_to_categorized_json_files(
+        collection,
+        args.output_dir,
+        ensure_ascii=args.ensure_ascii,
+        indent=args.indent,
+        dialogue_order=evidence,
+        classification_entries=complete,
+    )
     print(f"已导出 {len(collection)} 条词条到: {args.output_dir}")
 
 

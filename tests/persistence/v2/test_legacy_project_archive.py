@@ -16,7 +16,7 @@ from transbridge.application.projects import ProjectProvisioningRequest, Project
 from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.persistence.legacy_project_archive import decode_legacy_archive
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
-from transbridge.persistence.v2 import ProjectId, VariantSnapshot
+from transbridge.persistence.v2 import ProjectId, VariantId, VariantRef, VariantSnapshot
 from transbridge.persistence.v2.models import SchemaValidationError
 
 
@@ -172,9 +172,13 @@ def test_qualified_legacy_archive_round_trips_current_and_historical_state(tmp_p
         imported = services.project_archive.import_project(str(archive), _context())
         opened = services.current_project_opener.open_path(imported, _context())
         assert opened.is_success, opened.diagnostics
-        assert opened.value["read_only"]
-        restored = opened.value["recovery"].variant
-        assert {entry.entry_key: entry for entry in restored.entries} == actual
+        assert not opened.value["missing_inputs"]
+        restored = services.project_lifecycle.active.variant.snapshot()
+        assert len(restored.entries) == len(actual)
+        saved_by_translation = {entry.translation: entry for entry in actual.values()}
+        for entry in restored.entries:
+            saved = saved_by_translation[entry.translation]
+            assert replace(entry, entry_key=saved.entry_key, revision=saved.revision) == saved
     finally:
         services.close()
 
@@ -192,7 +196,7 @@ def test_qualified_legacy_archive_keeps_identity_when_source_is_missing(tmp_path
     assert all(fingerprint.sha256 is None for fingerprint in variants[0].source_fingerprints)
 
 
-def test_sparse_legacy_history_preserves_saved_rows_without_reading_reference(tmp_path):
+def test_sparse_legacy_history_restores_source_without_replacing_saved_history(tmp_path):
     source, prepared = _xml_source(tmp_path / "source.xml", extra_entry=True)
     saved_key = prepared.hydration.entries[0].legacy_id
     records = {
@@ -211,9 +215,11 @@ def test_sparse_legacy_history_preserves_saved_rows_without_reading_reference(tm
     try:
         imported = services.project_archive.import_project(str(path), _context())
         opened = services.current_project_opener.open_path(imported, _context())
-        assert opened.is_success and opened.value["read_only"]
-        current = opened.value["recovery"].variant.entries
-        assert len(current) == 1 and current[0].translation == "current"
+        assert opened.is_success, opened.diagnostics
+        assert not opened.value["missing_inputs"]
+        current = services.project_lifecycle.active.variant.snapshot().entries
+        assert len(current) == 2
+        assert sum(row.translation == "current" for row in current) == 1
         histories = list((tmp_path / "imported" / "snapshots").glob("*.json"))
         historical = json.loads(histories[0].read_bytes())["variant"]["data"]["entries"]
         assert len(historical) == 1
@@ -284,7 +290,7 @@ def test_missing_source_keeps_all_variants_entry_states_and_duplicate_named_snap
     }
 
 
-def test_existing_reference_does_not_remap_legacy_identity_or_read_source(tmp_path: Path) -> None:
+def test_archive_decode_is_read_only_and_open_restores_reference_without_losing_state(tmp_path: Path) -> None:
     source, prepared = _xml_source(tmp_path / "source.xml")
     parsed = prepared.hydration.entries[0]
     saved = {
@@ -325,13 +331,15 @@ def test_existing_reference_does_not_remap_legacy_identity_or_read_source(tmp_pa
     try:
         imported = services.project_archive.import_project(str(archive), _context())
         opened = services.current_project_opener.open_path(imported, _context())
-        assert opened.is_success and opened.value["read_only"]
-        assert opened.value["recovery"].variant.entries[0] == entry
+        assert opened.is_success, opened.diagnostics
+        assert not opened.value["missing_inputs"]
+        restored = services.project_lifecycle.active.variant.snapshot().entries[0]
+        assert replace(restored, entry_key=entry.entry_key, revision=entry.revision) == entry
     finally:
         services.close()
 
 
-def test_returning_source_does_not_make_unmapped_legacy_states_editable(tmp_path: Path) -> None:
+def test_returning_unmatched_reference_keeps_saved_legacy_states_without_activation(tmp_path: Path) -> None:
     path = tmp_path / "source.xml"
     source, _ = _xml_source(path)
     source_bytes = path.read_bytes()
@@ -341,21 +349,27 @@ def test_returning_source_does_not_make_unmapped_legacy_states_editable(tmp_path
         tmp_path / "v2", id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now"
     )
     imported = services.project_archive.import_project(str(archive), _context())
+    project = json.loads(Path(imported).read_bytes())
+    ref = VariantRef(VariantId(project["data"]["active_variant_id"]), ProjectId(project["id"]))
+    stored = services.variants.read_snapshot(ref)
+    original = Path(imported).read_bytes()
     missing = services.current_project_opener.open_path(imported, _context())
-    assert missing.is_success and missing.value["read_only"]
-    stored = missing.value["recovery"].variant
+    assert not missing.is_success
+    assert missing.diagnostics[0].code == "PROJECT_CONTENT_REPAIR_FAILED"
     path.write_bytes(source_bytes)
 
     returned = services.current_project_opener.open_path(imported, _context())
 
-    assert returned.is_success and returned.value["read_only"]
-    assert returned.value["recovery"].variant == stored
+    assert not returned.is_success
+    assert returned.diagnostics[0].code == "PROJECT_CONTENT_REPAIR_FAILED"
     assert services.project_lifecycle.active is None
-    assert VariantSnapshot.from_dto(services.variants.read_snapshot(stored.ref)) == stored
+    assert services.variants.read_snapshot(ref) == stored
+    assert Path(imported).read_bytes() == original
+    services.close()
 
 
 @pytest.mark.parametrize("with_missing_source", [False, True])
-def test_import_and_open_without_baseline_preserves_data_and_active_project(
+def test_import_and_open_without_baseline_preserves_saved_translations(
     tmp_path: Path, with_missing_source: bool
 ) -> None:
     sources = ({"key": "missing", "type": "esp", "path": str(tmp_path / "missing.esp")},) if with_missing_source else ()
@@ -373,24 +387,28 @@ def test_import_and_open_without_baseline_preserves_data_and_active_project(
         tmp_path / "v2", id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now"
     )
     assert services.gui_project_commands.create_project(ProjectProvisioningRequest("已打开工程"), _context()).is_success
-    active = services.project_lifecycle.active
-    pointer = (tmp_path / "v2" / "active-project.json").read_bytes()
+    previous = services.project_lifecycle.active
 
     imported = services.project_archive.import_project(str(archive), _context())
+    project = json.loads(Path(imported).read_bytes())
+    ref = VariantRef(VariantId(project["data"]["active_variant_id"]), ProjectId(project["id"]))
+    before = services.variants.read_snapshot(ref)
     opened = services.current_project_opener.open_path(imported, _context())
 
-    assert opened.is_success and opened.value["read_only"]
-    recovery = opened.value["recovery"]
-    assert len(recovery.variant.entries) == 3
-    assert {entry.translation for entry in recovery.variant.entries} == {"译文", ""}
-    assert services.project_lifecycle.active is active
-    assert (tmp_path / "v2" / "active-project.json").read_bytes() == pointer
-    assert VariantSnapshot.from_dto(services.variants.read_snapshot(recovery.variant.ref)) == recovery.variant
+    assert not opened.is_success
+    assert opened.diagnostics[0].code == "PROJECT_CONTENT_REPAIR_FAILED"
+    assert services.project_lifecycle.active is previous
+    variant = VariantSnapshot.from_dto(services.variants.read_snapshot(ref), ref)
+    assert len(variant.entries) == 3
+    assert {entry.translation for entry in variant.entries} == {"译文", ""}
+    assert VariantSnapshot.from_dto(services.variants.read_snapshot(variant.ref)) == variant
+    assert services.variants.read_snapshot(ref) == before
     snapshot_files = list((tmp_path / "v2" / "snapshots").glob("*.json"))
     assert len(snapshot_files) == 2
     for path in snapshot_files:
         document = json.loads(path.read_bytes())
         assert len(document["variant"]["data"]["entries"]) == 3
+    services.close()
 
 
 @pytest.mark.parametrize("ambiguous", [False, True])

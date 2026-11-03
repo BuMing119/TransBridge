@@ -11,7 +11,10 @@ from threading import RLock
 from transbridge.application.contracts import DomainError, ErrorCategory
 from transbridge.application.io import FormatId
 from transbridge.application.io.identity import EntryKey
+from transbridge.application.io.plugin_dialogue_order import dialogue_order_from_snapshot
 from transbridge.application.security.paths import PathAuthorizationPolicy, PathGrant
+from transbridge.parser.plugin.dialogue_order_binary import DialogueOrderCancelled
+from transbridge.parser.plugin.dialogue_order_evidence import DialogueOrderEvidence
 from transbridge.parser.strings_file import PluginStringsLookup
 from transbridge.persistence.v2.variant import SourceFingerprint
 
@@ -32,6 +35,7 @@ class SourceReadHydration:
 
     fingerprint: SourceFingerprint
     entries: tuple[SourceReadEntry, ...]
+    dialogue_order: DialogueOrderEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +66,9 @@ class SourceHydrationCache:
     def prepare(self, preparer, request, context, *, scope_key):
         return self._prepare(preparer, request, context, scope_key=scope_key, installed=False)
 
-    def read_installed(self, preparer, request, context, *, scope_key, source=None):
+    def read_installed(
+        self, preparer, request, context, *, scope_key, source=None, include_dialogue_order=False, cancellation=None
+    ):
         """Reuse verified source text for an already-installed Project revision.
 
         The request must carry the authoritative installed fingerprint. External
@@ -72,9 +78,30 @@ class SourceHydrationCache:
         """
         if request.expected_fingerprint is None:
             raise ValueError("installed source text requires an authoritative fingerprint")
-        return self._prepare(preparer, request, context, scope_key=scope_key, installed=True, source=source)
+        return self._prepare(
+            preparer,
+            request,
+            context,
+            scope_key=scope_key,
+            installed=True,
+            source=source,
+            include_dialogue_order=include_dialogue_order,
+            cancellation=cancellation,
+        )
 
-    def _prepare(self, preparer, request, context, *, scope_key, installed, source=None):
+    def _prepare(
+        self,
+        preparer,
+        request,
+        context,
+        *,
+        scope_key,
+        installed,
+        source=None,
+        include_dialogue_order=False,
+        cancellation=None,
+    ):
+        _check_cancelled(cancellation)
         authority = (
             context.owner_id,
             context.session_id,
@@ -90,6 +117,7 @@ class SourceHydrationCache:
             authority,
             json.dumps(request.fingerprint_data(), ensure_ascii=False, sort_keys=True),
             artifact_id,
+            include_dialogue_order,
         )
         with self._lock:
             cached = self._items.get(key)
@@ -104,7 +132,9 @@ class SourceHydrationCache:
                         "SOURCE_ARTIFACT_READER_REQUIRED",
                         "当前服务未配置保存来源读取能力。",
                     )
-                read_model = _read_model(loader(source))
+                read_model = _read_model(
+                    loader(source), include_dialogue_order=include_dialogue_order, cancellation=cancellation
+                )
                 if read_model is None or read_model.fingerprint.sha256 != request.expected_fingerprint:
                     raise DomainError(
                         ErrorCategory.CONFLICT, "PROJECT_SOURCE_FINGERPRINT_MISMATCH", "保存来源与当前工程身份不一致。"
@@ -115,7 +145,11 @@ class SourceHydrationCache:
                 signature = source_input_signature(request, context)
             except OSError:
                 # The normal parser owns actionable missing/permission errors.
-                return _read_model(preparer.prepare_source(request, context, role="primary", common_options=()))
+                return _read_model(
+                    preparer.prepare_source(request, context, role="primary", common_options=()),
+                    include_dialogue_order=include_dialogue_order,
+                    cancellation=cancellation,
+                )
             if request.expected_fingerprint is not None and signature[0] != request.expected_fingerprint:
                 raise DomainError(
                     ErrorCategory.CONFLICT,
@@ -129,7 +163,7 @@ class SourceHydrationCache:
             if cached is not None:
                 self._discard(key)
             prepared = preparer.prepare_source(request, context, role="primary", common_options=())
-            read_model = _read_model(prepared)
+            read_model = _read_model(prepared, include_dialogue_order=include_dialogue_order, cancellation=cancellation)
             del prepared
             if signature != source_input_signature(request, context):
                 raise DomainError(
@@ -245,9 +279,20 @@ def _archive_strings_hash(path, stem, language):
         return ("unreadable_archive", _file_hash(path))
 
 
-def _read_model(prepared):
+def _read_model(prepared, *, include_dialogue_order=False, cancellation=None):
     if prepared.hydration is None:
         return None
+    _check_cancelled(cancellation)
+    try:
+        evidence = (
+            dialogue_order_from_snapshot(prepared.hydration.source_snapshot, cancellation=cancellation)
+            if include_dialogue_order
+            else None
+        )
+    except DialogueOrderCancelled as exc:
+        raise DomainError(
+            ErrorCategory.CANCELLED, "DIALOGUE_ORDER_CANCELLED", "已取消对话排序准备。", cause=exc
+        ) from exc
     return SourceReadHydration(
         prepared.baseline.fingerprint,
         tuple(
@@ -256,7 +301,13 @@ def _read_model(prepared):
             )
             for entry in prepared.hydration.entries
         ),
+        evidence,
     )
+
+
+def _check_cancelled(cancellation):
+    if cancellation is not None and cancellation.is_cancelled:
+        raise DomainError(ErrorCategory.CANCELLED, "DIALOGUE_ORDER_CANCELLED", "已取消来源读取。")
 
 
 def _immutable_size(value, seen):

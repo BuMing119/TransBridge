@@ -21,6 +21,7 @@ from transbridge.application.contracts import (
 )
 from transbridge.converter.translation_entry import STAGE_TRANSLATED, TranslationEntry
 from transbridge.parser.eet_parser import EET_XmlParser
+from transbridge.parser.plugin.dialogue_order_binary import DialogueOrderCancelled
 from transbridge.parser.plugin_parser import PluginParser
 from transbridge.parser.xt import XT_XmlParser
 
@@ -41,6 +42,7 @@ from .contracts import (
     WriteRequest,
 )
 from .identity import EntryKey, SourceNamespace
+from .plugin_dialogue_order import capture_dialogue_order_metadata
 from .plugin_localized_sources import LocalizedSnapshotCancelled, validate_localized_snapshot
 from .plugin_write import _blocking_stage_diagnostics, _localized_source_snapshots, write_plugin
 from .stage_policy import DEFAULT_STAGE_POLICY, StageOperation, StagePolicyPort
@@ -376,6 +378,7 @@ class SsePluginAdapter(_LegacyFormatAdapter):
             discover_localized = bool(options.get("discover_sibling_strings", True))
             entries = parser.parse_plugin(
                 source_path,
+                captured_content=content,
                 skip_empty=bool(options.get("skip_empty", True)),
                 language=str(options.get("language", "english")),
                 discover_sibling_strings=discover_localized,
@@ -385,7 +388,7 @@ class SsePluginAdapter(_LegacyFormatAdapter):
         except (OSError, ValueError) as exc:
             return self._failed_parse(
                 request,
-                Diagnostic("PLUGIN_PARSE_FAILED", f"SSE plugin is invalid ({type(exc).__name__})."),
+                Diagnostic("PLUGIN_PARSE_FAILED", f"SSE plugin is invalid ({type(exc).__name__}: {exc})."),
             )
         snapshot = _snapshot(request, self.format_id, content)
         try:
@@ -411,6 +414,12 @@ class SsePluginAdapter(_LegacyFormatAdapter):
                     f"Localized strings snapshot capture failed ({type(exc).__name__}: {exc}).",
                 ),
             )
+        try:
+            dialogue_metadata = capture_dialogue_order_metadata(
+                parser.get_plugin(), snapshot.sha256, cancellation=request.cancellation
+            )
+        except DialogueOrderCancelled:
+            return self._cancelled_parse(request)
         snapshot = replace(
             snapshot,
             metadata=(
@@ -419,6 +428,7 @@ class SsePluginAdapter(_LegacyFormatAdapter):
                 ("localized_language", str(options.get("language", "english"))),
                 ("localized_sources", localized_sources),
                 ("stage_policy_version", DEFAULT_STAGE_POLICY.version),
+                dialogue_metadata,
             ),
         )
         namespace = request.source_namespace or _namespace_from_locators(

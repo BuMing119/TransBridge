@@ -435,26 +435,18 @@ def test_plugin_pair_roundtrip_and_removal_keeps_source_files(tmp_path: Path, re
         id_factory=_Ids(),
         timestamp_factory=lambda: "2026-08-24T00:01:00+08:00",
     )
-    loaded_sources: list[dict] = []
-
-    def load_baseline(source: dict, _context: RequestContext):
-        loaded_sources.append(source)
-        return baseline
-
     opener = CurrentProjectOpener(
         str(tmp_path / "data"),
         restarted.projects,
         restarted.variants,
         restarted.baselines,
         restarted.gui_project_commands,
-        baseline_loader=load_baseline,
     )
 
     restored = opener.prepare_active(RequestContext("gui", run_id="restore"))
 
     assert restored.is_success and restored.value is not None
     assert len(restored.value.sources) == 2
-    assert loaded_sources == []
     assert len(restored.value.baselines) == 1
     assert restored.value.baselines[0].fingerprint == baseline.fingerprint
     assert opener.activate(restored.value, RequestContext("gui", run_id="restore")).is_success

@@ -65,7 +65,10 @@ class EntryRefresh:
             return False
         if tuple(entry.identity for entry in filtered) != tuple(entry.identity for entry in view._render_entries):
             return False
-        if table._sorting.order(filtered, view._entry_labels) != table._display_order:
+        if (
+            table._sorting.ordering_affected(changes, view._entry_labels)
+            and table._sorting.order(filtered, view._entry_labels) != table._display_order
+        ):
             return False
         # Ambiguous legacy IDs still require a full render.
         ids = [entry_label_key(entry) for entry in filtered]
