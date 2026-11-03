@@ -1,10 +1,13 @@
 """Short windows keep the start-center actions reachable without growing the shell."""
 
+from dataclasses import replace
+
 from PyQt6.QtCore import QPoint
 from PyQt6.QtWidgets import QBoxLayout
 import pytest
 
 from tests.ui.responsive_layout_support import settle_layout, themed_layout_app as themed_layout_app
+from transbridge.ui.coordinators.guided_project_coordinator import GuidedProjectDraftState
 from transbridge.ui.shell.start_center import (
     RecentProjectViewState,
     RecoveryItemViewState,
@@ -40,6 +43,42 @@ def test_short_start_center_keeps_window_size_and_bottom_actions_reachable(layou
         button = view._task_center_button
         rectangle = button.rect().translated(button.mapTo(scroll.viewport(), QPoint()))
         assert scroll.viewport().rect().contains(rectangle)
+    finally:
+        view.close()
+
+
+@pytest.mark.parametrize("path_count", [1, 4])
+def test_long_migration_paths_do_not_grow_or_lock_window_width(layout_app, path_count):
+    view = StartCenterWidget()
+    state = GuidedProjectDraftState("D:/mods/Base.esm", "Base")
+    view.render_draft(state)
+    view.resize(850, 750)
+    view.show()
+    try:
+        settle_layout(layout_app)
+        paths = tuple("D:/" + "很长的译文目录/" * 20 + f"Plugin-{i}.esm" for i in range(path_count))
+        view.render_draft(replace(state, migration_sources=paths, revision=1))
+        settle_layout(layout_app)
+        assert view.width() == 850
+        for width in (1200, 720, 850):
+            view.resize(width, 750)
+            settle_layout(layout_app)
+            assert view.width() == width
+            button = view._migration_button
+            assert view.rect().contains(button.rect().translated(button.mapTo(view, QPoint())))
+        assert view._migration_label.toolTip() == "\n".join(paths)
+        assert view._migration_label.accessibleDescription() == "、".join(paths)
+        assert view._migration_label.text() != "、".join(paths)
+
+        view.render(StartCenterViewState(StartDestinationState.START_CENTER_USER_REQUESTED, revision=1))
+        view.resize(720, 750)
+        settle_layout(layout_app)
+        assert view.width() == 720
+
+        view.render_draft(replace(state, revision=2))
+        settle_layout(layout_app)
+        assert view._migration_label.text() == "不导入"
+        assert view._migration_label.toolTip() == ""
     finally:
         view.close()
 

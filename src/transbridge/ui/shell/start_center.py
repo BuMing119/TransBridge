@@ -33,6 +33,7 @@ from transbridge.ui.foundation.components import (
     ComponentDensity,
     ComponentKind,
     ComponentStyle,
+    ElidedLabel,
     SemanticState,
     make_primary_button,
 )
@@ -234,7 +235,8 @@ class StartCenterWidget(QWidget):
         ComponentStyle.apply_static(self._variant_edit, ComponentKind.INPUT)
         self._variant_edit.textEdited.connect(self.variant_name_changed)
         self._variant_edit.returnPressed.connect(self._activate_draft_primary)
-        self._migration_label = QLabel("不导入", page)
+        self._migration_label = ElidedLabel("不导入", page)
+        self._migration_label.setTextFormat(Qt.TextFormat.PlainText)
         self._migration_label.setAccessibleName("已有译文来源")
         self._migration_button = QPushButton("选择已有译文", page)
         self._migration_button.setAccessibleName("选择已有译文来源")
@@ -314,7 +316,8 @@ class StartCenterWidget(QWidget):
         if self._variant_edit.text() != state.default_variant_name:
             self._variant_edit.setText(state.default_variant_name)
         migrations = tuple(state.migration_sources)
-        self._migration_label.setText("、".join(migrations) if migrations else "不导入")
+        self._migration_label.set_full_text("、".join(migrations) if migrations else "不导入")
+        self._migration_label.setToolTip("\n".join(migrations))
         options = dict(state.parse_options)
         self._skip_empty.setChecked(bool(options.get("skip_empty", False)))
         self._draft_summary.setText(state.summary)
