@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from transbridge.application.categorized_upload.models import UploadSource
 from transbridge.application.file_upload import upload_files, wire_records
 from transbridge.application.io import EntryKey, ExternalEntryRef, SourceNamespace
@@ -10,6 +12,35 @@ from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.converter.translation_entry_collection_export import export_to_categorized_json_files
 from transbridge.smart_assistant.file_parser.paratranz_parser import ParatranzParser
+
+
+@pytest.mark.parametrize("prefix", ["", "00000042|"])
+def test_additional_record_types_export_to_existing_categories(tmp_path: Path, prefix: str) -> None:
+    expected = {
+        "法术_龙吼_技能.json": {"WOOP:FULL", "WOOP:TNAM"},
+        "书籍_内容.json": {"BOOK:CNAM"},
+        "物品.json": {"APPA:FULL", "AMMO:DESC", "LIGH:FULL"},
+        "地名与门.json": {"REGN:RDMP"},
+    }
+    entries = tuple(
+        TranslationEntry(context, context, "Original", "译文", 1, prefix + context)
+        for contexts in expected.values()
+        for context in sorted(contexts)
+    )
+    before = tuple(entry.to_dict() for entry in entries)
+
+    export_to_categorized_json_files(TranslationEntryCollection(entries), tmp_path)
+
+    local = {path.name: json.loads(path.read_text(encoding="utf-8")) for path in tmp_path.glob("*.json")}
+    assert {path: {record["key"] for record in records} for path, records in local.items()} == expected
+    files = upload_files((UploadSource("source", "Plugin.esp", entries),), categorized=True)
+    assert local == {file.path.removeprefix("Plugin.esp/"): list(wire_records(file)) for file in files}
+    assert all(
+        record["original"] == "Original" and record["translation"] == "译文"
+        for records in local.values()
+        for record in records
+    )
+    assert tuple(entry.to_dict() for entry in entries) == before
 
 
 def test_paratranz_public_package_keeps_active_exports_after_lazy_loading() -> None:
