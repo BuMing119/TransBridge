@@ -1,5 +1,29 @@
 # 变更日志索引
 
+- 2026-11-03：[补全七种记录类型的导出分类](maintenance/export-category-coverage/2026-11-03-001-seven-record-types.md) — 七种类型归入现有四类，本地导出与分类上传一致；37 项回归及全库 Ruff/格式通过，不迁移历史文件。
+
+- 2026-11-03：[开始中心已有译文长路径宽度修复](maintenance/start-center-long-path/2026-11-03-001-migration-path-width.md) — 长路径按宽度省略并保留完整提示，选择后和返回开始页均可缩小窗口；51 项通过、1 项既有来源标识断言失败已用原版界面复现，全库 Ruff/格式通过。
+
+- 2026-11-03：[多窗口当前工程标记与导航修复](maintenance/multi-window-project-isolation/2026-11-03-001-window-local-project-navigation.md) — 当前工程按窗口自身身份判断，修复共享启动指针导致点击 B 返回 A 工作台；47 项回归及全库 Ruff/格式通过，真实双进程分别先关闭 A/B 后均可往返切换。临时数据已清理，未验证打包安装版。
+
+- 2026-11-03：[精简下载进度文案](paratranz-categorized-upload/story-30/2026-11-03-003-download-progress-label.md) — 改为百分比加括号计数，例如 `33%（1/3）`；5 项回归及全库 Ruff/格式通过。
+
+- 2026-11-03：[下载按文件实时显示进度](paratranz-categorized-upload/story-30/2026-11-03-002-download-file-progress.md) — 显示已下载/总文件数，并发后续文件先完成也更新；失败不报满、404 重算与去重，原 worker 交付进度。85 项下载/窗口回归通过，全库 Ruff/2351 文件格式通过；未操作真实云端或打包。
+
+- 2026-11-03：[缺内容项目自动恢复](project-self-contained-storage/story-04/2026-11-03-001-automatic-source-content-repair.md) — schema 4/5 缺内容在既有升级边界尝试成果、快照、备份与明确路径；全部版本译文保留，失败停止打开且保留项目/备份，显式取消不先修复。最终聚焦 50 通过；广域 1158 通过、4 失败、1 跳过，一次权限失败复跑通过，另 3 项为既有断言及硬链接环境失败；全库 Ruff/2349 文件格式通过。
+
+- 2026-11-03：[项目自包含保存与便携依赖闭包](project-self-contained-storage/story-01-to-03/2026-11-03-001-self-contained-project-storage.md) — schema 5 捕获状态与统一升级、缺来源部分保存和安全导航、localized 缺非零 ID 明确失败、正式业务资产及换源历史 artifact 打包；日志/AI 历史/缓存排除。单次联合 999 通过、1 项 Windows 符号链接权限跳过，全库 Ruff/2345 文件格式通过；不修改真实用户 data，不新增历史一键恢复。
+
+- 2026-10-31：[文件上传与下载最多五路并发](paratranz-categorized-upload/story-30/2026-10-31-001-bounded-file-concurrency.md) — 同账号文件网关共享5在途/0.5秒节奏，独立session、有界流水线/下载前瞻、429停止和在途写入事实保护。21项新并发回归、合计602通过/1跳过/6既有失败，Ruff/格式通过；六文件五轮受控演示中位5.328→3.829秒，未进行线上压测。
+
+- 2026-10-31：[文件传输性能与共享冷却](paratranz-categorized-upload/story-29/2026-10-31-001-file-transfer-performance.md) — 文件网关发起间隔 1→0.5 秒，串行和取消后 429 冷却保持；同轮下载候选复用，五轮局部中位 33.079→16.382 秒，完整摘要一致。581 项通过、1 跳过、6 项起始代码同样失败，Ruff/格式通过；未进行真实服务压测。
+
+- 2026-10-30：[对话排序性能优化](paratranz-categorized-upload/story-28/2026-10-30-003-dialogue-order-performance.md) — 紧凑关系取证、后台索引准备与有界结果复用；同源五轮冷提取 10.112→3.953 秒，重复表格刷新 206.21→35.87 毫秒。全部顺序摘要相同，440 项相关回归及 Ruff/格式通过；首次布局与偶发停顿限制明确记录。
+
+- 2026-10-29：[软件内部接入纯插件 DIAL 显示排序](paratranz-categorized-upload/story-28/2026-10-29-002-plugin-dialogue-internal-display.md) — 补齐工作台默认列表与对话树；仅改显示位置，词条信息、内部匹配及同 DIAL 内 INFO 次序保持。315 项同进程回归、全库 Ruff/格式通过；真实 1,480 个有输出任务及 1,502 个树话题映射核对通过。
+
+- 2026-10-29：[分类导出接入纯插件 DIAL 阅读排序](paratranz-categorized-upload/story-28/2026-10-29-001-plugin-dialogue-reading-order.md) — 保持内部匹配、块内 INFO 与原来源顺序，仅调整分类展示；已存成果、脚本、子集/413/补传共用完整编号。1,015 项通过、1 环境跳过、3 项 HEAD 既有失败；1,480 个真实任务核验、7 个保守回退，Ruff/格式通过。
+
 - 2026-10-29：[写回缺输入清单、批量补充与部分范围确认](application-preflight/story-10/2026-10-29-001-batch-source-inputs.md) — 多文件/目录补充、同名版本选择、保留已有模板及明确跳过；桌面和助手保持确认后的精确来源范围。最终分组 45、85、43 项通过及 1 项环境跳过，全库 Ruff/2308 文件格式通过，清理完成；批次重叠、硬链接失败与未执行边界详见记录。
 
 - 2026-10-29：[助手按需补输入与原请求恢复](application-preflight/story-09/2026-10-29-003-assistant-source-inputs.md) — 补输入动作、原范围映射、新许可与新确认闭环；真实失败回执保留，保存原文的未知 context 合入及报告/词库身份修正。真实 offscreen 助手窗口、分批回归、全库 Ruff/2299 文件格式通过，环境复跑与未执行边界明确记录。

@@ -30,6 +30,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 编号 | 标题 | 状态 |
 |------|------|------|
+| [ADR-051](adr/051-self-contained-project-storage.md) | 正式项目自包含存储与单一升级边界 | 已接受；S01～S03 本地实现与 QA 完成，999 通过、1 项环境跳过；S04 本地实现与相关 QA 完成，广域未全绿，见 [计划](../plans/project-self-contained-storage/plan.md) |
 | [ADR-048](adr/048-ai-project-concurrency-and-terms.md) | AI 多插件并发、共享术语与参考差异综合校对 | S01～S13 本地实现及相关验证完成；术语不再是翻译通过条件，见 [S11～S13 记录](changelogs/ai-project-concurrency/story-11-to-13/2026-10-24-001-terminology-advisory-review.md) |
 | [ADR-047](adr/047-opt-in-categorized-project-upload.md) | 普通与分类上传使用文件 API | 已接受；任务标题命名及手动补传保持。GUI/助手共用无 Qt 应用层下载用例，按插件目录读取并匹配、保存，本轮结束清理，不新增索引或校验。见[使用说明](dev/paratranz-categorized-upload.md) |
 | [ADR-046](adr/046-purpose-aware-data-projection.md) | 按来源与用途保护凭据，业务数据保持原样 | 已接受（2026-10-07），实施中 |
