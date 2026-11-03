@@ -702,7 +702,7 @@ def test_recent_projects_prefer_v2_read_only_catalog() -> None:
 
     host = SimpleNamespace(
         app_runtime=SimpleNamespace(use_cases=Registry()),
-        context=SimpleNamespace(workspace=None),
+        context=SimpleNamespace(workspace=None, active_project_id="project-1"),
     )
     controller = StartCenterController.__new__(StartCenterController)
     controller._host = host

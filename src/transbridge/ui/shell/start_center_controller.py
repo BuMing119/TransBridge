@@ -246,6 +246,9 @@ class StartCenterController:
         runtime = self._host.app_runtime
         if runtime is not None and "project_catalog" in runtime.use_cases.names():
             snapshot = runtime.use_cases.resolve("project_catalog").list_projects()
+            # The catalog's active flag is the shared startup pointer. Another
+            # GUI process can change it without changing this window's workbench.
+            active_project_id = self._host.context.active_project_id
             return tuple(
                 RecentProjectViewState(
                     project_key=item.project_id,
@@ -253,7 +256,7 @@ class StartCenterController:
                     path=item.path,
                     available=item.available,
                     reason=item.reason or "",
-                    active=item.active,
+                    active=item.project_id == active_project_id,
                 )
                 for item in snapshot.projects
             )
