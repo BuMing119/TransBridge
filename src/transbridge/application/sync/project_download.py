@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from transbridge.application.categorized_upload import UploadSource
 from transbridge.application.categorized_upload.classification import source_directory_names
+from transbridge.application.categorized_upload.diagnostics import timed_phase
 from transbridge.application.sync import ConflictPolicy, SyncAction
 from transbridge.application.sync.batch_download import (
     BatchDownloadSource,
@@ -74,6 +75,8 @@ class ProjectDownloadSession:
         self._scopes = {}
         self._lock = Lock()
         self.plan = self.snapshot = None
+        self._candidate_plan, self._candidates = None, ()
+        self._diagnostic_id = uuid4().hex
         self.source_ids, self.decisions = (), ()
         self.policy = ConflictPolicy.PREFER_REMOTE
         self.review_keys = ()
@@ -171,7 +174,8 @@ class ProjectDownloadSession:
             raise ValueError("请至少选择一个插件。")
         self._check_target()
         self.merge_policy = _merge_policy(policy)
-        snapshot = self._capture(source_ids)
+        with timed_phase("download_capture", operation_id=self._diagnostic_id, source_count=len(source_ids)):
+            snapshot = self._capture(source_ids)
         scopes, sources, details = [], {}, []
         retryable = False
         names = self._source_names(snapshot)
@@ -204,13 +208,14 @@ class ProjectDownloadSession:
         )
         missing = [scope for scope in scopes if scope not in self._reads]
         if missing:
-            self._verify(cancel)
-            reads = self.reader_factory(self.config).fetch(
-                self.target.project_id,
-                missing,
-                cancellation=UploadCancellation(cancel),
-                progress=progress,
-            )
+            with timed_phase("download_fetch", operation_id=self._diagnostic_id, source_count=len(missing)):
+                self._verify(cancel)
+                reads = self.reader_factory(self.config).fetch(
+                    self.target.project_id,
+                    missing,
+                    cancellation=UploadCancellation(cancel),
+                    progress=progress,
+                )
             for scope, read in zip(missing, reads, strict=True):
                 if not read.error and read.paths:
                     self._reads[scope] = read
@@ -223,61 +228,64 @@ class ProjectDownloadSession:
                 else:
                     retryable = True
                     details.append(f"{sources[scope.source_id].label}：下载失败，未修改；{read.error}")
-        complete = []
-        invalid = self._invalid_cached_sources(scopes)
-        cached_count = 0
-        for scope in scopes:
-            read = self._reads.get(scope)
-            if read is None:
-                continue
-            source = sources[scope.source_id]
-            if scope.source_id in invalid:
-                retryable = True
-                details.append(f"{source.label}：文件或云端条目与其他所选来源重叠，已排除该来源。")
-                self._reads.pop(scope, None)
-                continue
-            if cached_count + len(read.entries) > 100_000:
-                retryable = True
-                details.append(f"{source.label}：超过本轮完整下载词条上限，本次未采用。请减少所选插件后重试。")
-                continue
-            cached_count += len(read.entries)
-            if not read.paths:
-                retryable = True
-                details.append(f"{source.label}：云端没有当前路径文件，已跳过。")
-                continue
-            details.extend(f"{source.label}：采用 {path}" for path in read.paths)
-            complete.append(
-                BatchDownloadSource(
-                    source.source_id,
-                    source.label,
-                    self._bases[source.source_id].local_entries,
-                    read.entries,
+        with timed_phase("download_assemble", operation_id=self._diagnostic_id):
+            complete = []
+            invalid = self._invalid_cached_sources(scopes)
+            cached_count = 0
+            for scope in scopes:
+                read = self._reads.get(scope)
+                if read is None:
+                    continue
+                source = sources[scope.source_id]
+                if scope.source_id in invalid:
+                    retryable = True
+                    details.append(f"{source.label}：文件或云端条目与其他所选来源重叠，已排除该来源。")
+                    self._reads.pop(scope, None)
+                    continue
+                if cached_count + len(read.entries) > 100_000:
+                    retryable = True
+                    details.append(f"{source.label}：超过本轮完整下载词条上限，本次未采用。请减少所选插件后重试。")
+                    continue
+                cached_count += len(read.entries)
+                if not read.paths:
+                    retryable = True
+                    details.append(f"{source.label}：云端没有当前路径文件，已跳过。")
+                    continue
+                details.extend(f"{source.label}：采用 {path}" for path in read.paths)
+                complete.append(
+                    BatchDownloadSource(
+                        source.source_id,
+                        source.label,
+                        self._bases[source.source_id].local_entries,
+                        read.entries,
+                    )
                 )
-            )
-        present_ids = {source.source_id for source in complete}
-        for source_id in source_ids:
-            if source_id in present_ids or source_id in sources:
-                continue
-            scope = self._scopes.get(source_id)
-            read = self._reads.get(scope)
-            if read is not None and not read.error and source_id in self._bases:
-                complete.append(replace(self._bases[source_id], remote_entries=read.entries))
+            present_ids = {source.source_id for source in complete}
+            for source_id in source_ids:
+                if source_id in present_ids or source_id in sources:
+                    continue
+                scope = self._scopes.get(source_id)
+                read = self._reads.get(scope)
+                if read is not None and not read.error and source_id in self._bases:
+                    complete.append(replace(self._bases[source_id], remote_entries=read.entries))
         if cancel.is_set():
             raise TaskCancelled("下载已取消，本地译文未修改。")
         progress(0, 0, "正在按原文和译文自动匹配…")
-        self.plan = plan_batch_download(
-            tuple(complete),
-            policy=ConflictPolicy.PREFER_REMOTE,
-            decisions=tuple(
-                DownloadDecision(*decision) for decision in decisions if not decision[0].startswith("merge:")
-            ),
-            review_keys=self.review_keys,
-        )
+        with timed_phase("download_match", operation_id=self._diagnostic_id, entry_count=cached_count):
+            self.plan = plan_batch_download(
+                tuple(complete),
+                policy=ConflictPolicy.PREFER_REMOTE,
+                decisions=tuple(
+                    DownloadDecision(*decision) for decision in decisions if not decision[0].startswith("merge:")
+                ),
+                review_keys=self.review_keys,
+            )
         self.snapshot, self.source_ids, self.policy, self.decisions = snapshot, source_ids, policy, decisions
         self._retryable = retryable
         self._scopes = {scope.source_id: scope for scope in scopes}
-        self.details = self._plan_details(details)
-        preview = self._preview()
+        with timed_phase("download_preview", operation_id=self._diagnostic_id):
+            self.details = self._plan_details(details)
+            preview = self._preview()
         if not preview.can_apply and not preview.review_rows:
             self.discard()
         return preview
@@ -290,6 +298,8 @@ class ProjectDownloadSession:
         self.review_states.clear()
         self._verified = False
         self.plan = self.snapshot = self.merge_result = None
+        self._candidate_plan, self._candidates = None, ()
+        self._diagnostic_id = uuid4().hex
         self.source_ids = self.decisions = self.review_keys = self.details = ()
         self._retryable = False
 
@@ -358,7 +368,7 @@ class ProjectDownloadSession:
         for source, plan in zip(self.plan.sources, self.plan.plans, strict=True):
             keys = {entry.entry_key for entry in source.local_entries}
             unchanged += sum(item.action is SyncAction.SKIP and item.entry_key in keys for item in plan.items)
-        candidates = result_changes(self.plan)
+        candidates = self._result_changes()
         policies, reviewed = merge_options(self, candidates)
         current = (
             {row.base.entry_key: row.base for row in candidates}
@@ -392,6 +402,14 @@ class ProjectDownloadSession:
             policy=self.merge_policy.value,
         )
 
+    def _result_changes(self):
+        """Reuse only derivations of this round's exact immutable plan."""
+        if self._candidate_plan is not self.plan:
+            self._candidate_plan, self._candidates = None, ()
+            candidates = result_changes(self.plan)
+            self._candidate_plan, self._candidates = self.plan, candidates
+        return self._candidates
+
     def apply(self, progress, cancel):
         if not self._lock.acquire(blocking=False):
             raise RuntimeError("正在处理当前下载，请等待完成。")
@@ -421,7 +439,8 @@ class ProjectDownloadSession:
             self._lock.release()
 
     def _apply(self, progress, cancel, task_context, commit, cancellation):
-        return publish_results(self, task_context, commit, progress, cancel, cancellation)
+        with timed_phase("download_merge_save", operation_id=self._diagnostic_id):
+            return publish_results(self, task_context, commit, progress, cancel, cancellation)
 
 
 def _require_success(result, message):

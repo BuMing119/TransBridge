@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 import json
 import logging
+import os
 from time import monotonic
 from uuid import uuid4
 
@@ -16,6 +17,36 @@ from transbridge.application.security.redaction import SecretRedactor
 
 _logger = logging.getLogger(__name__)
 _scope: ContextVar[dict] = ContextVar("categorized_upload_diagnostics", default={})
+
+
+@contextmanager
+def timed_phase(stage: str, **fields):
+    """Measure a bounded phase without logging input content or exception text."""
+    started, outcome = monotonic(), "failed"
+    try:
+        yield
+        outcome = "completed"
+    finally:
+        log_timing(
+            "phase_timing", stage=stage, outcome=outcome, elapsed_ms=round((monotonic() - started) * 1000), **fields
+        )
+
+
+def log_timing(event: str, **fields) -> None:
+    """Timing is observational, including after a successful durable commit."""
+    try:
+        log_event(event, **fields)
+    except Exception:
+        # Never echo the event fields, exception, or failed handler's content.
+        message = "ParaTranz timing diagnostics unavailable; operation result is preserved."
+        try:
+            _logger.warning(message)
+        except Exception:
+            try:
+                os.write(2, (message + "\n").encode("ascii"))
+            except OSError:
+                # Both diagnostic sinks are unavailable; do not overturn a commit.
+                pass
 
 
 @contextmanager

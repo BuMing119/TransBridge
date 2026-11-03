@@ -216,8 +216,14 @@ def test_permission_and_server_lock_are_file_failures_without_string_fallback(st
 
 def test_rate_limit_waits_retry_after_then_retries_only_rejected_request(monkeypatch):
     port, session = gateway((429, {}, {"Retry-After": "12"}), [])
-    waits = []
-    monkeypatch.setattr(port.cancellation, "wait", lambda delay: waits.append(delay))
+    waits, clock = [], [0.0]
+
+    def wait(delay):
+        waits.append(delay)
+        clock[0] += delay
+
+    monkeypatch.setattr("transbridge.paratranz.file_publication.monotonic", lambda: clock[0])
+    monkeypatch.setattr(port.cancellation, "wait", wait)
     assert port.inventory(7) == {}
     assert waits == [12]
     assert len(session.calls) == 2
@@ -289,7 +295,7 @@ def test_permission_failure_after_source_commit_stops_following_files():
 
 
 def test_multiple_windows_share_serial_requests_and_can_cancel_while_queued(monkeypatch):
-    budget = RequestBudget(0)
+    budget = RequestBudget(0, max_concurrent=1)
     first, first_session = gateway([], budget=budget)
     cancel = Event()
     second, second_session = gateway([], budget=budget, cancel=cancel)

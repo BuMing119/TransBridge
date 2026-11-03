@@ -18,6 +18,7 @@ from .download_paths import (
     unambiguous_legacy_paths,
     validate_download_path,
 )
+from .download_progress import DownloadProgress, ProgressFileReads
 from .file_publication import FilePublicationGateway
 from .sync_snapshot import _snapshot
 
@@ -90,21 +91,33 @@ class BatchDownloadSnapshotReader:
         if not scopes:
             return ()
         gateway = self.gateway_factory(self.config)
+        parallel = None
         try:
             if cancellation is not None:
                 gateway.cancellation = cancellation
             inventory = _inventory(gateway, project_id)
+            file_progress = DownloadProgress(progress, inventory, lambda current: _prefetch_files(scopes, current))
+            if getattr(gateway, "max_workers", 1) > 1:
+                from .parallel_file_reads import ParallelFileReads
+
+                parallel = ParallelFileReads(
+                    gateway,
+                    project_id,
+                    inventory,
+                    lambda current: _prefetch_files(scopes, current),
+                    limit=limit,
+                    on_download=file_progress.downloaded,
+                )
+            reader = ProgressFileReads(parallel or gateway, file_progress)
             results = []
             owners = {}
             collided = set()
             consumed = 0
-            for index, scope in enumerate(scopes):
+            for scope in scopes:
                 _check_cancelled(cancellation)
-                if progress:
-                    progress(index, len(scopes), f"正在读取 {scope.paths[0]} 等当前文件…")
                 try:
                     read, remote_ids, inventory = _read_source(
-                        gateway, project_id, scope, scopes, inventory, cancellation, limit - consumed
+                        reader, project_id, scope, scopes, inventory, cancellation, limit - consumed
                     )
                 except Exception as exc:
                     if isinstance(exc, _PartialReadFailure):
@@ -114,6 +127,8 @@ class BatchDownloadSnapshotReader:
                     _check_cancelled(cancellation)
                     if _global_failure(exc):
                         raise exc
+                    if parallel is not None:
+                        parallel.finish_source(scope.source_id)
                     _logger.warning("Batch download source failed: source_id=%s", scope.source_id, exc_info=True)
                     results.append(BatchDownloadRead(scope.source_id, error=str(exc)))
                     continue
@@ -123,11 +138,12 @@ class BatchDownloadSnapshotReader:
                         collided.update((previous, scope.source_id))
                 consumed += len(read.entries)
                 results.append(read)
+                if parallel is not None:
+                    parallel.finish_source(scope.source_id)
                 if on_source is not None:
                     on_source(scope, read)
             _check_cancelled(cancellation)
-            if progress:
-                progress(len(scopes), len(scopes), "当前文件读取完成。")
+            file_progress.publish("当前文件读取结束，正在整理下载结果…")
             completed = tuple(
                 replace(item, entries=(), error="云端不同插件返回了重复词条 ID，本次未采用这些插件的内容。")
                 if item.source_id in collided
@@ -140,6 +156,8 @@ class BatchDownloadSnapshotReader:
                         on_source(scope, read)
             return completed
         finally:
+            if parallel is not None:
+                parallel.close()
             gateway.close()
 
 
@@ -170,6 +188,17 @@ def _read_source(gateway, project_id, scope, scopes, inventory, cancellation, re
             )
             raise _PartialReadFailure(read, exc) from exc
         raise
+
+
+def _prefetch_files(scopes, inventory):
+    for scope in scopes:
+        try:
+            files = _source_files(scope, scopes, inventory)
+        except ValueError:
+            # The ordinary per-source path reports the same ownership failure;
+            # unsafe scopes never enter speculative HTTP reads.
+            continue
+        yield from ((scope.source_id, file_id) for _path, file_id in files)
 
 
 class _PartialReadFailure(RuntimeError):

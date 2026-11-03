@@ -46,7 +46,7 @@ def publish_results(session, task_context, commit, progress, cancel, cancellatio
         cancellation.raise_if_cancelled()
         raise RuntimeError("下载已取消。")
     session._check_target()
-    candidates = result_changes(session.plan)
+    candidates = session._result_changes()
 
     def guarded(mutation):
         def publish():

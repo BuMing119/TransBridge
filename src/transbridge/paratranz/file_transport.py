@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from threading import Event
+from time import monotonic
 
 from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError
 
@@ -22,6 +23,31 @@ class UploadCancellation:
     def raise_if_cancelled(self) -> None:
         if self.is_cancelled:
             raise ExternalServiceError(ExternalServiceCategory.CANCELLED, "分类上传已取消")
+
+
+class FileRequestAdmission:
+    """Stop queued requests without invalidating an already received response."""
+
+    def __init__(self, cancellation, stopped):
+        self.cancellation, self.stopped = cancellation, stopped
+
+    def raise_if_cancelled(self):
+        self.cancellation.raise_if_cancelled()
+        if self.stopped.is_set():
+            raise ExternalServiceError(ExternalServiceCategory.CANCELLED, "本轮文件传输已停止，未发起后续请求。")
+
+    @property
+    def is_stopped(self):
+        return self.stopped.is_set()
+
+    def wait(self, timeout):
+        deadline = monotonic() + timeout
+        while True:
+            self.raise_if_cancelled()
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return False
+            self.stopped.wait(min(remaining, 0.05))
 
 
 def _items(payload, *keys) -> list[Mapping]:

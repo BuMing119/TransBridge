@@ -125,6 +125,10 @@ def execute_file_upload(
     if progress:
         progress(0, len(files), "正在获取云端文件列表…")
     inventory = port.inventory(project_id)
+    if getattr(port, "max_workers", 1) > 1 and len(files) > 1:
+        from .file_upload_parallel import publish_files_parallel
+
+        return publish_files_parallel(project_id, files, port, inventory, mode, cancelled, check_current, progress)
     receipts = []
     retry_files = []
     stopped = ""
@@ -242,14 +246,17 @@ def _upload_one(project_id, path, records, inventory, port, mode, cancelled, che
             if exc.status == 404 and attempt == 0:
                 # Deleted/recreated files are ordinary path resolution, not an ID conflict.
                 try:
-                    fresh = port.inventory(project_id)
+                    if hasattr(inventory, "relocate"):
+                        inventory.relocate(port, project_id, path)
+                    else:
+                        fresh = port.inventory(project_id)
+                        inventory.clear()
+                        inventory.update(fresh)
                 except Exception as refresh_error:
                     log_failure("file_upload_relocate", refresh_error, path=path)
                     return FileReceipt(
                         path, "failed", f"重新定位文件失败：{refresh_error}", source_applied, translation_applied
                     )
-                inventory.clear()
-                inventory.update(fresh)
                 continue
             if exc.status == 413:
                 if phase == "translation":
