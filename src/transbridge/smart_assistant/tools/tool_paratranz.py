@@ -756,7 +756,11 @@ def _register_paratranz_tools():
                     "translations directly using the same project workflow as the GUI. project_id is optional; "
                     "source_ids selects registered sources and defaults to the active plugin. Returns updated_count, "
                     "unchanged_count, pending_count, source_ids and retryable. Does not create local source entries. "
-                    "There is no 2000-entry pagination limit or saved result_id. Temporary download content is cleared "
+                    "There is no 2000-entry pagination limit or saved result_id. At 50 or more selected remote files, "
+                    "this triggers a fresh project export (requires "
+                    "ParaTranz admin permission), downloads its ZIP and matches only the selected files. Otherwise "
+                    "files are downloaded individually. Export failure is reported without using a stale ZIP. "
+                    "ZIP and extracted files are removed after reading; in-memory download content is cleared "
                     "when this call ends; do not call get_task_result or merge_task_result for this operation. "
                     "Unresolved translations keep their local content. Write permission and confirmation required."
                 ),

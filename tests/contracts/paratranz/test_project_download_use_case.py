@@ -37,6 +37,45 @@ def test_application_use_case_reads_matches_saves_and_discards_without_gui_execu
     assert case.gateway.calls == [("inventory", 42), ("file", 1), ("file", 2)]
 
 
+def test_fifty_file_archive_matches_saves_and_releases_temporary_content(case):  # noqa: F811
+    from tests.paratranz.test_artifact_file_downloads import ExportAPI
+    from transbridge.paratranz.artifact_download import FreshArtifactDownload
+    from transbridge.paratranz.artifact_file_reads import ArtifactFileReads
+
+    first = next(iter(case.gateway.files)).removesuffix(".json")
+    for index in range(3, 51):
+        case.gateway.files[f"{first}_{index}.json"] = index
+        case.gateway.rows[index] = []
+    api = ExportAPI({path: case.gateway.rows[file_id] for path, file_id in case.gateway.files.items()})
+
+    def artifacts(config):
+        return ArtifactFileReads(
+            config,
+            downloader_factory=lambda config: FreshArtifactDownload(
+                config, api_factory=lambda **_: api, poll_interval=0.001
+            ),
+        )
+
+    session = ProjectDownloadSession(
+        case.context,
+        execute=inline_execute,
+        reader_factory=lambda config: BatchDownloadSnapshotReader(
+            config, gateway_factory=lambda _: case.gateway, artifact_factory=artifacts
+        ),
+        service_factory=case.session.service_factory,
+    )
+    sources = tuple(source.source_id for source in case.sources)
+    result = run_download(sources, "keep_current", (), session.compare, session.apply, lambda *_: None, case.cancel)
+    assert result.updated == 2 and not result.requires_review
+    assert set(states(case).values()) == {("云端1", 3), ("云端2", 3)}
+    active = case.services.project_lifecycle.active
+    assert not active.dirty
+    assert case.services.variants.read_snapshot(active.formal_variant_ref) == active.variant.snapshot().to_dto()
+    assert session.plan is None and not session._reads and not session._bases
+    assert api.closed and not api.destination.parent.exists()
+    assert case.gateway.calls == [("inventory", 42)]
+
+
 def test_same_plan_candidates_are_reused_but_new_local_edit_is_still_protected(case, monkeypatch):  # noqa: F811
     from transbridge.application.sync import project_download
 

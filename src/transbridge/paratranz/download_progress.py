@@ -11,7 +11,7 @@ class DownloadProgress:
     def refresh(self, inventory):
         selected = {file_id for _source, file_id in self.select_files(inventory)}
         self.paths = {file_id: path for path, file_id in inventory.items() if file_id in selected}
-        self.publish("正在下载当前文件…")
+        self.publish(f"本轮需下载 {len(selected)} 个云端文件，正在准备下载…")
 
     def downloaded(self, file_id):
         if file_id not in self.completed:

@@ -10,6 +10,7 @@ from transbridge.application.io.identity import SourceNamespace
 from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError, ParaTranzEntry
 from transbridge.application.sync.models import RemoteEntrySnapshot
 
+from .artifact_file_reads import ARTIFACT_FILE_THRESHOLD, ArtifactFileReads
 from .download_paths import (
     legacy_plugin_paths,
     matches_current_path,
@@ -61,9 +62,10 @@ class BatchDownloadRead:
 
 
 class BatchDownloadSnapshotReader:
-    def __init__(self, config, *, gateway_factory=None):
+    def __init__(self, config, *, gateway_factory=None, artifact_factory=None):
         self.config = config
         self.gateway_factory = gateway_factory or FilePublicationGateway
+        self.artifact_factory = artifact_factory or ArtifactFileReads
 
     def fetch(self, project_id, scopes, *, cancellation=None, progress=None, limit=100_000, on_source=None):
         scopes = tuple(scopes)
@@ -92,12 +94,23 @@ class BatchDownloadSnapshotReader:
             return ()
         gateway = self.gateway_factory(self.config)
         parallel = None
+        artifact = None
         try:
             if cancellation is not None:
                 gateway.cancellation = cancellation
             inventory = _inventory(gateway, project_id)
             file_progress = DownloadProgress(progress, inventory, lambda current: _prefetch_files(scopes, current))
-            if getattr(gateway, "max_workers", 1) > 1:
+            selected_ids = set(file_progress.paths)
+            if len(selected_ids) >= ARTIFACT_FILE_THRESHOLD:
+                artifact = self.artifact_factory(self.config)
+                artifact.prepare(
+                    project_id,
+                    inventory,
+                    selected_ids,
+                    cancellation=cancellation,
+                    progress=file_progress.publish,
+                )
+            elif getattr(gateway, "max_workers", 1) > 1:
                 from .parallel_file_reads import ParallelFileReads
 
                 parallel = ParallelFileReads(
@@ -108,7 +121,7 @@ class BatchDownloadSnapshotReader:
                     limit=limit,
                     on_download=file_progress.downloaded,
                 )
-            reader = ProgressFileReads(parallel or gateway, file_progress)
+            reader = ProgressFileReads(artifact or parallel or gateway, file_progress)
             results = []
             owners = {}
             collided = set()
@@ -156,9 +169,16 @@ class BatchDownloadSnapshotReader:
                         on_source(scope, read)
             return completed
         finally:
-            if parallel is not None:
-                parallel.close()
-            gateway.close()
+            try:
+                if artifact is not None:
+                    try:
+                        file_progress.publish("正在清理本轮压缩包和解压文件…")
+                    finally:
+                        artifact.close()
+                if parallel is not None:
+                    parallel.close()
+            finally:
+                gateway.close()
 
 
 def _read_source(gateway, project_id, scope, scopes, inventory, cancellation, remaining):
