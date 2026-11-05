@@ -11,16 +11,27 @@ from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QObject, QRunnable, Qt, QThreadPool, QTimer, pyqtSignal
 
 from transbridge.application.terminology_profiles.entry_projection import ProfileEntryInput, ProfileEntryProjector
+from transbridge.application.terminology_profiles.transition_projection import same_profile_revision
 
 
-def profile_snapshot_key(profile, base):
+def profile_snapshot_key(profile, base, source_profile=None):
     profile_key = (
         None
         if profile is None
         else (profile.project_id, profile.profile_id, profile.revision, profile.content_digest, profile.name)
     )
     base_key = None if base is None else (base.snapshot_identity, base.status, base.diagnostics)
-    return profile_key, base_key
+    source_key = (
+        None
+        if source_profile is None
+        else (
+            source_profile.project_id,
+            source_profile.profile_id,
+            source_profile.revision,
+            source_profile.content_digest,
+        )
+    )
+    return profile_key, base_key, source_key
 
 
 def preview_identity(ctx, scope):
@@ -32,18 +43,21 @@ class _Signals(QObject):
 
 
 class _ProjectionCall(QRunnable):
-    def __init__(self, generation, profile, base, chunks, prepared, cancelled, closed, signals):
+    def __init__(self, generation, profile, base, chunks, prepared, cancelled, closed, signals, source_profile=None):
         super().__init__()
         self.generation, self.profile, self.base = generation, profile, base
         self.chunks, self.prepared = chunks, prepared
         self.cancelled, self.closed, self.signals = cancelled, closed, signals
+        self.source_profile = source_profile
 
     def run(self):
         if self.cancelled.is_set() or self.closed.is_set():
             return
         result, error = None, None
         try:
-            projector = self.prepared or ProfileEntryProjector(self.profile, self.base)
+            projector = self.prepared or ProfileEntryProjector(
+                self.profile, self.base, source_profile=self.source_profile
+            )
             output = {}
             for chunk in self.chunks:
                 for entry in chunk:
@@ -82,7 +96,7 @@ class TerminologyPreviewCoordinator(QObject):
         self._request_identity = None
         self._key = profile_snapshot_key(None, None)
         self._prepared = None
-        self.profile = self.base = None
+        self.profile = self.base = self.source_profile = None
         self.projection = MappingProxyType({})
         self.pending = False
         self.error = ""
@@ -97,11 +111,12 @@ class TerminologyPreviewCoordinator(QObject):
             return f"译名方案预览失败：{self.error}。当前保留项目译文，请重新选择方案重试。"
         return "正在生成译名方案预览；暂时显示项目译文。" if self.pending else ""
 
-    def set_profile(self, profile, base=None):
-        key = profile_snapshot_key(profile, base)
+    def set_profile(self, profile, base=None, *, source_profile=None):
+        key = profile_snapshot_key(profile, base, source_profile)
         if self._closed.is_set() or (key == self._key and not self.error):
             return False
         self._key, self.profile, self.base = key, profile, base
+        self.source_profile = source_profile
         self._prepared = None
         self._start()
         return True
@@ -118,7 +133,9 @@ class TerminologyPreviewCoordinator(QObject):
 
     @property
     def profile_label(self):
-        return None if self.profile is None else self.profile.name
+        if same_profile_revision(self.source_profile, self.profile):
+            return None
+        return "项目默认译名" if self.profile is None else self.profile.name
 
     def _start(self):
         self._cancelled.set()
@@ -127,7 +144,7 @@ class TerminologyPreviewCoordinator(QObject):
         self._generation += 1
         self.projection = MappingProxyType({})
         self.error = ""
-        self.pending = self.profile is not None and bool(self._entries) and not self._closed.is_set()
+        self.pending = self.profile_label is not None and bool(self._entries) and not self._closed.is_set()
         self._request_identity = self._identity()
         self._chunks, self._offset = [], 0
         if self.pending:
@@ -176,6 +193,7 @@ class TerminologyPreviewCoordinator(QObject):
                 self._cancelled,
                 self._closed,
                 self._signals,
+                self.source_profile,
             )
         )
         self._chunks = []

@@ -74,6 +74,28 @@ def test_browser_replaces_and_clears_selected_copy_without_stale_rows() -> None:
     view.close()
 
 
+def test_browser_explains_and_filters_effective_scheme_owned_terms():
+    view = SourceBrowser()
+    row = SimpleNamespace(
+        original="Riverwood",
+        translation="河木镇",
+        base_translation="",
+        scope_kind="project",
+        plugin_id=None,
+        state="scheme_owned",
+    )
+    view.render_context(SimpleNamespace(mapping_rows=(row,), profile_id="profile", diagnostics=()))
+    assert "方案独有术语仅在选用此方案时生效" in view.description.text()
+    assert view.filtered.index(0, 3).data() == "方案独有，当前生效"
+    view.state_filter.setCurrentIndex(view.state_filter.findData("scheme_owned"))
+    wait_search(view._search)
+    assert view.filtered.rowCount() == 1
+    view.state_filter.setCurrentIndex(view.state_filter.findData("base_missing"))
+    wait_search(view._search)
+    assert view.filtered.rowCount() == 0
+    view.close()
+
+
 def test_background_source_search_keeps_base_text_scope_status_and_selection():
     rows = (
         SimpleNamespace(
@@ -126,7 +148,7 @@ def test_source_strip_displays_exact_selected_revision_and_switch_failure() -> N
     state = _state(ProfileTermMapping("Dragon", "巨龙"))
     view.render(state)
     assert view.scheme_combo.currentData() == "source"
-    assert view.metadata.text() == "1 条方案映射 · 已应用修订 2"
+    assert view.metadata.text() == "1 条方案映射 · 预览修订 2"
     assert view.status_label.isHidden()
     view.render(replace(state, selection_error="切换失败：文件只读"))
     assert not view.status_label.isHidden()
@@ -168,7 +190,7 @@ def test_profile_refresh_preserves_navigation_and_project_actions_remain_availab
     build.show()  # A delayed project preflight/build completion requests visibility.
     assert view.source_browser.isVisible()
     assert not build.isVisible()
-    assert view._project_actions.isVisible()
+    assert not view._project_actions.isVisible()
     view.build_details_button.click()
     assert build.isVisible()
     view.all_terms_button.click()

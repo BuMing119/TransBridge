@@ -54,6 +54,7 @@ class HydratedWriteDraft:
     conflict_policy: ConflictPolicy = ConflictPolicy.FAIL
     backup_policy: BackupPolicy = BackupPolicy.IF_EXISTS
     options: tuple[tuple[str, object], ...] = ()
+    entry_projection: FrozenWriteEntryProjection | None = None
 
     def __post_init__(self) -> None:
         if self.source_snapshot.format_id is not self.format_id:
@@ -128,6 +129,8 @@ class HydratedWritePreflightService:
         self._entry_projection = entry_projection
 
     def freeze_projection(self, draft: HydratedWriteDraft) -> FrozenWriteEntryProjection | None:
+        if draft.entry_projection is not None:
+            return draft.entry_projection
         if self._entry_projection is None or draft.context.project_id is None or draft.context.variant_id is None:
             return None
         return self._entry_projection.freeze(draft.context.project_id, draft.context.variant_id)

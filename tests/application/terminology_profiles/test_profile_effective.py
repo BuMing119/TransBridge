@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import base64
 from datetime import UTC, datetime
+import json
+from types import SimpleNamespace
+
+import pytest
 
 from transbridge.application.terminology.effective import EffectiveSnapshotStatus, EffectiveTerminologySnapshot
 from transbridge.application.terminology.models import DecisionStatus, TermDecision, TermScope
@@ -118,10 +123,61 @@ def test_profiled_version_restores_exact_base_and_profile_revision_after_selecti
         expected_revision=1,
     )
     profiles.publish(profile.profile_id, expected_draft_revision=second_draft.draft_revision)
-    assert profiles.selected_revision("project-1", "variant-1").revision == 2
+    assert profiles.selected_revision("project-1", "variant-1").revision == 1
     base.current = "base-1"
     restored = source.snapshot("project-1", "variant-1", frozen.version_id)
 
     assert descriptor["base_version_id"] == "base-2"
     assert restored == frozen
     assert source.snapshot("project-1", "variant-1", "base-1") is base.snapshots["base-1"]
+
+
+@pytest.mark.parametrize(
+    ("has_base", "legacy_digest", "legacy_effective"),
+    [
+        (True, "e60d8019cfae87516283e9635eda728b9d8b96ba5380deb94c59f917f3a4d867", {"Whiterun", "Added"}),
+        (False, "8dd4f2b838a884e63c32461849ebd7ada0747a92202c09dc5e1577ea1582c26a", {"Added"}),
+    ],
+)
+def test_legacy_v1_checkpoint_keeps_prior_mapping_authority_and_digest(has_base, legacy_digest, legacy_effective):
+    # Digest fixtures were captured from this task's pre-change effective.py,
+    # including its scheme_owned-only authority, not computed by the new implementation.
+    profiles = _profile_service()
+    profile = profiles.create_with_content(
+        "project-1",
+        "A",
+        TerminologyProfileContent((
+            ProfileTermMapping("Whiterun", "白漫"),
+            ProfileTermMapping("Orphan", "孤立"),
+            ProfileTermMapping("Added", "独有", scheme_owned=True),
+        )),
+    )
+    published = profiles.publish(profile.profile_id, expected_draft_revision=0)
+    profiles.select("project-1", "variant-1", profile.profile_id)
+    base = (
+        _BaseSnapshots()
+        if has_base
+        else SimpleNamespace(
+            snapshot=lambda *args: EffectiveTerminologySnapshot(
+                "project-1", "variant-1", EffectiveSnapshotStatus.NO_PROJECT_VERSION
+            )
+        )
+    )
+    descriptor = dict(
+        base_version_id="base-2" if has_base else None,
+        profile_digest=published.content_digest,
+        profile_id=published.profile_id,
+        profile_revision=1,
+    )
+    encoded = json.dumps(descriptor, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+    legacy_id = "profiled:v1:" + base64.urlsafe_b64encode(encoded).rstrip(b"=").decode("ascii")
+    port = ProfiledEffectiveTerminologySnapshotPort(base, profiles)
+    restored = port.snapshot("project-1", "variant-1", legacy_id)
+    assert restored.version_id == legacy_id
+    assert restored.content_digest == legacy_digest
+    assert {item.original for item in restored.decisions if item.is_effective} == legacy_effective
+    current = port.snapshot("project-1", "variant-1")
+    assert current.version_id.startswith("profiled:v2:")
+    assert current.content_digest != restored.content_digest
+    assert {item.original for item in current.decisions if item.is_effective} == {"Whiterun", "Orphan", "Added"}
+    assert port.snapshot("project-1", "variant-1", current.version_id) == current

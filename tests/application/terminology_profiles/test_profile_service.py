@@ -69,7 +69,7 @@ def test_published_revision_is_immutable_when_draft_changes() -> None:
     assert first.content.mappings[0].translation == "白漫"
 
 
-def test_new_publish_advances_existing_variant_selection_for_new_runs() -> None:
+def test_new_publish_preserves_actual_variant_revision() -> None:
     service, _ = _service()
     profile = service.create("project-1", "A")
     service.publish(profile.profile_id, expected_draft_revision=0)
@@ -83,7 +83,7 @@ def test_new_publish_advances_existing_variant_selection_for_new_runs() -> None:
     revision = service.publish(profile.profile_id, expected_draft_revision=updated.draft_revision)
 
     assert revision.revision == 2
-    assert service.selected_revision("project-1", "variant-1") == revision
+    assert service.selected_revision("project-1", "variant-1").revision == 1
 
 
 def test_stale_draft_and_duplicate_names_are_rejected() -> None:
@@ -98,7 +98,7 @@ def test_stale_draft_and_duplicate_names_are_rejected() -> None:
         service.save_draft(profile.profile_id, content, expected_revision=0)
 
 
-def test_archiving_current_profile_clears_all_variant_selections() -> None:
+def test_archiving_actual_profile_preserves_fixed_variant_associations() -> None:
     service, repository = _service()
     profile = service.create("project-1", "A")
     published = service.publish(profile.profile_id, expected_draft_revision=0)
@@ -108,8 +108,8 @@ def test_archiving_current_profile_clears_all_variant_selections() -> None:
     service.archive(profile.profile_id)
 
     assert repository.get_published(profile.profile_id, published.revision) == published
-    assert service.selected_revision("project-1", "variant-a") is None
-    assert service.selected_revision("project-1", "variant-b") is None
+    assert service.selected_revision("project-1", "variant-a") == published
+    assert service.selected_revision("project-1", "variant-b") == published
 
 
 def test_selection_is_project_scoped() -> None:

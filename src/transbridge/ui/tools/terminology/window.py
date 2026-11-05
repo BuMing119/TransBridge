@@ -25,6 +25,7 @@ from .history_view import HistoryView
 from .launcher import TerminologyLauncher
 from .object_views import TermsView, VersionsView
 from .operation_notice import OperationNotice
+from .preflight_presentation import preflight_failed
 from .presenter import TerminologyPresenter
 from .reports_view import ReportsView
 from .save_close import DraftSaveCloseGuard
@@ -230,7 +231,8 @@ class TerminologyWindow(QWidget):
                 )
         self._preflight_started = True
         self.build_view.preflight_button.setEnabled(False)
-        self.operation_notice.show_message("正在检查当前工程、翻译版本和来源…")
+        if repair:
+            self.operation_notice.show_message("正在检查当前工程、翻译版本和来源…")
         self._actions.run(
             self.presenter.preflight, self._preflight_ready, key="preflight", on_error=self._preflight_failed
         )
@@ -287,9 +289,11 @@ class TerminologyWindow(QWidget):
             return
         self.build_view.preflight_button.setEnabled(True)
         self.build_view.set_preflight(state)
-        self.operation_notice.show_message(state.message, details=state.technical_details if not state.ready else ())
-        self.workspace.set_context(state.project_display_name, state.variant_display_name, len(state.sources))
-        self.versions_view.set_context(state.current_version_value)
+        if self.operation_notice.message.text() == "正在检查当前工程、翻译版本和来源…":
+            self.operation_notice.hide()
+        self.workspace.set_context(state.project_display_name, state.variant_display_name, state.source_count)
+        if state.ready:
+            self.versions_view.set_context(state.current_version_value)
         self._bind_existing_assets()
 
     def _preflight_failed(self, error: object) -> None:
@@ -297,8 +301,11 @@ class TerminologyWindow(QWidget):
             return
         self.build_view.preflight_button.setEnabled(True)
         notice = self.presenter.notice("TERMINOLOGY_PREFLIGHT_FAILED", str(error))
-        self.build_view.set_preflight(TerminologyPreflightViewState.unavailable(f"{notice.message} {notice.recovery}"))
-        self.operation_notice.show_error(notice)
+        state = preflight_failed(self.presenter.context, message=str(error))
+        self.build_view.set_preflight(state)
+        self.workspace.set_context(state.project_display_name, state.variant_display_name, state.source_count)
+        if self.terms_view.build_details_button.isChecked():
+            self.operation_notice.show_error(notice)
 
     def _bind_existing_assets(self, workload=None, run_id=None) -> None:
         if not self.context_is_current:

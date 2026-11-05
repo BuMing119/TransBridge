@@ -39,14 +39,18 @@ def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPla
         if _snapshot_localized_sources(request.source_snapshot)
         else ""
     )
+    projection = request.entry_projection
+    profile = getattr(projection, "profile", None)
+    scheme_mode = "" if projection is None else f"；译名方案：{profile.name if profile else '项目默认译名'}"
     return OperationPlanDraft(
         request=value,
         target=request.target_path if request.target_path.strip() else "请选择输出位置",
         target_revision="existing" if target_exists else "missing",
-        input_fingerprint=request.source_snapshot.sha256,
+        input_fingerprint=request.source_snapshot.sha256 + ("" if projection is None else f":{projection.identity}"),
         scope_summary=f"{len(request.entries)} 个项目条目",
         mode_summary=("将当前译文匹配到所选插件，预检后写出" if transfer else "导出当前文件的译文，验证后写出")
-        + resource_mode,
+        + resource_mode
+        + scheme_mode,
         conflict_summary="已确认覆盖现有文件"
         if request.conflict_policy is PublishConflictPolicy.EXPLICIT_OVERWRITE
         else "目标已存在时停止",

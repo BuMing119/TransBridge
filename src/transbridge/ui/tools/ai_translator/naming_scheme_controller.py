@@ -6,7 +6,7 @@ from PyQt6.QtCore import QObject, QSignalBlocker
 
 
 class AiNamingSchemeBinding(QObject):
-    """Render and forward the shared Project/Variant naming-scheme selection."""
+    """Share Workbench previews while AI keeps the variant's applied scheme."""
 
     def __init__(self, controller, controls, refresh_task, parent=None) -> None:
         super().__init__(parent)
@@ -27,26 +27,29 @@ class AiNamingSchemeBinding(QObject):
         combo = self._controls.naming_scheme_combo
         with QSignalBlocker(combo):
             combo.clear()
-            combo.addItem("保持当前译名", None)
+            combo.addItem("使用项目默认译名", None)
             for choice in state.choices:
                 combo.addItem(choice.label, choice.profile_id)
-            index = combo.findData(state.selected_profile_id)
+            index = combo.findData(state.selected_choice_id)
             combo.setCurrentIndex(max(index, 0))
         combo.setEnabled(state.enabled)
         self._controls.naming_scheme_manage_btn.setEnabled(state.can_manage)
-        selected = next(
-            (choice for choice in state.choices if choice.profile_id == state.selected_profile_id),
-            None,
-        )
+        applied = state.applied_revision
+        applied_name = "项目默认译名" if applied is None else applied.name
+        target = state.selected_revision
+        target_name = "项目默认译名" if target is None else target.name
         if state.loading:
             status = state.detail
         elif not state.enabled:
             status = "当前工程未启用译名方案；任务将使用现有译文和“术语库”页中的术语来源。"
-        elif selected is None:
-            status = "保持项目译文中的现有译名；选择方案会同步工作台，并影响之后创建的任务与导出。"
+        elif state.is_preview:
+            status = (
+                f"工作台正在预览“{target_name}”；当前 AI 任务仍使用“{applied_name}”。"
+                "另存为翻译版本并切换到该版本后，可按预览方案继续翻译。"
+            )
         else:
-            status = f"本次采用“{selected.label}”；已与工作台同步，任务开始后会固定当前版本。"
-        self._summary_label = "保持当前译名" if selected is None else selected.label
+            status = f"当前 AI 任务使用翻译版本已关联的“{applied_name}”；任务开始后会固定该修订。"
+        self._summary_label = "保持当前译名" if applied is None else applied.name
         self._set_status(status)
 
     @property
@@ -68,7 +71,7 @@ class AiNamingSchemeBinding(QObject):
 
     @staticmethod
     def _task_profile_key(state):
-        profile = state.selected_revision
+        profile = state.applied_revision
         return (
             None
             if profile is None

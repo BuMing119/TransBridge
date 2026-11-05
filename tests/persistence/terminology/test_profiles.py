@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 import sqlite3
 
 import pytest
@@ -82,7 +83,7 @@ def _published(profile: TerminologyProfile, revision: int = 1) -> PublishedTermi
     )
 
 
-def test_schema_v4_and_profile_draft_round_trip_with_cas(storage) -> None:
+def test_schema_v5_and_profile_draft_round_trip_with_cas(storage) -> None:
     connection, repository = storage
     profile = _profile()
     repository.insert_profile(profile)
@@ -99,7 +100,7 @@ def test_schema_v4_and_profile_draft_round_trip_with_cas(storage) -> None:
         updated_at="2026-09-06T00:00:02+00:00",
     )
 
-    assert SCHEMA_VERSION == 4
+    assert SCHEMA_VERSION == 5
     assert validate_schema(connection) is None
     assert saved.draft_revision == 1
     assert renamed.draft == _content()
@@ -174,19 +175,12 @@ def test_publish_and_selection_recheck_current_profile_state_inside_storage_tran
         archived=True,
         updated_at="2026-09-06T00:00:03+00:00",
     )
-    with pytest.raises(ValueError, match="unavailable"):
-        repository.set_selection(
-            TerminologyProfileSelection(
-                "project-1",
-                "variant-a",
-                "profile-1",
-                1,
-                "2026-09-06T00:00:04+00:00",
-            )
-        )
+    association = TerminologyProfileSelection("project-1", "variant-a", "profile-1", 1, "2026-09-06T00:00:04+00:00")
+    repository.set_selection(association)
+    assert repository.get_selection("project-1", "variant-a") == association
 
 
-def test_selection_isolated_by_project_and_variant_and_archive_clears_it(storage) -> None:
+def test_actual_association_is_isolated_and_survives_publication_and_archive(storage) -> None:
     connection, repository = storage
     profile = _profile()
     repository.insert_profile(profile)
@@ -216,8 +210,8 @@ def test_selection_isolated_by_project_and_variant_and_archive_clears_it(storage
     repository.insert_published(revision_two, expected_draft_revision=1)
     selected_a = repository.get_selection("project-1", "variant-a")
     selected_b = repository.get_selection("project-1", "variant-b")
-    assert selected_a is not None and selected_a.revision == 2
-    assert selected_b is not None and selected_b.revision == 2
+    assert selected_a is not None and selected_a.revision == 1
+    assert selected_b is not None and selected_b.revision == 1
 
     with pytest.raises(ValueError, match="unavailable"):
         repository.set_selection(replace(variant_a, project_id="project-2", revision=2))
@@ -234,8 +228,8 @@ def test_selection_isolated_by_project_and_variant_and_archive_clears_it(storage
     assert archived.state is ProfileState.ARCHIVED
     assert repository.list_profiles("project-1") == ()
     assert repository.list_profiles("project-1", include_archived=True) == (archived,)
-    assert repository.get_selection("project-1", "variant-a") is None
-    assert repository.get_selection("project-1", "variant-b") is None
+    assert repository.get_selection("project-1", "variant-a").revision == 2
+    assert repository.get_selection("project-1", "variant-b") == selected_b
 
     restored = repository.set_archived(
         "profile-1",
@@ -271,4 +265,46 @@ def test_clear_all_profile_selections_and_fail_closed_payload(storage) -> None:
         ('{"schema_version":999,"value":{}}', "profile-1"),
     )
     with pytest.raises(ValueError, match="unsupported|invalid"):
+        repository.get_profile("profile-1")
+
+
+def test_owned_mapping_round_trips_and_legacy_payload_retains_authority_and_digest(storage):
+    connection, repository = storage
+    content = TerminologyProfileContent(
+        mappings=(
+            ProfileTermMapping("A", "甲"),
+            ProfileTermMapping("B", "乙", scheme_owned=True),
+        )
+    )
+    profile = replace(_profile(), draft=content)
+    repository.insert_profile(profile)
+    repository.insert_published(_published(profile), expected_draft_revision=0)
+    assert repository.get_profile(profile.profile_id).draft == content
+    assert repository.get_published(profile.profile_id, 1).content == content
+    payload = json.loads(connection.execute("SELECT draft_json FROM terminology_profiles").fetchone()[0])
+    assert "scheme_owned" not in payload["value"]["mappings"][0]
+    assert payload["value"]["mappings"][1]["scheme_owned"] is True
+    old = TerminologyProfileContent(mappings=(ProfileTermMapping("A", "甲"),))
+    assert old.content_digest == "3c79eeff42dda655a4c7e9b16a754435b6e9e7426b6026b345fda661ee62cb59"
+    assert (
+        old.content_digest
+        != TerminologyProfileContent(mappings=(ProfileTermMapping("A", "甲", scheme_owned=True),)).content_digest
+    )
+    payload["value"]["mappings"] = payload["value"]["mappings"][:1]
+    connection.execute("UPDATE terminology_profiles SET draft_json = ?", (json.dumps(payload),))
+    legacy = repository.get_profile(profile.profile_id).draft
+    assert legacy == old
+    assert not legacy.mappings[0].scheme_owned
+
+
+@pytest.mark.parametrize("invalid", ["true", 1, None, []])
+def test_invalid_owned_authority_fails_closed_in_persisted_content(storage, invalid):
+    connection, repository = storage
+    repository.insert_profile(
+        replace(_profile(), draft=TerminologyProfileContent(mappings=(ProfileTermMapping("A", "甲"),)))
+    )
+    payload = json.loads(connection.execute("SELECT draft_json FROM terminology_profiles").fetchone()[0])
+    payload["value"]["mappings"][0]["scheme_owned"] = invalid
+    connection.execute("UPDATE terminology_profiles SET draft_json = ?", (json.dumps(payload),))
+    with pytest.raises(ValueError, match="authority must be a boolean"):
         repository.get_profile("profile-1")

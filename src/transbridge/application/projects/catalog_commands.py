@@ -9,25 +9,26 @@ from transbridge.persistence.v2.models import LoadedRecord
 from transbridge.persistence.v2.variant import VariantAggregate, VariantSnapshot
 
 from .catalog import project_with_added_variant, project_without_variant, variant_catalog
-from .models import ActiveProject, LifecycleActivation, project_with_active_variant
+from .models import ActiveProject, LifecycleActivation, TerminologySelectionMutation, project_with_active_variant
 
 
 class VariantCatalogCommands:
-    def __init__(self, lifecycle, projects, variants, baselines, id_factory):
+    def __init__(self, lifecycle, projects, variants, baselines, id_factory, *, terminology=None):
         self._lifecycle = lifecycle
         self._projects = projects
         self._variants = variants
         self._baselines = baselines
         self._id_factory = id_factory
+        self._terminology = terminology
 
     def create(self, name, context, *, copy_active=False):
         descriptor = None
 
         def prepare(active):
             nonlocal descriptor
-            project_record, source_record = self._check_active(active, context)
+            project_record, source_record = self.checked_active(active, context)
             baselines = self._baselines.provide(active.project, active.formal_variant_ref, context)
-            new_ref = self._new_ref(active)
+            new_ref = self.allocate_ref(active)
             source = active.variant.snapshot()
             snapshot = VariantSnapshot(
                 new_ref,
@@ -53,6 +54,27 @@ class VariantCatalogCommands:
                     (active.formal_variant_ref, source_record.value.envelope.revision, source_record.source_hash),
                 ),
             )
+            if copy_active and self._terminology is not None:
+                source_selection = self._terminology.selection(
+                    active.project_ref.identity.value, active.formal_variant_ref.identity.value
+                )
+                selection = (
+                    None if source_selection is None else replace(source_selection, variant_id=new_ref.identity.value)
+                )
+                activation = replace(
+                    activation,
+                    terminology_selections=(
+                        TerminologySelectionMutation(
+                            active.project_ref.identity.value,
+                            active.formal_variant_ref.identity.value,
+                            source_selection,
+                            source_selection,
+                        ),
+                        TerminologySelectionMutation(
+                            active.project_ref.identity.value, new_ref.identity.value, None, selection
+                        ),
+                    ),
+                )
             descriptor = next(item for item in variant_catalog(project) if item.variant_id == new_ref.identity.value)
             return candidate, activation
 
@@ -64,7 +86,7 @@ class VariantCatalogCommands:
 
         def prepare(active):
             nonlocal descriptor
-            project_record, source_record = self._check_active(active, context)
+            project_record, source_record = self.checked_active(active, context)
             catalog = variant_catalog(active.project)
             descriptor = next((item for item in catalog if item.variant_id == variant_id), None)
             if descriptor is None:
@@ -95,12 +117,21 @@ class VariantCatalogCommands:
                     (active.formal_variant_ref, source_record.value.envelope.revision, source_record.source_hash),
                 ),
             )
+            if self._terminology is not None:
+                selection = self._terminology.selection(active.project_ref.identity.value, variant_id)
+                activation = replace(
+                    activation,
+                    terminology_selections=(
+                        TerminologySelectionMutation(active.project_ref.identity.value, variant_id, selection, None),
+                    ),
+                )
             return candidate, activation
 
         result = self._lifecycle.commit_catalog_change(prepare, context)
         return self._result(result, descriptor, context)
 
-    def _check_active(self, active, context):
+    def checked_active(self, active, context):
+        """Validate a clean catalog source and return its verified disk records."""
         if any(value is None for value in (self._projects, self._variants, self._baselines, self._id_factory)):
             raise DomainError(ErrorCategory.PREREQUISITE, "VARIANT_CATALOG_UNAVAILABLE", "版本目录服务未配置。")
         if active is None or active.variant is None or active.formal_variant_ref is None:
@@ -124,7 +155,8 @@ class VariantCatalogCommands:
             )
         return project, variant
 
-    def _new_ref(self, active):
+    def allocate_ref(self, active):
+        """Allocate a detached unique Variant identity without writing it."""
         existing = {item.variant_id for item in variant_catalog(active.project)}
         for _ in range(8):
             raw = str(self._id_factory())

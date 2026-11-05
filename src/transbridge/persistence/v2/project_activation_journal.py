@@ -20,18 +20,20 @@ from .atomic_documents import AtomicDocumentStore
 from .ids import ProjectId, ProjectRef, VariantId, VariantRef
 from .project_record_guard import require_record_version, verified_preimage
 from .schema import parse_json_bytes, serialize_document, validate_v2
+from .terminology_selection_participant import TerminologySelectionParticipant
 from .validated_reads import decode_validated_read, reuse_validated_reads
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class ProjectActivationProtocol:
-    def __init__(self, root, filesystem, projects, variants):
+    def __init__(self, root, filesystem, projects, variants, *, terminology_selections=None):
         self._filesystem = filesystem
         self._documents = AtomicDocumentStore(root, filesystem)
         self._projects = projects
         self._variants = variants
         self._lock = projects.mutation_lock
+        self._selections = terminology_selections or TerminologySelectionParticipant(root)
         self._directory = self._documents.path("project-activation-journal")
         self.recover_pending()
         self._lock.add_recovery(self.recover_pending)
@@ -42,6 +44,7 @@ class ProjectActivationProtocol:
             records = self._records(activation)
             if not records:
                 return
+            self._validate_participants(records)
             document = {"schema_version": 1, "transaction_id": transaction_id, "phase": "prepared", "records": records}
             path = self._documents.path(os.path.join("project-activation-journal", self._filename(transaction_id)))
             if self._filesystem.exists(path):
@@ -105,6 +108,21 @@ class ProjectActivationProtocol:
         if activation.removed_variant is not None:
             ref, revision, digest = activation.removed_variant
             records.append(self._record(ref, None, revision, digest, write=True))
+        for mutation in activation.terminology_selections:
+            previous = self._selections.read(mutation.project_id, mutation.variant_id)
+            if previous != self._selections.encode(mutation.expected):
+                raise _conflict("The Variant terminology association changed before saving.")
+            target = self._selections.encode(mutation.target)
+            self._selections.decode(target, mutation.project_id, mutation.variant_id)
+            records.append(
+                _record_data(
+                    "terminology-selection",
+                    mutation.variant_id,
+                    mutation.project_id,
+                    previous,
+                    target,
+                )
+            )
         pointer_path = self._documents.path("active-project.json")
         pointer = {
             "schema_version": 1,
@@ -162,7 +180,7 @@ class ProjectActivationProtocol:
                 raise ValueError("manifest checksum mismatch")
             if os.path.basename(path) != self._filename(document["transaction_id"]):
                 raise ValueError("manifest identity mismatch")
-            if not isinstance(document["records"], list) or not 1 <= len(document["records"]) <= 4:
+            if not isinstance(document["records"], list) or not 1 <= len(document["records"]) <= 6:
                 raise ValueError("invalid activation participants")
             paths = set()
             for record in document["records"]:
@@ -185,7 +203,9 @@ class ProjectActivationProtocol:
                     if _digest(value) != record[f"{field}_digest"]:
                         raise ValueError("record checksum mismatch")
                     if value is not None:
-                        if record["kind"] != "pointer":
+                        if record["kind"] == "terminology-selection":
+                            self._selections.decode(value, record["project_id"], record["identity"])
+                        elif record["kind"] != "pointer":
                             ref = self._ref(record)
                             repository = self._projects if isinstance(ref, ProjectRef) else self._variants
                             decode_validated_read(repository, ref, value, validate=validate_v2)
@@ -200,12 +220,17 @@ class ProjectActivationProtocol:
         pointers = [record for record in records if record["kind"] == "pointer"]
         projects = [record for record in records if record["kind"] == "project"]
         variants = [record for record in records if record["kind"] == "variant"]
+        selections = [record for record in records if record["kind"] == "terminology-selection"]
         if len(pointers) > 1 or len(projects) > 1:
             raise ValueError("ambiguous activation participants")
         parent_ids = {record["project_id"] for record in variants}
+        parent_ids.update(record["project_id"] for record in selections)
         parent_ids.update(record["identity"] for record in projects)
         if len(parent_ids) > 1:
             raise ValueError("activation cannot mutate multiple Projects")
+        variant_ids = {(record["project_id"], record["identity"]) for record in variants}
+        if any((record["project_id"], record["identity"]) not in variant_ids for record in selections):
+            raise ValueError("terminology association must accompany its Variant mutation")
         if projects:
             project = projects[0]
             if project["previous"] is None or project["target"] is None:
@@ -216,6 +241,9 @@ class ProjectActivationProtocol:
                 declared = variant["identity"] in data["variant_ids"]
                 if (variant["target"] is not None) != declared:
                     raise ValueError("Variant publication disagrees with its Project catalog")
+            for selection in selections:
+                if selection["target"] is not None and selection["identity"] not in data["variant_ids"]:
+                    raise ValueError("terminology selection targets an undeclared Variant")
             if pointers:
                 pointer = parse_json_bytes(_decode(pointers[0]["target"]))
                 if (pointer["project_id"], pointer["variant_id"]) != (project["identity"], data["active_variant_id"]):
@@ -246,6 +274,16 @@ class ProjectActivationProtocol:
         self._require_known(record)
         path = self._path(record)
         payload = _decode(record["target" if target else "previous"])
+        if record["kind"] == "terminology-selection":
+            self._selections.replace(
+                record["project_id"],
+                record["identity"],
+                payload,
+                known=(_decode(record["previous"]), _decode(record["target"])),
+            )
+            if self._read_record(record) != payload:
+                raise _conflict("Terminology association verification failed.", path=path)
+            return
         if self._read(path) == payload:
             return
         if payload is None:
@@ -257,11 +295,16 @@ class ProjectActivationProtocol:
 
     def _require_known(self, record):
         path = self._path(record)
-        current = _digest(self._read(path))
+        current = _digest(self._read_record(record))
         if current not in {record["previous_digest"], record["target_digest"]}:
             raise _conflict(
                 "Activation recovery conflicts with newer content; automatic writes are blocked.", path=path
             )
+
+    def _read_record(self, record):
+        if record["kind"] == "terminology-selection":
+            return self._selections.read(record["project_id"], record["identity"])
+        return self._read(self._path(record))
 
     def _cleanup(self, path, token, *, committed):
         try:
@@ -272,6 +315,10 @@ class ProjectActivationProtocol:
             _LOGGER.warning("Committed activation journal cleanup is pending: %s", path, exc_info=True)
 
     def _path(self, record):
+        if record["kind"] == "terminology-selection":
+            ProjectId(record["project_id"])
+            VariantId(record["identity"])
+            return f"terminology-selection:{record['project_id']}:{record['identity']}"
         if record["kind"] == "pointer":
             if record["identity"] is not None or record["project_id"] is not None:
                 raise ValueError("pointer cannot have a record identity")

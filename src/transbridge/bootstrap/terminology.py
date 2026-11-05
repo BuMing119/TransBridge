@@ -216,6 +216,10 @@ class ProductionTerminologyComposition:
             PublishedEffectiveTerminologyGate(
                 lambda candidate_project, candidate_variant: (
                     repository.effective_version(candidate_project, candidate_variant) is not None
+                    or self.profile_service_for(candidate_project).selected_revision(
+                        candidate_project, candidate_variant
+                    )
+                    is not None
                 )
             ),
         )

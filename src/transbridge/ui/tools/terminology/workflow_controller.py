@@ -13,7 +13,11 @@ class TerminologyWorkflowController:
         terms = window.terms_view
         terms.workflow.edit_requested.connect(window._draft_actions.continue_editing)
         terms.workflow.publish_requested.connect(window._publish)
+        terms.workflow.build_requested.connect(self.open_build)
         window.versions_view.workflow_requested.connect(self.continue_workflow)
+        window.schemes_view.edit_requested.connect(self.edit_current)
+        window.schemes_view.source_requested.connect(self.show_source)
+        window.schemes_view.extract_requested.connect(self.open_build)
         terms.all_terms_button.clicked.connect(self.edit_page)
         window.draft_view.batch_requested.connect(window._draft_actions.batch)
         window.effective_view.edit_requested.connect(window._draft_actions.edit_effective)
@@ -28,6 +32,7 @@ class TerminologyWorkflowController:
         self.state = TerminologyWorkflowState.from_assets(assets)
         view = self.window
         view.terms_view.render_workflow(self.state)
+        view.schemes_view.set_project_editable(self.state.has_draft or self.state.has_version)
         context = assets.browse_context
         view.effective_view.set_workflow(self.state, has_profile=bool(context and context.profile_id))
         view.versions_view.discard_button.setEnabled(self.state.has_draft)
@@ -48,7 +53,27 @@ class TerminologyWorkflowController:
         view = self.window
         view.workspace.set_current_index(0)
         view.terms_view.build_details_button.setChecked(True)
-        view.operation_notice.show_message("请先点击“从来源生成草稿”。整理完成后即可新增和编辑术语，再检查影响并发布。")
+        view.operation_notice.show_message(
+            "编辑项目术语前需先提取并建立草稿；也可使用上方“导入术语…”创建独立译名方案。"
+        )
+
+    def edit_current(self):
+        profiles = self.window._profile_controller
+        if profiles is not None and profiles.state.selected_profile_id is not None:
+            profiles.open_manager()
+        elif self.state is not None and (self.state.has_draft or self.state.has_version):
+            self.window.workspace.set_current_index(0)
+            self.window._draft_actions.continue_editing()
+        else:
+            self.open_build()
+
+    def show_source(self):
+        self.window.workspace.set_current_index(0)
+        self.window.terms_view.show_source()
+
+    def open_build(self):
+        self.window.workspace.set_current_index(0)
+        self.window.terms_view.open_build()
 
     def start(self):
         if self.state is not None and self.state.has_draft:
@@ -97,6 +122,8 @@ class TerminologyWorkflowController:
     def saving_changed(self, pending):
         ready = self.state is not None and self.state.can_publish and not pending
         self.window.terms_view.workflow.set_pending(pending)
+        if pending:
+            self.window.terms_view.workflow.show()
         if self.state is not None:
             self.window.versions_view.render_workflow(self.state, pending)
         self.window.terms_view.workflow.publish_button.setEnabled(ready)

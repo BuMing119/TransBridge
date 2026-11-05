@@ -26,6 +26,7 @@ from transbridge.persistence.terminology import SqliteTerminologyRepository, Ter
 from transbridge.persistence.v2.filesystem import OsPersistenceFilesystem, RepositoryPaths
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef
 from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
+from transbridge.persistence.v2.repository import ProjectRepository
 
 from .terminology_sources import lightweight_build_snapshot
 
@@ -41,6 +42,7 @@ class ProjectTerminologyRepositories:
     def __init__(self, root: str | Path) -> None:
         self.paths = TerminologyPaths(Path(root).resolve(strict=False))
         self._records = RepositoryPaths(str(self.paths.root), OsPersistenceFilesystem())
+        self._publication_lock = ProjectRepository(str(self.paths.root), OsPersistenceFilesystem()).mutation_lock
         self._items: dict[str, SqliteTerminologyRepository] = {}
         self._deleting: set[str] = set()
         self._deleted: set[str] = set()
@@ -62,6 +64,7 @@ class ProjectTerminologyRepositories:
             repository = self._items.get(project_id)
             if repository is None:
                 repository = SqliteTerminologyRepository.open(str(self.paths.root), project_id)
+                repository.localization_profiles.bind_publication_lock(self._publication_lock)
                 self._items[project_id] = repository
             return repository
 

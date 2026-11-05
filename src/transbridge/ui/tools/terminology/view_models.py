@@ -54,6 +54,7 @@ class TerminologyPreflightViewState:
     diagnostic_code: str | None = None
     technical_details: tuple[TechnicalDetail, ...] = ()
     action_label: str = "创建术语库"
+    source_count: int | None = None
 
     @classmethod
     def unavailable(

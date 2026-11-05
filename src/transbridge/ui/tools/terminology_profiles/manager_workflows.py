@@ -69,11 +69,13 @@ class ProfileManagerWorkflows(QObject):
         self.active = False
         self._owner.setEnabled(True)
         message = (
-            f"“{published.name}”已用于当前翻译版本。"
+            f"已预览“{published.name}”；保存为翻译版本后才会关联此方案。"
             if preview.target_variant_id is not None
-            else f"已发布“{published.name}”；{len(preview.selections)} 个使用中的翻译版本已更新。"
+            else f"已发布“{published.name}”；现有翻译版本保留各自的关联修订。"
         )
         self._owner._changed(message, select_profile_id=published.profile_id)
+        if preview.target_variant_id is not None and self._owner.context_active:
+            self._owner.preview_requested.emit(published.profile_id)
         if not self._owner.context_active:
             self._owner.close()
 

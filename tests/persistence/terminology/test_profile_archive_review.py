@@ -15,7 +15,7 @@ from transbridge.persistence.terminology.schema import initialize_schema
 
 
 @pytest.mark.parametrize("backend", ["memory", "sqlite"])
-def test_archive_impact_is_checked_atomically_and_restore_never_rebinds(backend):
+def test_archive_impact_is_checked_atomically_and_actual_associations_survive(backend):
     connection = sqlite3.connect(":memory:", isolation_level=None)
     initialize_schema(connection)
     repository = (
@@ -37,9 +37,9 @@ def test_archive_impact_is_checked_atomically_and_restore_never_rebinds(backend)
         assert repository.get_profile(profile.profile_id).state is ProfileState.ACTIVE
         assert service.selected_revision("project", "variant-a") is not None
         service.archive(profile.profile_id, expected_selections=service.list_profile_selections(profile.profile_id))
-        assert service.list_profile_selections(profile.profile_id) == ()
+        assert len(service.list_profile_selections(profile.profile_id)) == 3
         service.restore(profile.profile_id)
-        assert service.list_profile_selections(profile.profile_id) == ()
+        assert len(service.list_profile_selections(profile.profile_id)) == 3
         assert service.published_revision(profile.profile_id, 1) is not None
         assert repository.get_profile(profile.profile_id).state is ProfileState.ACTIVE
     finally:

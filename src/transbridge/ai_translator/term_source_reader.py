@@ -73,7 +73,7 @@ class ConfiguredTermSourceReader:
         return TerminologySourceSnapshot.capture(
             source_id,
             request.source_label,
-            tuple(TerminologySourceEntry(entry.term, entry.translation) for entry in entries),
+            tuple(_source_entry(entry) for entry in entries),
         )
 
     def _read_dynamic(self, request: TermSourceReadRequest) -> list[TermEntry]:
@@ -112,6 +112,29 @@ class ConfiguredTermSourceReader:
         if not path.is_file():
             raise TermSourceUnavailableError(f"{label}术语文件不存在：{path}")
         return path
+
+
+def _source_entry(entry: TermEntry) -> TerminologySourceEntry:
+    """Preserve explicit machine-readable scope, never infer it from prose."""
+
+    metadata = entry.metadata
+    scope = metadata.get("scope_kind")
+    plugin = metadata.get("plugin_id", metadata.get("shared_plugin_id"))
+    if scope is None:
+        if plugin is not None:
+            scope = "plugin"
+        elif entry.context == "project":
+            scope = "project"
+        elif entry.context.startswith("plugin:"):
+            scope, plugin = "plugin", entry.context.removeprefix("plugin:")
+        else:
+            scope = "project"
+    if not isinstance(scope, str) or (plugin is not None and not isinstance(plugin, str)):
+        raise TermSourceUnavailableError(f"术语 {entry.term!r} 的作用域元数据无效。")
+    try:
+        return TerminologySourceEntry(entry.term, entry.translation, scope, plugin)
+    except ValueError as exc:
+        raise TermSourceUnavailableError(f"术语 {entry.term!r} 的作用域元数据无效：{exc}") from exc
 
 
 __all__ = [

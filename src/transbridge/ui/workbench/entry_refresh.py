@@ -35,7 +35,7 @@ class EntryRefresh:
 
     def try_refresh(self, collection) -> bool:
         view = self.preview
-        if collection is None or view._terminology_profile is not None:
+        if collection is None or view._terminology_preview.profile_label is not None:
             return False
         entries = list(collection)
         if not entries or len(entries) != len(view._entries):

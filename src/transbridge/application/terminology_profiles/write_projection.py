@@ -21,16 +21,19 @@ class FrozenProfileWriteProjection:
     profile: PublishedTerminologyProfile | None
     projector: TerminologyProfileProjector
     base_snapshot: EffectiveTerminologySnapshot | None = None
+    source_profile: PublishedTerminologyProfile | None = None
 
     @property
     def identity(self) -> str:
+        source = self.source_profile
+        source_key = "base" if source is None else f"{source.profile_id}:r{source.revision}:{source.content_digest}"
         if self.profile is None:
-            return "common-translation"
+            return f"common-translation:from:{source_key}"
         base_version = "unavailable" if self.base_snapshot is None else self.base_snapshot.version_id
         base_digest = "unavailable" if self.base_snapshot is None else self.base_snapshot.content_digest
         return (
             f"terminology-profile:{self.profile.profile_id}:r{self.profile.revision}:"
-            f"{self.profile.content_digest}:base:{base_version}:{base_digest}"
+            f"{self.profile.content_digest}:base:{base_version}:{base_digest}:from:{source_key}"
         )
 
     @property
@@ -55,11 +58,13 @@ class FrozenProfileWriteProjection:
         self,
         entries: tuple[TranslationEntry, ...],
     ) -> tuple[tuple[TranslationEntry, ...], tuple[ProjectionDiagnostic, ...]]:
-        if self.profile is None:
+        if self.profile is None and self.source_profile is None:
             return entries, ()
         output = []
         diagnostics = []
-        projector = ProfileEntryProjector(self.profile, self.base_snapshot, projector=self.projector)
+        projector = ProfileEntryProjector(
+            self.profile, self.base_snapshot, source_profile=self.source_profile, projector=self.projector
+        )
         for entry in entries:
             result = projector.project(entry)
             output.append(replace(entry, translation=result.translation))
@@ -91,6 +96,7 @@ class TerminologyProfileWriteProjectionSource:
             profile,
             self._projector,
             base,
+            source_profile=profile,
         )
 
 

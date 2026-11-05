@@ -63,13 +63,20 @@ class TermsView(QWidget):
         self._project_panel = QScrollArea(self)
         self._project_panel.setWidgetResizable(True)
         self._project_panel.setMaximumHeight(210)
+        self._project_panel.setMinimumHeight(170)
         self._project_panel.setWidget(build)
         self._project_panel.hide()
-        self.build_details_button.toggled.connect(self._project_panel.setVisible)
+        self.build_details_button.toggled.connect(self._show_build_details)
         layout.addWidget(self._project_panel)
+        self._project_actions.hide()
 
-        choices = QHBoxLayout()
+        self._view_actions = QWidget(self)
+        choices = QHBoxLayout(self._view_actions)
+        choices.setContentsMargins(0, 0, 0, 0)
         choices.setSpacing(8)
+        self.content_title = QLabel("当前可用术语", self)
+        self.content_title.setProperty("tbTerminologySectionTitle", True)
+        choices.addWidget(self.content_title)
         self._choice_group = QButtonGroup(self)
         self._choice_group.setExclusive(True)
         self.effective_button = QPushButton("当前生效", self)
@@ -86,8 +93,10 @@ class TermsView(QWidget):
             button.setProperty("tbTerminologyFilter", index != 2)
             button.clicked.connect(lambda _checked=False, value=index: self._set_page(value))
             self._choice_group.addButton(button, index)
-            if index != 2:
+            if index not in {2, 3}:
                 choices.addWidget(button)
+            else:
+                button.hide()
         self.review_button = QPushButton("复核术语", self)
         for button in (self.review_button, self.attention_button):
             ComponentStyle.apply_static(button, ComponentKind.BUTTON)
@@ -95,9 +104,10 @@ class TermsView(QWidget):
         choices.addStretch(1)
         choices.addWidget(self.review_button)
         choices.addWidget(self.attention_button)
+        choices.addWidget(draft.add_button)
         self.review_button.hide()
         self.attention_button.hide()
-        layout.addLayout(choices)
+        layout.addWidget(self._view_actions)
 
         card = QFrame(self)
         card_layout = QVBoxLayout(card)
@@ -124,11 +134,24 @@ class TermsView(QWidget):
     def show_draft(self) -> None:
         self._set_page(1)
 
+    def show_source(self) -> None:
+        self._set_page(3)
+
+    def open_build(self) -> None:
+        self.build_details_button.setChecked(True)
+
+    def _show_build_details(self, visible: bool) -> None:
+        self._project_actions.setVisible(visible)
+        self._project_panel.setVisible(visible)
+        self.build_details_button.setText("收起提取详情" if visible else "从项目提取术语…")
+
     def render_workflow(self, state) -> None:
         self._workflow_state = state
         self.workflow.render(state)
-        self._draft.add_button.setVisible(state.has_draft)
-        self._build.build_button.setText("重新整理来源" if state.has_draft or state.has_version else "从来源生成草稿")
+        self._draft.add_button.setVisible(state.has_draft and self.pages.currentIndex() == 1)
+        self._build.build_button.setText(
+            "重新提取并生成草稿" if state.has_draft or state.has_version else "提取并生成草稿"
+        )
         self._build.build_button.setToolTip("读取项目已登记来源，整理术语并生成或更新待审核草稿。")
         for action, button in (
             ("build", self._build.build_button),
@@ -154,6 +177,16 @@ class TermsView(QWidget):
 
     def _update_content_context(self) -> None:
         has_draft = self._workflow_state is not None and self._workflow_state.has_draft
+        index = self.pages.currentIndex()
+        editing = index in {1, 2}
+        self.workflow.setVisible(has_draft or editing)
+        self.workflow.set_editing(index == 1)
+        self.content_title.setVisible(index == 0 and not has_draft)
+        self.effective_button.setVisible(has_draft or index != 0)
+        self.effective_button.setText("返回可用术语" if index != 0 else "当前可用术语")
+        self.all_terms_button.setVisible(has_draft or editing)
+        self._draft.add_button.setVisible(has_draft and index == 1)
+        self.content_context.setVisible(index == 3 or (editing and not has_draft))
         self.content_context.setText(
             (
                 "正在查看：当前生效术语。后续翻译采用此处译名，未发布的草稿修改不会出现在这里。",

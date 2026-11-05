@@ -26,6 +26,7 @@ from .models import ProfileTermMapping, PublishedTerminologyProfile, logical_ter
 
 class ProfileMappingState(StrEnum):
     EFFECTIVE = "effective"
+    SCHEME_OWNED = "scheme_owned"
     BASE_MISSING = "base_missing"
     BASE_INACTIVE = "base_inactive"
     UNMAPPED = "unmapped"
@@ -184,8 +185,10 @@ def _mapping_rows(
         if cancellation is not None:
             cancellation.raise_if_cancelled()
         mapping, decision = mappings.get(key), base.get(key)
-        if decision is None:
-            state = ProfileMappingState.BASE_MISSING
+        if decision is None and mapping is not None and mapping.scheme_owned:
+            state = ProfileMappingState.SCHEME_OWNED
+        elif decision is None:
+            state = ProfileMappingState.EFFECTIVE
         elif not decision.is_effective:
             state = ProfileMappingState.BASE_INACTIVE
         elif mapping is None:

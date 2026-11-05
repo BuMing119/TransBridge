@@ -116,7 +116,7 @@ def test_pending_selection_finishes_only_in_captured_project_and_variant():
     wait_until(lambda: len(pool.calls) == 3)
     pool.calls[2].run()
     wait_profile(controller)
-    assert services["a"].selected_revision("a", "v").profile_id == identifiers["a"]
+    assert services["a"].selected_revision("a", "v") is None
     assert services["b"].selected_revision("b", "new") is None
     assert controller.state.selected_revision is None
     assert [item.label for item in controller.state.choices] == ["b"]
@@ -136,10 +136,10 @@ def test_selection_commands_are_serial_and_in_submission_order():
     assert len(pool.calls) == 2
     pool.calls[1].run()
     wait_until(lambda: len(pool.calls) == 3)
-    assert service.selected_revision("a", "v").profile_id == first
+    assert service.selected_revision("a", "v") is None
     pool.calls[2].run()
     wait_profile(controller)
-    assert service.selected_revision("a", "v").profile_id == second.profile_id
+    assert service.selected_revision("a", "v") is None
     assert controller.state.selected_profile_id == second.profile_id
     bar.close()
 

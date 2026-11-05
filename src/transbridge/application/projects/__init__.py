@@ -20,6 +20,7 @@ from .models import (
     LifecycleSave,
     LifecycleSnapshot,
     PreparedTransition,
+    TerminologySelectionMutation,
     TransitionTarget,
     project_with_active_variant,
 )
@@ -76,6 +77,7 @@ __all__ = [
     "LifecycleUnitOfWorkPort",
     "NullLifecycleLeasePort",
     "PreparedTransition",
+    "TerminologySelectionMutation",
     "PreparedProjectSource",
     "PreparedSourceHydration",
     "ProjectProvisioningCommit",

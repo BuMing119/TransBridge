@@ -7,11 +7,13 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidg
 class TerminologyWorkflowBar(QWidget):
     edit_requested = pyqtSignal()
     publish_requested = pyqtSignal()
+    build_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._state = None
         self._pending = 0
+        self._editing = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
@@ -28,6 +30,11 @@ class TerminologyWorkflowBar(QWidget):
         self.publish_button.clicked.connect(self.publish_requested)
         row.addWidget(self.edit_button)
         row.addWidget(self.publish_button)
+        self.build_button = QPushButton("重新提取术语…", self)
+        self.build_button.setProperty("tbTerminologyPrimary", True)
+        self.build_button.clicked.connect(self.build_requested)
+        row.addWidget(self.build_button)
+        self.build_button.hide()
         self.edit_button.hide()
         self.publish_button.hide()
         layout.addLayout(row)
@@ -40,6 +47,7 @@ class TerminologyWorkflowBar(QWidget):
         self._state = state
         self.edit_button.setVisible(state.has_version and not state.has_draft)
         self.publish_button.setVisible(state.can_publish)
+        self.build_button.setVisible(state.has_draft and state.next_action == "build")
         self.publish_button.setToolTip("先检查逐条变化和发布条件，再确认发布。")
         self.set_pending(self._pending)
 
@@ -48,5 +56,9 @@ class TerminologyWorkflowBar(QWidget):
         if self._state is None:
             return
         title, detail = self._state.display_copy(pending)
-        self.title.setText(title)
+        self.title.setText("正在编辑术语" if self._editing and not pending else title)
         self.detail.setText(detail)
+
+    def set_editing(self, editing):
+        self._editing = editing
+        self.set_pending(self._pending)

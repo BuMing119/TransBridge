@@ -51,7 +51,7 @@ def test_preview_does_not_save_or_publish_and_describes_exact_changes(profiles):
     assert service.selected_revision("project", "first").revision == 1
 
 
-def test_reviewed_publish_keeps_selection_and_adoption_is_explicit(profiles):
+def test_reviewed_publication_never_changes_actual_variant_association(profiles):
     service, repository, original = profiles
     second = service.create_with_content("project", "新版", _content("新版甲"))
     preview = service.preview_publication(second.profile_id, second.draft, expected_revision=0)
@@ -62,7 +62,7 @@ def test_reviewed_publish_keeps_selection_and_adoption_is_explicit(profiles):
     adopted = service.publish_reviewed(adopt)
     assert adopted.revision == 1
     assert repository.get_profile(second.profile_id).latest_published_revision == 1
-    assert service.selected_revision("project", "first").profile_id == second.profile_id
+    assert service.selected_revision("project", "first").profile_id == original.profile_id
 
 
 @pytest.mark.parametrize("change", ("draft", "publish", "users", "target", "rename", "archive"))
@@ -93,23 +93,20 @@ def test_changed_review_inputs_reject_without_saving_local_edits(profiles, chang
     assert repository.list_profile_selections(original.profile_id) == selections
 
 
-def test_failed_adoption_rolls_back_draft_publication_and_all_users(profiles, monkeypatch):
+def test_publication_does_not_attempt_to_reassign_actual_variant(profiles, monkeypatch):
     service, repository, original = profiles
     preview = service.preview_publication(
         original.profile_id, _content("新版甲"), expected_revision=0, target_variant_id="current"
     )
-    before = repository.get_profile(original.profile_id)
     existing = service.selected_revision("project", "first")
 
     def fail(_selection):
         raise ValueError("模拟选择写入失败")
 
     monkeypatch.setattr(repository, "set_selection", fail)
-    with pytest.raises(TerminologyProfileConflictError, match="模拟选择"):
-        service.publish_reviewed(preview)
-    assert repository.get_profile(original.profile_id) == before
+    published = service.publish_reviewed(preview)
     assert service.selected_revision("project", "first") == existing
-    assert repository.get_published(original.profile_id, 2) is None
+    assert repository.get_published(original.profile_id, 2) == published
 
 
 def test_name_only_change_is_reviewed_and_published_without_mutating_history(profiles):
@@ -127,7 +124,7 @@ def test_name_only_change_is_reviewed_and_published_without_mutating_history(pro
     assert adopted.name == "新版名称"
     assert adopted.revision == 2
     assert adopted.content_digest == historical.content_digest
-    assert service.selected_revision("project", "first") == adopted
+    assert service.selected_revision("project", "first") == historical
     assert service.published_revision(original.profile_id, 1) == historical
     repeated = service.preview_publication(original.profile_id, original.draft, expected_revision=0)
     assert not repeated.has_changes

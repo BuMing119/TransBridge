@@ -81,8 +81,8 @@ class ProfileReadStore:
                     "SELECT selections.profile_id, selections.revision FROM terminology_profile_selections selections "
                     "JOIN terminology_profiles profiles ON profiles.profile_id = selections.profile_id "
                     "WHERE selections.project_id = ? AND selections.variant_id = ? "
-                    "AND profiles.project_id = ? AND profiles.state = ?",
-                    (project_id, variant_id, project_id, ProfileState.ACTIVE.value),
+                    "AND profiles.project_id = ?",
+                    (project_id, variant_id, project_id),
                 ).fetchone()
                 result = None if row is None else self.published(str(row[0]), int(row[1]))
                 if self.token() == token:

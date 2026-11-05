@@ -11,15 +11,14 @@ from transbridge.ui.tools.terminology.row_search import SearchDocument
 
 OUTCOME_LABELS = {
     ImportPreviewOutcome.ADOPTED: "采用来源译名",
-    ImportPreviewOutcome.KEPT: "保持项目默认译名",
-    ImportPreviewOutcome.SOURCE_CONFLICT: "来源译名冲突，保持默认",
-    ImportPreviewOutcome.SCOPE_AMBIGUOUS: "作用域不明确，保持默认",
-    ImportPreviewOutcome.SOURCE_ONLY: "来源独有，未导入",
+    ImportPreviewOutcome.KEPT: "保留已有译名",
+    ImportPreviewOutcome.SOURCE_CONFLICT: "来源重复，已按策略处理",
+    ImportPreviewOutcome.SCOPE_AMBIGUOUS: "作用域不明确，保留已有",
+    ImportPreviewOutcome.SOURCE_ONLY: "新增方案术语",
 }
 _PROBLEM_OUTCOMES = {
     ImportPreviewOutcome.SOURCE_CONFLICT,
     ImportPreviewOutcome.SCOPE_AMBIGUOUS,
-    ImportPreviewOutcome.SOURCE_ONLY,
 }
 
 
@@ -31,7 +30,7 @@ def _scope(row: ImportPreviewRow) -> str:
 
 def row_details(row: ImportPreviewRow) -> str:
     if row.outcome is ImportPreviewOutcome.SOURCE_CONFLICT:
-        explanation = "外部来源为同一原词提供多个译名，无法自动选择；此映射保持项目默认译名。"
+        explanation = "外部来源为同一使用范围的原词提供多个译名，已按本次批量策略选择方案译名。"
     elif row.outcome is ImportPreviewOutcome.SCOPE_AMBIGUOUS:
         scopes = "、".join(
             "整个工程" if item == "project" else f"插件：{item.partition(':')[2]}" for item in row.base_scopes
@@ -41,11 +40,11 @@ def row_details(row: ImportPreviewRow) -> str:
             "此映射保持项目默认译名，可在创建后管理译名方案并逐项调整。"
         )
     elif row.outcome is ImportPreviewOutcome.SOURCE_ONLY:
-        explanation = "项目当前已发布的有效术语中没有此原词，因此不会写入译名方案。此行仅供审查。"
+        explanation = "此术语将完整导入为方案独有术语，仅在选用此方案时生效；不会加入项目基础术语或其他方案。"
     elif row.outcome is ImportPreviewOutcome.ADOPTED:
         explanation = "此映射采用外部来源的译名。"
     else:
-        explanation = "外部来源没有此原词，继续使用项目默认译名。"
+        explanation = "此映射保留复制到新方案的项目默认译名；外部来源的同名差异已按本次批量策略处理。"
     return (
         f"原词：{row.original}\n范围：{_scope(row)}\n"
         f"项目默认译名：{row.base_translation or '无'}\n"

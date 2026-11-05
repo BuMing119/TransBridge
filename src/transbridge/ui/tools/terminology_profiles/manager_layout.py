@@ -50,7 +50,9 @@ def build_manager_layout(view):
     creation.addWidget(view.show_archived)
     layout.addLayout(creation)
     explanation = QLabel(
-        "方案只调整预览、输出和 AI 使用的术语，不修改项目译文。保存修改保留草稿；发布后使用中的版本才会更新。", view
+        "切换方案可临时预览或导出；保存为独立翻译版本后，该版本按关联方案继续编辑和 AI 翻译。"
+        "保存修改保留方案草稿，发布后可预览新修订；已有翻译版本保留原关联。",
+        view,
     )
     explanation.setWordWrap(True)
     explanation.setAccessibleName("译名方案映射说明")
@@ -92,7 +94,7 @@ def build_manager_layout(view):
     footer = QHBoxLayout()
     view.save_button = button("保存修改", view._save_draft)
     view.publish_button = button("预览并发布…", view._publish)
-    view.publish_use_button = button("发布并用于当前翻译版本…", lambda: view._workflows.publish(adopt=True))
+    view.publish_use_button = button("发布并预览…", lambda: view._workflows.publish(adopt=True))
     view.close_button = button("关闭", view.close)
     footer.addStretch(1)
     for item in (view.save_button, view.publish_button, view.publish_use_button, view.close_button):

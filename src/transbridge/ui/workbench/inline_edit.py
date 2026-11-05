@@ -151,7 +151,7 @@ class InlineEditController(QObject):
         if _scope(self.context) != draft.scope:
             return "工程、版本或翻译内容已切换；请返回原内容再重试，或复制草稿。"
         if self.table.terminology_profile_active:
-            return "请先切换为“不应用方案”，再重试提交草稿。"
+            return "请先切回当前翻译版本的译名方案，再重试提交草稿。"
         collection = self.context.collection
         current = None if collection is None else collection.get(draft.before.entry_key)
         if current is None or current.snapshot() != draft.before:

@@ -94,3 +94,32 @@ def test_reader_rejects_missing_files_unbound_or_unstable_sources(tmp_path: Path
         ConfiguredTermSourceReader(lambda: _ParaTranzService(stable=False)).read(
             _request("paratranz", paratranz_project_id=42)
         )
+
+
+def test_reader_preserves_structured_scopes_but_keeps_prose_unscoped(tmp_path):
+    path = tmp_path / "scoped.json"
+    path.write_text(
+        json.dumps([
+            {"term": "A", "translation": "项目", "context": "This note mentions Example.esp"},
+            {"term": "A", "translation": "插件", "context": "plugin:Example.esp"},
+            {"term": "B", "translation": "共享", "metadata": {"shared_plugin_id": "Shared.esm"}},
+            {"term": "C", "translation": "显式", "scope_kind": "plugin", "plugin_id": "Explicit.esp"},
+            {"term": "", "translation": "invalid"},
+            {"term": "Empty", "translation": ""},
+        ]),
+        encoding="utf-8",
+    )
+    snapshot = ConfiguredTermSourceReader().read(_request("json", file_path=str(path)))
+    assert [(item.scope_kind, item.plugin_id) for item in snapshot.entries] == [
+        ("project", None),
+        ("plugin", "Example.esp"),
+        ("plugin", "Shared.esm"),
+        ("plugin", "Explicit.esp"),
+    ]
+
+
+def test_reader_rejects_invalid_explicit_scope_with_term_context(tmp_path):
+    path = tmp_path / "invalid-scope.json"
+    path.write_text(json.dumps([{"term": "A", "translation": "甲", "scope_kind": "plugin"}]), encoding="utf-8")
+    with pytest.raises(TermSourceUnavailableError, match="A.*作用域"):
+        ConfiguredTermSourceReader().read(_request("json", file_path=str(path)))

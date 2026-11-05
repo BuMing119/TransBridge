@@ -4,6 +4,7 @@ from transbridge.application.terminology.effective import EffectiveSnapshotStatu
 from transbridge.application.terminology.models import DecisionStatus, TermDecision, TermScope
 from transbridge.application.terminology_profiles import (
     InMemoryTerminologyProfileRepository,
+    TerminologyProfileImportPolicy,
     TerminologyProfileImportService,
     TerminologyProfileService,
     TerminologySourceEntry,
@@ -12,7 +13,7 @@ from transbridge.application.terminology_profiles import (
 from transbridge.application.terminology_profiles.import_preview import ImportPreviewOutcome, import_preview_rows
 
 
-def test_preview_rows_cover_all_mappings_and_excluded_sources_without_changing_import():
+def test_preview_rows_cover_all_imported_mappings_without_changing_import():
     def decision(identity, original, target, scope=TermScope()):
         return TermDecision(identity, "p", "v", original, original.casefold(), target, scope, DecisionStatus.ADOPTED)
 
@@ -47,10 +48,10 @@ def test_preview_rows_cover_all_mappings_and_excluded_sources_without_changing_i
         ),
     )
     importer = TerminologyProfileImportService(TerminologyProfileService(InMemoryTerminologyProfileRepository()))
-    preview = importer.preview("p", "v", base, source)
+    preview = importer.preview("p", "v", base, source, policy=TerminologyProfileImportPolicy.USE_IMPORTED)
     digest = preview.content.content_digest
     rows = import_preview_rows(preview)
-    assert len(rows) == preview.base_mapping_count + preview.source_only_term_count == 6
+    assert len(rows) == preview.mapping_count == 6
     assert len({row.row_id for row in rows}) == 6
     by_name = {row.original: row for row in rows if row.scope_kind == "project"}
     assert by_name["Adopted"].outcome is ImportPreviewOutcome.ADOPTED
@@ -58,16 +59,16 @@ def test_preview_rows_cover_all_mappings_and_excluded_sources_without_changing_i
     assert by_name["Kept"].outcome is ImportPreviewOutcome.KEPT
     assert by_name["Conflict"].outcome is ImportPreviewOutcome.SOURCE_CONFLICT
     assert by_name["Conflict"].source_translations == ("乙", "甲")
-    scoped = [row for row in rows if row.outcome is ImportPreviewOutcome.SCOPE_AMBIGUOUS]
+    scoped = [row for row in rows if row.original == "Scoped"]
     assert len(scoped) == 2
-    assert {row.translation for row in scoped} == {"项目译名", "插件译名"}
-    assert all(set(row.base_scopes) == {"project", "plugin:Demo.esp"} for row in scoped)
-    source_only = rows[-1]
+    assert {row.translation for row in scoped} == {"来源译名", "插件译名"}
+    assert all(row.outcome is not ImportPreviewOutcome.SCOPE_AMBIGUOUS for row in scoped)
+    source_only = next(row for row in rows if row.outcome is ImportPreviewOutcome.SOURCE_ONLY)
     assert source_only.outcome is ImportPreviewOutcome.SOURCE_ONLY
     assert source_only.source_translations == ("独有乙", "独有甲")
-    assert source_only.translation == ""
-    assert source_only.scope_kind is None
+    assert source_only.translation == "独有甲"
+    assert source_only.scope_kind == "project"
     assert preview.content.content_digest == digest
     result = importer.create_and_publish("p", "v", "方案", preview)
-    assert len(result.published.content.mappings) == 5
-    assert all(item.original.casefold() != "only" for item in result.published.content.mappings)
+    assert len(result.published.content.mappings) == 6
+    assert any(item.original.casefold() == "only" and item.scheme_owned for item in result.published.content.mappings)

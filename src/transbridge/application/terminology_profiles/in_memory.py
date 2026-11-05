@@ -70,7 +70,7 @@ class InMemoryTerminologyProfileRepository:
         if selection is None:
             return None
         profile = self.get_profile(selection.profile_id)
-        if profile is None or profile.state is ProfileState.ARCHIVED or profile.project_id != project_id:
+        if profile is None or profile.project_id != project_id:
             return None
         return self.get_published(selection.profile_id, selection.revision)
 
@@ -132,8 +132,6 @@ class InMemoryTerminologyProfileRepository:
             updated_at=updated_at,
         )
         self._profiles[profile_id] = updated
-        if archived:
-            self.clear_profile_selections(profile_id)
         return updated
 
     @_synchronized
@@ -160,13 +158,6 @@ class InMemoryTerminologyProfileRepository:
             latest_published_revision=revision.revision,
             updated_at=revision.published_at,
         )
-        for selection_key, selection in tuple(self._selections.items()):
-            if selection.profile_id == revision.profile_id:
-                self._selections[selection_key] = replace(
-                    selection,
-                    revision=revision.revision,
-                    selected_at=revision.published_at,
-                )
 
     @_synchronized
     def get_published(self, profile_id: str, revision: int) -> PublishedTerminologyProfile | None:
@@ -200,13 +191,7 @@ class InMemoryTerminologyProfileRepository:
     def set_selection(self, selection: TerminologyProfileSelection) -> None:
         revision = self.get_published(selection.profile_id, selection.revision)
         profile = self.get_profile(selection.profile_id)
-        if (
-            revision is None
-            or revision.project_id != selection.project_id
-            or profile is None
-            or profile.state is ProfileState.ARCHIVED
-            or profile.latest_published_revision != selection.revision
-        ):
+        if revision is None or revision.project_id != selection.project_id or profile is None:
             raise ValueError("selected profile revision is unavailable")
         self._selections[(selection.project_id, selection.variant_id)] = selection
 

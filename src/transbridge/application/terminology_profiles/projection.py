@@ -122,11 +122,11 @@ class TerminologyProfileProjector:
     def __init__(self) -> None:
         self._prepared: tuple[TerminologyProfileContent, PreparedProfileProjector] | None = None
 
-    def prepare(self, content: TerminologyProfileContent) -> PreparedProfileProjector:
+    def prepare(self, content: TerminologyProfileContent, *, ignore_missing: bool = False) -> PreparedProfileProjector:
         cached = self._prepared
-        if cached is not None and cached[0] is content:
+        if cached is not None and cached[0] is content and cached[1]._ignore_missing == ignore_missing:
             return cached[1]
-        prepared = PreparedProfileProjector(_profile_indexes(content))
+        prepared = PreparedProfileProjector(_profile_indexes(content), ignore_missing)
         # Publish the pair together; concurrent callers retain their own frozen result.
         self._prepared = (content, prepared)
         return prepared
@@ -150,6 +150,7 @@ class PreparedProfileProjector:
     """A complete immutable index bound once, reusable across entries and threads."""
 
     _indexes: _ProfileIndexes
+    _ignore_missing: bool = False
 
     def project(
         self, *, entry_key: str, original: str, common_translation: str, plugin_id: str | None = None
@@ -179,6 +180,8 @@ class PreparedProfileProjector:
                     )
                 )
                 continue
+            if mapping.translation == binding.expected_text:
+                continue
             if common_translation[binding.start : binding.end] != binding.expected_text:
                 diagnostics.append(
                     ProjectionDiagnostic(
@@ -194,6 +197,8 @@ class PreparedProfileProjector:
         for mapping in indexes.matching(original, plugin_id):
             if mapping.term_key in bound_keys:
                 continue
+            if mapping.translation == mapping.base_translation:
+                continue
             if not mapping.base_translation:
                 diagnostics.append(
                     ProjectionDiagnostic(
@@ -205,22 +210,21 @@ class PreparedProfileProjector:
                 )
                 continue
             spans = _literal_spans(common_translation, mapping.base_translation)
-            if len(spans) != 1:
+            if not spans:
+                if self._ignore_missing:
+                    continue
                 diagnostics.append(
                     ProjectionDiagnostic(
-                        "historical_translation_not_found" if not spans else "historical_translation_ambiguous",
-                        (
-                            "项目译文中找不到已登记的旧术语译名，已保留整条项目译文。"
-                            if not spans
-                            else "项目译文中的旧术语译名不是唯一位置，已保留整条项目译文。"
-                        ),
+                        "historical_translation_not_found",
+                        "项目译文中找不到已登记的旧术语译名，已保留整条项目译文。",
                         entry_key,
                         mapping.term_key,
                     )
                 )
                 continue
-            start, end = spans[0]
-            replacements.append(_Replacement(start, end, mapping.translation, mapping.term_key, False))
+            replacements.extend(
+                _Replacement(start, end, mapping.translation, mapping.term_key, False) for start, end in spans
+            )
 
         accepted, rejected = _without_overlaps(replacements)
         for item in rejected:

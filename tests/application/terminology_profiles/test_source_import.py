@@ -10,6 +10,7 @@ from transbridge.application.terminology_profiles import (
     InMemoryTerminologyProfileRepository,
     TerminologyProfileImportConflictKind,
     TerminologyProfileImportError,
+    TerminologyProfileImportPolicy,
     TerminologyProfileImportService,
     TerminologyProfileService,
     TerminologySourceEntry,
@@ -66,11 +67,11 @@ def _importer() -> tuple[TerminologyProfileImportService, TerminologyProfileServ
     return TerminologyProfileImportService(profiles), profiles
 
 
-def test_source_capture_has_order_independent_digest_and_immutable_entries() -> None:
+def test_source_capture_preserves_order_in_digest_and_immutable_entries() -> None:
     first = _source(("Whiterun", "白漫城"), ("Solitude", "独孤城"))
     second = _source(("Solitude", "独孤城"), ("Whiterun", "白漫城"))
 
-    assert first.source_digest == second.source_digest
+    assert first.source_digest != second.source_digest
     assert isinstance(first.entries, tuple)
 
 
@@ -82,6 +83,7 @@ def test_preview_normalizes_only_for_comparison_and_preserves_source_translation
         "variant-1",
         _snapshot(_decision("term-a", "Letter A", "字母A")),
         _source(("Letter A", "字母Ａ")),
+        policy=TerminologyProfileImportPolicy.USE_IMPORTED,
     )
 
     assert preview.content.mappings[0].translation == "字母Ａ"
@@ -103,17 +105,20 @@ def test_preview_uses_effective_base_as_full_skeleton_and_deduplicates_source_ro
     )
     mappings = {item.original: item for item in preview.content.mappings}
 
-    assert tuple(mappings) == ("Solitude", "Whiterun")
-    assert mappings["Whiterun"].translation == "白漫城"
+    assert tuple(mappings) == ("Riverwood", "Solitude", "Whiterun")
+    assert mappings["Whiterun"].translation == "雪漫城"
     assert mappings["Whiterun"].base_translation == "雪漫城"
     assert mappings["Solitude"].translation == mappings["Solitude"].base_translation == "独孤城"
+    assert mappings["Riverwood"].translation == "河木镇"
+    assert mappings["Riverwood"].scheme_owned
+    assert mappings["Riverwood"].base_translation == ""
     assert preview.source_entry_count == 3
     assert preview.source_term_count == 2
     assert preview.duplicate_entry_count == 1
     assert preview.matched_term_count == 1
     assert preview.changed_mapping_count == 1
     assert preview.source_only_term_count == 1
-    assert preview.conflicts == ()
+    assert preview.conflict_count == 1
 
 
 def test_preview_keeps_base_for_source_translation_conflict_and_ambiguous_base_scopes() -> None:
@@ -137,7 +142,7 @@ def test_preview_keeps_base_for_source_translation_conflict_and_ambiguous_base_s
     assert preview.conflict_count == 2
     assert {item.kind for item in preview.conflicts} == {
         TerminologyProfileImportConflictKind.SOURCE_TRANSLATIONS,
-        TerminologyProfileImportConflictKind.BASE_SCOPES,
+        TerminologyProfileImportConflictKind.EXISTING_TRANSLATION,
     }
 
 

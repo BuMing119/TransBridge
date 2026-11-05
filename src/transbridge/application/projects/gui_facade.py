@@ -52,6 +52,8 @@ class GuiProjectCommandFacade:
         source_mutations: ProjectSourceMutationService | None = None,
         categorized_uploads: ProjectCategorizedUploadService | None = None,
         durable_variant_commits: DurableVariantCommitService | None = None,
+        profile_variants=None,
+        profile_entry_inputs=None,
     ) -> None:
         self._lifecycle = lifecycle
         self._projection_rebuild = projection_rebuild
@@ -63,6 +65,8 @@ class GuiProjectCommandFacade:
         self._source_mutations = source_mutations
         self._categorized_uploads = categorized_uploads
         self._durable_variant_commits = durable_variant_commits
+        self._profile_variants = profile_variants
+        self._profile_entry_inputs = profile_entry_inputs
 
     def categorized_upload_snapshot(
         self,
@@ -308,11 +312,36 @@ class GuiProjectCommandFacade:
     def delete_variant(self, variant_id: str, context: RequestContext):
         return self._catalog_commands().delete(variant_id, context)
 
+    def profile_variant_targets(self, context, target_profile):
+        return self._profile_variant_commands().targets(context, target_profile)
+
+    def save_profile_variant(self, name, context, **options):
+        """Save a frozen preview to a new or explicitly selected independent Variant."""
+        return self._profile_variant_commands().save(name, context, **options)
+
+    def _profile_variant_commands(self):
+        from .profile_variant_commands import ProfileVariantCommands
+
+        return ProfileVariantCommands(
+            self._lifecycle,
+            self._catalog_commands(),
+            self._projects,
+            self._variants,
+            self._baselines,
+            self._profile_variants,
+            entry_inputs=self._profile_entry_inputs,
+        )
+
     def _catalog_commands(self):
         from .catalog_commands import VariantCatalogCommands
 
         return VariantCatalogCommands(
-            self._lifecycle, self._projects, self._variants, self._baselines, self._id_factory
+            self._lifecycle,
+            self._projects,
+            self._variants,
+            self._baselines,
+            self._id_factory,
+            terminology=self._profile_variants,
         )
 
     def update_entry(

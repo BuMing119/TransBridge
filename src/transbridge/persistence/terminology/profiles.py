@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 import json
 import sqlite3
@@ -34,6 +34,7 @@ class SqliteTerminologyProfileRepository:
     def __init__(self, connection: sqlite3.Connection, *, lock=None) -> None:
         self._connection = connection
         self._lock = lock or RLock()
+        self._publication_lock = None
         self._reads = ProfileReadStore(connection, self._lock, _published_from_row)
         connection.execute("PRAGMA foreign_keys = ON")
         if int(connection.execute("PRAGMA foreign_keys").fetchone()[0]) != 1:
@@ -43,7 +44,12 @@ class SqliteTerminologyProfileRepository:
         return self._reads.summaries(project_id, include_archived=include_archived)
 
     def get_selected_published(self, project_id: str, variant_id: str) -> PublishedTerminologyProfile | None:
-        return self._reads.selected(project_id, variant_id)
+        with self._publication_lock or nullcontext():
+            return self._reads.selected(project_id, variant_id)
+
+    def bind_publication_lock(self, lock) -> None:
+        """Share the Project journal boundary for association readers and writers."""
+        self._publication_lock = lock
 
     def read_cache_token(self) -> object:
         return self._reads.token()
@@ -148,7 +154,7 @@ class SqliteTerminologyProfileRepository:
         updated_at: str,
         expected_selections: tuple[TerminologyProfileSelection, ...] | None = None,
     ) -> TerminologyProfile:
-        with self._lock, self._write_transaction():
+        with self._publication_lock or nullcontext(), self._lock, self._write_transaction():
             current = self._require_profile(profile_id)
             if expected_selections is not None and self.list_profile_selections(profile_id) != expected_selections:
                 raise ValueError("profile selections changed")
@@ -161,11 +167,6 @@ class SqliteTerminologyProfileRepository:
                 "UPDATE terminology_profiles SET state = ?, updated_at = ? WHERE profile_id = ?",
                 (updated.state.value, updated.updated_at, profile_id),
             )
-            if archived:
-                self._connection.execute(
-                    "DELETE FROM terminology_profile_selections WHERE profile_id = ?",
-                    (profile_id,),
-                )
         return updated
 
     def insert_published(
@@ -215,10 +216,6 @@ class SqliteTerminologyProfileRepository:
                 )
                 if cursor.rowcount != 1:
                     raise ValueError("published revision changed concurrently")
-                self._connection.execute(
-                    "UPDATE terminology_profile_selections SET revision = ?, selected_at = ? WHERE profile_id = ?",
-                    (revision.revision, revision.published_at, revision.profile_id),
-                )
         except sqlite3.IntegrityError as exc:
             raise ValueError("published revision already exists or violates storage constraints") from exc
 
@@ -228,11 +225,11 @@ class SqliteTerminologyProfileRepository:
     def commit_publication(
         self, preview: ProfilePublicationPreview, *, published_at: str
     ) -> PublishedTerminologyProfile:
-        with self._lock, self._write_transaction():
+        with self._publication_lock or nullcontext(), self._lock, self._write_transaction():
             return commit_publication(self, preview, published_at=published_at)
 
     def get_selection(self, project_id: str, variant_id: str) -> TerminologyProfileSelection | None:
-        with self._lock:
+        with self._publication_lock or nullcontext(), self._lock:
             row = self._connection.execute(
                 "SELECT project_id, variant_id, profile_id, revision, selected_at "
                 "FROM terminology_profile_selections WHERE project_id = ? AND variant_id = ?",
@@ -241,7 +238,7 @@ class SqliteTerminologyProfileRepository:
         return None if row is None else _selection_from_row(row)
 
     def list_profile_selections(self, profile_id: str) -> tuple[TerminologyProfileSelection, ...]:
-        with self._lock:
+        with self._publication_lock or nullcontext(), self._lock:
             rows = self._connection.execute(
                 "SELECT project_id, variant_id, profile_id, revision, selected_at "
                 "FROM terminology_profile_selections WHERE profile_id = ? ORDER BY project_id, variant_id",
@@ -251,20 +248,15 @@ class SqliteTerminologyProfileRepository:
 
     def set_selection(self, selection: TerminologyProfileSelection) -> None:
         try:
-            with self._lock, self._write_transaction():
+            with self._publication_lock or nullcontext(), self._lock, self._write_transaction():
                 row = self._connection.execute(
-                    "SELECT revisions.project_id, profiles.state, profiles.latest_published_revision "
+                    "SELECT revisions.project_id "
                     "FROM terminology_profile_revisions AS revisions "
                     "JOIN terminology_profiles AS profiles ON profiles.profile_id = revisions.profile_id "
                     "WHERE revisions.profile_id = ? AND revisions.revision = ?",
                     (selection.profile_id, selection.revision),
                 ).fetchone()
-                if (
-                    row is None
-                    or str(row[0]) != selection.project_id
-                    or str(row[1]) != ProfileState.ACTIVE.value
-                    or int(row[2]) != selection.revision
-                ):
+                if row is None or str(row[0]) != selection.project_id:
                     raise ValueError("selected profile revision is unavailable")
                 self._connection.execute(
                     "INSERT INTO terminology_profile_selections("
@@ -285,14 +277,14 @@ class SqliteTerminologyProfileRepository:
             raise ValueError("selected profile revision is unavailable") from exc
 
     def clear_selection(self, project_id: str, variant_id: str) -> None:
-        with self._lock, self._write_transaction():
+        with self._publication_lock or nullcontext(), self._lock, self._write_transaction():
             self._connection.execute(
                 "DELETE FROM terminology_profile_selections WHERE project_id = ? AND variant_id = ?",
                 (project_id, variant_id),
             )
 
     def clear_profile_selections(self, profile_id: str) -> None:
-        with self._lock, self._write_transaction():
+        with self._publication_lock or nullcontext(), self._lock, self._write_transaction():
             self._connection.execute(
                 "DELETE FROM terminology_profile_selections WHERE profile_id = ?",
                 (profile_id,),
@@ -390,6 +382,7 @@ def _dump_content(content: TerminologyProfileContent) -> str:
                     "plugin_id": item.plugin_id,
                     "scope_kind": item.scope_kind,
                     "translation": item.translation,
+                    **({"scheme_owned": True} if item.scheme_owned else {}),
                 }
                 for item in content.mappings
             ],
@@ -416,11 +409,17 @@ def _load_content(payload_json: str) -> TerminologyProfileContent:
 
 
 def _decode_mapping(value: Any) -> ProfileTermMapping:
+    fields = {"base_translation", "original", "plugin_id", "scope_kind", "translation"}
+    if isinstance(value, dict) and "scheme_owned" in value:
+        fields.add("scheme_owned")
     _exact_keys(
         value,
-        {"base_translation", "original", "plugin_id", "scope_kind", "translation"},
+        fields,
         "profile mapping",
     )
+    scheme_owned = value.get("scheme_owned", False)
+    if not isinstance(scheme_owned, bool):
+        raise ValueError("scheme-owned authority must be a boolean")
     plugin_id = value["plugin_id"]
     if plugin_id is not None:
         plugin_id = _string(plugin_id, "plugin ID")
@@ -430,6 +429,7 @@ def _decode_mapping(value: Any) -> ProfileTermMapping:
         base_translation=_string(value["base_translation"], "base translation", allow_empty=True),
         scope_kind=_string(value["scope_kind"], "scope kind"),
         plugin_id=plugin_id,
+        scheme_owned=scheme_owned,
     )
 
 

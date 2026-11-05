@@ -82,9 +82,13 @@ def _write_batch_plan(request: _HydratedWriteBatch) -> OperationPlanDraft:
         if any(_snapshot_localized_sources(item.source_snapshot) for item in request.drafts)
         else ""
     )
+    projection = next((item.entry_projection for item in request.drafts if item.entry_projection is not None), None)
+    profile = getattr(projection, "profile", None)
+    scheme_mode = "" if projection is None else f"；译名方案：{profile.name if profile else '项目默认译名'}"
     fingerprint = hashlib.sha256(
         "\0".join([
             *(f"{item.source_snapshot.sha256}:{item.variant_revision}" for item in request.drafts),
+            *(item.entry_projection.identity for item in request.drafts if item.entry_projection is not None),
             *(f"{item.target_path}:{item.code}:{item.message}" for item in request.failures),
         ]).encode()
     ).hexdigest()
@@ -95,7 +99,8 @@ def _write_batch_plan(request: _HydratedWriteBatch) -> OperationPlanDraft:
         input_fingerprint=fingerprint,
         scope_summary=f"{len(targets)} 个来源文件，{len(entries)} 个条目",
         mode_summary=("另存到指定目录，保留各来源原名" if request.output_directory else "选择输出目录，保留各来源原名")
-        + resource_mode,
+        + resource_mode
+        + scheme_mode,
         conflict_summary="全部覆盖已确认" if overwrite else "保留已有输出，继续写出其他文件",
         backup_summary="覆盖输出文件前创建备份",
         is_batch=True,

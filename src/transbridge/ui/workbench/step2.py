@@ -461,10 +461,10 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         if index.column() == _COL_TRANS:
             self._table.edit(index)
 
-    def set_terminology_profile(self, profile, *, base_snapshot=None) -> None:
+    def set_terminology_profile(self, profile, *, base_snapshot=None, source_profile=None) -> None:
         """Apply one frozen published profile to display without changing entries."""
 
-        if self._terminology_preview.set_profile(profile, base_snapshot):
+        if self._terminology_preview.set_profile(profile, base_snapshot, source_profile=source_profile):
             self._populate_table()
 
     @property

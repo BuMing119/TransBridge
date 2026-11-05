@@ -204,9 +204,11 @@ class BuildView(QWidget):
         self.build_button.setEnabled(state.ready)
         self.preflight_button.setText("重新检查" if state.ready else "重试检查")
         self.preflight_button.show()
-        self.alert.setVisible(not state.ready)
+        # The surrounding extraction panel controls disclosure. Keep both
+        # ready and blocked checks inspectable when the user opens that panel.
+        self.alert.show()
         self.details.set_details(state.technical_details)
-        self.setVisible(not state.ready or not self.result_group.isHidden())
+        self.show()
 
     def set_summary(self, state: TerminologySummaryViewState) -> None:
         self.show()

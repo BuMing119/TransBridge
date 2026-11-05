@@ -12,7 +12,6 @@ from transbridge.ui.dynamic_terminology_source import dynamic_terminology_source
 from transbridge.ui.tools.ai_translator import ai_translator_window, config_dialogs, task_launch
 from transbridge.ui.tools.ai_translator.run_spec import AiPreflightResult
 from transbridge.ui.tools.ai_translator.source_terms import source_terminology_path
-from transbridge.ui.tools.terminology_profiles import source_catalog
 
 
 def _context(reference=None):
@@ -73,22 +72,6 @@ def test_ai_window_passes_the_stable_active_source_to_editor(monkeypatch):
     ai_translator_window.AITranslatorWindow.on_view_terms(SimpleNamespace(_ctx=context))
 
     assert opened == [(None, "saved-source")]
-
-
-def test_catalog_without_reference_uses_saved_name_and_the_task_cache(monkeypatch):
-    context = _context()
-    monkeypatch.setattr(source_catalog, "bound_paratranz_project", lambda _: None)
-    monkeypatch.setattr(
-        source_catalog.LLMConfig,
-        "load_from_file",
-        lambda: SimpleNamespace(local_json_path="", local_excel_path="", local_csv_path=""),
-    )
-    choices = source_catalog.configured_source_selections(context)
-
-    assert len(choices) == 1
-    assert choices[0].label == "动态词库 · Saved"
-    assert choices[0].request.esp_path == source_terminology_path(None, "saved-source")
-    assert "Saved.esp" in choices[0].detail
 
 
 def test_startup_inspection_finds_dynamic_terms_without_reference(cache, monkeypatch):

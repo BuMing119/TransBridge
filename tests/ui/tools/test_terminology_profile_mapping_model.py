@@ -9,6 +9,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QComboBox, QLineEdit, QMessageBox, QTableView
 import pytest
 
+from tests.ui.workbench.terminology_async_support import wait_until
 from transbridge.application.terminology_profiles import (
     InMemoryTerminologyProfileRepository,
     ProfileTermMapping,
@@ -20,6 +21,46 @@ from transbridge.ui.tools.terminology_profiles.mapping_editor import ProfileMapp
 from transbridge.ui.tools.terminology_profiles.mapping_model import ProfileMappingModel
 
 _APP = QApplication.instance() or QApplication([])
+
+
+def test_scheme_owned_metadata_survives_edits_save_publication_and_copy(monkeypatch):
+    monkeypatch.setattr(
+        "transbridge.ui.tools.terminology_profiles.manager_workflows.confirm_publication", lambda *_args: True
+    )
+    service = TerminologyProfileService(InMemoryTerminologyProfileRepository())
+    mapping = ProfileTermMapping("Riverwood", "河木镇", scheme_owned=True)
+    profile = service.create_with_content("project", "导入方案", TerminologyProfileContent((mapping,)))
+    dialog = TerminologyProfileManagerDialog(service, "project", selected_profile_id=profile.profile_id)
+    model = dialog.mapping_table.mapping_model
+    assert model.columnCount() == 5
+    assert model.read_mappings() == (mapping,)
+    assert not model.is_dirty
+    model.setData(model.index(0, 2), "溪木镇")
+    assert dialog._save_draft()
+    saved = service.list_profiles("project")[0]
+    assert saved.draft.mappings[0].scheme_owned
+    assert saved.draft.mappings[0].translation == "溪木镇"
+    model.setData(model.index(0, 2), "河木村")
+    dialog._publish()
+    wait_until(lambda: not dialog._workflows.active)
+    published = service.published_revision(profile.profile_id, 1)
+    assert published.content.mappings[0].scheme_owned
+    assert published.content.mappings[0].translation == "河木村"
+    copied = service.create("project", "副本", copy_from=profile.profile_id)
+    assert copied.draft.mappings == published.content.mappings
+    dialog.close()
+
+
+def test_scheme_owned_metadata_is_part_of_changed_row_comparison():
+    model = ProfileMappingModel()
+    legacy = ProfileTermMapping("Riverwood", "河木镇")
+    owned = ProfileTermMapping("Riverwood", "河木镇", scheme_owned=True)
+    model.load((owned,), published=(legacy,))
+    assert model.row_changed_from_published(0)
+    assert model.removeRow(0)
+    model.append_mapping(owned)
+    assert not model.is_dirty
+    assert model.read_mappings() == (owned,)
 
 
 def test_raw_input_can_be_invalid_then_reverted_without_losing_dirty_protection():

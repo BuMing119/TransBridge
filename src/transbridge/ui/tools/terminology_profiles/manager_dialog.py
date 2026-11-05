@@ -23,6 +23,7 @@ class TerminologyProfileManagerDialog(QDialog):
     """Edit profile mappings while preserving advanced projection metadata."""
 
     profiles_changed = pyqtSignal()
+    preview_requested = pyqtSignal(object)
 
     def __init__(
         self,
@@ -168,14 +169,14 @@ class TerminologyProfileManagerDialog(QDialog):
 
     def _profile_status(self, profile) -> str:
         if profile.state is ProfileState.ARCHIVED:
-            return "此方案已归档。恢复后可继续编辑；原使用者不会自动重新选择此方案。"
+            return "此方案已归档。现有翻译版本保留原关联修订；恢复后可继续编辑和预览。"
         published = profile.latest_published_revision
         if published is None:
-            return "尚未发布。可先保存草稿，或点击“发布并用于当前翻译版本”完成发布与选择。"
+            return "尚未发布。可先保存草稿，或点击“发布并预览”查看译名转换效果。"
         applied = self._service.published_revision(profile.profile_id, published)
         if applied is None or applied.content_digest != profile.draft.content_digest or applied.name != profile.name:
-            return "有未发布的修改；当前使用中的翻译版本仍保持上一次发布结果。"
-        return "当前修改已发布。下方可将此方案用于当前翻译版本。"
+            return "有未发布的修改；现有翻译版本保持各自已关联的修订。"
+        return "当前修改已发布。下方可预览此方案；保存为翻译版本后才会关联。"
 
     def _create_profile(self) -> None:
         if not self._guard_unsaved():
@@ -235,7 +236,7 @@ class TerminologyProfileManagerDialog(QDialog):
             self.profiles_changed.emit()
         else:
             message = (
-                "已重命名；预览并发布后，使用中的版本将采用新名称。"
+                "已重命名；发布后可预览新名称，已有翻译版本保留原关联。"
                 if profile.latest_published_revision is not None
                 else "已重命名译名方案。"
             )
@@ -253,7 +254,7 @@ class TerminologyProfileManagerDialog(QDialog):
             self._show_error(exc)
             return
         self._current = None
-        self._changed("已归档；受影响的翻译版本已使用项目默认译名。勾选“显示已归档”可恢复。")
+        self._changed("已归档；现有翻译版本保留原关联修订。勾选“显示已归档”可恢复。")
 
     def _restore_profile(self) -> None:
         if self._current is None:
@@ -263,7 +264,7 @@ class TerminologyProfileManagerDialog(QDialog):
         except Exception as exc:  # noqa: BLE001 - UI adapter boundary
             self._show_error(exc)
             return
-        self._changed("已恢复；请在需要使用的翻译版本中重新选择此方案。", select_profile_id=profile.profile_id)
+        self._changed("已恢复；可继续编辑和预览此方案。", select_profile_id=profile.profile_id)
 
     def _save_draft(self) -> bool:
         if self._current is None:
@@ -279,7 +280,9 @@ class TerminologyProfileManagerDialog(QDialog):
         except Exception as exc:  # noqa: BLE001 - UI adapter boundary
             self._show_error(exc)
             return False
-        self._changed("草稿已保存；发布后才会更新使用中的方案内容。", select_profile_id=profile.profile_id)
+        self._changed(
+            "草稿已保存；发布后可预览，现有翻译版本的关联修订保持不变。", select_profile_id=profile.profile_id
+        )
         return True
 
     def _publish(self) -> None:

@@ -56,12 +56,15 @@ def test_first_use_explains_empty_result_and_hides_inapplicable_paging(workbench
     window, _harness = workbench
     window._bind_existing_assets()
     _wait(lambda: window.effective_model.pagination.total == 0)
-    assert "还没有项目术语" in window.effective_view.empty.text()
+    assert "还没有可用术语" in window.effective_view.empty.text()
     assert not window.effective_view.empty.isHidden()
     assert window.effective_view.pagination.isHidden()
     assert window.draft_view.add_button.isHidden()
     assert window.terms_view.workflow.publish_button.isHidden()
-    assert window.effective_view.empty_action.text() == "从来源生成草稿"
+    assert window.effective_view.empty_action.isHidden()
+    assert window.terms_view.workflow.isHidden()
+    assert window.terms_view.content_context.isHidden()
+    assert window.terms_view._project_actions.isHidden()
 
 
 def test_published_content_can_continue_editing_from_the_main_page(workbench):
@@ -70,8 +73,8 @@ def test_published_content_can_continue_editing_from_the_main_page(workbench):
     version = harness.publish()
     window._bind_existing_assets()
     _wait(lambda: window.effective_model.rowCount() == 1 and window._workflow.state is not None)
-    assert not window.terms_view.workflow.edit_button.isHidden()
-    window.terms_view.workflow.edit_button.click()
+    assert window.terms_view.workflow.isHidden()
+    window.schemes_view.edit_button.click()
     _wait(lambda: harness.repository.active_ref("project-1", "main") is not None)
     _wait(lambda: window.draft_model.rowCount() == 1)
     assert window.terms_view.pages.currentWidget() is window.draft_view

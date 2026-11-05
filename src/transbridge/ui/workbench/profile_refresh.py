@@ -1,4 +1,4 @@
-"""Serialize scoped profile reads and selection writes away from the Qt thread."""
+"""Read applied and preview scheme revisions away from the Qt thread."""
 
 from __future__ import annotations
 
@@ -20,25 +20,32 @@ class ProfileRefreshResult:
     selected: object
     base: object
     selection_error: str = ""
+    applied: object = None
 
 
 def _read(factory, identity, service, selection):
     project_id, variant_id = identity
     service = service or factory.profile_service_for(project_id)
+    profiles = service.list_profile_summaries(project_id)
+    applied = service.selected_revision(project_id, variant_id)
+    selected = applied
     selection_error = ""
     if selection is not _READ:
         try:
             if selection is None:
-                service.clear_selection(project_id, variant_id)
+                selected = None
             else:
-                service.select(project_id, variant_id, selection)
-        except Exception as exc:  # noqa: BLE001 - recover persisted selection after a failed write
+                summary = next((item for item in profiles if item.profile_id == selection), None)
+                revision = None if summary is None else summary.latest_published_revision
+                selected = None if revision is None else service.published_revision(selection, revision)
+                if selected is None or selected.project_id != project_id:
+                    raise RuntimeError("该译名方案没有可读取的已发布版本，请重新选择。")
+        except Exception as exc:  # noqa: BLE001 - recover the applied revision after a failed preview read
+            selected = applied
             selection_error = str(exc)
-    profiles = service.list_profile_summaries(project_id)
-    selected = service.selected_revision(project_id, variant_id)
     read_base = getattr(factory, "base_terminology_snapshot", None)
-    base = read_base(project_id, variant_id) if selected is not None and callable(read_base) else None
-    return ProfileRefreshResult(service, profiles, selected, base, selection_error)
+    base = read_base(project_id, variant_id) if callable(read_base) else None
+    return ProfileRefreshResult(service, profiles, selected, base, selection_error, applied)
 
 
 class _Signals(QObject):
@@ -65,11 +72,7 @@ class _Call(QRunnable):
 
 
 class ProfileRefreshCoordinator(QObject):
-    """One active call, coalesced waiting reads, and ordered selection mutations.
-
-    Every command captures its original Project/Variant and service. In-flight
-    writes finish normally; obsolete results never reach the current controls.
-    """
+    """One active read and one latest request; obsolete results are discarded."""
 
     ready = pyqtSignal(object, object)
     failed = pyqtSignal(object, object)
@@ -97,14 +100,13 @@ class ProfileRefreshCoordinator(QObject):
         if self._closed.is_set():
             return
         self._generation += 1
-        # A refresh can supersede another read, but must never reorder writes.
-        self._queue = deque(item for item in self._queue if item[3] is not _READ)
+        self._queue.clear()
         self._queue.append((self._generation, identity, service, selection))
         self._start_next()
 
     def invalidate(self):
         self._generation += 1
-        self._queue = deque(item for item in self._queue if item[3] is not _READ)
+        self._queue.clear()
 
     def _start_next(self):
         if self._active or not self._queue or self._closed.is_set():

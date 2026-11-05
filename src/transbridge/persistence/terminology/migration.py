@@ -63,6 +63,11 @@ class TerminologyMigrator:
                 )
                 _upgrade_artifact_payloads(connection)
             initialize_schema(connection)
+            # Earlier selections were preview preferences, not evidence that
+            # the Variant's saved text used that scheme. The digest-bound
+            # database backup above retains them without relabelling any text.
+            if from_version < 5:
+                connection.execute("DELETE FROM terminology_profile_selections")
             _backfill_frozen_sections(connection)
             _ensure_migration_evidence_table(connection)
             schema_diagnostic = validate_schema(connection)

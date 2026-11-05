@@ -130,10 +130,4 @@ def commit_publication(repository, preview: ProfilePublicationPreview, *, publis
         published = repository.get_published(profile.profile_id, profile.latest_published_revision)
         if published is None:
             raise ValueError("方案的已发布版本不可用，请重新载入。")
-    if preview.target_variant_id is not None:
-        repository.set_selection(
-            TerminologyProfileSelection(
-                profile.project_id, preview.target_variant_id, profile.profile_id, published.revision, published_at
-            )
-        )
     return published

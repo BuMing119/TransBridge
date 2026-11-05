@@ -145,8 +145,10 @@ def test_no_change_does_not_prompt_or_create_another_revision(manager, monkeypat
     assert service.published_revision(profile.profile_id, 2) is None
 
 
-def test_publish_and_use_adopts_created_scheme_after_confirming_current_version(manager, monkeypatch):
-    service, _repository, dialog, _profile = manager
+def test_publish_and_preview_emits_target_without_changing_actual_variant(manager, monkeypatch):
+    service, _repository, dialog, original = manager
+    requested = []
+    dialog.preview_requested.connect(requested.append)
     second = service.create_with_content(
         "project", "方案 B", TerminologyProfileContent((ProfileTermMapping("A", "乙"),))
     )
@@ -156,22 +158,24 @@ def test_publish_and_use_adopts_created_scheme_after_confirming_current_version(
     dialog.publish_use_button.click()
     wait_until(lambda: not dialog._workflows.active)
     assert previews[0].target_variant_id == "current"
-    assert service.selected_revision("project", "current").profile_id == second.profile_id
-    assert "已用于当前翻译版本" in dialog.status_label.text()
+    assert service.selected_revision("project", "current").profile_id == original.profile_id
+    assert requested == [second.profile_id]
+    assert "已预览" in dialog.status_label.text()
 
 
 def test_name_only_adoption_reviews_rename_and_uses_new_name_in_success(manager, monkeypatch):
     service, _repository, dialog, profile = manager
     monkeypatch.setattr(QInputDialog, "getText", lambda *_args, **_kwargs: ("新方案名称", True))
     dialog._rename_profile()
-    assert "使用中的版本将采用新名称" in dialog.status_label.text()
+    assert "已重命名" in dialog.status_label.text()
     previews = []
     monkeypatch.setattr(workflows, "confirm_publication", lambda _owner, value, _names: previews.append(value) or True)
     dialog.publish_use_button.click()
     wait_until(lambda: not dialog._workflows.active)
     assert len(previews) == 1 and previews[0].previous_name == "方案 A"
     assert previews[0].changes == () and previews[0].has_changes
-    assert service.selected_revision("project", "current").name == "新方案名称"
+    assert service.selected_revision("project", "current").name == "方案 A"
+    assert service.published_revision(profile.profile_id, 2).name == "新方案名称"
     assert service.published_revision(profile.profile_id, 1).name == "方案 A"
     assert "新方案名称" in dialog.status_label.text()
     assert "方案 A" not in dialog.status_label.text()
@@ -255,4 +259,4 @@ def test_publication_dialog_renders_exact_changes_and_all_affected_versions(mana
     assert not confirm_publication(dialog, preview, {"current": "中文"})
     assert len(observed) == 32
     assert any("中文" in text for text in observed)
-    assert any("new（本次采用此方案）" in text for text in observed)
+    assert any("new（本次预览此方案）" in text for text in observed)

@@ -26,8 +26,8 @@ def confirm_archive(parent, name: str, selections, variant_names: dict[str, str]
     dialog.resize(500, 330)
     layout = QVBoxLayout(dialog)
     text = QLabel(
-        f"归档“{name}”后，以下 {len(selections)} 个翻译版本将使用项目默认译名。\n"
-        "方案内容和已应用历史会保留，可在“显示已归档”中恢复；恢复后需要重新选择使用。",
+        f"归档“{name}”后，以下 {len(selections)} 个翻译版本保留原方案关联和正文。\n"
+        "方案将从新的预览选择中隐藏；可在“显示已归档”中恢复并继续编辑。",
         dialog,
     )
     text.setWordWrap(True)

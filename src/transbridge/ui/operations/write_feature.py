@@ -171,6 +171,7 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
                             ),
                             backup_policy=BackupPolicy.REQUIRED_IF_EXISTS,
                             options=(("pack_bsa", pack_bsa),),
+                            entry_projection=values.get("entry_projection"),
                         )
                     )
                 except (TypeError, ValueError) as exc:
@@ -201,6 +202,7 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
             conflict_policy=(PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL),
             backup_policy=BackupPolicy.REQUIRED_IF_EXISTS,
             options=(("pack_bsa", bool(values.get("pack_bsa", False))),),
+            entry_projection=values.get("entry_projection"),
         )
         return _write_plan(PluginTransferDraft(request, plugin_path) if plugin_path else request)
 

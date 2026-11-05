@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from pathlib import PurePath
 from typing import Any, Protocol
 
 from transbridge.application.contracts import JobRef, OperationOutcome, RequestContext
@@ -19,10 +18,10 @@ from transbridge.application.terminology.input_capture import BuildInputSnapshot
 from transbridge.application.terminology.models import DraftRef, TerminologyDraft
 from transbridge.application.terminology.publication_review import TerminologyPublishPreview
 
+from .preflight_presentation import preflight_failed, preflight_ready
 from .task_adapter import TerminologyTaskAdapter, TerminologyTaskViewState
 from .term_editing import TermEditingCommands
 from .view_models import (
-    SourceScopeViewState,
     TechnicalDetail,
     TerminologyNotice,
     TerminologyPreflightViewState,
@@ -164,50 +163,14 @@ class TerminologyPresenter:
             self._build_config = deepcopy(config)
         self._snapshot = None
         if self.services.build_inputs is None:
-            return TerminologyPreflightViewState.unavailable("术语构建服务尚未接入当前运行环境。"), None
+            return preflight_failed(self.context, message="术语构建服务尚未接入当前运行环境。"), None
         result = self.services.build_inputs.capture_build_input(self.context, config=deepcopy(self._build_config))
         if result.outcome is not OperationOutcome.COMPLETED or result.value is None:
             diagnostic = result.diagnostics[0] if result.diagnostics else None
-            code = "TERMINOLOGY_PREFLIGHT_FAILED" if diagnostic is None else diagnostic.code
-            notice = business_diagnostic(code, "" if diagnostic is None else diagnostic.message)
-            details = () if diagnostic is None else _diagnostic_details(diagnostic)
-            state = TerminologyPreflightViewState(
-                False,
-                notice.title,
-                f"{notice.message} {notice.impact} {notice.recovery}".strip(),
-                diagnostic_code=code,
-                technical_details=details,
-            )
-            return state, None
+            return preflight_failed(self.context, diagnostic), None
         snapshot = result.value
         self._snapshot = snapshot
-        sources = tuple(_source_view(source) for source in snapshot.sources)
-        metadata = dict(self.context.metadata)
-        project_name = metadata.get("project_name") or snapshot.project_id
-        variant_name = metadata.get("variant_name") or snapshot.variant_id
-        action_label = "更新术语库" if snapshot.effective_version_id else "创建术语库"
-        details = (
-            TechnicalDetail("工程修订", str(snapshot.project_revision)),
-            TechnicalDetail("翻译版本修订", str(snapshot.variant_revision)),
-            TechnicalDetail("当前术语版本", snapshot.effective_version_id or "尚无已发布版本"),
-            TechnicalDetail("配置摘要", snapshot.config_digest),
-        )
-        state = TerminologyPreflightViewState(
-            True,
-            f"可以{action_label}",
-            "将读取当前工程已登记且启用的来源，并包含当前翻译版本尚未写回的调整。",
-            project_label=f"当前工程 · {snapshot.project_id}",
-            variant_label=f"翻译版本 · {snapshot.variant_id}",
-            scope_label=f"来源范围 · {len(sources)} 个已启用来源",
-            current_version_label=_current_version_label(snapshot.effective_version_id),
-            project_display_name=project_name,
-            variant_display_name=variant_name,
-            current_version_value=snapshot.effective_version_id or "",
-            sources=sources,
-            technical_details=details,
-            action_label=action_label,
-        )
-        return state, snapshot
+        return preflight_ready(snapshot, self.context), snapshot
 
     def start_build(self) -> JobRef:
         state, snapshot = self._capture_preflight()
@@ -427,35 +390,6 @@ class TerminologyPresenter:
     def _require_open(self) -> None:
         if self._closed:
             raise RuntimeError("terminology presenter is closed")
-
-
-def _source_view(source) -> SourceScopeViewState:
-    registration = source.registration
-    location = registration.location
-    name = registration.display_name or PurePath(location.replace("\\", "/")).name or registration.source_id
-    return SourceScopeViewState(
-        registration.source_id,
-        name,
-        registration.format_id.value,
-        (
-            TechnicalDetail("来源标识", registration.source_id),
-            TechnicalDetail("位置", location),
-            TechnicalDetail("内容指纹", source.lease.actual_fingerprint),
-            TechnicalDetail("适配器", f"{source.adapter_id} {source.adapter_version}"),
-        ),
-    )
-
-
-def _current_version_label(version_id: str | None) -> str:
-    return "当前版本 · 尚无已发布版本" if version_id is None else f"当前版本 · {version_id}"
-
-
-def _diagnostic_details(diagnostic) -> tuple[TechnicalDetail, ...]:
-    return (
-        TechnicalDetail("诊断代码", diagnostic.code),
-        TechnicalDetail("诊断信息", diagnostic.message),
-        *(TechnicalDetail(str(key), str(value)) for key, value in diagnostic.details),
-    )
 
 
 __all__ = ["TerminologyCommandPort", "TerminologyPreflightError", "TerminologyPresenter", "TerminologyUiServices"]

@@ -177,3 +177,30 @@ def test_run_controller_archives_and_reuses_the_same_frozen_binding() -> None:
     metadata = dict(runtime_job_spec(request.spec).metadata)
     assert metadata["terminology_version_id"] == "version-1"
     assert metadata["terminology_content_digest"] == "digest-1"
+
+
+def test_production_gate_freezes_actual_scheme_without_a_variant_base_version(tmp_path):
+    from transbridge.application.terminology_profiles import ProfileTermMapping, TerminologyProfileContent
+    from transbridge.bootstrap.terminology import ProductionTerminologyComposition
+    from transbridge.bootstrap.terminology_storage import ProjectTerminologyRepositories
+
+    repositories = ProjectTerminologyRepositories(tmp_path)
+    composition = ProductionTerminologyComposition(repositories, None, None, None, None, None)
+    try:
+        profiles = composition.profile_service_for("project-1")
+        profile = profiles.create_with_content(
+            "project-1", "B", TerminologyProfileContent((ProfileTermMapping("Sword", "B之剑"),))
+        )
+        profiles.publish(profile.profile_id, expected_draft_revision=0)
+        profiles.select("project-1", "variant-b", profile.profile_id)
+        assert repositories.for_project("project-1").effective_version("project-1", "variant-b") is None
+        owner = SimpleNamespace(
+            active_version_identity=("project-1", "variant-b"), effective_terminology_factory=composition
+        )
+        binding = freeze_project_terminology(owner)
+        assert binding.snapshot_ref.status is EffectiveSnapshotStatus.READY
+        assert binding.snapshot_ref.version_id.startswith("profiled:v2:")
+        loaded = binding.adapter.load(binding.context, ())
+        assert [(entry.term, entry.translation) for entry in loaded.entries] == [("Sword", "B之剑")]
+    finally:
+        composition.close()

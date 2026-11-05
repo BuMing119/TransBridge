@@ -36,7 +36,7 @@ def test_switching_a_to_b_to_a_is_deterministic_and_does_not_change_common_text(
     assert common == "前往雪漫城拜访领主。"
 
 
-def test_historical_recognition_requires_source_evidence_and_unique_target_occurrence() -> None:
+def test_source_evidence_gates_replacement_and_repeated_occurrences_all_change() -> None:
     projector = TerminologyProfileProjector()
     content = TerminologyProfileContent(
         mappings=(ProfileTermMapping("Whiterun", "白漫", "雪漫"),),
@@ -56,8 +56,8 @@ def test_historical_recognition_requires_source_evidence_and_unique_target_occur
     )
 
     assert no_source.translation == "去雪漫"
-    assert repeated.translation == "雪漫通往雪漫"
-    assert {item.code for item in repeated.diagnostics} == {"historical_translation_ambiguous"}
+    assert repeated.translation == "白漫通往白漫"
+    assert repeated.diagnostics == ()
 
 
 def test_explicit_binding_survives_other_same_text_but_detects_stale_common_translation() -> None:
@@ -122,7 +122,7 @@ def test_matching_plugin_scope_shadows_project_mapping_for_the_same_term() -> No
     assert other.translation == "巨龙"
 
 
-def test_overlapping_historical_candidates_are_not_guessed() -> None:
+def test_unchanged_short_term_does_not_block_changed_long_term() -> None:
     projector = TerminologyProfileProjector()
     content = TerminologyProfileContent(
         mappings=(
@@ -138,11 +138,11 @@ def test_overlapping_historical_candidates_are_not_guessed() -> None:
         content=content,
     )
 
-    assert result.translation == "加入黑暗兄弟会"
-    assert {item.code for item in result.diagnostics} == {"replacement_overlap"}
+    assert result.translation == "加入暗黑兄弟会"
+    assert result.diagnostics == ()
 
 
-def test_one_ambiguous_term_fails_closed_for_the_entire_entry() -> None:
+def test_repeated_term_and_other_matching_term_are_converted_together() -> None:
     projector = TerminologyProfileProjector()
     content = TerminologyProfileContent(
         mappings=(
@@ -158,9 +158,9 @@ def test_one_ambiguous_term_fails_closed_for_the_entire_entry() -> None:
         content=content,
     )
 
-    assert result.translation == "雪漫领主会见了另一位领主"
-    assert result.changed_term_keys == ()
-    assert {item.code for item in result.diagnostics} == {"historical_translation_ambiguous"}
+    assert result.translation == "白漫城主会见了另一位城主"
+    assert set(result.changed_term_keys) == {logical_term_key("Whiterun"), logical_term_key("Jarl")}
+    assert result.diagnostics == ()
 
 
 def test_source_match_without_registered_base_translation_is_visible_and_fails_closed() -> None:

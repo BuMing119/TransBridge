@@ -6,9 +6,12 @@ from collections import defaultdict
 from dataclasses import dataclass
 from enum import StrEnum
 
-from transbridge.application.terminology.identity import normalize_original
-
-from .importing import TerminologyProfileImportConflictKind, TerminologyProfileImportPreview, TerminologySourceEntry
+from .importing import (
+    TerminologyProfileImportConflictKind,
+    TerminologyProfileImportPolicy,
+    TerminologyProfileImportPreview,
+    TerminologySourceEntry,
+)
 
 
 class ImportPreviewOutcome(StrEnum):
@@ -35,23 +38,23 @@ class ImportPreviewRow:
 def import_preview_rows(preview: TerminologyProfileImportPreview) -> tuple[ImportPreviewRow, ...]:
     """Project the existing decision, without changing mappings or resolving conflicts."""
 
-    conflicts = {item.normalized_original: item for item in preview.conflicts}
+    conflicts = {item.term_key: item for item in preview.conflicts}
     source_groups: dict[str, list[TerminologySourceEntry]] = defaultdict(list)
     for entry in preview.source.entries:
-        source_groups[normalize_original(entry.original)].append(entry)
-    mapped_originals = set()
+        source_groups[entry.term_key].append(entry)
     rows = []
     for mapping in preview.content.mappings:
-        normalized = normalize_original(mapping.original)
-        mapped_originals.add(normalized)
-        conflict = conflicts.get(normalized)
-        source = source_groups.get(normalized, ())
-        if conflict is not None:
-            outcome = (
-                ImportPreviewOutcome.SOURCE_CONFLICT
-                if conflict.kind is TerminologyProfileImportConflictKind.SOURCE_TRANSLATIONS
-                else ImportPreviewOutcome.SCOPE_AMBIGUOUS
-            )
+        key = mapping.term_key
+        conflict = conflicts.get(key)
+        source = source_groups.get(key, ())
+        if mapping.scheme_owned:
+            outcome = ImportPreviewOutcome.SOURCE_ONLY
+        elif conflict is not None and conflict.kind is TerminologyProfileImportConflictKind.SOURCE_TRANSLATIONS:
+            outcome = ImportPreviewOutcome.SOURCE_CONFLICT
+        elif conflict is not None and preview.policy is TerminologyProfileImportPolicy.KEEP_EXISTING:
+            outcome = ImportPreviewOutcome.KEPT
+        elif mapping.translation == mapping.base_translation:
+            outcome = ImportPreviewOutcome.KEPT
         else:
             outcome = ImportPreviewOutcome.ADOPTED if source else ImportPreviewOutcome.KEPT
         rows.append(
@@ -65,20 +68,6 @@ def import_preview_rows(preview: TerminologyProfileImportPreview) -> tuple[Impor
                 outcome,
                 tuple(sorted({item.translation for item in source})),
                 () if conflict is None else conflict.base_scopes,
-            )
-        )
-    for normalized in sorted(source_groups.keys() - mapped_originals):
-        source = source_groups[normalized]
-        rows.append(
-            ImportPreviewRow(
-                f"source-only:{normalized}",
-                min(item.original for item in source),
-                "",
-                "",
-                None,
-                None,
-                ImportPreviewOutcome.SOURCE_ONLY,
-                tuple(sorted({item.translation for item in source})),
             )
         )
     return tuple(rows)

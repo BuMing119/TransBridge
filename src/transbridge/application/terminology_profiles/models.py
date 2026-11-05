@@ -64,6 +64,7 @@ class ProfileTermMapping:
     base_translation: str = ""
     scope_kind: str = "project"
     plugin_id: str | None = None
+    scheme_owned: bool = False
     term_key: str = field(init=False, compare=True)
 
     def __post_init__(self) -> None:
@@ -72,6 +73,8 @@ class ProfileTermMapping:
         scope_kind = _required(self.scope_kind, "scope kind").lower()
         plugin_id = None if self.plugin_id is None else _required(self.plugin_id, "plugin ID")
         key = logical_term_key(original, scope_kind=scope_kind, plugin_id=plugin_id)
+        if not isinstance(self.scheme_owned, bool):
+            raise TypeError("scheme-owned authority must be a boolean")
         object.__setattr__(self, "original", original)
         object.__setattr__(self, "translation", translation)
         object.__setattr__(self, "base_translation", self.base_translation.strip())
@@ -152,6 +155,7 @@ class TerminologyProfileContent:
                     "plugin_id": item.plugin_id,
                     "scope_kind": item.scope_kind,
                     "translation": item.translation,
+                    **({"scheme_owned": True} if item.scheme_owned else {}),
                 }
                 for item in self.mappings
             ],

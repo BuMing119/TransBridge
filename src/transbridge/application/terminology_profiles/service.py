@@ -189,6 +189,23 @@ class TerminologyProfileService:
     def clear_selection(self, project_id: str, variant_id: str) -> None:
         self._repository.clear_selection(project_id, variant_id)
 
+    def selection(self, project_id: str, variant_id: str) -> TerminologyProfileSelection | None:
+        """Read the exact association, including archived historical revisions."""
+        return self._repository.get_selection(project_id, variant_id)
+
+    def select_revision(
+        self, project_id: str, variant_id: str, revision: PublishedTerminologyProfile
+    ) -> TerminologyProfileSelection:
+        """Bind already converted text to its exact immutable scheme revision."""
+        stored = self._repository.get_published(revision.profile_id, revision.revision)
+        if stored != revision or revision.project_id != project_id:
+            raise TerminologyProfileError("the exact terminology profile revision is unavailable")
+        selection = TerminologyProfileSelection(
+            project_id, variant_id, revision.profile_id, revision.revision, self._timestamp()
+        )
+        self._repository.set_selection(selection)
+        return selection
+
     def selected_revision(self, project_id: str, variant_id: str) -> PublishedTerminologyProfile | None:
         return self._repository.get_selected_published(project_id, variant_id)
 

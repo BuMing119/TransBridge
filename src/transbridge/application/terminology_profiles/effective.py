@@ -14,12 +14,13 @@ from transbridge.application.terminology.effective import (
     EffectiveTerminologySnapshot,
     EffectiveTerminologySnapshotPort,
 )
-from transbridge.application.terminology.models import DecisionStatus
+from transbridge.application.terminology.identity import normalize_original, term_id
+from transbridge.application.terminology.models import DecisionStatus, ScopeKind, TermDecision, TermScope
 from transbridge.application.terminology.query_control import QueryCancellation
 
 from .models import PublishedTerminologyProfile, logical_term_key
 
-_VERSION_PREFIX = "profiled:v1:"
+_VERSION_PREFIXES = {1: "profiled:v1:", 2: "profiled:v2:"}
 
 
 class TerminologyProfileRevisionSource(Protocol):
@@ -54,6 +55,7 @@ class ProfiledEffectiveTerminologySnapshotPort:
             # semantics even if a profile is selected today.
             return self._base.snapshot(local_project_id, local_variant_id, version_id)
 
+        format_version = 2 if version_id is None else _format_version(version_id)
         if version_id is None:
             base = self._base.snapshot(local_project_id, local_variant_id)
             profile = self._profiles.selected_revision(local_project_id, local_variant_id)
@@ -73,7 +75,15 @@ class ProfiledEffectiveTerminologySnapshotPort:
                     EffectiveSnapshotStatus.UNAVAILABLE,
                     diagnostics=("the exact terminology localization profile revision is unavailable",),
                 )
-            base = self._base.snapshot(local_project_id, local_variant_id, base_version_id)
+            # A captured absence is exact evidence too. Never resolve it as
+            # "latest" after a project base has subsequently been published.
+            base = (
+                EffectiveTerminologySnapshot(
+                    local_project_id, local_variant_id, EffectiveSnapshotStatus.NO_PROJECT_VERSION
+                )
+                if base_version_id is None
+                else self._base.snapshot(local_project_id, local_variant_id, base_version_id)
+            )
             if profile.content_digest != descriptor["profile_digest"]:
                 return EffectiveTerminologySnapshot(
                     local_project_id,
@@ -82,16 +92,24 @@ class ProfiledEffectiveTerminologySnapshotPort:
                     diagnostics=("terminology localization profile digest mismatch",),
                 )
 
-        if base.status is not EffectiveSnapshotStatus.READY:
+        if (
+            format_version == 1
+            and base.status is EffectiveSnapshotStatus.NO_PROJECT_VERSION
+            and not any(item.scheme_owned for item in profile.content.mappings)
+        ):
             return base
-        return _profiled_snapshot(base, profile, cancellation)
+        if base.status not in {EffectiveSnapshotStatus.READY, EffectiveSnapshotStatus.NO_PROJECT_VERSION}:
+            return base
+        return _profiled_snapshot(base, profile, cancellation, format_version=format_version)
 
 
 def is_profiled_version_id(value: str | None) -> bool:
-    return bool(value and value.startswith(_VERSION_PREFIX))
+    return bool(value and value.startswith(tuple(_VERSION_PREFIXES.values())))
 
 
-def encode_profiled_version_id(base_version_id: str, profile: PublishedTerminologyProfile) -> str:
+def encode_profiled_version_id(
+    base_version_id: str | None, profile: PublishedTerminologyProfile, *, format_version: int = 2
+) -> str:
     payload = {
         "base_version_id": base_version_id,
         "profile_digest": profile.content_digest,
@@ -99,25 +117,29 @@ def encode_profiled_version_id(base_version_id: str, profile: PublishedTerminolo
         "profile_revision": profile.revision,
     }
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    return _VERSION_PREFIX + base64.urlsafe_b64encode(encoded).rstrip(b"=").decode("ascii")
+    return _VERSION_PREFIXES[format_version] + base64.urlsafe_b64encode(encoded).rstrip(b"=").decode("ascii")
 
 
-def decode_profiled_version_id(value: str) -> dict[str, str | int]:
+def _format_version(value: str) -> int:
+    return next(version for version, prefix in _VERSION_PREFIXES.items() if value.startswith(prefix))
+
+
+def decode_profiled_version_id(value: str) -> dict[str, str | int | None]:
     if not is_profiled_version_id(value):
         raise ValueError("not a profiled terminology version ID")
-    encoded = value[len(_VERSION_PREFIX) :]
+    encoded = value[len(_VERSION_PREFIXES[_format_version(value)]) :]
     try:
         padded = encoded + "=" * (-len(encoded) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
         result = {
-            "base_version_id": str(payload["base_version_id"]),
+            "base_version_id": None if payload["base_version_id"] is None else str(payload["base_version_id"]),
             "profile_digest": str(payload["profile_digest"]),
             "profile_id": str(payload["profile_id"]),
             "profile_revision": int(payload["profile_revision"]),
         }
     except (binascii.Error, KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("invalid profiled terminology version ID") from exc
-    if not result["base_version_id"] or not result["profile_id"] or len(str(result["profile_digest"])) != 64:
+    if result["base_version_id"] == "" or not result["profile_id"] or len(str(result["profile_digest"])) != 64:
         raise ValueError("invalid profiled terminology version descriptor")
     if int(result["profile_revision"]) < 0:
         raise ValueError("invalid profiled terminology profile revision")
@@ -128,6 +150,8 @@ def _profiled_snapshot(
     base: EffectiveTerminologySnapshot,
     profile: PublishedTerminologyProfile,
     cancellation: QueryCancellation | None = None,
+    *,
+    format_version: int = 2,
 ) -> EffectiveTerminologySnapshot:
     mappings = {}
     for item in profile.content.mappings:
@@ -136,16 +160,17 @@ def _profiled_snapshot(
         mappings[item.term_key] = item
     decisions = []
     missing = 0
+    base_keys = set()
     for decision in base.decisions:
         if cancellation is not None:
             cancellation.raise_if_cancelled()
-        mapping = mappings.get(
-            logical_term_key(
-                decision.original,
-                scope_kind=decision.scope.kind.value,
-                plugin_id=decision.scope.plugin_id,
-            )
+        key = logical_term_key(
+            decision.original,
+            scope_kind=decision.scope.kind.value,
+            plugin_id=decision.scope.plugin_id,
         )
+        base_keys.add(key)
+        mapping = mappings.get(key)
         if mapping is not None:
             decisions.append(replace(decision, translation=mapping.translation))
         elif decision.is_effective:
@@ -155,7 +180,33 @@ def _profiled_snapshot(
             missing += 1
         else:
             decisions.append(decision)
-    version_id = encode_profiled_version_id(base.version_id or "", profile)
+    for key, mapping in mappings.items():
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
+        # The saved Variant association is authority for these spellings.
+        # A newly saved independent Variant need not own a base version yet.
+        # Existing inactive/suppressed decisions still retain their state.
+        if key in base_keys or (format_version == 1 and not mapping.scheme_owned):
+            continue
+        scope = TermScope(ScopeKind(mapping.scope_kind), mapping.plugin_id)
+        decisions.append(
+            TermDecision(
+                term_id(
+                    project_id=base.local_project_id,
+                    variant_id=base.local_variant_id,
+                    original=mapping.original,
+                    scope=scope,
+                ),
+                base.local_project_id,
+                base.local_variant_id,
+                mapping.original,
+                normalize_original(mapping.original),
+                mapping.translation,
+                scope,
+                DecisionStatus.ADOPTED,
+            )
+        )
+    version_id = encode_profiled_version_id(base.version_id, profile, format_version=format_version)
     payload = json.dumps(
         {
             "base_content_digest": base.content_digest,
@@ -168,7 +219,8 @@ def _profiled_snapshot(
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
-    digest = hashlib.sha256(b"transbridge.profiled-effective-terminology.v1\0" + payload).hexdigest()
+    digest_domain = f"transbridge.profiled-effective-terminology.v{format_version}\0".encode("ascii")
+    digest = hashlib.sha256(digest_domain + payload).hexdigest()
     diagnostics = list(base.diagnostics)
     if missing:
         diagnostics.append(f"terminology localization profile has {missing} unmapped effective term(s)")

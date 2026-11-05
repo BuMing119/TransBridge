@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from transbridge.application.terminology_profiles import TerminologyProfileImportPolicy
+
 
 class TerminologyWindowContext(QObject):
     """Bind profile actions and updates to the same identity as the window presenter."""
@@ -58,8 +60,8 @@ class TerminologyWindowContext(QObject):
         if self._current():
             self._profiles.refresh()
 
-    def preview_source_import(self, source):
-        return self._require_profiles().preview_source_import(source)
+    def preview_source_import(self, source, *, policy=TerminologyProfileImportPolicy.KEEP_EXISTING):
+        return self._require_profiles().preview_source_import(source, policy=policy)
 
     def create_from_source_import(self, name, preview, *, select=False):
         return self._require_profiles().create_from_source_import(name, preview, select=select)

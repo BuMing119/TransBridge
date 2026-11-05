@@ -8,17 +8,19 @@ from transbridge.application.terminology_profiles import ProfileTermMapping, nor
 
 _HEADERS = ("原文术语", "当前译文中的叫法", "方案译名", "生效范围", "插件文件")
 SCOPE_LABELS = {"project": "整个工程", "plugin": "仅指定插件"}
+_RawMapping = tuple[str, str, str, str, str, bool]
 
 
-def _raw_mapping(mapping: ProfileTermMapping | None) -> tuple[str, ...]:
+def _raw_mapping(mapping: ProfileTermMapping | None) -> _RawMapping:
     if mapping is None:
-        return ("", "", "", "project", "")
+        return ("", "", "", "project", "", False)
     return (
         mapping.original,
         mapping.base_translation,
         mapping.translation,
         mapping.scope_kind,
         mapping.plugin_id or "",
+        mapping.scheme_owned,
     )
 
 
@@ -29,10 +31,10 @@ class ProfileMappingModel(QAbstractTableModel):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._rows: list[tuple[str, ...]] = []
-        self._baseline: tuple[tuple[str, ...], ...] = ()
+        self._rows: list[_RawMapping] = []
+        self._baseline: tuple[_RawMapping, ...] = ()
         self._changed_rows: set[int] = set()
-        self._published_rows: set[tuple[str, ...]] = set()
+        self._published_rows: set[_RawMapping] = set()
 
     @property
     def is_dirty(self) -> bool:
@@ -150,8 +152,9 @@ class ProfileMappingModel(QAbstractTableModel):
                 base_translation=base.strip(),
                 scope_kind=scope,
                 plugin_id=plugin.strip() if scope == "plugin" else None,
+                scheme_owned=scheme_owned,
             )
-            for source, base, target, scope, plugin in self._rows
+            for source, base, target, scope, plugin, scheme_owned in self._rows
         )
 
     def _track_row(self, row: int) -> None:

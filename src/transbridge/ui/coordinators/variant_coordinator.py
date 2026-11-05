@@ -123,6 +123,10 @@ class VariantCoordinator:
 
     def manual_save(self):
         """保存当前工程版本。"""
+        from .profile_variant_save import ProfileVariantSaveCoordinator
+
+        if ProfileVariantSaveCoordinator(self._host).request():
+            return
         self._host.save_current_project_async()
 
     def delete_variant(self, name: str):

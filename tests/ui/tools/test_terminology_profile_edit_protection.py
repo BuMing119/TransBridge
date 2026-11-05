@@ -126,7 +126,7 @@ def test_close_and_escape_can_cancel_without_losing_input(editor, monkeypatch, c
     monkeypatch.setattr(manager_module, "choose_unsaved_action", lambda *_args: QMessageBox.StandardButton.Discard)
 
 
-def test_archive_reviews_actual_users_and_restore_does_not_rebind(editor, monkeypatch):
+def test_archive_reviews_actual_users_and_preserves_association_when_restored(editor, monkeypatch):
     service, dialog, first, second = editor
     for profile in (first, second):
         service.publish(profile.profile_id, expected_draft_revision=0)
@@ -138,7 +138,7 @@ def test_archive_reviews_actual_users_and_restore_does_not_rebind(editor, monkey
     )
     dialog._archive_profile()
     assert [item.variant_id for item in observed[0]] == ["variant-a"]
-    assert service.selected_revision("project-a", "variant-a") is None
+    assert service.selected_revision("project-a", "variant-a").profile_id == second.profile_id
     assert service.selected_revision("project-a", "variant-b").profile_id == first.profile_id
     dialog.show_archived.setChecked(True)
     dialog.select_profile(second.profile_id)
@@ -148,7 +148,7 @@ def test_archive_reviews_actual_users_and_restore_does_not_rebind(editor, monkey
     dialog._restore_profile()
     assert dialog.current_profile.state is ProfileState.ACTIVE
     assert dialog.mapping_table.isEnabled()
-    assert service.selected_revision("project-a", "variant-a") is None
+    assert service.selected_revision("project-a", "variant-a").profile_id == second.profile_id
     assert service.published_revision(second.profile_id, 1) is not None
 
 

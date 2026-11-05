@@ -76,7 +76,9 @@ class SourceBrowser(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
-        self.description = QLabel("方案映射只有匹配已确认的项目基础术语后才会生效；此表不等于当前生效列表。", self)
+        self.description = QLabel(
+            "外部来源导入的方案独有术语可直接在此方案中生效；其他映射需匹配已确认的项目基础术语。", self
+        )
         self.description.setWordWrap(True)
         self.description.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.description)
@@ -96,7 +98,7 @@ class SourceBrowser(QWidget):
         self.state_filter = QComboBox(self)
         self.state_filter.setAccessibleName("方案映射状态")
         self.state_filter.addItem("全部匹配状态", "")
-        for value in ("effective", "base_missing", "base_inactive", "unmapped"):
+        for value in ("effective", "scheme_owned", "base_missing", "base_inactive", "unmapped"):
             self.state_filter.addItem(_state_label(value), value)
         toolbar.addWidget(self.state_filter)
         toolbar.addStretch(1)
@@ -153,7 +155,10 @@ class SourceBrowser(QWidget):
 
     def render_context(self, context) -> None:
         self._empty_text = "此方案没有映射" if context.profile_id else "使用项目默认译名，没有方案映射。"
-        description = "方案映射只有匹配已确认的项目基础术语后才会生效；缺少基础术语时，可前往草稿补充并发布。"
+        description = (
+            "外部来源导入的方案独有术语仅在选用此方案时生效。"
+            "其他映射需匹配已确认的项目基础术语；缺少基础术语时，可前往草稿补充并发布。"
+        )
         if context.diagnostics:
             description += "\n" + "；".join(context.diagnostics)
         self.description.setText(description)
@@ -200,6 +205,7 @@ def _search_document(item) -> SearchDocument:
 def _state_label(value) -> str:
     return {
         "effective": "当前生效",
+        "scheme_owned": "方案独有，当前生效",
         "base_missing": "缺少项目基础术语",
         "base_inactive": "基础术语未确认或已停用",
         "unmapped": "方案缺少映射",

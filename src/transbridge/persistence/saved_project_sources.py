@@ -5,6 +5,7 @@ from dataclasses import replace
 from transbridge.application.contracts import DomainError, ErrorCategory
 from transbridge.application.io import FormatId
 from transbridge.application.projects.source_content import source_content_identity
+from transbridge.application.projects.source_terminology_scope import scoped_source_entries
 
 
 class SavedProjectSourcePreparer:
@@ -56,6 +57,12 @@ def load_saved_project_source(artifacts, source, source_fingerprints):
             prepared.hydration,
             source_id=source.get("source_id"),
             reference_location=str(source.get("location") or ""),
+            entries=scoped_source_entries(
+                prepared.hydration.entries,
+                prepared.hydration.format_id,
+                str(source.get("location") or prepared.hydration.location),
+                plugin_scope=source.get("plugin_scope"),
+            ),
         )
         return replace(prepared, descriptor=tuple(descriptor.items()), hydration=hydration)
     except (OSError, ValueError, KeyError, TypeError) as exc:

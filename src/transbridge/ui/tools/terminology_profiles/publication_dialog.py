@@ -70,7 +70,7 @@ def confirm_publication(parent, preview, variant_names) -> bool:
             else "内容与已发布版本一致；将直接采用现有版本，不创建重复修订。"
         )
         + ("还包含条目特例或精确位置绑定变更。" if preview.advanced_changed else "")
-        + "项目译文不会被修改；之后的翻译与导出将使用新的方案内容。",
+        + "发布保留现有翻译版本的正文与关联修订；新修订可供预览和另存为翻译版本。",
         dialog,
     )
     summary.setWordWrap(True)
@@ -80,7 +80,7 @@ def confirm_publication(parent, preview, variant_names) -> bool:
     table.setModel(PublicationChangesModel(preview.changes, table))
     table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
     layout.addWidget(table, 1)
-    layout.addWidget(QLabel("受影响的翻译版本", dialog))
+    layout.addWidget(QLabel("关联历史与本次预览", dialog))
     affected = QListWidget(dialog)
     affected.setAccessibleName("发布受影响的翻译版本")
     affected.setMaximumHeight(150)
@@ -88,16 +88,16 @@ def confirm_publication(parent, preview, variant_names) -> bool:
     if preview.target_variant_id is not None:
         ids.add(preview.target_variant_id)
     for variant_id in sorted(ids):
-        suffix = "（本次采用此方案）" if variant_id == preview.target_variant_id else "（使用中的方案将更新）"
+        suffix = "（本次预览此方案）" if variant_id == preview.target_variant_id else "（保留原关联修订）"
         affected.addItem(f"{variant_names.get(variant_id, variant_id)}{suffix}")
     if not ids:
-        affected.addItem("目前没有翻译版本使用此方案；发布后仍需选择使用。")
+        affected.addItem("目前没有翻译版本关联此方案；发布后可选择预览。")
     layout.addWidget(affected)
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, dialog)
     buttons.button(QDialogButtonBox.StandardButton.Ok).setText(
-        "用于当前翻译版本"
+        "预览当前方案"
         if not preview.has_changes
-        else "发布并用于当前翻译版本"
+        else "发布并预览"
         if preview.target_variant_id is not None
         else "确认发布"
     )

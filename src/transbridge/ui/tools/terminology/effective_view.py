@@ -18,8 +18,9 @@ class EffectiveTermsView(QWidget):
         self._has_version = self._has_draft = self._has_profile = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.description = QLabel("后续翻译采用此处的译名。选中词条可修改基础术语，保存到草稿并发布后生效。", self)
+        self.description = QLabel("", self)
         self.description.setWordWrap(True)
+        self.description.hide()
         layout.addWidget(self.description)
         self.filters = TermFilterBar(self)
         self.filters.changed.connect(self.query_changed)
@@ -40,9 +41,10 @@ class EffectiveTermsView(QWidget):
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setWordWrap(True)
         empty_layout.addWidget(self.empty)
-        self.empty_action = QPushButton("从来源生成草稿", self.empty_panel)
+        self.empty_action = QPushButton("导入术语…", self.empty_panel)
         self.empty_action.setProperty("tbComponentKind", "button")
         self.empty_action.clicked.connect(self.start_requested)
+        self.empty_action.hide()
         empty_layout.addWidget(self.empty_action, 0, Qt.AlignmentFlag.AlignHCenter)
         empty_layout.addStretch(1)
         layout.addWidget(self.empty_panel, 1)
@@ -61,7 +63,9 @@ class EffectiveTermsView(QWidget):
         layout.addWidget(self.pagination)
         self.table.selectionModel().selectionChanged.connect(self._render)
         model.pagination_changed.connect(self._render)
-        self.table.doubleClicked.connect(lambda _index: self._edit(self.edit_requested))
+        self.table.doubleClicked.connect(
+            lambda _index: self._edit(self.scheme_edit_requested if self._has_profile else self.edit_requested)
+        )
         self._render()
 
     def set_workflow(self, state, *, has_profile=False):
@@ -79,24 +83,26 @@ class EffectiveTermsView(QWidget):
         self.table.setVisible(not empty)
         self.empty_panel.setVisible(empty)
         self.empty.setVisible(empty)
-        self.description.setVisible(not empty)
-        self.filters.setVisible(self._has_version or not empty)
+        self.description.hide()
+        self.filters.setVisible(
+            not empty or bool(self.filters.search.text()) or self.filters.scope.currentData() is not None
+        )
         self.pagination.setVisible(not empty or bool(state.error))
-        if not self._has_version:
+        if self.filters.search.text() or self.filters.scope.currentData() is not None:
+            message = "没有符合当前筛选条件的术语。\n清空搜索或选择全部范围后重新筛选。"
+        elif not self._has_version and not self._has_profile:
             message = (
                 "草稿尚未发布，因此当前没有生效术语。\n前往编辑草稿，检查并发布后会显示在这里。"
                 if self._has_draft
-                else ("还没有项目术语。\n从项目来源生成草稿，检查译名后发布，即可用于后续翻译。")
+                else "还没有可用术语。点击上方“导入术语…”添加术语文件或词库。"
             )
-        elif self.filters.search.text() or self.filters.scope.currentData() is not None:
-            message = "没有符合当前筛选条件的术语。\n清空搜索或选择全部范围后重新筛选。"
         else:
-            message = "当前没有生效术语。请检查草稿中的确认状态，以及译名方案的映射是否完整。"
+            message = "当前选择中没有可用术语。可切换译名方案，或点击上方“导入术语…”。"
         self.empty.setText(message)
-        self.empty_action.setVisible(empty and not self._has_version)
-        self.empty_action.setText("前往编辑草稿" if self._has_draft else "从来源生成草稿")
+        self.empty_action.hide()
         self.actions.setVisible(bool(self.table.selectionModel().selectedRows()) and not empty)
         self.scheme_edit_button.setVisible(self._has_profile)
+        self.edit_button.setVisible(not self._has_profile)
 
     def _edit(self, signal):
         rows = self.table.selectionModel().selectedRows()

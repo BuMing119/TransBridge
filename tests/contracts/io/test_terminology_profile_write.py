@@ -11,9 +11,11 @@ from transbridge.application.io.operation_write import HydratedWriteDraft, Hydra
 from transbridge.application.terminology.effective import EffectiveSnapshotStatus, EffectiveTerminologySnapshot
 from transbridge.application.terminology.models import DecisionStatus, TermDecision, TermScope
 from transbridge.application.terminology_profiles import (
+    FrozenProfileWriteProjection,
     InMemoryTerminologyProfileRepository,
     ProfileTermMapping,
     TerminologyProfileContent,
+    TerminologyProfileProjector,
     TerminologyProfileService,
     TerminologyProfileWriteProjectionSource,
 )
@@ -84,10 +86,17 @@ def test_write_preflight_freezes_profile_projection_without_mutating_common_entr
         RequestContext("gui", project_id="project-1", variant_id="variant-1"),
     )
 
-    service.select("project-1", "variant-1", profile_a)
-    frozen_a = preflights.preflight(request)
-    service.select("project-1", "variant-1", profile_b)
-    frozen_b = preflights.preflight(request)
+    frozen_a_projection = FrozenProfileWriteProjection(
+        "project-1",
+        "variant-1",
+        service.published_revision(profile_a, 1),
+        TerminologyProfileProjector(),
+        base_snapshot,
+    )
+    frozen_b_projection = replace(frozen_a_projection, profile=service.published_revision(profile_b, 1))
+    frozen_a = preflights.preflight(replace(request, entry_projection=frozen_a_projection))
+    frozen_b = preflights.preflight(replace(request, entry_projection=frozen_b_projection))
+    assert service.selected_revision("project-1", "variant-1") is None
 
     assert frozen_a.projected_entries[0].translation == "前往白漫"
     assert frozen_b.projected_entries[0].translation == "前往雪漫城"

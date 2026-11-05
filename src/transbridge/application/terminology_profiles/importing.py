@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from transbridge.application.terminology.effective import EffectiveSnapshotStatus, EffectiveTerminologySnapshot
-from transbridge.application.terminology.identity import canonical_digest, normalize_original, normalize_translation
+from transbridge.application.terminology.identity import canonical_digest, normalize_original
 from transbridge.application.terminology.models import TermDecision
 
 from .models import (
@@ -17,6 +17,7 @@ from .models import (
     TerminologyProfile,
     TerminologyProfileContent,
     TerminologyProfileSelection,
+    logical_term_key,
 )
 from .service import TerminologyProfileService
 
@@ -39,10 +40,21 @@ class TerminologySourceEntry:
 
     original: str
     translation: str
+    scope_kind: str = "project"
+    plugin_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "original", _required(self.original, "source original"))
         object.__setattr__(self, "translation", _required(self.translation, "source translation"))
+        mapping = ProfileTermMapping(
+            self.original, self.translation, scope_kind=self.scope_kind, plugin_id=self.plugin_id
+        )
+        object.__setattr__(self, "scope_kind", mapping.scope_kind)
+        object.__setattr__(self, "plugin_id", mapping.plugin_id)
+
+    @property
+    def term_key(self) -> str:
+        return logical_term_key(self.original, scope_kind=self.scope_kind, plugin_id=self.plugin_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,16 +83,22 @@ class TerminologySourceSnapshot:
         entries: Iterable[TerminologySourceEntry],
     ) -> TerminologySourceSnapshot:
         captured = tuple(entries)
-        payload = tuple(
-            sorted((normalize_original(item.original), normalize_translation(item.translation)) for item in captured)
-        )
-        digest = canonical_digest(payload, namespace="transbridge.terminology-source-snapshot.v1")
+        # Source order resolves duplicate translations under the selected batch
+        # policy, so it is part of the immutable decision evidence.
+        payload = tuple((item.term_key, item.original, item.translation) for item in captured)
+        digest = canonical_digest(payload, namespace="transbridge.terminology-source-snapshot.v2")
         return cls(source_id, source_label, captured, digest)
+
+
+class TerminologyProfileImportPolicy(StrEnum):
+    KEEP_EXISTING = "keep_existing"
+    USE_IMPORTED = "use_imported"
 
 
 class TerminologyProfileImportConflictKind(StrEnum):
     SOURCE_TRANSLATIONS = "source_translations"
     BASE_SCOPES = "base_scopes"
+    EXISTING_TRANSLATION = "existing_translation"
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -90,6 +108,8 @@ class TerminologyProfileImportConflict:
     kind: TerminologyProfileImportConflictKind
     source_translations: tuple[str, ...]
     base_scopes: tuple[str, ...]
+    scope_kind: str = "project"
+    plugin_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "normalized_original", _required(self.normalized_original, "normalized original"))
@@ -102,13 +122,17 @@ class TerminologyProfileImportConflict:
         object.__setattr__(self, "source_translations", source_translations)
         object.__setattr__(self, "base_scopes", base_scopes)
 
+    @property
+    def term_key(self) -> str:
+        return logical_term_key(self.original, scope_kind=self.scope_kind, plugin_id=self.plugin_id)
+
 
 @dataclass(frozen=True, slots=True)
 class TerminologyProfileImportPreview:
     project_id: str
     variant_id: str
-    base_version_id: str
-    base_content_digest: str
+    base_version_id: str | None
+    base_content_digest: str | None
     source: TerminologySourceSnapshot
     content: TerminologyProfileContent
     source_entry_count: int
@@ -118,10 +142,19 @@ class TerminologyProfileImportPreview:
     changed_mapping_count: int
     source_only_term_count: int
     conflicts: tuple[TerminologyProfileImportConflict, ...] = ()
+    policy: TerminologyProfileImportPolicy = TerminologyProfileImportPolicy.KEEP_EXISTING
+    adopted_mapping_count: int = 0
+    kept_mapping_count: int = 0
 
     def __post_init__(self) -> None:
-        for name in ("project_id", "variant_id", "base_version_id", "base_content_digest"):
+        for name in ("project_id", "variant_id"):
             object.__setattr__(self, name, _required(getattr(self, name), name.replace("_", " ")))
+        for name in ("base_version_id", "base_content_digest"):
+            if getattr(self, name) is not None:
+                object.__setattr__(self, name, _required(getattr(self, name), name.replace("_", " ")))
+        if (self.base_version_id is None) != (self.base_content_digest is None):
+            raise ValueError("import preview base version and digest must both be present or absent")
+        object.__setattr__(self, "policy", TerminologyProfileImportPolicy(self.policy))
         if not isinstance(self.source, TerminologySourceSnapshot):
             raise TypeError("preview source must be a TerminologySourceSnapshot")
         if not isinstance(self.content, TerminologyProfileContent):
@@ -133,6 +166,8 @@ class TerminologyProfileImportPreview:
             "matched_term_count",
             "changed_mapping_count",
             "source_only_term_count",
+            "adopted_mapping_count",
+            "kept_mapping_count",
         ):
             _count(getattr(self, name), name.replace("_", " "))
         object.__setattr__(self, "conflicts", tuple(sorted(self.conflicts)))
@@ -140,6 +175,16 @@ class TerminologyProfileImportPreview:
     @property
     def base_mapping_count(self) -> int:
         return len(self.content.mappings)
+
+    @property
+    def mapping_count(self) -> int:
+        return len(self.content.mappings)
+
+    @property
+    def overwritten_mapping_count(self) -> int:
+        return sum(
+            bool(item.base_translation) and item.translation != item.base_translation for item in self.content.mappings
+        )
 
     @property
     def conflict_count(self) -> int:
@@ -167,98 +212,106 @@ class TerminologyProfileImportService:
         variant_id: str,
         base_snapshot: EffectiveTerminologySnapshot,
         source: TerminologySourceSnapshot,
+        *,
+        policy: TerminologyProfileImportPolicy = TerminologyProfileImportPolicy.KEEP_EXISTING,
     ) -> TerminologyProfileImportPreview:
         project_id = _required(project_id, "project ID")
         variant_id = _required(variant_id, "variant ID")
         if (base_snapshot.local_project_id, base_snapshot.local_variant_id) != (project_id, variant_id):
             raise TerminologyProfileImportError("base terminology snapshot belongs to another Project/Variant")
-        if base_snapshot.status is not EffectiveSnapshotStatus.READY:
-            raise TerminologyProfileImportError("base terminology snapshot must be ready before importing a scheme")
+        if base_snapshot.status not in {EffectiveSnapshotStatus.READY, EffectiveSnapshotStatus.NO_PROJECT_VERSION}:
+            raise TerminologyProfileImportError(
+                "base terminology snapshot must be ready or unpublished before importing"
+            )
         if not source.entries:
             raise TerminologyProfileImportError("terminology source snapshot is empty")
 
         base_decisions = tuple(item for item in base_snapshot.decisions if item.is_effective)
-        if not base_decisions:
-            raise TerminologyProfileImportError("base terminology snapshot contains no effective decisions")
-
-        base_by_original: dict[str, list[TermDecision]] = defaultdict(list)
+        policy = TerminologyProfileImportPolicy(policy)
+        base_by_key: dict[str, TermDecision] = {}
         for decision in base_decisions:
-            base_by_original[normalize_original(decision.original)].append(decision)
+            key = logical_term_key(
+                decision.original, scope_kind=decision.scope.kind.value, plugin_id=decision.scope.plugin_id
+            )
+            base_by_key[key] = decision
 
-        source_by_original: dict[str, list[TerminologySourceEntry]] = defaultdict(list)
+        source_by_key: dict[str, list[TerminologySourceEntry]] = defaultdict(list)
         for entry in source.entries:
-            source_by_original[normalize_original(entry.original)].append(entry)
+            source_by_key[entry.term_key].append(entry)
 
         duplicate_count = sum(
-            len(entries) - len({normalize_translation(item.translation) for item in entries})
-            for entries in source_by_original.values()
+            len(entries) - len({item.translation for item in entries}) for entries in source_by_key.values()
         )
-        matched_originals = set(base_by_original) & set(source_by_original)
+        matched_keys = set(base_by_key) & set(source_by_key)
         conflicts: list[TerminologyProfileImportConflict] = []
-        targets: dict[str, str] = {}
-
-        for normalized in sorted(matched_originals):
-            base_group = base_by_original[normalized]
-            translations_by_normalized: dict[str, list[str]] = defaultdict(list)
-            for item in source_by_original[normalized]:
-                translations_by_normalized[normalize_translation(item.translation)].append(item.translation)
-            normalized_translations = tuple(sorted(translations_by_normalized))
-            source_translations = tuple(
-                sorted({value for values in translations_by_normalized.values() for value in values})
+        mappings = []
+        adopted = 0
+        for key in sorted(base_by_key.keys() | source_by_key.keys()):
+            decision = base_by_key.get(key)
+            entries = source_by_key.get(key, ())
+            entry = None if not entries else entries[-1 if policy is TerminologyProfileImportPolicy.USE_IMPORTED else 0]
+            different = decision is not None and entry is not None and decision.translation != entry.translation
+            use_source = entry is not None and (
+                decision is None or policy is TerminologyProfileImportPolicy.USE_IMPORTED
             )
-            original = sorted((item.original for item in base_group), key=str.casefold)[0]
-            scopes = tuple(item.scope.canonical_key for item in base_group)
-            if len(normalized_translations) > 1:
-                conflicts.append(
-                    TerminologyProfileImportConflict(
-                        normalized,
-                        original,
-                        TerminologyProfileImportConflictKind.SOURCE_TRANSLATIONS,
-                        source_translations,
-                        scopes,
+            if entry is not None:
+                translations = tuple(sorted({item.translation for item in entries}))
+                duplicate_conflict = len(translations) > 1
+                if duplicate_conflict or different:
+                    conflicts.append(
+                        TerminologyProfileImportConflict(
+                            normalize_original(entry.original),
+                            entry.original,
+                            TerminologyProfileImportConflictKind.SOURCE_TRANSLATIONS
+                            if duplicate_conflict
+                            else TerminologyProfileImportConflictKind.EXISTING_TRANSLATION,
+                            translations,
+                            () if decision is None else (decision.scope.canonical_key,),
+                            entry.scope_kind,
+                            entry.plugin_id,
+                        )
                     )
-                )
-            elif len(base_group) > 1:
-                conflicts.append(
-                    TerminologyProfileImportConflict(
-                        normalized,
-                        original,
-                        TerminologyProfileImportConflictKind.BASE_SCOPES,
-                        source_translations,
-                        scopes,
+            if decision is not None:
+                mappings.append(
+                    ProfileTermMapping(
+                        decision.original,
+                        entry.translation if use_source else decision.translation,
+                        decision.translation,
+                        decision.scope.kind.value,
+                        decision.scope.plugin_id,
                     )
                 )
             else:
-                targets[normalized] = sorted(translations_by_normalized[normalized_translations[0]])[0]
-
-        mappings = tuple(
-            ProfileTermMapping(
-                decision.original,
-                targets.get(normalize_original(decision.original), decision.translation),
-                decision.translation,
-                decision.scope.kind.value,
-                decision.scope.plugin_id,
-            )
-            for decision in base_decisions
-        )
-        changed_count = sum(
-            normalize_translation(item.translation) != normalize_translation(item.base_translation) for item in mappings
-        )
-        source_only = set(source_by_original) - set(base_by_original)
+                assert entry is not None
+                mappings.append(
+                    ProfileTermMapping(
+                        entry.original,
+                        entry.translation,
+                        scope_kind=entry.scope_kind,
+                        plugin_id=entry.plugin_id,
+                        scheme_owned=True,
+                    )
+                )
+            adopted += int(entry is not None and (decision is None or (different and use_source)))
+        changed_count = sum(item.translation != item.base_translation for item in mappings)
+        source_only = set(source_by_key) - set(base_by_key)
         return TerminologyProfileImportPreview(
             project_id=project_id,
             variant_id=variant_id,
-            base_version_id=base_snapshot.version_id or "",
-            base_content_digest=base_snapshot.content_digest or "",
+            base_version_id=base_snapshot.version_id,
+            base_content_digest=base_snapshot.content_digest,
             source=source,
             content=TerminologyProfileContent(mappings=mappings),
             source_entry_count=len(source.entries),
-            source_term_count=len(source_by_original),
+            source_term_count=len(source_by_key),
             duplicate_entry_count=duplicate_count,
-            matched_term_count=len(matched_originals),
+            matched_term_count=len(matched_keys),
             changed_mapping_count=changed_count,
             source_only_term_count=len(source_only),
             conflicts=tuple(conflicts),
+            policy=policy,
+            adopted_mapping_count=adopted,
+            kept_mapping_count=len(mappings) - adopted,
         )
 
     def create_and_publish(
@@ -285,6 +338,7 @@ __all__ = [
     "TerminologyProfileImportConflictKind",
     "TerminologyProfileImportError",
     "TerminologyProfileImportPreview",
+    "TerminologyProfileImportPolicy",
     "TerminologyProfileImportResult",
     "TerminologyProfileImportService",
     "TerminologySourceEntry",

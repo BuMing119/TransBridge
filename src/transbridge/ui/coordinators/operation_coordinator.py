@@ -55,7 +55,10 @@ class OperationCoordinator:
             return
         facade = getattr(self._host, "operation_plan_facade", None)
         if self._supports(facade, "write"):
-            return facade.begin_write(self._host.context)
+            values = self._write_projection_values()
+            if values is not None:
+                return facade.begin_write(self._host.context, **values)
+            return None
         self._host.write_card.write()
 
     def batch_write(self):
@@ -63,8 +66,21 @@ class OperationCoordinator:
             return
         facade = getattr(self._host, "operation_plan_facade", None)
         if self._supports(facade, "write", batch=True):
-            return facade.begin_write(self._host.context, batch=True)
+            values = self._write_projection_values()
+            if values is not None:
+                return facade.begin_write(self._host.context, batch=True, **values)
+            return None
         self._host.write_card.batch_write()
+
+    def _write_projection_values(self):
+        controller = getattr(self._host.workbench, "terminology_profile_controller", None)
+        if controller is None:
+            return {}
+        try:
+            return {"entry_projection": controller.capture_write_projection()}
+        except RuntimeError as exc:
+            self._host.show_message(str(exc))
+            return None
 
     def _supports(self, facade, kind: str, *, batch: bool = False) -> bool:
         if facade is None:

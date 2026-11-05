@@ -161,9 +161,9 @@ def test_only_immutable_inputs_and_prepared_projection_run_on_worker(monkeypatch
         capture_threads.append(get_ident())
         return original_capture(entry)
 
-    def initialize(self, *args):
+    def initialize(self, *args, **kwargs):
         worker_threads.append(get_ident())
-        original_init(self, *args)
+        original_init(self, *args, **kwargs)
 
     def project(self, entry):
         assert isinstance(entry, ProfileEntryInput)

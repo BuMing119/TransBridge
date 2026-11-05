@@ -67,6 +67,8 @@ class TerminologyWorkbenchShell(QWidget):
         project_layout.addWidget(self._project_icon)
         self.project_name = QLabel("正在读取当前项目", project)
         self.project_name.setProperty("tbTerminologyProjectTitle", True)
+        self.project_name.setMinimumWidth(0)
+        self.project_name.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         project_layout.addWidget(self.project_name, 1)
         self.project_caption = QLabel("", project)
         self.project_caption.setProperty("tbSecondary", True)
@@ -79,8 +81,8 @@ class TerminologyWorkbenchShell(QWidget):
         self.current_version.setTextFormat(Qt.TextFormat.PlainText)
         self.current_version.setWordWrap(False)
         context_row.addWidget(self.current_version)
-        brand.addWidget(project)
-        brand.addStretch(1)
+        self.current_version.hide()
+        brand.addWidget(project, 1)
 
         self._scheme_slot = QVBoxLayout()
         self._scheme_slot.setContentsMargins(0, 0, 0, 0)
@@ -153,12 +155,15 @@ class TerminologyWorkbenchShell(QWidget):
     def labels(self) -> tuple[str, ...]:
         return tuple(label for _area, label, _icon in TERMINOLOGY_AREAS)
 
-    def set_context(self, project_name: str, variant_name: str, source_count: int) -> None:
-        project = project_name.strip() or "当前项目"
-        variant = variant_name.strip() or "当前翻译版本"
+    def set_context(self, project_name: str, variant_name: str, source_count: int | None) -> None:
+        project = project_name.strip() or "项目名称未读取"
+        variant = variant_name.strip() or "翻译版本未读取"
+        source_summary = "来源数量未读取" if source_count is None else f"{source_count} 个来源"
         self.project_name.setText(project)
-        self.project_caption.setText(f"翻译版本：{variant} · {source_count} 个来源")
-        self.project_name.setAccessibleDescription(f"{variant}，{source_count} 个来源")
+        self.project_name.setToolTip(project)
+        self.project_caption.setText(f"翻译版本：{variant}")
+        self.project_caption.setToolTip(source_summary)
+        self.project_name.setAccessibleDescription(f"{variant}，{source_summary}")
 
     def set_scheme_switcher(self, widget: QWidget) -> None:
         """Place output naming selection beside the Project/Variant context."""

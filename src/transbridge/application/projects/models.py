@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, TypedDict
 
+from transbridge.application.terminology_profiles.models import TerminologyProfileSelection
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantRef
 from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
 from transbridge.persistence.v2.variant import SourceBaseline, VariantAggregate, VariantSnapshot
@@ -148,6 +149,14 @@ class LifecycleProjectUpdate:
 
 
 @dataclass(frozen=True, slots=True)
+class TerminologySelectionMutation:
+    project_id: str
+    variant_id: str
+    expected: TerminologyProfileSelection | None
+    target: TerminologyProfileSelection | None
+
+
+@dataclass(frozen=True, slots=True)
 class LifecycleActivation:
     old_project_ref: ProjectRef | None
     old_project_revision: int | None
@@ -166,6 +175,7 @@ class LifecycleActivation:
     removed_variant: tuple[VariantRef, int, str] | None = None
     candidate_baselines: tuple[SourceBaseline, ...] | None = None
     checked_variants: tuple[tuple[VariantRef, int, str], ...] = ()
+    terminology_selections: tuple[TerminologySelectionMutation, ...] = ()
 
     @classmethod
     def capture(

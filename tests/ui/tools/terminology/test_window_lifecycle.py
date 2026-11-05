@@ -97,9 +97,9 @@ def test_window_uses_horizontal_object_navigation_without_workflow_tabs() -> Non
     assert window.workspace.current_area() is TerminologyArea.TERMS
     assert window.workspace.surface.isAncestorOf(window.schemes_view)
     assert window.schemes_view.actions_button.text() == "更多…"
-    assert window.schemes_view.new_button.text() == "新建方案…"
-    assert window.schemes_view.rename_button.text() == "重命名…"
-    assert window.schemes_view.create_action.text() == "从外部来源创建方案…"
+    assert window.schemes_view.new_action.text() == "基于项目术语新建方案…"
+    assert window.schemes_view.rename_action.text() == "重命名当前方案…"
+    assert window.schemes_view.import_button.text() == "导入术语…"
     window.close()
 
 
@@ -113,7 +113,8 @@ def test_workbench_projects_human_readable_context_into_the_top_project_card() -
     window.workspace.set_context("Skyrim SE 汉化项目", "简体中文", 18)
 
     assert window.workspace.project_name.text() == "Skyrim SE 汉化项目"
-    assert window.workspace.project_caption.text() == "翻译版本：简体中文 · 18 个来源"
+    assert window.workspace.project_caption.text() == "翻译版本：简体中文"
+    assert window.workspace.project_caption.toolTip() == "18 个来源"
     assert not window.workspace.project_caption.isHidden()
     assert window.workspace.current_version.text() == "当前术语版本：尚未发布"
     assert window.workspace.brand_context.isHidden()
@@ -216,11 +217,11 @@ def test_overview_hides_empty_and_technical_sections_until_they_are_useful() -> 
         )
     )
 
-    assert view.alert.isHidden()
+    assert not view.alert.isHidden()
     assert not view.preflight_button.isHidden()
     assert view.preflight_button.text() == "重新检查"
     assert view.build_button.text() == "开始整理"
-    assert view.isHidden()
+    assert not view.isHidden()
 
     view.set_summary(
         TerminologySummaryViewState(

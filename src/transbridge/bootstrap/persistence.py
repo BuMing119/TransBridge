@@ -22,6 +22,7 @@ from transbridge.application.projects import (
     ProjectSourcePreparationPort,
 )
 from transbridge.application.projects.durable_variant import DurableVariantCommitService
+from transbridge.application.projects.profile_entry_inputs import ProfileEntryInputReader
 from transbridge.application.projects.snapshots import ProjectSnapshotCommands
 from transbridge.application.projects.source_supplement import ProjectSourceSupplementService
 from transbridge.application.projects.source_update import ProjectSourceUpdateService
@@ -60,6 +61,7 @@ from transbridge.persistence.v2.lifecycle_transactions import (
     SessionLifecycleTransactionStore,
 )
 from transbridge.persistence.v2.session_catalog import SessionCatalogRepository
+from transbridge.persistence.v2.terminology_selection_participant import TerminologySelectionParticipant
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +223,8 @@ def build_persistence_v2_services(
         durable_variant_commits=DurableVariantCommitService(
             project_lifecycle, project_uow, projects=projects, variants=variants
         ),
+        profile_variants=TerminologySelectionParticipant(resolved_root),
+        profile_entry_inputs=ProfileEntryInputReader(resolved_source_preparer).read,
     )
     current_project_opener = CurrentProjectOpener(
         resolved_root,

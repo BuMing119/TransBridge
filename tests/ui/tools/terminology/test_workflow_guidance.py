@@ -45,15 +45,19 @@ def test_only_the_next_required_action_is_primary(workbench, assets, action, exp
     window._workflow.render(assets)
     terms = window.terms_view
     actions = {
-        "build": window.build_view.build_button,
+        "build": terms.workflow.build_button,
         "edit": terms.workflow.edit_button,
         "conflicts": terms.attention_button,
         "review": terms.review_button,
         "publish": terms.workflow.publish_button,
     }
+    expected = [action] if assets.draft is not None else []
     assert [
-        key for key, button in actions.items() if not button.isHidden() and button.property("tbTerminologyPrimary")
-    ] == [action]
+        key
+        for key, button in actions.items()
+        if not button.isHidden() and button.property("tbTerminologyPrimary") and button.isVisibleTo(terms)
+    ] == expected
+    assert terms.workflow.isHidden() is (assets.draft is None)
     assert explanation in terms.workflow.detail.text()
     assert explanation in window.versions_view.draft_status.text()
     assert "下一步" in terms.workflow.detail.text()
@@ -72,19 +76,20 @@ def test_switching_content_explains_what_is_edited_and_when_it_takes_effect(work
     window.show()
     settle_layout(layout_app)
     terms = window.terms_view
-    assert "当前生效" in terms.content_context.text()
+    assert terms.content_context.isHidden()
     if entry == "versions":
         window.workspace.set_current_index(1)
         QTest.mouseClick(window.versions_view.continue_button, Qt.MouseButton.LeftButton)
     else:
-        QTest.mouseClick(terms.workflow.edit_button, Qt.MouseButton.LeftButton)
+        window._workflow.edit_current()
     _wait(lambda: window._workflow.state.has_draft and window.draft_model.rowCount() == 1)
-    assert "未发布草稿" in terms.content_context.text()
-    assert "发布后" in terms.content_context.text()
+    assert terms.content_context.isHidden()
+    assert terms.workflow.title.text() == "正在编辑术语"
+    assert "发布" in terms.workflow.detail.text()
     assert harness.repository.effective_version("project-1", "main").ref == published.ref
     QTest.mouseClick(terms.effective_button, Qt.MouseButton.LeftButton)
-    assert "当前生效" in terms.content_context.text()
-    QTest.mouseClick(terms.source_button, Qt.MouseButton.LeftButton)
+    assert terms.content_context.isHidden()
+    window.schemes_view.source_action.trigger()
     assert "方案映射" in terms.content_context.text()
     assert "当前生效" in terms.content_context.text()
 
@@ -164,12 +169,15 @@ def test_guidance_and_required_actions_fit_the_supported_narrow_window(workbench
         assert expected in terms.content_context.text()
         assert window.width() == width
         for widget in (terms.workflow, terms.content_context, terms.review_button, terms.attention_button, terms.pages):
+            if not widget.isVisibleTo(window):
+                continue
             top_left = widget.mapTo(window, QPoint())
             assert top_left.x() >= 0 and top_left.y() >= 0
             assert top_left.x() + widget.width() <= window.width()
             assert top_left.y() + widget.height() <= window.height()
         for label in (terms.workflow.title, terms.workflow.detail, terms.content_context):
-            assert label.height() >= label.heightForWidth(label.width())
+            if label.isVisibleTo(window):
+                assert label.height() >= label.heightForWidth(label.width())
         assert not terms.review_button.geometry().intersects(terms.attention_button.geometry())
     window.workspace.set_current_index(1)
     settle_layout(layout_app)

@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.application.terminology_profiles import TerminologyProfileImportPolicy
 from transbridge.application.terminology_profiles.import_preview import import_preview_rows
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
 
@@ -41,7 +42,8 @@ class TerminologySourceImportDialog(QDialog):
         layout = QVBoxLayout(self)
 
         explanation = QLabel(
-            "仅匹配项目已发布的有效术语，创建为独立副本，不随外部来源自动更新。"
+            "有效术语将完整写入新方案，来源新增术语仅在选用此方案时生效。"
+            "创建为独立副本，不随外部来源自动更新，也不修改项目基础术语或其他方案。"
             "搜索和筛选只影响预览；创建时会保存全部方案映射。",
             self,
         )
@@ -56,6 +58,11 @@ class TerminologySourceImportDialog(QDialog):
         source_label.setCursorPosition(0)
         ComponentStyle.apply_static(source_label, ComponentKind.INPUT)
         form.addRow("外部来源", source_label)
+        policy_label = QLabel(
+            "保留已有译名" if preview.policy is TerminologyProfileImportPolicy.KEEP_EXISTING else "采用导入译名", self
+        )
+        policy_label.setAccessibleName("本次导入的批量处理方式")
+        form.addRow("同名术语处理", policy_label)
         self.name_edit = QLineEdit(default_name, self)
         self.name_edit.setAccessibleName("新译名方案名称")
         ComponentStyle.apply_static(self.name_edit, ComponentKind.INPUT)
@@ -76,7 +83,7 @@ class TerminologySourceImportDialog(QDialog):
         self.result_filter = QComboBox(self)
         self.result_filter.setAccessibleName("按导入处理结果筛选")
         self.result_filter.addItem("全部结果", "all")
-        self.result_filter.addItem("需要检查", "problems")
+        self.result_filter.addItem("来源重复（已按策略处理）", "problems")
         for outcome, label in OUTCOME_LABELS.items():
             self.result_filter.addItem(label, outcome.value)
         filters.addWidget(self.result_filter)
@@ -144,13 +151,12 @@ class TerminologySourceImportDialog(QDialog):
 
     def _summary_text(self) -> str:
         preview = self.preview
-        adopted = preview.matched_term_count - preview.conflict_count
-        kept = preview.base_mapping_count - adopted
         return (
             f"读取 {preview.source_entry_count} 条（{preview.source_term_count} 个术语）；"
-            f"采用来源译名 {adopted} 条映射，保持项目默认译名 {kept} 条映射；"
-            f"冲突或作用域不明确 {preview.conflict_count} 个原词，"
-            f"来源独有且未导入 {preview.source_only_term_count} 个。"
+            f"新增 {preview.source_only_term_count} 条术语，覆盖已有译名 {preview.overwritten_mapping_count} 条，"
+            f"保留已有译名 {preview.kept_mapping_count} 条；"
+            f"采用来源译名共 {preview.adopted_mapping_count} 条映射。"
+            f"{preview.conflict_count} 个同名译名差异已按批量策略处理。"
             f"合并完全重复记录 {preview.duplicate_entry_count} 条。"
         )
 
@@ -176,8 +182,7 @@ class TerminologySourceImportDialog(QDialog):
     def _update_count(self) -> None:
         self.count_label.setText(
             f"显示 {self.filtered.rowCount()} / {self.model.rowCount()} 项；"
-            f"包含 {self.preview.base_mapping_count} 条方案映射"
-            f"和 {self.preview.source_only_term_count} 个来源独有术语。"
+            f"创建时保存全部 {self.preview.mapping_count} 条方案映射。"
         )
 
     def _search_status(self, pending, error) -> None:

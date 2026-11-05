@@ -10,10 +10,11 @@ from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.persistence.v2.variant import SourceBaseline, SourceFingerprint, VariantEntryState
 
 from .provisioning_models import PreparedProjectSource, PreparedSourceHydration
+from .source_terminology_scope import scoped_source_entries
 
 
 def prepare_parsed_source(path, entries, snapshot, format_id, options=(), *, role="primary", diagnostics=()):
-    entries = tuple(entries)
+    entries = scoped_source_entries(entries, format_id, str(path))
     namespaces = {entry.identity.namespace for entry in entries}
     if len(namespaces) > 1:
         raise ValueError("来源没有唯一的内容身份。")

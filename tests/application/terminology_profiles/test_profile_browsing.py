@@ -66,18 +66,18 @@ def test_profile_mapping_states_match_ai_and_preserve_plugin_scope():
     assert rows["Solitude", None].state is ProfileMappingState.UNMAPPED
     assert rows["Inactive", None].state is ProfileMappingState.BASE_INACTIVE
     assert rows["Excluded", None].state is ProfileMappingState.BASE_INACTIVE
-    assert rows["Only in profile", None].state is ProfileMappingState.BASE_MISSING
+    assert rows["Only in profile", None].state is ProfileMappingState.EFFECTIVE
     assert rows["Only in profile", None].base_translation == ""
     assert rows["Solitude", None].translation == ""
     assert rows["Whiterun", None].base_translation == "雪漫城"
     effective = TerminologyBrowseQueries(SimpleNamespace(active_draft=lambda *args: None), reader).list_effective_terms(
         TermBrowseQuery("project-1", "variant-1")
     )
-    assert {item.translation for item in effective.items} == {"白漫城", "插件独孤"}
+    assert {item.translation for item in effective.items} == {"白漫城", "插件独孤", "孤立映射"}
     assert context.diagnostics == ai.diagnostics
 
 
-def test_unpublished_base_explains_all_mappings_without_enabling_them():
+def test_actual_profile_mappings_remain_effective_without_a_base_version():
     profiles = _profile_service()
     _select(profiles, (ProfileTermMapping(f"Term {index}", f"译名 {index}") for index in range(601)))
     base = SimpleNamespace(
@@ -90,9 +90,9 @@ def test_unpublished_base_explains_all_mappings_without_enabling_them():
     reader = ProfiledTerminologyBrowseSnapshotPort(base, profiles)
     context = reader.describe("project-1", "variant-1")
     assert len(context.mapping_rows) == 601
-    assert all(row.state is ProfileMappingState.BASE_MISSING for row in context.mapping_rows)
+    assert all(row.state is ProfileMappingState.EFFECTIVE for row in context.mapping_rows)
     assert context.base_version_id is None
-    assert context.effective_snapshot.decisions == ()
+    assert len(context.effective_snapshot.decisions) == 601
 
 
 def test_default_profile_context_uses_base_decisions_and_has_no_mapping_rows():
@@ -116,8 +116,12 @@ def test_profile_change_invalidates_effective_cursor_even_when_translations_are_
         profiles.publish(profile.profile_id, expected_draft_revision=0)
     else:
         profiles.clear_selection("project-1", "variant-1")
-    with pytest.raises(CursorStaleError):
-        browsing.list_effective_terms(query, PageRequest(cursor=first.next_cursor))
+    if change == "selection":
+        with pytest.raises(CursorStaleError):
+            browsing.list_effective_terms(query, PageRequest(cursor=first.next_cursor))
+    else:
+        second = browsing.list_effective_terms(query, PageRequest(cursor=first.next_cursor))
+        assert len(second.items) == 1
 
 
 def test_unreadable_base_does_not_claim_that_the_profile_mappings_are_missing():

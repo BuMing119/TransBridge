@@ -72,8 +72,8 @@ def test_frozen_write_projection_is_stable_after_current_selection_changes() -> 
     projected_a, _ = frozen_a.project_entries((common,))
     projected_b, _ = source.freeze("project-1", "variant-1").project_entries((common,))
 
-    assert projected_a[0].translation == "前往白漫"
-    assert projected_b[0].translation == "前往雪漫城"
+    assert projected_a[0].translation == "前往雪漫"
+    assert projected_b[0].translation == "前往雪漫"
     assert common.translation == "前往雪漫"
     assert frozen_a.metadata[0] == ("terminology_profile_id", profile_a)
     assert dict(frozen_a.metadata)["base_terminology_version"] == "base-1"
@@ -93,7 +93,7 @@ def test_unselected_write_projection_returns_original_entries() -> None:
     assert diagnostics == ()
 
 
-def test_missing_mapping_keeps_entire_entry_common_and_reports_it() -> None:
+def test_exporting_actual_body_does_not_reinterpret_missing_mappings() -> None:
     service = _service()
     profile_id = _published(service, "A", "白漫")
     service.select("project-1", "variant-1", profile_id)
@@ -125,4 +125,4 @@ def test_missing_mapping_keeps_entire_entry_common_and_reports_it() -> None:
     projected, diagnostics = frozen.project_entries((entry,))
 
     assert projected[0].translation == entry.translation
-    assert {item.code for item in diagnostics} == {"profile_mapping_missing"}
+    assert diagnostics == ()

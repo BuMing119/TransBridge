@@ -212,11 +212,11 @@ def test_publish_switch_and_archive_refresh_profile_browse(storage, external) ->
             expected_revision=0,
         )
         writer.publish(profile.profile_id, expected_draft_revision=saved.draft_revision)
-        assert browsing.list_effective_terms(query).items[0].translation == "古龙"
+        assert browsing.list_effective_terms(query).items[0].translation == "巨龙"
         other = _profile(writer, "方案 B", "飞龙")
         assert browsing.list_effective_terms(query).items[0].translation == "飞龙"
         writer.archive(other.profile_id, expected_selections=writer.list_profile_selections(other.profile_id))
-        assert browsing.list_effective_terms(query).items[0].translation == "龙"
+        assert browsing.list_effective_terms(query).items[0].translation == "飞龙"
     finally:
         if connection is not None:
             connection.close()

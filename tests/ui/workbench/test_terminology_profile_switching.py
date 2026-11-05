@@ -17,6 +17,7 @@ from transbridge.application.terminology_profiles import (
     ProfileTermMapping,
     PublishedTerminologyProfile,
     TerminologyProfileContent,
+    TerminologyProfileImportPolicy,
     TerminologyProfileService,
     TerminologySourceEntry,
     TerminologySourceSnapshot,
@@ -51,7 +52,7 @@ class _Preview(QWidget):
         super().__init__()
         self.profile = None
 
-    def set_terminology_profile(self, profile, *, base_snapshot=None) -> None:
+    def set_terminology_profile(self, profile, *, base_snapshot=None, source_profile=None) -> None:
         self.profile = profile
         self.base_snapshot = base_snapshot
 
@@ -120,7 +121,7 @@ def _service_with_profile() -> tuple[TerminologyProfileService, str]:
     return service, profile.profile_id
 
 
-def test_controller_lists_only_published_profiles_and_persists_selection() -> None:
+def test_controller_previews_without_persistence_and_ai_keeps_actual_scheme() -> None:
     service, profile_id = _service_with_profile()
     service.create("project-a", "未发布草稿")
     context = _ProfileContext()
@@ -145,18 +146,19 @@ def test_controller_lists_only_published_profiles_and_persists_selection() -> No
     ai_controls.naming_scheme_status_label = QLabel()
     refreshes = []
     binding = AiNamingSchemeBinding(controller, ai_controls, lambda: refreshes.append(True))
-    assert ai_controls.naming_scheme_combo.currentText() == "保持当前译名"
+    assert ai_controls.naming_scheme_combo.currentText() == "使用项目默认译名"
 
     ai_controls.naming_scheme_combo.setCurrentIndex(1)
     assert "正在切换" in ai_controls.naming_scheme_status_label.text()
     assert refreshes == []
     wait_profile(controller)
     selected = service.selected_revision("project-a", "variant-a")
-    assert selected is not None and selected.profile_id == profile_id
-    assert preview.profile == selected
+    assert selected is None
+    assert preview.profile == service.published_revision(profile_id, 1)
     assert bar.combo.currentData() == profile_id
-    assert "本次采用“官中”" in ai_controls.naming_scheme_status_label.text()
-    assert refreshes == [True]
+    assert "AI 任务仍使用“项目默认译名”" in ai_controls.naming_scheme_status_label.text()
+    assert binding.summary_label == "保持当前译名"
+    assert refreshes == []
 
     bar.combo.setCurrentIndex(0)
     wait_profile(controller)
@@ -186,8 +188,8 @@ def test_failed_switch_retains_exact_published_rows_and_exposes_failure(monkeypa
     def fail(*_args):
         raise PermissionError("文件只读")
 
-    monkeypatch.setattr(service, "clear_selection", fail)
-    controller.select(None)
+    monkeypatch.setattr(service, "published_revision", fail)
+    controller.select(profile_id)
     wait_profile(controller)
 
     assert controller.state.selected_revision == original
@@ -234,7 +236,7 @@ def test_controller_creates_published_scheme_from_source_without_selecting_it() 
         (TerminologySourceEntry("Whiterun", "白漫城"),),
     )
 
-    preview = controller.preview_source_import(source)
+    preview = controller.preview_source_import(source, policy=TerminologyProfileImportPolicy.USE_IMPORTED)
     result = controller.create_from_source_import("白漫方案", preview)
     wait_profile(controller)
 
@@ -253,6 +255,60 @@ def test_controller_creates_published_scheme_from_source_without_selecting_it() 
     )
     with pytest.raises(RuntimeError, match="发生了变化"):
         controller.create_from_source_import("过期方案", preview)
+    controller.deleteLater()
+    bar.close()
+    view.close()
+
+
+@pytest.mark.parametrize("status", [EffectiveSnapshotStatus.NO_PROJECT_VERSION, EffectiveSnapshotStatus.READY])
+def test_source_import_works_without_any_published_base_terms(status):
+    service = TerminologyProfileService(InMemoryTerminologyProfileRepository())
+    base = EffectiveTerminologySnapshot(
+        "project-a",
+        "variant-a",
+        status,
+        version_id="empty-v1" if status is EffectiveSnapshotStatus.READY else None,
+        content_digest="e" * 64 if status is EffectiveSnapshotStatus.READY else None,
+    )
+    context, bar, view = _ProfileContext(), TerminologyProfileBar(), _Preview()
+    factory = _Factory(service, base)
+    controller = TerminologyProfileUiController(context, factory, bar, view)
+    wait_profile(controller)
+    source = TerminologySourceSnapshot.capture("json", "本地 JSON", (TerminologySourceEntry("Riverwood", "河木镇"),))
+    preview = controller.preview_source_import(source)
+    assert preview.policy is TerminologyProfileImportPolicy.KEEP_EXISTING
+    assert preview.source_only_term_count == 1
+    result = controller.create_from_source_import("独有术语", preview, select=True)
+    wait_profile(controller)
+    assert result.selection is None
+    assert service.selected_revision("project-a", "variant-a") is None
+    assert result.published.content.mappings[0].scheme_owned
+    assert result.published.content.mappings[0].translation == "河木镇"
+    assert factory.base_snapshot is base and base.decisions == ()
+    assert view.profile == result.published
+    controller.deleteLater()
+    bar.close()
+    view.close()
+
+
+@pytest.mark.parametrize("status", [EffectiveSnapshotStatus.UNAVAILABLE, EffectiveSnapshotStatus.CORRUPT])
+def test_source_import_rejects_unreadable_base_even_after_valid_preview(status):
+    service = TerminologyProfileService(InMemoryTerminologyProfileRepository())
+    base = EffectiveTerminologySnapshot("project-a", "variant-a", EffectiveSnapshotStatus.NO_PROJECT_VERSION)
+    context, bar, view = _ProfileContext(), TerminologyProfileBar(), _Preview()
+    factory = _Factory(service, base)
+    controller = TerminologyProfileUiController(context, factory, bar, view)
+    wait_profile(controller)
+    source = TerminologySourceSnapshot.capture("json", "本地 JSON", (TerminologySourceEntry("Riverwood", "河木镇"),))
+    preview = controller.preview_source_import(source)
+    factory.base_snapshot = EffectiveTerminologySnapshot(
+        "project-a", "variant-a", status, diagnostics=("无法读取术语",)
+    )
+    with pytest.raises(ValueError):
+        controller.preview_source_import(source)
+    with pytest.raises(RuntimeError, match="不可读取"):
+        controller.create_from_source_import("不能创建", preview)
+    assert service.list_profiles("project-a") == ()
     controller.deleteLater()
     bar.close()
     view.close()
@@ -310,7 +366,7 @@ def test_profile_switch_projects_read_only_text_without_mutating_common_entry(mo
     wait_preview(widget)
     item = widget._table.model().index(0, COL_TRANSLATION)
     assert item.data(Qt.ItemDataRole.DisplayRole) == "龙来了"
-    assert "无法安全定位" in item.data(Qt.ItemDataRole.ToolTipRole)
+    assert widget._terminology_projection[entry.identity.serialize()].diagnostics == ()
 
     widget.set_terminology_profile(None)
     _APP.processEvents()
@@ -369,17 +425,56 @@ def test_name_only_publication_refreshes_selector_current_description_and_previe
     service.rename(profile_id, "新名称")
     controller.refresh()
     wait_profile(controller)
-    assert bar.combo.currentText() == "新名称（名称未发布）"
+    assert bar.combo.currentText() == "官中（当前翻译版本）"
     review = service.preview_publication(
         profile_id, historical.content, expected_revision=1, target_variant_id="variant-a"
     )
     service.publish_reviewed(review)
     controller.refresh()
     wait_profile(controller)
-    assert bar.combo.currentText() == "新名称"
-    assert "新名称" in controller.state.detail
-    assert "官中" not in controller.state.detail
-    assert preview.profile.name == "新名称"
+    assert bar.combo.currentText() == "官中（当前翻译版本）"
+    assert "官中" in controller.state.detail
+    assert preview.profile == historical
+    assert controller.state.applied_revision == historical
     assert service.published_revision(profile_id, 1).name == "官中"
     bar.close()
     preview.close()
+
+
+def test_full_workbench_preview_survives_filtering_and_returns_to_editable_actual_body(monkeypatch):
+    monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
+    entries = tuple(
+        TranslationEntry(
+            str(index),
+            str(index),
+            "Dragon arrives",
+            f"巨龙来了 {index}",
+            1,
+            None,
+            form_id_with_plugin=f"{index:08x}|{('A.esm' if index % 2 else 'B.esm')}",
+        )
+        for index in range(300)
+    )
+    widget = Step2PreviewWidget(context_module.AppContext())
+    widget.refresh(TranslationEntryCollection(entries))
+    actual, target = _published("A", "A", "巨龙"), _published("B", "B", "神龙")
+    widget.set_terminology_profile(target, source_profile=actual)
+    wait_preview(widget)
+    assert len(widget._terminology_projection) == len(entries)
+    assert all(
+        widget._terminology_projection[item.identity.serialize()].translation == f"神龙来了 {index}"
+        for index, item in enumerate(entries)
+    )
+    monkeypatch.setattr(widget._filters_presenter, "apply", lambda *_: entries[-1:])
+    widget._populate_table()
+    _APP.processEvents()
+    assert widget.filtered_entries() == entries[-1:]
+    assert len(widget._terminology_projection) == 300
+    assert widget._table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "神龙来了 299"
+    widget.set_terminology_profile(actual, source_profile=actual)
+    _APP.processEvents()
+    item = widget._table.model().index(0, COL_TRANSLATION)
+    assert item.data(Qt.ItemDataRole.DisplayRole) == "巨龙来了 299"
+    assert item.flags() & Qt.ItemFlag.ItemIsEditable
+    assert all(entry.translation == f"巨龙来了 {index}" for index, entry in enumerate(entries))
+    widget.close()

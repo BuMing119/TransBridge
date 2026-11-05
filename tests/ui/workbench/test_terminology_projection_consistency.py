@@ -86,15 +86,22 @@ def test_preview_and_write_share_fallback_diagnostics_and_override_priority(monk
     frozen = TerminologyProfileWriteProjectionSource(
         lambda _project: service, base_snapshot_for=lambda _project, _variant: base
     ).freeze("project", "variant")
+    frozen = replace(frozen, source_profile=None)
     written, diagnostics = frozen.project_entries((entry,))
     preview = widget._terminology_projection[entry.identity.serialize()]
 
-    expected = "Complete override" if override else entry.translation
+    expected = (
+        "Complete override"
+        if override
+        else "NewWhiterun and OldSolitude"
+        if base_state == "ready"
+        else entry.translation
+    )
     assert preview.translation == written[0].translation == expected
     assert widget._table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == expected
     assert preview.diagnostics == diagnostics
     assert preview.used_override == override
-    assert bool(diagnostics) is not override
+    assert bool(diagnostics) is (not override and base_state != "ready")
     assert entry.translation == "OldWhiterun and OldSolitude"
     widget.close()
 
@@ -115,7 +122,6 @@ def test_controller_supplies_base_and_refreshes_unchanged_profile_when_base_chan
         TerminologyProfileContent((ProfileTermMapping("Whiterun", "NewWhiterun", "OldWhiterun"),)),
     )
     service.publish(profile.profile_id, expected_draft_revision=0)
-    service.select("project", "variant", profile.profile_id)
     base = _base(extra=False)
     factory = SimpleNamespace(
         profile_service_for=lambda _project: service,
@@ -127,6 +133,8 @@ def test_controller_supplies_base_and_refreshes_unchanged_profile_when_base_chan
     bar = TerminologyProfileBar()
     controller = TerminologyProfileUiController(Context(), factory, bar, widget)
     wait_profile(controller)
+    controller.select(profile.profile_id)
+    wait_profile(controller)
     wait_preview(widget)
     assert widget._terminology_projection[entry.identity.serialize()].translation == "NewWhiterun and OldSolitude"
 
@@ -136,7 +144,7 @@ def test_controller_supplies_base_and_refreshes_unchanged_profile_when_base_chan
     wait_preview(widget)
 
     result = widget._terminology_projection[entry.identity.serialize()]
-    assert result.translation == entry.translation
-    assert [diagnostic.code for diagnostic in result.diagnostics] == ["profile_mapping_missing"]
+    assert result.translation == "NewWhiterun and OldSolitude"
+    assert result.diagnostics == ()
     widget.close()
     bar.close()

@@ -34,7 +34,7 @@ def translation_cell_text(
             if bool(getattr(projected, "is_derived", False))
             else "此条无需调整"
         )
-        note = f"{profile_label or '当前译名方案'} · {status}。如需编辑正文，请选择“使用项目默认译名”。"
+        note = f"{profile_label or '当前译名方案'} · {status}。切回当前翻译版本的译名方案可编辑正文。"
         details = [str(item.message) for item in diagnostics[:3]]
         tooltip = "\n\n".join(part for part in (text, note, "\n".join(details)) if part)
     return text or "（无译文）", full_text_tooltip(tooltip)
