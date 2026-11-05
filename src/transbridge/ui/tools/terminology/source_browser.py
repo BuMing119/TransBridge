@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, WrappingLabel
 
 from .async_row_filter import AsyncRowFilter
 from .filtered_rows_model import FilteredRowsModel
@@ -116,8 +116,7 @@ class SourceBrowser(QWidget):
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         ComponentStyle.apply_static(self.table, ComponentKind.TABLE)
         layout.addWidget(self.table, 1)
-        self.status = QLabel("使用项目默认译名，没有方案映射。", self)
-        self.status.setTextFormat(Qt.TextFormat.PlainText)
+        self.status = WrappingLabel("使用项目默认译名，没有方案映射。", self)
         self.status.setProperty("tbSecondary", True)
         layout.addWidget(self.status)
         self._empty_text = self.status.text()

@@ -35,6 +35,7 @@ from transbridge.ui.foundation.components import (
     ComponentStyle,
     ElidedLabel,
     SemanticState,
+    WrappingLabel,
     make_primary_button,
 )
 from transbridge.ui.foundation.tabler_icons import tabler_icon
@@ -215,9 +216,7 @@ class StartCenterWidget(QWidget):
         header.addStretch(1)
         layout.addLayout(header)
         form = QFormLayout()
-        self._source_label = QLabel(page)
-        self._source_label.setWordWrap(True)
-        self._source_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._source_label = WrappingLabel(parent=page)
         self._source_list = QListWidget(page)
         self._source_list.setAccessibleName("已选择的插件")
         self._source_list.setMaximumHeight(144)
@@ -260,13 +259,11 @@ class StartCenterWidget(QWidget):
         advanced_layout.addWidget(self._skip_empty)
         layout.addWidget(advanced)
 
-        self._draft_summary = QLabel(page)
-        self._draft_summary.setWordWrap(True)
+        self._draft_summary = WrappingLabel(parent=page)
         self._draft_summary.setAccessibleName("工程创建方案摘要")
         ComponentStyle.apply_static(self._draft_summary, ComponentKind.NOTIFICATION)
         layout.addWidget(self._draft_summary)
-        self._draft_error = QLabel(page)
-        self._draft_error.setWordWrap(True)
+        self._draft_error = WrappingLabel(parent=page)
         self._draft_error.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._draft_error.setAccessibleName("工程创建错误")
         ComponentStyle.apply_static(self._draft_error, ComponentKind.NOTIFICATION)

@@ -22,7 +22,13 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState, configure_dialog
+from transbridge.ui.foundation.components import (
+    ComponentKind,
+    ComponentStyle,
+    SemanticState,
+    WrappingLabel,
+    configure_dialog,
+)
 from transbridge.ui.operations.categorized_upload_progress import LatestProgress
 from transbridge.ui.workers import ApiWorker
 
@@ -107,9 +113,7 @@ class CategorizedUploadDialog(QDialog):
     def _build_widgets(self, project: str, variant: str, target: str) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 18, 20, 18)
-        self._scope = QLabel(f"当前工程：{project}  ·  翻译版本：{variant}\nParaTranz 项目：{target}", self)
-        self._scope.setTextFormat(Qt.TextFormat.PlainText)
-        self._scope.setWordWrap(True)
+        self._scope = WrappingLabel(f"当前工程：{project}  ·  翻译版本：{variant}\nParaTranz 项目：{target}", self)
         root.addWidget(self._scope)
         root.addWidget(
             QLabel(
@@ -135,8 +139,7 @@ class CategorizedUploadDialog(QDialog):
         self._files.setAccessibleName("选择分类上传文件")
         self._files.itemChanged.connect(self._files_changed)
         root.addWidget(self._files, 1)
-        self._summary = QLabel("尚未读取分类", self)
-        self._summary.setWordWrap(True)
+        self._summary = WrappingLabel("尚未读取分类", self)
         root.addWidget(self._summary)
         self._mode = QComboBox(self)
         for label, value in (
@@ -149,9 +152,7 @@ class CategorizedUploadDialog(QDialog):
         self._mode.setAccessibleName("文件上传内容与覆盖策略")
         self._mode.setToolTip("译文导入需要 ParaTranz 项目管理员以上权限。")
         root.addWidget(self._mode)
-        self._status = QLabel("正在读取当前工程的插件和分类…", self)
-        self._status.setTextFormat(Qt.TextFormat.PlainText)
-        self._status.setWordWrap(True)
+        self._status = WrappingLabel("正在读取当前工程的插件和分类…", self)
         ComponentStyle.apply_static(self._status, ComponentKind.NOTIFICATION)
         root.addWidget(self._status)
         self._details = QPlainTextEdit(self)

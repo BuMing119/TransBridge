@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 from transbridge.translation_memory import TranslationMemoryManager
+from transbridge.ui.foundation.components import WrappingLabel
 
 
 class DictionaryPanel(QDialog):
@@ -89,7 +90,7 @@ class DictionaryPanel(QDialog):
         layout.addWidget(self._table)
 
         # 状态栏文字
-        self._status = QLabel("")
+        self._status = WrappingLabel()
         layout.addWidget(self._status)
 
     def _build_share_buttons(self) -> QHBoxLayout:

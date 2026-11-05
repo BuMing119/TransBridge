@@ -19,7 +19,13 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState, configure_dialog
+from transbridge.ui.foundation.components import (
+    ComponentKind,
+    ComponentStyle,
+    SemanticState,
+    WrappingLabel,
+    configure_dialog,
+)
 from transbridge.ui.workers import ApiWorker
 
 from .batch_download_view import DownloadPreview, DownloadReceipt, DownloadSourceOption
@@ -78,9 +84,7 @@ class BatchDownloadDialog(QDialog):
     def _build_widgets(self, project: str, variant: str, target: str) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 18, 20, 18)
-        scope = QLabel(f"当前工程：{project}  ·  翻译版本：{variant}\nParaTranz 项目：{target}", self)
-        scope.setTextFormat(Qt.TextFormat.PlainText)
-        scope.setWordWrap(True)
+        scope = WrappingLabel(f"当前工程：{project}  ·  翻译版本：{variant}\nParaTranz 项目：{target}", self)
         root.addWidget(scope)
         notice = QLabel(
             "选择插件后下载并保存译文。分歧可在本轮确认，关闭后清理下载数据，再次下载会重新读取云端。", self
@@ -111,12 +115,9 @@ class BatchDownloadDialog(QDialog):
         self._policy.setAccessibleName("下载译文更新策略")
         self._policy.currentIndexChanged.connect(self._invalidate)
         root.addWidget(self._policy)
-        self._summary = QLabel("正在读取工程插件…", self)
-        self._summary.setWordWrap(True)
+        self._summary = WrappingLabel("正在读取工程插件…", self)
         root.addWidget(self._summary)
-        self._status = QLabel("正在读取工程插件…", self)
-        self._status.setTextFormat(Qt.TextFormat.PlainText)
-        self._status.setWordWrap(True)
+        self._status = WrappingLabel("正在读取工程插件…", self)
         ComponentStyle.apply_static(self._status, ComponentKind.NOTIFICATION)
         root.addWidget(self._status)
         self._details = QPlainTextEdit(self)

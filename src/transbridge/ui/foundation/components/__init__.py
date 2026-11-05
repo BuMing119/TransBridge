@@ -11,6 +11,8 @@ from enum import StrEnum
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog, QFrame, QLabel, QPushButton, QSizePolicy, QWidget
 
+from .wrapping_label import WrappingLabel
+
 
 class ComponentKind(StrEnum):
     BUTTON = "button"
@@ -220,6 +222,7 @@ __all__ = [
     "SemanticState",
     "StatusBadge",
     "ThemedCard",
+    "WrappingLabel",
     "configure_dialog",
     "make_primary_button",
     "reserve_text_width",

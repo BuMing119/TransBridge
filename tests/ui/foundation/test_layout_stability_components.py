@@ -4,11 +4,47 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QPushButton
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QPushButton, QVBoxLayout, QWidget
+import pytest
 
-from transbridge.ui.foundation.components import ElidedLabel, reserve_text_width
+from tests.ui.responsive_layout_support import settle_layout, themed_layout_app as themed_layout_app
+from transbridge.ui.foundation.components import ElidedLabel, WrappingLabel, reserve_text_width
 
 _APP = QApplication.instance() or QApplication([])
+
+
+@pytest.mark.parametrize("text", ["FileName" * 25, "<b>literal path</b>" + "X" * 200, "目录" * 100])
+def test_wrapping_label_preserves_text_and_allocates_height_without_widening_window(layout_app, text):
+    view = QWidget()
+    layout = QVBoxLayout(view)
+    label = WrappingLabel("short", view)
+    layout.addWidget(label)
+    layout.addStretch()
+    view.resize(400, 400)
+    view.show()
+    try:
+        settle_layout(layout_app)
+        minimum = view.minimumSizeHint().width()
+        label.setText(text)
+        settle_layout(layout_app)
+        assert view.width() == 400
+        assert view.minimumSizeHint().width() == minimum
+        heights = []
+        for width in (400, 250, 600):
+            view.resize(width, 400)
+            settle_layout(layout_app)
+            assert view.width() == width
+            assert label.text() == text
+            assert label.textFormat() == Qt.TextFormat.PlainText
+            assert label.height() >= label.heightForWidth(label.width())
+            heights.append(label.heightForWidth(label.width()))
+        assert heights[1] > heights[2]
+        label.setText("short")
+        settle_layout(layout_app)
+        assert label.heightForWidth(label.width()) < heights[1]
+    finally:
+        view.close()
 
 
 def test_elided_label_keeps_full_text_without_contributing_a_variable_minimum_width() -> None:

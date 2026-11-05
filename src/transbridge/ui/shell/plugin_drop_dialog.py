@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QVBoxLayout
+from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QVBoxLayout
 
-from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, configure_dialog
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, WrappingLabel, configure_dialog
 
 
 class PluginDropDialog(QDialog):
@@ -16,13 +15,9 @@ class PluginDropDialog(QDialog):
         self.setAccessibleName("插件拖放项目选择")
         self.choice: str | None = None
         layout = QVBoxLayout(self)
-        self.summary = QLabel(f"插件：{path}\n当前项目：{project_name}", self)
-        self.summary.setTextFormat(Qt.TextFormat.PlainText)
-        self.summary.setWordWrap(True)
+        self.summary = WrappingLabel(f"插件：{path}\n当前项目：{project_name}", self)
         layout.addWidget(self.summary)
-        self.notice = QLabel(add_unavailable or "选择将插件加入当前项目，或用它创建一个新项目。", self)
-        self.notice.setTextFormat(Qt.TextFormat.PlainText)
-        self.notice.setWordWrap(True)
+        self.notice = WrappingLabel(add_unavailable or "选择将插件加入当前项目，或用它创建一个新项目。", self)
         layout.addWidget(self.notice)
         buttons = QDialogButtonBox(self)
         self.add_button = buttons.addButton("加入当前项目", QDialogButtonBox.ButtonRole.ActionRole)

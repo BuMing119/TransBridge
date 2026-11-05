@@ -31,6 +31,7 @@ from transbridge.ui.foundation.components import (
     ComponentStyle,
     ElidedLabel,
     SemanticState,
+    WrappingLabel,
     reserve_text_width,
 )
 from transbridge.ui.workers import ApiWorker
@@ -101,7 +102,7 @@ class ParaTranzTargetDialog(QDialog):
         self._list = QListWidget(self)
         self._list.itemDoubleClicked.connect(lambda _item: self.accept())
         layout.addWidget(self._list, 1)
-        self._status = QLabel("正在加载我的项目…", self)
+        self._status = WrappingLabel("正在加载我的项目…", self)
         layout.addWidget(self._status)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText(confirmation_text or "绑定到当前工程")
