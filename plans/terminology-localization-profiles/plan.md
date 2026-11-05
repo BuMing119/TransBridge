@@ -3,14 +3,16 @@
 **对应需求**: FR5.18
 **架构决策**: ADR-039
 **技术模块**: application + persistence + bootstrap + ai_translator + ui + io
-**状态**: 已完成（2026-09-06）
+**状态**: Story 01～10 本地实现与 QA 已完成；Story 11～13 行为已确认、实现契约提议，本地实现与相关 QA 完成（2026-11-05）
 **创建日期**: 2026-09-06
 
 ## 目标与边界
 
-让同一个 Project/Variant 只维护一份项目译文，同时按目标场景选择独立的译名方案。方案可承载本体汉化、地区/社群译名、团队/发行规范、系列旧译/新译与整合包约定；切换只改变预览、AI 术语约束、质量检查与导出的适配结果，不改写项目译文，也不借用 Project Variant 表示术语差异。
+同一 Project 支持两种工作方式：只维护 A 正文、临时预览/导出 B，或显式保存独立 B Variant 后分别维护。现有 Variant→profile/revision 关联唯一表示实际保存正文的方案，预览目标只在会话中存在。方案切换不改正文、不创建 Variant，AI 只依据当前实际 Variant 方案。
 
-首版提供项目内术语版本的创建、复制、重命名、归档、发布与快速切换；允许每个逻辑术语在不同版本中保存不同目标译名，并通过明确绑定或唯一可证明的历史识别生成结果。普通中文全文替换、不同模组译文分叉、远端 ParaTranz 多分支发布和自动推断歧义术语不在本轮范围。
+本轮按共同术语 original+scope 从实际 A 译名转换为 B，仅当词条 original 命中相应术语时替换中文 translation，重复出现正常全部替换；无变化跳过，original 不变。不增加第二持久选择、不要求复杂人工绑定、不自动同步 A/B，不改导入、上传或错误词库/特殊占位符防御性规则。
+
+Story 01～10 是已完成实施历史，其当时的持久预览选择、唯一位置识别、AI 共享选择等验收由本次 FR5.18、ADR-039 与 Story 11～13 替代；保留历史记录，不重新将旧功能标为未实施。
 
 ## Story 01：领域契约与版本化存储
 
@@ -98,6 +100,8 @@
 
 ## Story 08：从单个术语来源创建译名方案
 
+**历史范围**: 本节记录已完成的首版；外部来源的全量导入、冲突策略与无底板行为由 Story 10 修订，当前要求以 FR5.18.25 为准。
+
 **依赖**: Story 01、Story 03、Story 07
 **主要落点**: `src/transbridge/application/terminology_profiles/importing.py`、`src/transbridge/ai_translator/term_database.py`、`src/transbridge/ui/tools/ai_translator/`、`src/transbridge/ui/tools/terminology_profiles/`
 
@@ -122,10 +126,147 @@
 - [x] 精简运行入口在缺少方案服务时显示不可用状态，不影响既有术语构建、版本和报告页面
 - [x] 补充入口归属、来源发现、切换和跳转回归，并通过相关 pytest 与 Ruff 检查
 
+## Story 10：外部来源完整导入与整批译名冲突策略
+
+**状态**: 本地实现与独立 QA 完成（2026-11-04）；技术设计记录为草稿，需求范围已确认
+**依赖**: Story 03、Story 08、Story 09
+**对应需求与决策**: FR5.18.25、ADR-039 第 2、6、10 节修订
+
+### 目标、当前事实与非目标
+
+用户从外部来源创建新方案时，两种策略均导入全部有效新词；已存在同键译名由“保留已有译名”（默认）或“采用导入译名”统一处理。创建和选择不修改底板、其他方案或正文。
+
+实施前 `importing.py` 仅遍历底板有效决定，来源独有词被计数但丢弃；`effective.py` 仅投影底板决定；`browse_queries.py` 把所有无底板映射标为 `BASE_MISSING`。导入控制器和应用服务均拒绝无底板，组合版本编码也不能表达固定的空底板。旧数据及测试明确要求孤立旧映射不自动生效，因此只扩大遍历范围不足以实现兼容修改。
+
+本轮不自动继承以后发布的底板、不重做所有术语问题、不增加逐词冲突决定、不直接修改既有方案、不改变“基于项目术语创建方案”的入口要求，也不实现来源直连或自动同步。正文自动适配仍受历史译名与位置证据约束。
+
+### 实施步骤与文件归属
+
+1. **建立独立词权威与兼容持久化**：在 `application/terminology_profiles/models.py` 增加显式独立标记，默认关闭。无该标记的序列化与摘要维持旧格式；新标记参与内容摘要。更新 `persistence/terminology/profiles.py` 的严格读取，必要时将完整内容编码职责提取为 `profile_content_codec.py`，避免继续扩大已接近 500 行的仓储模块。复制、发布、编辑往返均保留标记。
+2. **完整导入与统一策略**：在 `importing.py` 和 `import_preview.py` 增加两种策略、作用域逻辑键、固定顺序的重复处理和新增/覆盖/保留结果。保留创建时有效底板骨架；两种策略均增加来源新词。`ai_translator/term_source_reader.py` 只保留可信结构化作用域，普通无作用域来源归 project，不猜测同名插件身份。来源摘要覆盖顺序、作用域和译名。无版本/空版本允许导入，损坏或不可用版本拒绝导入。
+3. **生效查询、冻结与输出边界**：在 `effective.py` 只为显式独立且底板不存在的映射派生稳定有效决定，不复活底板抑制项；在 `browse_queries.py` 区分独立有效词与旧孤立映射。组合引用精确表示“无底板”，恢复不得跟随之后的新版本。验证 `entry_projection.py`、`projection.py`、`write_projection.py` 与 AI 运行快照边界；不以原文或来源译名伪造历史译名证据。
+4. **用户入口与只读预览**：在 `ui/tools/terminology_profiles/source_picker_dialog.py`、`import_dialog.py`、`import_preview_model.py`、`source_import_controller.py` 与 `ui/workbench/terminology_profile_controller.py` 接入两个中文策略，默认保留；读取来源前选择策略，预览固定并显示该选择，确认创建使用当前所见结果。`mapping_model.py` 编辑时保留独立标记。必要的 `source_browser.py` 状态文字变更须与既有未提交修改并存，不覆盖用户改动。
+5. **验证与追溯**：针对真实变更增加应用、持久化、AI 快照、预览/写出和 UI 回归；运行相关测试与 Ruff，记录真实未执行项目；由主会话根据实际结果更新状态和增量记录，不提前标为完成。
+
+### 验收标准
+
+- [x] 底板含 A、来源含不同译名 A 与独有 B：默认保留 A，采用策略覆盖 A；B 在两种策略均进入新方案，底板和其他方案内容摘要不变。
+- [x] 来源无命中、尚无底板、已发布空底板均可创建并立即发布包含有效来源词的独立方案；空来源、读取失败、损坏或不可用底板不产生方案。
+- [x] 来源选择器只提供两个整批策略，预览明确显示所选策略、新增、覆盖、保留数量及只读明细；确认创建使用同一固定预览，取消不写入方案。
+- [x] 规范化等价但原始译文文本不同（如 `字母A` 与 `字母Ａ`）时，保留策略保持原有文本；采用策略保存来源文本并计为覆盖。完全相同的既有译名计为保留，三类数量完整覆盖最终映射。
+- [x] 同键且译文文本相同的记录计为同译重复；规范化等价但文本不同仍计为来源差异。同键异译按固定来源顺序在保留策略下保留首值、采用策略下保留末值；摘要覆盖顺序，重复结果稳定可复现。
+- [x] 无作用域来源只产生 project 逻辑键；明确 plugin 作用域保持插件身份。同名不同作用域不误覆盖，不广播替换全部插件译名。
+- [x] 选择新方案后独立词出现在生效浏览与 AI 查询，取消选择或切换其他方案后不泄漏；既有抑制决定不复活，旧孤立映射仍未生效。
+- [x] 无底板时冻结的 AI 快照在之后发布底板、修改或切换方案后仍可精确恢复；旧普通版本与旧组合版本引用保持兼容。
+- [x] 无独立标记的旧 payload 和内容摘要保持不变；新标记经 SQLite、复制、发布和管理器编辑往返仍保留；非法标记值失败保护。
+- [x] 来源独有词缺少历史译名时保留正文和导出译文并给出诊断；已确认位置绑定按既有规则工作，不进行全文猜测替换。
+- [x] GUI 与 AI 共享选择；未主动选择时创建不改变当前方案。后台读取、项目切换保护和取消行为保持可用。
+
+### 工作分配与依赖顺序
+
+- Astra：需求、架构与本计划，随后独立审查和 QA；不修改业务代码。
+- Sol 核心：应用导入/模型/生效/浏览、持久化内容编码、来源读取与相关测试。
+- Sol UI：导入预览/控制器、管理器映射编辑、状态文案与 UI 测试；与核心先对齐策略与预览字段，不修改核心文件。
+- 主会话：协调接口、集成验证、问题回流、最终清理和增量记录。核心契约先固定，UI 可并行实现，独立审查在两者提交实际工作树结果后执行。
+
+### 假设、风险与回退
+
+用户确认的是完整导入和两个整批策略；同批重复的首/末值规则、无作用域默认 project 及显式独立标记是本次基于现有模型提出的实现决策，不冒充用户逐项批准。来源有效性继续遵守既有读取器契约，不放宽文件校验。
+
+新增独立词仅归方案，旧孤立映射不迁移；需要主动重新导入才能获得新语义。旧读取器若不能识别独立字段，应拒绝该新方案；回退先取消选择并恢复兼容备份，不删除独立字段伪造旧摘要。无底板仅指明确尚无版本，不能用来掩盖损坏或读取错误。保存任务既有未提交改动，并在结束时只清理本任务拥有的临时目录。
+
+### 验证计划与阶段
+
+- [x] 读取现有需求、ADR、调用链、测试与工作区差异；确定范围和兼容边界。
+- [x] 原位修订 FR5.18.25、ADR-039，并形成 Story 10 设计草稿与文件分工。
+- [x] 核心与 UI 实施，完成针对性测试。
+- [x] Astra 独立审查，修复发现并完成集成验证。
+- [x] 主会话完成增量记录与任务临时文件清理；验证证据和 Story/索引状态已更新。
+
+优先运行 `tests/application/terminology_profiles`、`tests/persistence/terminology/test_profiles.py`、相关 `tests/ui/tools` 与 `tests/ui/workbench` 测试，再覆盖来源读取、AI 快照和写出合同。使用仓库已有 uv 环境；本次工作区已有无关 `pyproject.toml`/`uv.lock` 修改，可用 `uv --cache-dir <本任务临时目录>/uv-cache run --no-sync ...`，避免顺带同步依赖。并行测试分别使用本任务目录下独立 `--basetemp`。最后运行 `ruff check src tests` 与 `ruff format --check src tests`，不要求真实 LLM、ParaTranz 网络或用户游戏资产。
+
+独立 QA：最终直接相关回归 `173 passed`；扩展集成首次 `360 passed, 2 failed`，两项报告硬链接测试经环境归因后退出 sandbox 复验 `2 passed`；窄窗口 `4 passed`。以上批次有重叠，不累加。全库 Ruff 检查与格式检查通过；详见 [QA 报告](../../docs/test-reports/terminology-source-import-2026-11-04.md)。
+
+本次归档：[Story 10 增量记录](../../docs/changelogs/terminology-localization-profiles/story-10-complete-source-import/2026-11-04-001-complete-source-import.md)。已核验并清理本任务临时目录；原有 30 个无关已跟踪差异逐块比较一致，共用文档与 `source_browser.py` 的已有改动亦保留。
+
+## Story 11：实际正文关联与 A→B 转换
+
+**状态**: 本地实现与相关 QA 完成（2026-11-05）；行为已确认，技术契约提议
+**依赖**: Story 01、02、03、10
+**对应合同**: FR5.18.1～4、6～7、10～13、19、21；ADR-039 第 1、2、6、8 节
+
+### 当前事实与落点
+
+`TerminologyProfileSelection` 已含 profile/revision，但旧发布推动 revision、归档删除关联；SQLite schema 4 的选择代表预览偏好。`entry_projection.py`/`projection.py` 原从目标历史译名识别，重复译名会被唯一位置约束阻挡。计划在上述应用模块、`in_memory.py`、`service.py`、`effective.py`、`persistence/terminology/{schema,migration,profiles,profile_reads}.py` 原位修正；新增职责须独立模块，不扩大超限类。
+
+### 实施与验收
+
+- [x] schema 升级为 5，先现有摘要备份/完整性检查，再清除 schema<5 的旧预览偏好，正文/方案/术语版本不变；迁移证据记录重置，交付说明兼容影响，重复打开保留新实际关联。
+- [x] 实际关联固定 revision，发布与归档不悄悄改关联；归档版本仍能按固定引用读取；无关联旧版本保留基础术语和 AI 行为。
+- [x] `ProfileEntryProjector(target, base, source_profile=actual)` 接受明确来源方案；共同 original+scope 生成一次性非级联替换，原文命中才替换，重复全部替换；original、stage、标签和无变化条目保持原值。
+- [x] A/B 不同 revision 不能因相同 profile ID 被视作同一内容；完全相同固定输入直接返回原文。无关联基础来源只取明确共同术语快照，不从旧 selection 或目标 base_translation 猜测。
+- [x] AI 读取实际关联，旧普通/组合 checkpoint 与显式无底板仍可恢复。
+
+**验证**: 应用投影/entry projection/有效术语测试，SQLite migration、publication、archive、profile service 测试；包括重复出现、无命中中文同名、scope 隔离、缺映射、无变化、旧选择重置与迁移回滚。
+
+## Story 12：全工作台临时预览、AI 分离与文件导出
+
+**状态**: 本地实现与相关 QA 完成（2026-11-05）；行为已确认，技术契约提议
+**依赖**: Story 11
+**对应合同**: FR5.18.2、5、9、11、14～17、22；ADR-039 第 3、6、7 节
+**主要落点**: `ui/workbench/terminology_profile_controller.py`、现有 profile preview/coordinator/table、`ui/tools/ai_translator/`、`application/terminology_profiles/write_projection.py`、`application/io/` 与现有 bootstrap 写出接线。
+
+### 实施与验收
+
+- [x] UI 状态区分 selected/preview revision 和 applied/actual revision；选择不写 repository，刷新同 Variant 保留临时目标，切换 Variant 重置为实际方案。
+- [x] 后台捕获完整 Variant 全部来源条目，预览覆盖分页、筛选之外；generation、identity/revision 丢弃迟到结果，切回 A 直接读保存正文。
+- [x] 临时 B 预览保护 A 不被普通表格编辑覆盖；实际 A/B 正文均保持普通编辑能力。界面能辨别实际正文与预览目标。
+- [x] A 上临时预览 B 时 AI 展示和冻结 A；新活动 B 才使用 B。AI 不把临时选择写回实际关联。
+- [x] 现有文件导出显式固定会话目标，复用完整转换；预览 B 导出成功而不增加 Variant，不改 A。没有临时目标导出实际正文，CLI/MCP 默认行为保持。
+
+**验证**: workbench switching/async refresh、多页多来源 projection、AI 上下文、write projection 和 IO 合同；测试失败恢复、快速 A→B→A、刷新与 Variant 切换。后台/网络入口不新增实际外部服务依赖。
+
+## Story 13：独立 B 保存、明确覆盖与可恢复一致性
+
+**状态**: 本地实现与相关 QA 完成（2026-11-05）；行为已确认，技术契约提议
+**依赖**: Story 11、12
+**对应合同**: FR5.18.8～9、13、16、18～19；ADR-039 第 4、5 节及 ADR-035
+**主要落点**: `application/projects/` 新窄保存用例、现有 project command facade、`persistence/v2/` activation journal/participant、术语 association adapter、`ui/shell/project_save.py` 与独立方案保存对话/控制器（计划新增，避免将新责任加入超限主类）。
+
+### 实施步骤
+
+1. 提供 `project_commands.save_profile_variant(name, context, *, target_profile, source_profile, target_variant_id=None, expected_target_revision=None, expected_project_revision=None, expected_variant_revision=None, base_snapshot=None)`；profile 为固定 published 对象或 None，校验实际来源/完整正文输入，不从当前页 collection 抓取。
+2. 在已有 activation journal 的 participant 边界加入 SQLite selection row 的预/目标镜像与 CAS；prepared 恢复/回滚、committed 恢复验证目标，事务日志不作为第二选择字段。已有 Project/Variant journal 不能直接覆盖 SQLite，必须实现参与者后再开放 UI。
+3. UI 预览 B 点击保存默认另存。已有 B 时显式选择新建/覆盖指定目标并捕获目标 revision；自动保存不得把临时预览当作用户另存意图。
+4. 全部持久化与关联验证成功后激活 B，之后恢复普通编辑与 AI。取消、冲突和故障保持 A/原目标及可用预览；错误保留原因并可重试。
+
+### 验收标准
+
+- [x] B 正文和 B revision 关联真实保存，重开一致；A 正文/关联不变，B 独立修改不自动同步 A。
+- [x] 保存包含完整来源/页集合，未变化条目保留 entry revision；target/source 同名不代表可以覆盖。
+- [x] 默认新建、显式覆盖及取消可独立验证；覆盖必须匹配目标 revision，不静默覆盖任一已有 B。
+- [x] 注入正文与 selection 写入之间、完成提交与 UI 激活之间的失败，重开可恢复且不显示混合状态；新建不留下悬空正式目标，覆盖不损坏原目标。
+- [x] prepared/committed 重复恢复幂等；外部较新 revision/selection 不被回滚覆盖，明确冲突而非成功。
+- [x] AI/普通保存可继续维护 B；只预览导出路径不生成 Variant。
+
+**验证**: 新保存用例与 activation journal participant 故障注入测试、SQLite selection CAS、UI save/cancel/overwrite、重开验证；结合 projection/AI/export 回归确认两种工作方式。
+
+### 本次共用验证、风险与收口
+
+按 Story 11→12→13 集成。先针对性 pytest，再相关全域与 `uv run ruff check src tests`、`uv run ruff format --check src tests`。使用现有 uv 环境与锁，不修改既有依赖；临时文件限定 `.tmp-variant-schemes-pilot-20261105/` 所属子目录，和本轮 baseline 比较，不能将用户已有修改算成本轮回归。
+
+责任审查：`bootstrap/terminology.py` 698 行仅调整实际方案生效入口；`gui_facade.py` 573 行只增加薄委托，完整新责任归 `ProfileVariantCommands`；`schema.py` 为数据声明，`step2.py` 700 行/48 方法仅转交 source_profile，不引入新职责。未做无关大范围重构。
+
+旧 selection 重置和实际 revision 不再追随发布是明确兼容变化；备份与迁移证据必须验证。恢复协议涉及文件与 SQLite，不能以 UI 测试代替故障注入；不访问真实用户译文。回退需要匹配的数据库/Project/Variant 备份，不仅回退代码。迁移结果与具体 journal 文件落点以实施结果复核，未通过验证前不勾选完成。
+
+本轮本地实现与 QA 完成：核心/术语SQLite/IO合同最终 245 项通过；工作台与方案管理 UI 113 项通过；AI runtime/adapter/UI 32 项通过。保存/恢复扩大批次 134 项通过、2 项系统临时目录权限失败，改为任务专有 TMP/TEMP 后相关 6 项全部通过；39 项新增保存/恢复测试均通过，批次有重叠不累加。一次 FAISS native 导入中断未算通过，最终以独立进程完整批次为证据。全库 Ruff 与格式检查由主会话最终复核通过（2381 文件），`git diff --check` 通过。
+
+详见 [专项 QA](../../docs/test-reports/variant-scheme-preview-save-2026-11-05.md) 与 [Story 11～13 增量记录](../../docs/changelogs/terminology-localization-profiles/story-11-to-13-variant-schemes/2026-11-05-001-variant-scheme-preview-save.md)。未使用真实 LLM/ParaTranz/用户游戏资产，未构建安装包，临时目录由主会话最终清理。
+
 ## 实施结果与后续增强
 
 - 首版核心闭环已完成：配置档持久化与不可变发布、Workbench 快速切换、只读安全投影、AI 组合快照、GUI/智能助手冻结写出及兼容迁移。
-- 通用产品定位与 AI 可见选择已完成：工作台、管理窗口、预览诊断和 AI 任务区统一使用“译名方案”；AI 与工作台共享选择并在运行摘要中显示当前方案。
+- 当前产品定位统一使用“译名方案”：工作台可临时预览目标，AI 与运行摘要只使用当前实际翻译版本关联；保存 B 后可独立维护。历史共享持久选择已由 Story 11～13 替代。
 - 自动化 QA：扩展回归 `344 passed`；Ruff check 与 format check 全仓通过；合成性能样本（2000 条目、200 映射）约 `0.112s`。
 - Story 07 自动化 QA：相关 UI、应用、持久化、AI 快照与集成回归 `468 passed`，补充接线/写出/兼容合同 `9 passed`；Ruff check 与 format check 全仓通过。
 - Story 08 已完成：AI“术语库”可从动态词库、ParaTranz、JSON、CSV 或 Excel 的当前单源快照创建完整译名方案；预览明确采用、保持、冲突、作用域不明确、重复和来源独有统计，默认创建后不切换。

@@ -1,5 +1,19 @@
 # 变更日志索引
 
+- 2026-11-05：[实际译名方案关联、预览与独立版本保存](terminology-localization-profiles/story-11-to-13-variant-schemes/2026-11-05-001-variant-scheme-preview-save.md) — 临时预览不改正文或 AI；原文门控全量转换、默认另存与明确覆盖、SQLite/Variant 可恢复关联和旧快照兼容；核心245、UI113、AI32项通过，保存恢复分批证据见专项 QA。
+
+- 2026-11-04：[本地词表直达与独立 ParaTranz 导入](terminology-ui-remediation/story-16/2026-11-04-001-direct-import-entry.md) — 删除插件来源列表，本地直接选文件，ParaTranz 独立按钮；保留两种策略与预览确认，81 项独立回归及 Ruff/格式检查通过。
+
+- 2026-11-04：[术语工作台入口简化与真实预检反馈](terminology-ui-remediation/story-14-to-15/2026-11-04-001-workbench-usability.md) — 直接导入、按需提取和简化编辑入口，修复来源数量与真实导入策略接线；431 项相关回归、Ruff/格式检查及 8 张实际窗口截图检查通过。
+
+- 2026-11-03：[50 文件自动切换新压缩包下载](paratranz-categorized-upload/story-31/2026-11-03-001-fresh-archive-download.md) — 先统计实际所选文件，再生成、下载、解压、匹配及清理；新增 40 项通过，扩大 661 通过/1 跳过/1 既有夹具失败，Ruff/格式通过。
+
+- 2026-11-03：[修复五项既有上传测试失败](maintenance/paratranz-api-coverage/2026-11-03-002-upload-test-contracts.md) — 更新工程上下文夹具与重复身份拒绝阶段断言，保留业务检查并补充回执验证；相关回归 597 项通过、1 项线上集成跳过，全库 Ruff/格式通过。
+
+- 2026-11-03：[ParaTranz API 补全与注释校准](maintenance/paratranz-api-coverage/2026-11-03-001-openapi-coverage.md) — 补齐 19 个接口、修复路径/筛选及批量编辑契约，完善中文注释；官方 67 个路由均有封装，144 项专项及关联回归通过，5 项既有失败已用 HEAD 原版模块复现，全库 Ruff/格式通过。
+
+- 2026-11-03：[多处长文本撑宽与无法缩小窗口修复](maintenance/start-center-long-path/2026-11-03-002-shared-long-text-wrapping.md) — 新建工程、拖放、上传下载及加载/搜索错误统一完整换行，连续英文不再撑宽或裁切；155 项布局回归通过，功能回归 260 通过、4 项既有失败已核验，全库 Ruff/格式通过。
+
 - 2026-11-03：[补全七种记录类型的导出分类](maintenance/export-category-coverage/2026-11-03-001-seven-record-types.md) — 七种类型归入现有四类，本地导出与分类上传一致；37 项回归及全库 Ruff/格式通过，不迁移历史文件。
 
 - 2026-11-03：[开始中心已有译文长路径宽度修复](maintenance/start-center-long-path/2026-11-03-001-migration-path-width.md) — 长路径按宽度省略并保留完整提示，选择后和返回开始页均可缩小窗口；51 项通过、1 项既有来源标识断言失败已用原版界面复现，全库 Ruff/格式通过。
@@ -297,7 +311,7 @@ docs/changelogs/
 | assistant-user-request-lifecycle | [plan](../../plans/assistant-user-request-lifecycle/plan.md) | 摘要及长期存储已补齐，1,410 项相关回归通过；真实模型评估未执行 | 8/8 | [S01-08:①用户请求生命周期与长上下文实现](assistant-user-request-lifecycle/story-01-to-08-implementation/2026-09-12-001-用户请求生命周期与长上下文实现.md) · [S06及存储:②请求摘要接线与长期存储补齐](assistant-user-request-lifecycle/story-01-to-08-implementation/2026-09-12-002-请求摘要接线与长期存储补齐.md) · [设计记录](assistant-user-request-lifecycle/design/2026-09-12-001-用户请求生命周期需求架构与实施规划.md) · [现有链路收尾](assistant-request-observability/story-01-to-03-implementation/2026-09-12-002-请求上下文与确认生命周期收尾.md) |
 | assistant-cancellation-lifecycle | [plan](../../plans/assistant-cancellation-lifecycle/plan.md) | 已完成，799 项相关回归与 Ruff 通过 | 4 个实施项 + QA | [①助手取消与生命周期快照闭环](assistant-cancellation-lifecycle/implementation/2026-09-12-001-助手取消与生命周期快照闭环.md) |
 | ai-task-project-terminology | [plan](../../plans/ai-task-project-terminology/plan.md) | 已完成，388 项相关回归与 Ruff 通过 | 未编号（直接实现） | [①AI任务项目术语状态与查看入口](ai-task-project-terminology/implementation/2026-09-11-001-AI任务项目术语状态与查看入口.md) |
-| terminology-localization-profiles | [plan](../../plans/terminology-localization-profiles/plan.md) | 已完成；S09 紧凑布局与已选副本浏览追加改版，55 项相关回归、随后 8 项空状态回归及 Ruff 通过；来源直连与自动同步未实现 | 9 | [S01-06:①本体汉化术语配置档与非破坏性切换](terminology-localization-profiles/story-01-to-06-implementation/2026-09-06-001-本体汉化术语配置档与非破坏性切换.md) · [S08:①从单个术语来源创建译名方案](terminology-localization-profiles/story-08-source-to-naming-scheme/2026-09-06-001-从单个术语来源创建译名方案.md) · [S09:①译名方案入口归位术语工作台](terminology-localization-profiles/story-09-workbench-scheme-hub/2026-09-06-001-译名方案入口归位术语工作台.md) · [S09:②紧凑布局与已选副本浏览](terminology-localization-profiles/story-09-workbench-scheme-hub/2026-09-10-002-术语工作台紧凑布局与已选副本浏览.md) |
+| terminology-localization-profiles | [plan](../../plans/terminology-localization-profiles/plan.md) | S01～10 已完成；S10 完整导入与两种整批策略，最终相关回归 173 项及 Ruff 通过；来源直连与自动同步未实现 | 10 | [S01-06:①本体汉化术语配置档与非破坏性切换](terminology-localization-profiles/story-01-to-06-implementation/2026-09-06-001-本体汉化术语配置档与非破坏性切换.md) · [S08:①从单个术语来源创建译名方案](terminology-localization-profiles/story-08-source-to-naming-scheme/2026-09-06-001-从单个术语来源创建译名方案.md) · [S09:①译名方案入口归位术语工作台](terminology-localization-profiles/story-09-workbench-scheme-hub/2026-09-06-001-译名方案入口归位术语工作台.md) · [S09:②紧凑布局与已选副本浏览](terminology-localization-profiles/story-09-workbench-scheme-hub/2026-09-10-002-术语工作台紧凑布局与已选副本浏览.md) · [S10:①完整导入与两种批量策略](terminology-localization-profiles/story-10-complete-source-import/2026-11-04-001-complete-source-import.md) |
 | unified-ai-task | [plan](../../plans/unified-ai-task/plan.md) | 模式切换追加修复完成，323 项工具回归通过 | 4 | [S01:①模式切换响应与布局稳定性修复](unified-ai-task/story-01-mode-switch-stability/2026-09-06-001-模式切换响应与布局稳定性修复.md) |
 | smart-assistant-tool-retry-recovery | [plan](../../plans/smart-assistant-tool-retry-recovery/plan.md) | ✅ S01-04 已完成；超时恢复、自纠错响应校验及可取消退避修复通过相关回归 | 4 | [S01-03:②模型超时恢复与安全重试修复](smart-assistant-tool-retry-recovery/story-01-to-03-implementation/2026-09-13-002-模型超时恢复与安全重试修复.md) · [S01-03:①工具失败自纠错闭环](smart-assistant-tool-retry-recovery/story-01-to-03-implementation/2026-09-05-001-智能助手工具失败自纠错闭环.md) · [S04:①字段级参数诊断](smart-assistant-tool-retry-recovery/story-04-field-validation-diagnostics/2026-09-05-001-参数校验字段级诊断与重试上下文增强.md) |
 | v3-ui-gap-closure | [plan](../../plans/v3-ui-gap-closure/plan.md) | ✅ S01-05 已完成，综合 QA 通过 | 5 | [S01-05:①V3权威工程UI缺口闭环](v3-ui-gap-closure/story-01-to-05-implementation/2026-09-01-001-V3权威工程UI缺口闭环.md) |
