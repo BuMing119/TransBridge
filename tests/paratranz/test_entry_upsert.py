@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,6 +10,7 @@ from transbridge.application.ports.paratranz import ExternalServiceCategory, Ext
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.service import ParaTranzService
+from transbridge.smart_assistant.tools.types import ExecutionContext
 
 
 class StatefulStrings:
@@ -125,7 +125,9 @@ def test_force_without_identity_does_not_resolve_conflicting_key_by_scanning() -
 
 
 @pytest.mark.parametrize("reference_project", [7, 8])
-def test_assistant_upload_reuses_only_the_target_projects_known_identity(monkeypatch, reference_project: int) -> None:
+def test_assistant_upload_reuses_only_the_target_projects_known_identity(
+    monkeypatch, reference_project: int, current_project_factory, tmp_path
+) -> None:
     from transbridge.smart_assistant.tools import tool_paratranz
 
     strings = StatefulStrings(801)
@@ -141,7 +143,9 @@ def test_assistant_upload_reuses_only_the_target_projects_known_identity(monkeyp
         "",
         external_refs=(ExternalEntryRef("paratranz", f"project:{reference_project}", 801),),
     )
-    context = SimpleNamespace(collection=TranslationEntryCollection([entry]))
+    project = current_project_factory(TranslationEntryCollection([entry]))
+    monkeypatch.setattr(project.commands, "task_result_directory", lambda _context: tmp_path)
+    context = ExecutionContext(app_context=project.context)
 
     result = tool_paratranz._tool_upload_entries({"project_id": 7, "force_overwrite": True}, context)
 
@@ -155,6 +159,9 @@ def test_assistant_upload_reuses_only_the_target_projects_known_identity(monkeyp
         assert "duplicate key" in result.data["failed_items"][0]["error"]
     assert strings.records == before
     assert strings.pages == []
+    assert result.data["durable"]
+    assert not result.data["deferred_associations"]
+    assert project.context.collection.get("local").external_refs == entry.external_refs
 
 
 def test_bounded_entry_read_keeps_pagination_offsets_stable() -> None:

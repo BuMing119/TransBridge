@@ -329,6 +329,24 @@ def test_issue_refresh_failure_does_not_leave_a_stale_action_target(views):
     assert not view._close_btn.isEnabled()
 
 
+def test_export_metadata_reads_latest_object_instead_of_admin_history_list(views, monkeypatch):
+    context, make, _notices = views
+    view = make("export")
+    calls = []
+
+    def latest(project_id):
+        calls.append(project_id)
+        return {"total": 7, "createdAt": "2026-11-03T00:00:00Z"}
+
+    monkeypatch.setattr(export_tab, "ParatranzExportAPI", lambda **kwargs: SimpleNamespace(get_latest_artifact=latest))
+    context.select({"id": 1})
+    worker = view._workers[-1]
+    worker.result.emit(worker.callback())
+    assert calls == [1]
+    assert view._lbl_total.text() == "7"
+    assert view._lbl_time.text() == "2026-11-03T00:00:00"
+
+
 def test_export_clearing_project_rejects_late_metadata(views):
     context, make, _notices = views
     view = make("export")

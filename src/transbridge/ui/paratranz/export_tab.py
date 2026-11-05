@@ -174,7 +174,7 @@ class ExportTab(QWidget):
 
         def _fetch():
             api = ParatranzExportAPI(token=config.token, config=config)
-            return api.get_artifacts(pid)
+            return api.get_latest_artifact(pid)
 
         def _on_done(artifact):
             if self._gen != gen:

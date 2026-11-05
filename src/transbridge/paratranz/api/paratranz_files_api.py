@@ -198,6 +198,63 @@ class ParatranzFilesAPI(ParatranzClient):
         """一次获取全部词条（原文、译文和状态，不分页）；需项目成员权限。"""
         return self._request("GET", f"/projects/{project_id}/files/{file_id}/translation", cancellation=cancellation)
 
+    def get_file_content(
+        self,
+        project_id: int,
+        file_id: int,
+        *,
+        rev: int | None = None,
+        tid: int | None = None,
+        dl: bool = False,
+        cancellation=None,
+    ):
+        """GET /projects/{projectId}/files/{fileId}/content：获取归档原文或下载原文。
+
+        需项目成员权限：未登录为 401，非成员为 403，私密项目对非成员为 404。
+        默认读取最近一次 create/update 的原文归档，不是当前译文导出。
+
+        Args:
+            project_id: 项目 ID。
+            file_id: 文件 ID。
+            rev: 文件历史接口返回的归档 ID；省略时使用服务端默认版本。
+            tid: 词条 ID，读取其导入时所属原文版本，并返回 highlight 定位信息。
+                与 rev 同传时的选择规则由服务端决定，客户端不自行推断。
+            dl: True 时请求附件，返回原始 bytes（保留 UTF-8 BOM）；False 时读取 JSON。
+            cancellation: 可选协作取消信号。
+
+        Returns:
+            dl=False：Revision 字典，附 content 原文字符串；指定 tid 时附 highlight
+            （key、original）。dl=True：完整原文附件字节，不执行解码或自动写盘。
+
+        Raises:
+            ExternalServiceError: HTTP 失败或 JSON 响应无效；保留公共客户端错误上下文。
+        """
+        params = {}
+        if rev is not None:
+            params["rev"] = rev
+        if tid is not None:
+            params["tid"] = tid
+        if dl:
+            params["dl"] = 1
+            response = self._request(
+                "GET",
+                f"/projects/{project_id}/files/{file_id}/content",
+                params=params,
+                raw_response=True,
+                cancellation=cancellation,
+            )
+            try:
+                return response.content
+            finally:
+                response.close()
+        return self._request(
+            "GET",
+            f"/projects/{project_id}/files/{file_id}/content",
+            params=params,
+            expected_type=dict,
+            cancellation=cancellation,
+        )
+
     def update_file_translation(
         self,
         project_id: int,

@@ -1,3 +1,4 @@
+from .paratranz_announcements_api import ParatranzAnnouncementsAPI
 from .paratranz_contribution_api import ParatranzScoresAPI
 from .paratranz_export_api import ParatranzExportAPI
 from .paratranz_files_api import ParatranzFilesAPI
@@ -7,10 +8,15 @@ from .paratranz_mails_api import ParatranzMailsAPI
 from .paratranz_members_api import ParatranzMembersAPI
 from .paratranz_project_api import ParatranzProjectAPI
 from .paratranz_strings_api import ParatranzStringsAPI
+from .paratranz_suggestions_api import ParatranzSuggestionsAPI
+from .paratranz_tasks_api import ParatranzTasksAPI
 from .paratranz_terms_api import ParatranzTermsAPI
 from .paratranz_user_api import ParatranzUserAPI
 
 __all__ = [
+    "ParatranzAnnouncementsAPI",
+    "ParatranzSuggestionsAPI",
+    "ParatranzTasksAPI",
     "ParatranzProjectAPI",
     "ParatranzFilesAPI",
     "ParatranzStringsAPI",

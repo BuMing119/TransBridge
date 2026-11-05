@@ -47,6 +47,9 @@ def test_paratranz_public_package_keeps_active_exports_after_lazy_loading() -> N
     import transbridge.paratranz as package
 
     expected = {
+        "ParatranzAnnouncementsAPI",
+        "ParatranzSuggestionsAPI",
+        "ParatranzTasksAPI",
         "ParatranzClient",
         "ParatranzConfig",
         "ParatranzProjectAPI",

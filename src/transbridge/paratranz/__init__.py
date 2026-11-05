@@ -5,6 +5,9 @@ from __future__ import annotations
 from importlib import import_module
 
 _EXPORTS = {
+    "ParatranzAnnouncementsAPI": "api.paratranz_announcements_api",
+    "ParatranzSuggestionsAPI": "api.paratranz_suggestions_api",
+    "ParatranzTasksAPI": "api.paratranz_tasks_api",
     "ParatranzClient": "paratranz_client",
     "ParatranzConfig": "config_manager",
     "ParatranzProjectAPI": "api.paratranz_project_api",

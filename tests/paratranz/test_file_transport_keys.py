@@ -78,10 +78,19 @@ def test_selection_order_and_layout_do_not_change_transport_keys():
 
 
 def test_identical_local_identity_is_still_rejected_without_post():
-    artifact = files(entries=(qualified(), qualified()))[0]
+    port, session = gateway([])
+    with pytest.raises(ValueError, match="重复词条身份"):
+        artifacts = files(entries=(qualified(), qualified()))
+        execute_file_upload(7, artifacts, port)
+    assert session.calls == []
+
+
+def test_plain_upload_rejects_identical_identity_before_post():
+    artifact = files(categorized=False, entries=(qualified(), qualified()))[0]
     port, session = gateway([])
     receipt = execute_file_upload(7, (artifact,), port)
     assert receipt.failed == 1 and len(session.calls) == 1
+    assert session.calls[0].method == "GET"
 
 
 def test_413_splitting_preserves_encoded_keys():

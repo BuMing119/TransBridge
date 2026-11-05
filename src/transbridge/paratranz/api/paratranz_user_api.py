@@ -1,3 +1,5 @@
+"""用户接口；依据 https://paratranz.cn/api-docs?format=json（OpenAPI 0.5.7）。"""
+
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from transbridge.paratranz.paratranz_client import ParatranzClient
@@ -106,13 +108,55 @@ class ParatranzUserAPI(ParatranzClient):
         enriched["_avatar_bytes"] = response.content
         return enriched
 
-    def get_user_activities(self, user_id: int, page: int = 1, page_size: int = 50):
-        """
-        获取用户近期词条相关历史记录
+    def get_user_projects(self, user_id: int, *, cancellation=None):
+        """获取用户参与的项目：GET /users/{userId}/projects。
 
-        注意：API 路径含官方拼写错误（/usres/ 而非 /users/），需原样使用。
+        私密项目由服务端按访问者权限过滤；此接口没有分页参数。
+
+        Args:
+            user_id: 要查询的用户 ID。
+            cancellation: 可选取消令牌，在请求前后检查取消状态。
 
         Returns:
-            分页结果，每项为 UserActivity 对象（含 id, createdAt, projectId, stringId, historyId, history）
+            成员关系对象列表，每项含 id、uid、permission、privacy 和 project。
+            project 是含 id、name、logo、stage、privacy 的项目简略信息，
+            不能把外层成员关系 id 当作项目 ID。
         """
-        return self._request("GET", f"/usres/{user_id}/activities", params={"page": page, "pageSize": page_size})
+        return self._request("GET", f"/users/{user_id}/projects", cancellation=cancellation, expected_type=list)
+
+    def get_user_activities(
+        self,
+        user_id: int,
+        page: int = 1,
+        page_size: int = 50,
+        *,
+        operation: str | None = None,
+        begin: str | None = None,
+        end: str | None = None,
+        cancellation=None,
+    ):
+        """获取用户近期词条动态：GET /users/{userId}/activities。
+
+        私密项目的动态由服务端按访问者权限过滤。
+
+        Args:
+            user_id: 要查询的用户 ID。
+            page: 页码，从 1 开始。
+            page_size: 每页数量；保留本客户端默认 50（服务端省略参数时默认 12）。
+            operation: 按操作类型筛选，如 translate；comment 返回评论记录。
+            begin: 筛选开始时间，ISO 8601 日期时间字符串。
+            end: 筛选结束时间，ISO 8601 日期时间字符串。
+            cancellation: 可选取消令牌，在请求前后检查取消状态。
+
+        Returns:
+            含 page、pageSize、rowCount、pageCount、results 的分页对象。
+            results 为 UserActivity 列表，包含 id、createdAt、projectId、uid、
+            operation、stringId、historyId、isPrivate、history 等动态字段。
+        """
+        params = {"page": page, "pageSize": page_size}
+        for name, value in (("operation", operation), ("begin", begin), ("end", end)):
+            if value is not None:
+                params[name] = value
+        return self._request(
+            "GET", f"/users/{user_id}/activities", params=params, cancellation=cancellation, expected_type=dict
+        )
