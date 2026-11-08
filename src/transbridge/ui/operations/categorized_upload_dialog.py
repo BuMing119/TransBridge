@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -94,6 +95,7 @@ class CategorizedUploadDialog(QDialog):
         self._upload = upload
         self._retry_upload = retry_upload
         self._retry_count = 0
+        self._retry_mode = "orig_only"
         self._sources: tuple[SourceOption, ...] | None = None
         self._file_selected: dict[str, bool] = {}
         self._worker = None
@@ -250,12 +252,37 @@ class CategorizedUploadDialog(QDialog):
         selection = self.selection()
         if not selection.source_ids or not selection.file_keys:
             return
+        if not self._confirm_force_upload(selection.translation_mode):
+            return
         self._retry_count = len(selection.file_keys)
+        self._retry_mode = selection.translation_mode
         self._start_worker("upload", lambda progress, cancel: self._upload(selection, progress, cancel))
 
     def _request_retry(self) -> None:
         if self._worker is None and self._retry_count and self._retry_upload is not None:
+            if not self._confirm_force_upload(self._retry_mode):
+                return
             self._start_worker("retry", self._retry_upload)
+
+    def _confirm_force_upload(self, mode: str) -> bool:
+        if mode != "trans_force":
+            return True
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("确认强制更新译文")
+        dialog.setText("强制更新会覆盖 ParaTranz 上已有的译文，包括人工译文。")
+        dialog.setInformativeText(
+            "空译文也会覆盖已有译文：如果上传内容中某个词条的译文为空，"
+            "ParaTranz 上该词条原有的译文将被清空。\n\n确定要继续强制上传吗？"
+        )
+        dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+        dialog.button(QMessageBox.StandardButton.Yes).setText("仍要强制上传")
+        dialog.button(QMessageBox.StandardButton.Cancel).setText("取消")
+        dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        dialog.setEscapeButton(QMessageBox.StandardButton.Cancel)
+        confirmed = dialog.exec() == QMessageBox.StandardButton.Yes
+        dialog.deleteLater()
+        return confirmed
 
     def _start_worker(self, phase: str, operation: Callable) -> None:
         self._phase = phase
