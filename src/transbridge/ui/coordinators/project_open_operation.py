@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 
 from PyQt6.QtCore import QObject, QTimer
@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QMessageBox
 from transbridge.application.projects import DirtyDecision
 from transbridge.application.projects.save_result import translations_were_saved
 from transbridge.ui.project_view_binding import ProjectViewState, prepare_project_view
+from transbridge.ui.projection_consistency import PreparedProjectionConsistency
 from transbridge.ui.source_hydration import prepare_project_slots
 from transbridge.ui.workers import ApiWorker
 
@@ -28,6 +29,13 @@ class OpenedProjectView:
 class PreparedWorkbenchView:
     slots: tuple
     state: ProjectViewState
+
+
+def _prepare_workbench_view(hydrations, candidate):
+    slots = prepare_project_slots(hydrations, candidate)
+    state = prepare_project_view(candidate)
+    evidence = PreparedProjectionConsistency(candidate, (slot for _, slot in slots))
+    return PreparedWorkbenchView(slots, replace(state, consistency=evidence))
 
 
 class ProjectOpenOperation(QObject):
@@ -109,9 +117,7 @@ class ProjectOpenOperation(QObject):
             options = {"dirty_decision": dirty_decision}
             if self.token is not None:
                 options.update(
-                    prepare_view=lambda candidate: PreparedWorkbenchView(
-                        prepare_project_slots(prepared.value.hydrations, candidate), prepare_project_view(candidate)
-                    ),
+                    prepare_view=lambda candidate: _prepare_workbench_view(prepared.value.hydrations, candidate),
                     expected_active_signature=expected,
                 )
             opened = host.current_project_opener.activate(prepared.value, execution_context, **options)
@@ -119,7 +125,11 @@ class ProjectOpenOperation(QObject):
                 return OpenedProjectView(opened)
             self._authority_committed = True
             snapshot = None if projection is None else projection.snapshot()
-            state = None if self.token is None else opened.value["view_payload"].state.committed(snapshot)
+            state = None
+            if self.token is not None:
+                payload = opened.value["view_payload"]
+                state = payload.state.committed(snapshot)
+                state.consistency.acknowledge(snapshot, (slot for _, slot in payload.slots))
             return OpenedProjectView(opened, snapshot, state)
 
         worker = ApiWorker(run, route_http_errors=False)

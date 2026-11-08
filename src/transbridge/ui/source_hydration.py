@@ -93,9 +93,10 @@ def prepare_project_slots(hydrations, snapshot) -> tuple[tuple[str, CollectionSl
             matches = [item for item in registered if fingerprint and item.get("fingerprint") == fingerprint]
         registration = matches[0] if len(matches) == 1 else None
         if registration is not None:
-            source = replace(
-                source, source_id=registration["source_id"], reference_location=registration.get("location") or ""
-            )
+            registered_id = registration["source_id"]
+            reference_location = registration.get("location") or ""
+            if source_id != registered_id or getattr(source, "reference_location", None) != reference_location:
+                source = replace(source, source_id=registered_id, reference_location=reference_location)
         key = source_slot_key(source)
         if key in identities:
             raise ValueError(f"Duplicate project source identity: {key}")

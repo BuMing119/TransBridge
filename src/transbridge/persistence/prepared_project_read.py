@@ -10,6 +10,8 @@ from transbridge.application.contracts import DomainError, ErrorCategory
 from transbridge.application.projects.source_inputs import MissingProjectSourceInput
 
 from .v2.models import LoadedRecord
+from .v2.project_record_guard import RecordVersion
+from .v2.repository import VariantRepository
 from .v2.schema import serialize_document
 from .v2.validated_reads import ValidatedReads, reuse_validated_reads
 from .v2.variant import VariantSnapshot
@@ -77,15 +79,15 @@ class _RecordIdentity:
         migrated = serialize_document(record.value.envelope.to_dict()) if record.migrated else None
         return cls(repository, record.ref, record.source_hash, migrated)
 
-    def check(self, repository, record):
-        same_record = repository is self.repository and record.ref == self.ref
-        if same_record and record.source_hash == self.digest:
+    def check(self, repository, ref, source_hash, migration_report=None):
+        same_record = repository is self.repository and ref == self.ref
+        if same_record and source_hash == self.digest:
             return
         if (
             same_record
             and self.migrated_document is not None
-            and record.source_hash == hashlib.sha256(self.migrated_document).hexdigest()
-            and (record.migration_report is None or record.migration_report.original_hash == self.digest)
+            and source_hash == hashlib.sha256(self.migrated_document).hexdigest()
+            and (migration_report is None or migration_report.original_hash == self.digest)
         ):
             return
         raise DomainError(
@@ -104,6 +106,8 @@ class PreparedProjectRead:
     snapshot: VariantSnapshot
     evidence: ValidatedReads
     bound_sources: bytes | None = None
+    source_relations: bytes = b"[]"
+    source_baselines: tuple = ()
     mutable_metadata: tuple[_MutableJsonEvidence, ...] = ()
     missing_inputs: tuple[MissingProjectSourceInput, ...] = ()
     hydrations: tuple = ()
@@ -129,6 +133,8 @@ class PreparedProjectRead:
             snapshot,
             evidence,
             None if bound_sources is None else json.dumps(bound_sources, sort_keys=True, allow_nan=False).encode(),
+            _encode_metadata(project.value.envelope.data.get("source_relations", ())),
+            source_baselines,
             _mutable_snapshot_evidence(snapshot, source_baselines),
             tuple(missing_inputs),
             tuple(hydrations),
@@ -151,7 +157,7 @@ def use_prepared_project(read: PreparedProjectRead):
 def verify_prepared_project(repository, record: LoadedRecord):
     prepared = _PREPARED.get()
     if prepared is not None:
-        prepared.project.check(repository, record)
+        prepared.project.check(repository, record.ref, record.source_hash, record.migration_report)
 
 
 def prepared_project_sources():
@@ -169,11 +175,48 @@ def prepared_source_hydrations():
     return None if prepared is None else prepared.hydrations
 
 
+def has_prepared_source_coverage(project, snapshot, baselines, hydrations, bound_sources):
+    """Reuse complete coverage only for the same verified source inputs and entries."""
+    prepared = _PREPARED.get()
+    if (
+        prepared is None
+        or prepared.missing_inputs
+        or snapshot is not prepared.snapshot
+        or baselines is not prepared.source_baselines
+        or hydrations is not prepared.hydrations
+        or bound_sources is None
+    ):
+        return False
+    data = project.envelope.data
+    return tuple(data.get("sources", ())) == bound_sources and tuple(data.get("source_relations", ())) == tuple(
+        json.loads(prepared.source_relations)
+    )
+
+
 def prepared_variant(repository, record: LoadedRecord) -> VariantSnapshot | None:
     prepared = _PREPARED.get()
     if prepared is None:
         return None
-    prepared.variant.check(repository, record)
+    prepared.variant.check(repository, record.ref, record.source_hash, record.migration_report)
+    return _checked_snapshot(prepared)
+
+
+def reuse_prepared_variant(repository, ref) -> tuple[VariantSnapshot, RecordVersion] | None:
+    """Match a current-schema candidate against fresh disk bytes under the read lease."""
+    prepared = _PREPARED.get()
+    if prepared is None or prepared.variant.migrated_document is not None:
+        return None
+    # Other load-port implementations retain their normal load behavior.
+    if type(repository) is not VariantRepository:
+        return None
+    version = repository._read_validated_version(ref)
+    if version is None:
+        return None
+    prepared.variant.check(repository, ref, version.source_hash)
+    return _checked_snapshot(prepared), version
+
+
+def _checked_snapshot(prepared: PreparedProjectRead) -> VariantSnapshot:
     for metadata in prepared.mutable_metadata:
         metadata.check()
     return prepared.snapshot

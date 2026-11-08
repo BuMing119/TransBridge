@@ -10,6 +10,7 @@ from typing import Any
 
 from .ids import EntityRef
 from .models import LoadedRecord, MigrationReport, PersistenceDto, SchemaEnvelope
+from .project_record_guard import RecordVersion
 from .schema import parse_json_bytes
 from .variant_validation import reuse_variant_preimage
 
@@ -17,7 +18,7 @@ from .variant_validation import reuse_variant_preimage
 @dataclass(frozen=True, slots=True)
 class _Evidence:
     dto_type: type[PersistenceDto]
-    source_hash: str
+    version: RecordVersion
     migrated: bool
     migration_report: MigrationReport | None
 
@@ -57,12 +58,22 @@ def reuse_validated_reads(evidence: ValidatedReads | None = None) -> Iterator[Va
         _READS.reset(token)
 
 
-def validated_read(repository: object, ref: EntityRef, raw: bytes) -> LoadedRecord | None:
+def _validated_evidence(repository: object, ref: EntityRef, raw: bytes) -> _Evidence | None:
     reads = _READS.get()
     if reads is None:
         return None
     with reads._lock:
-        previous = reads._records.get((repository, ref, raw))
+        return reads._records.get((repository, ref, raw))
+
+
+def validated_record_version(repository: object, ref: EntityRef, raw: bytes) -> RecordVersion | None:
+    """Return the revision and digest of previously validated exact bytes."""
+    previous = _validated_evidence(repository, ref, raw)
+    return None if previous is None else previous.version
+
+
+def validated_read(repository: object, ref: EntityRef, raw: bytes) -> LoadedRecord | None:
+    previous = _validated_evidence(repository, ref, raw)
     if previous is None:
         return None
     # Parsing the immutable, validated bytes is faster than deep-copying large
@@ -78,7 +89,7 @@ def validated_read(repository: object, ref: EntityRef, raw: bytes) -> LoadedReco
     return LoadedRecord(
         ref,
         previous.dto_type(envelope),
-        previous.source_hash,
+        previous.version.source_hash,
         migrated=previous.migrated,
         migration_report=previous.migration_report,
     )
@@ -92,7 +103,7 @@ def remember_validated_read(
     if reads is not None:
         with reads._lock:
             reads._records[repository, record.ref, raw] = _Evidence(
-                type(record.value), record.source_hash, record.migrated, record.migration_report
+                type(record.value), RecordVersion.from_record(record), record.migrated, record.migration_report
             )
             if full_schema:
                 reads._preimages[repository, record.ref] = raw
@@ -105,6 +116,7 @@ def decode_validated_read(
     raw: bytes,
     *,
     validate: Callable[[dict[str, Any], EntityRef], PersistenceDto],
+    document: dict[str, Any] | None = None,
     remember: bool = True,
     reuse_unchanged: bool = False,
 ) -> LoadedRecord:
@@ -113,16 +125,44 @@ def decode_validated_read(
     Callers supply their validator so existing diagnostics/instrumentation keep
     observing the actual validation boundary. Proposed writes may defer adding
     evidence until publication succeeds by passing ``remember=False``.
+    A caller that has just parsed ``raw`` to inspect its schema version may
+    supply that same document.
     """
     reads = _READS.get()
     if reads is None:
         with reuse_variant_preimage(ref, None):
-            return LoadedRecord(ref, validate(parse_json_bytes(raw), ref), hashlib.sha256(raw).hexdigest())
+            return _validate_read(ref, raw, validate, document)
     with reads._lock:
         previous = validated_read(repository, ref, raw)
         if previous is not None:
             return previous
         preimage = reads._preimages.get((repository, ref)) if reuse_unchanged else None
         with reuse_variant_preimage(ref, preimage):
-            record = LoadedRecord(ref, validate(parse_json_bytes(raw), ref), hashlib.sha256(raw).hexdigest())
+            record = _validate_read(ref, raw, validate, document)
         return remember_validated_read(repository, raw, record, full_schema=preimage is None) if remember else record
+
+
+def decode_record_version(
+    repository: object,
+    ref: EntityRef,
+    raw: bytes,
+    *,
+    validate: Callable[[dict[str, Any], EntityRef], PersistenceDto],
+    reuse_unchanged: bool = False,
+) -> RecordVersion:
+    """Validate exact bytes as needed without decoding a previously checked payload."""
+    version = validated_record_version(repository, ref, raw)
+    if version is not None:
+        return version
+    record = decode_validated_read(repository, ref, raw, validate=validate, reuse_unchanged=reuse_unchanged)
+    return RecordVersion.from_record(record)
+
+
+def _validate_read(
+    ref: EntityRef,
+    raw: bytes,
+    validate: Callable[[dict[str, Any], EntityRef], PersistenceDto],
+    document: dict[str, Any] | None,
+) -> LoadedRecord:
+    value = validate(parse_json_bytes(raw) if document is None else document, ref)
+    return LoadedRecord(ref, value, hashlib.sha256(raw).hexdigest())

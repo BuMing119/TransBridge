@@ -1,6 +1,7 @@
 """One prepared open reuses content evidence without accepting stale files."""
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -8,7 +9,15 @@ import pytest
 
 from scripts.benchmark_project_open import _services, create_fixture
 from transbridge.application.contracts import RequestContext
-from transbridge.persistence.v2 import EntityKind, VariantSnapshot, project_activation_journal, repository
+from transbridge.persistence.v2 import (
+    EntityKind,
+    ProjectId,
+    VariantId,
+    VariantRef,
+    VariantSnapshot,
+    project_activation_journal,
+    repository,
+)
 
 
 @pytest.fixture
@@ -59,6 +68,64 @@ def test_prepared_open_across_threads_validates_each_record_once_and_reuses_vari
     assert services.project_projection.snapshot() is final
 
 
+def test_unchanged_open_decodes_variant_bytes_once_and_keeps_the_prepared_snapshot(opening, monkeypatch):
+    services, path, context = opening
+    project = json.loads(path.read_bytes())
+    ref = VariantRef(VariantId(project["data"]["active_variant_id"]), ProjectId(project["id"]))
+    variant_path = Path(services.variants.path_for(ref))
+    raw = variant_path.read_bytes()
+    text = raw.decode("utf-8")
+    loads = json.loads
+    encode = project_activation_journal.base64.b64encode
+    bytes_decoded = 0
+    bytes_encoded = 0
+
+    def count_json(payload, *args, **kwargs):
+        nonlocal bytes_decoded
+        if payload == text or payload == raw:
+            bytes_decoded += len(raw)
+        return loads(payload, *args, **kwargs)
+
+    def count_base64(payload, *args, **kwargs):
+        nonlocal bytes_encoded
+        if payload == raw:
+            bytes_encoded += len(raw)
+        return encode(payload, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(json, "loads", count_json)
+        patch.setattr(project_activation_journal.base64, "b64encode", count_base64)
+        prepared = services.current_project_opener.prepare_path(path, context)
+        assert prepared.is_success, prepared.diagnostics
+        activated = services.current_project_opener.activate(prepared.value, context)
+        assert activated.is_success, activated.diagnostics
+
+    active = services.project_lifecycle.active
+    assert active.variant.snapshot() is prepared.value.prepared_read.snapshot
+    assert not active.dirty
+    assert variant_path.read_bytes() == raw
+    assert bytes_decoded == len(raw)
+    assert bytes_encoded == 0
+
+
+def test_materialized_entries_without_hydration_recompute_source_coverage(opening):
+    services, path, context = opening
+    prepared = services.current_project_opener.prepare_path(path, context).value
+    assert not prepared.missing_inputs
+    (baseline,) = prepared.baselines
+    default = baseline.entries[0]
+    new_key = replace(default.entry_key, local_key="no-hydration")
+    expanded_baseline = replace(baseline, entries=(*baseline.entries, replace(default, entry_key=new_key)))
+    prepared = replace(prepared, baselines=(expanded_baseline,))
+
+    activated = services.current_project_opener.activate(prepared, context)
+
+    assert activated.is_success, activated.diagnostics
+    active = services.project_lifecycle.active
+    assert new_key in {entry.entry_key for entry in active.variant.snapshot().entries}
+    assert [item.namespace for item in active.missing_inputs] == [new_key.namespace.value]
+
+
 @pytest.mark.parametrize("kind", ["project", "variant"])
 def test_prepared_open_refuses_same_revision_external_change(opening, kind):
     services, path, context = opening
@@ -78,20 +145,27 @@ def test_prepared_open_refuses_same_revision_external_change(opening, kind):
     assert record_path.read_bytes() == changed
 
 
-def test_final_activation_still_rejects_changes_after_candidate_loading(opening):
+@pytest.mark.parametrize("kind", ["project", "variant"])
+def test_final_activation_still_rejects_changes_after_candidate_loading(opening, kind):
     services, path, context = opening
     prepared = services.current_project_opener.prepare_path(path, context).value
+    record_path = path if kind == "project" else Path(services.variants.path_for(prepared.variant_ref))
+    document = json.loads(record_path.read_bytes())
+    if kind == "project":
+        document["data"]["name"] = "changed after preparation"
+    else:
+        document["data"]["entries"][0]["stage"] = 5
+    changed = json.dumps(document).encode("utf-8")
 
     def change_during_view(_projection):
-        document = json.loads(path.read_text(encoding="utf-8"))
-        document["data"]["name"] = "changed after preparation"
-        path.write_text(json.dumps(document), encoding="utf-8")
+        record_path.write_bytes(changed)
 
     result = services.current_project_opener.activate(prepared, context, prepare_view=change_during_view)
     assert not result.is_success
+    assert result.diagnostics[0].code == "PROJECT_ACTIVATION_STALE"
     assert services.project_lifecycle.active is None
     assert services.project_projection.snapshot() is None
-    assert json.loads(path.read_text(encoding="utf-8"))["data"]["name"] == "changed after preparation"
+    assert record_path.read_bytes() == changed
 
 
 def test_changed_caller_dto_cannot_pollute_prepared_input_evidence(opening):

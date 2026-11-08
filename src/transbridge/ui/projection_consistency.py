@@ -25,6 +25,10 @@ def _immutable(value):
     )
 
 
+def _snapshot_entries(snapshot):
+    return () if snapshot is None else snapshot.values.get("entries", ())
+
+
 @dataclass
 class _CollectionEvidence:
     version: int | None = None
@@ -105,7 +109,7 @@ class ProjectionConsistency:
                 self._visible.pop(key)
 
     def _authority_changes(self, snapshot):
-        entries = () if snapshot is None else snapshot.values.get("entries", ())
+        entries = _snapshot_entries(snapshot)
         if entries is self._entries:
             return set()
         rows = {EntryKey.from_dict(item["entry_key"]): item for item in entries if not item.get("tombstone", False)}
@@ -126,3 +130,28 @@ class ProjectionConsistency:
         self._entries, self._authority = entries, authority
         self._authority_rows = rows
         return changed
+
+
+class PreparedProjectionConsistency:
+    """Transfer a detached consistency cache from the open worker to Qt once."""
+
+    def __init__(self, snapshot, slots):
+        self._consistency = ProjectionConsistency()
+        self._consistency.diverged(snapshot, slots)
+
+    def acknowledge(self, snapshot, slots):
+        """Refresh on the worker if publication produced different authority rows."""
+        if self._consistency._entries is not _snapshot_entries(snapshot):
+            self._consistency.diverged(snapshot, slots)
+
+    def take(self, snapshot, slots):
+        consistency, self._consistency = self._consistency, None
+        if (
+            consistency is not None
+            and consistency._entries is _snapshot_entries(snapshot)
+            and consistency._collections.keys() == {slot.collection.change_journal for slot in slots}
+        ):
+            # The normal consistency check validates the journal versions under
+            # their locks and rechecks nested metadata that bypasses the journal.
+            return consistency
+        return None

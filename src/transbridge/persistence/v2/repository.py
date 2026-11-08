@@ -33,11 +33,11 @@ from .models import (
     SessionDto,
     VariantDto,
 )
-from .project_record_guard import record_matches
+from .project_record_guard import RecordVersion, record_matches
 from .project_write_lock import ProjectWriteLock
 from .schema import parse_json_bytes, serialize_document, validate_v2, version_of
 from .session_write_lease import session_write_lease
-from .validated_reads import decode_validated_read, remember_validated_read, validated_read
+from .validated_reads import decode_validated_read, remember_validated_read, validated_read, validated_record_version
 
 _MUTATION_LOCKS_GUARD = RLock()
 _MUTATION_LOCKS: dict[tuple[type[object] | int, str], ProjectWriteLock] = {}
@@ -108,7 +108,7 @@ class JsonRepository[RefT, DtoT]:
         if version_of(document) < SCHEMA_VERSION:
             document = migrate_to_current(document, ref).document
             return LoadedRecord(ref, validate_v2(document, ref), hashlib.sha256(raw).hexdigest(), migrated=True)
-        return decode_validated_read(self, ref, raw, validate=validate_v2)
+        return decode_validated_read(self, ref, raw, validate=validate_v2, document=document)
 
     def load(self, ref: RefT) -> LoadResult:
         self._check_ref(ref)
@@ -132,7 +132,7 @@ class JsonRepository[RefT, DtoT]:
 
         if version == SCHEMA_VERSION:
             try:
-                return decode_validated_read(self, ref, raw, validate=validate_v2)
+                return decode_validated_read(self, ref, raw, validate=validate_v2, document=document)
             except SchemaValidationError as exc:
                 return self._quarantine(ref, path, raw, digest, exc)
 
@@ -266,7 +266,7 @@ class JsonRepository[RefT, DtoT]:
         if not self._filesystem.exists(path):
             return
         existing = self._filesystem.read_bytes(path)
-        if validated_read(self, ref, existing) is not None:
+        if validated_record_version(self, ref, existing) is not None:
             return
         try:
             document = parse_json_bytes(existing)
@@ -287,7 +287,7 @@ class JsonRepository[RefT, DtoT]:
                 "Load and migrate the legacy record before saving current-schema data.",
             )
         try:
-            decode_validated_read(self, ref, existing, validate=validate_v2)
+            decode_validated_read(self, ref, existing, validate=validate_v2, document=document)
         except SchemaValidationError as exc:
             raise ReadOnlyWriteRefused(
                 "INVALID_EXISTING_RECORD",
@@ -365,12 +365,13 @@ class JsonRepository[RefT, DtoT]:
             return cached
         try:
             document = parse_json_bytes(raw)
-            if version_of(document) > SCHEMA_VERSION:
+            version = version_of(document)
+            if version > SCHEMA_VERSION:
                 return
-            if version_of(document) == SCHEMA_VERSION:
+            if version == SCHEMA_VERSION:
                 # The caller still owns the read lease. Reuse this validated
                 # read rather than parsing and validating the same file again.
-                return decode_validated_read(self, ref, raw, validate=validate_v2)
+                return decode_validated_read(self, ref, raw, validate=validate_v2, document=document)
         except SchemaValidationError:
             pass
         self._mutation_lock.recover()
@@ -483,6 +484,12 @@ class VariantRepository(JsonRepository[VariantRef, VariantDto]):
     def read_snapshot_record(self, ref: VariantRef) -> LoadedRecord:
         with self._mutation_lock.reading():
             return super().read_snapshot_record(ref)
+
+    def _read_validated_version(self, ref: VariantRef) -> RecordVersion | None:
+        """Recheck disk for exact evidence without reconstructing a detached DTO."""
+        with self._mutation_lock.reading():
+            raw = self._filesystem.read_bytes(self.path_for(ref))
+            return validated_record_version(self, ref, raw)
 
     def save_if_revision(
         self,

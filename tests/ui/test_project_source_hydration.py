@@ -134,6 +134,22 @@ def test_empty_project_has_no_slots():
     assert source_hydration.prepare_project_slots((), _snapshot([])) == ()
 
 
+def test_already_bound_hydration_does_not_revalidate_source_entries(monkeypatch):
+    source = _source("artifact.esp", "namespace")
+    source.source_id = "registered"
+    source.reference_location = "current.esp"
+    snapshot = ProjectionSnapshot(
+        "project:new", 3, 3, {"sources": [{"source_id": source.source_id, "location": source.reference_location}]}
+    )
+    monkeypatch.setattr(source_hydration, "replace", lambda *_args, **_kwargs: pytest.fail("Copied bound hydration"))
+
+    ((identity, slot),) = source_hydration.prepare_project_slots((source,), snapshot)
+
+    assert identity == slot.source_id == source.source_id
+    assert slot.esp_path == source.reference_location
+    assert slot.source_snapshot is source.source_snapshot
+
+
 @pytest.mark.parametrize("empty", [False, True])
 def test_registered_primary_identity_survives_folded_source_and_empty_content(empty):
     from transbridge.application.projects.provisioning_models import PreparedSourceHydration

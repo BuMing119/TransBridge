@@ -1,7 +1,7 @@
 # 本地工程打开性能修复方案
 
 - **Feature slug**：`project-open-performance`
-- **状态**：S01～S05 已实现；相关功能回归通过，最终性能验收见增量记录。
+- **状态**：S01～S05 已实现，历史验证见原增量记录；2026-11-09 的 S06～S09 本地实现、分组/扩大回归与五轮对照已完成，7 个既有失败在本轮起点源码复现。全流程 200 ms 心跳预算仍未达到，不能标记整体性能验收完成。
 - **日期**：2026-10-19
 - **来源**：用户反馈开始页加载工程时明显停顿，并询问优化与修改方案。
 - **对应需求**：[FR19.4、FR19.7、FR28.6、NFR1.5、NFR1.7](../../docs/requirements.md)
@@ -163,3 +163,108 @@ uv run ruff format --check src tests
 - 当前工作区有大量未提交 UI 改动，实施只修改已明确的性能职责，保留用户其他改动。
 - 责任审查：lifecycle 的候选准备已抽为独立模块，主文件缩小但仍超 700 行；其既有保存、目录事务和导出协议本轮不整体重组，以限制持久化回归范围。后续扩展上述任一事务责任前，须先单独抽取相应切片并复跑事务故障测试。AppContext 保留已有 facade，但工程订阅、队列排序、安装及状态已集中到 ProjectViewBinding；不向旧 facade 增加数据转换职责。
 - 最终测量、200 ms 心跳预算的实际达成情况、未完整执行的广 UI 和可见窗口检查，均以本轮增量记录为准；不把后台运行等同于完全没有停顿。
+
+## 2026-11-09 后续优化范围与实施结果
+
+本轮继续修复普通工程打开、启动恢复及指定工程包启动中的重复计算。S01～S05 的完成和历史测量保留；其“已完成”不代表后续持久来源恢复加入后所有成本已消除。对应需求与 ADR 仍沿用本计划列出的文档，局部证据复用和线程交接不新增持久化公共契约，因此无需新 ADR。
+
+本轮起点诊断与测量边界（以下重复工作由 S06～S09 处理）：
+
+- 正常 `prepare_path → activate` 已有 `PreparedProjectRead` 和 `ValidatedReads`，活动 Variant 完整 schema 校验与 `VariantSnapshot.from_dto` 各一次；剩余重复主要是 raw 读取、严格 JSON 解析和无变化对象重建，不能再次声称尚未实现同次校验复用。
+- 读取当前 schema 时 repository 先解析判断版本，decode 又解析；复用证据的公开读取为保持 DTO 隔离也重新解析。activation 的未写入记录仍构造 previous/target base64 与摘要后才过滤。
+- loader 无条件索引 baseline、创建新 Snapshot、比较全部内容；来源缺失检查存在可验证的复用机会。来源 artifact 仍完整恢复 baseline 与 hydration，规模较大。
+- worker 已准备 slots 和 `ProjectViewState`，但 `ProjectViewBinding._apply_state` 的首次 `ProjectionConsistency.diverged` 仍在 Qt 线程全量扫描。
+- 开始页 `_render` 同步扫描工程目录和可恢复任务；指定 `initial_import_path` 时 MainWindow 仍先恢复旧工程，再等待空闲导入指定工程包。
+- 工程包 inspection/import 都完整准备；当前 schema 也经过 migration 深复制。减少重复预检必须保留导入时冲突判断、归档安全校验与失败回滚。
+- 组件诊断输入为约 96.2 MB、96751 条活动 Variant、80 来源，用于定位 strict parse/schema/from_dto 成本，不作为完整打开基线。正式 before/after 以本轮末尾的五轮重载对照为准；历史 [来源恢复记录](../../docs/changelogs/task-result-lifecycle/story-01-to-05/2026-10-26-010-durable-source-restoration.md) 的完整重开约 92 秒仅提供问题背景，不能跨环境作为本轮 before 数值。
+
+**范围外及后续架构**：本轮保留完整权威 Variant 和完整来源加载，不实现按来源 lazy hydration，不修改 schema、artifact ABI、保存完整性、写回能力判定或全局缓存。按来源懒加载是明确的后续独立架构切片：需要拆分完整可保存的权威译文状态与按需来源能力，定义每来源 readiness/error/cancel、版本失效、worker 所有权、导出/写回 capability gates，并证明尚未 hydration 的来源不会在保存时丢失。不能直接让现有 typed artifact decoder 返回部分对象。本轮不包含该设计与实现，不以此宣称解决所有大工程加载成本。
+
+## S06：减少普通恢复的重复解析与无变化重建
+
+**状态**：本地实现，相关回归通过。**依赖**：已有 S01～S03；与 S07 独立实施。
+
+**验收标准**：当前 schema 的首次读取只解析一次；同次打开证据复用不泄露共享可变 DTO；未变更 activation record 不做无用 journal 编码；无变化 materialization 复用原 Snapshot，保存与缺失来源语义不变。
+
+**实施步骤与契约**：
+
+1. 在 repository 与 validated reads 的私有调用链传递已严格解析且属于同一 raw 的 document，避免版本判断后再次 parse。重复键、非有限数、未来 schema、只读读取和旧格式迁移继续执行原策略。
+2. 公开 repository read 仍返回 detached mutable DTO。为内部只需要 revision/hash/已验证身份的路径复用不可变操作级证据，不把返回给调用者的 DTO 当可信缓存；不同 repository、ref 或 raw 必须失配，恢复与迁移后重新核对。
+3. activation 的 `write=False` 完成当前记录 revision/hash 和 preimage 验证后直接省略记录，不先调用 `_record_data` 再过滤。实际写入的 manifest、崩溃恢复、提交前冲突检查与写后读回保持；不为减少 I/O 任意删除 preimage 防护。
+4. `_materialize` 采用有变化才构造结果的方式，仍逐项处理 namespace 重复、fingerprint 不匹配、tombstone 和 inferred fields 补齐。用明确的实际变化判断减少新 Snapshot 校验/排序和全量 equality，不能根据 revision 相同猜测无变化。
+5. prepared missing-input 结果只在 project sources、hydrations 和有效 Snapshot 均保持一致时复用；来源 repair、补齐或材料变化后重新计算。保留完整 source artifact 解码，不增加跨打开缓存。
+6. 按热点诊断增加 exact built-in JSON 类型的等价快速校验与 namespace 集合成员检查；source artifact 单次解码内仅复用最多各 64 个冻结 namespace/revision 值。JSON object pairs 无重复时走内置 dict，重复时仍定位并拒绝；复杂 metadata 保持独立，bool/float revision 不进入 int 快路径。
+
+**文件落点**：`src/transbridge/persistence/v2/repository.py`、`validated_reads.py`、`project_activation_journal.py`、`project_record_guard.py`、`schema.py`，`src/transbridge/persistence/prepared_project_read.py`、`project_lifecycle_loader.py`、`source_artifact_codec.py`、`source_artifact_store.py`。仅修改内聚热路径；超过大小阈值的 repository 不新增跨操作缓存职责，版本证据放在已有 guard/evidence 模块。
+
+**验证**：扩展 `tests/persistence/v2/test_project_open_reuse.py`、`test_repository_read_snapshot.py`、`test_project_activation_transactions.py` 和 `tests/application/projects/test_v2_loader.py`；覆盖同 revision 外部更改、candidate 后提交前更改、DTO 与嵌套 metadata 修改、迁移前后变化、无变化对象复用与真实补齐、重复 namespace、tombstone、缺失来源及 repair。诊断计数辅助确认收益，但不能替代保存正确性验证。
+
+## S07：在后台准备首次视图一致性证据
+
+**状态**：本地实现，相关回归通过。**依赖**：已有 S03；与 S06 独立实施。
+
+**验收标准**：正常完整打开的首次全量一致性检查在 worker 执行；Qt 只安装匹配的视图与证据。正常编辑、非权威变更检测和后台保存等待语义保持，不能通过直接标记 clean 达成性能目标。
+
+**实施步骤与契约**：
+
+1. `ProjectOpenOperation` 完成 detached slots 和 prepared projection 后，建立对应 `ProjectionConsistency` 证据，作为一次性 prepared-view payload 交接。
+2. 安装时验证 exact snapshot、slots/collection 所有权及 change journal version。失配必须拒绝或走现有正确性路径，不能采用过期证据；commit 后安装失败继续使用明确的恢复状态。
+3. 保留 nested mutable external refs 的 fallback 检查，保持权威 revision/identity、排队投影、late result 和关闭协议。不得在后台访问 QWidget 或修改已发布 collection。
+4. 普通 projection 更新继续使用现有增量检查，不增加永久轮询或第二套保存真实性判断。
+5. source hydration 的 source_id/reference_location 已绑定时保留原实例，避免无变化 replace 再次检查全部来源 entries。
+
+**文件落点**：`src/transbridge/ui/projection_consistency.py`、`project_view_binding.py`、`coordinators/project_open_operation.py`、`source_hydration.py`；新增数据交接类型仅限这项职责，避免扩展 MainWindow/AppContext。
+
+**验证**：`tests/ui/test_projection_consistency_cost.py`、`test_project_open_operation.py`、`test_project_source_hydration.py`、`test_background_gui_operations.py`、`tests/integration/gui/test_app_context_projection.py`。新增线程归属、安装前 collection 改变、mutable metadata、迟到结果、提交后安装失败和后台保存一致性检查；用真实 CPU 工作观察心跳，不只依赖 sleep mock。
+
+## S08：缩短启动恢复和指定工程包的首屏等待
+
+**状态**：本地实现，相关回归通过；扩大测试的既有夹具失败见本轮增量。**依赖**：沿用现有 worker registry、关闭协议；与 S06/S07 独立。
+
+**验收标准**：显示恢复状态不再同步等待目录/任务扫描；指定工程包启动不会先完整恢复旧工程。普通无参数启动继续恢复原工程，原有工作区筛选配置保持。
+
+**实施步骤与契约**：
+
+1. 开始页先用已有状态或空列表渲染，再后台取得工程与恢复任务投影。使用操作代次/页面 revision 拒绝过期结果，完成回调只更新对应状态，不把已进入工作台的窗口切回开始页。
+2. 后台扫描登记到现有 worker 生命周期；重复显示合并合理的未完成扫描，失败保留可诊断状态，关闭后不再写控件。避免每次渲染新建无限并发 worker。
+3. `initial_import_path` 作为明确启动意图，仍加载 workspace 和筛选配置，但跳过旧活动工程 `prepare_active`，再进入既有包导入流程。取消/失败留在可用开始页，不伪装指定工程已打开。
+4. 保持显式 project path、无启动路径、服务不可用和窗口关闭分支；两个显式路径同时传入时优先 project path，不并发两项打开操作。
+5. 导入冲突回调和导入完成回调在入口及 modal 返回后检查 close_pending，不在关闭等待中弹出后继提示、启动导入或打开新工程；已开始的发布事务正常完成，已导入成果保留。只修复该入口，不改变所有 foreground 回调。
+
+**文件落点**：`src/transbridge/ui/shell/start_center_controller.py`、新增同目录 `start_center_directory.py`、`coordinators/project_coordinator.py`、`coordinators/project_transfer_coordinator.py`、`main_window.py`。扫描职责独立，保留本轮前已有更新器、打开文件和窗口生命周期改动。
+
+**验证**：开始页/窗口隔离、`tests/ui/test_main_window_coordinators.py`、`test_main_window_shell.py`、`test_worker_shutdown_registry.py` 及相关导入入口测试；覆盖扫描慢/失败、连续 render、切换工作台后结果到达、关闭、指定包成功/取消/失败、普通恢复与显式项目路径。
+
+## S09：减少归档预检重复工作并完成对照验证
+
+**状态**：本地实现，归档回归与 before/after 对照完成；总时长中位改善，心跳预算未达到。**依赖**：归档切片独立实施，对照覆盖 S06～S08 的工程打开路径。
+
+**验收标准**：明确减少 current-schema 归档的无意义 migration/deepcopy 或重复重建；仍验证合法输入并拒绝损坏/危险归档。普通恢复、指定包启动的总耗时和 GUI 占用分别报告，不用后台化代替总耗时改善。
+
+**实施步骤与契约**：
+
+1. current schema 直接严格校验，仅旧版本执行 migration。将容器与记录验证抽取到 `project_archive_reader.py`，保留归属、来源、资产路径与 fingerprint 校验。
+2. 新增 `inspect_import_conflicts` 仅用于 GUI 冲突提示；公共 `inspect_import` 继续完整校验。`import_project` 重新打开归档完整准备，不在两个操作间复用 draft，也不以 mtime/size 证明输入未变。legacy 包保留完整预检路径。
+3. 复用既有 `scripts/benchmark_project_open.py::measure_project`，由任务专属隔离 wrapper 加载 before/after 源码与同 seed 副本；不修改正式 runner，不把用户译文写入报告。采用相同采样终点记录一次冷开和五轮重载；组件计数、微基准与 profiler 只作诊断。
+4. 组件 runner 不覆盖完整 MainWindow：启动自动恢复、指定工程包和完整窗口订阅须额外验证。记录冷开/重载、首屏时刻、总打开耗时和 Qt 最长心跳；200 ms 仍为已有预算，结果未达标时明确报告，不改阈值掩盖问题。
+5. 原始输入只读；需要真实工程时使用隔离副本。`.tmp-project-open-opt-20261109/before` 为本轮起点源码副本，后续对照不能当成干净 Git HEAD；结束前按所有权清理本轮临时产物，保留用户原有文件和修改。
+
+**文件落点**：`src/transbridge/persistence/project_archive.py`、新增 `project_archive_reader.py`、`tests/persistence/v2/test_project_archive.py` 与相关 GUI 预检接线；性能复用已有 runner，任务 wrapper 不作为生产文件交付。
+
+**验证**：`tests/persistence/v2/test_project_archive.py`、`test_legacy_project_archive.py`、`test_source_artifact_archive.py`、`test_archive_business_assets.py`、`tests/security/test_archive_attack_corpus.py`；覆盖旧/当前 schema、inspection 后归档变化、复制/重命名、归属、路径/资产攻击和失败回滚。实际分组命令、既有失败及基线复现、Ruff 和性能原始样本见[本轮增量](../../docs/changelogs/project-open-performance/story-06-to-09/2026-11-09-001-project-restore-work.md)，不以早期分组结果替代最终收尾验证。
+
+## S06～S09 依赖、风险与回退
+
+- S06、S07、S08 为独立职责切片，S09 汇总验收；每个切片可单独回退。证据 producer/consumer 配套回退，不能只移除失配检查。
+- 不修改 uv.lock、依赖或安装包；已有公开同步 API、文件格式、只读恢复与持久化事务协议保持兼容，无用户迁移操作。
+- 复用证据的最大风险是把 mutable DTO 或旧 revision 当成可信状态；测试必须主动修改对象和磁盘内容。UI 移交的最大风险是 detached 数据在验证后被改动；通过明确所有权与 journal 版本约束处理。
+- 初步成本不支持承诺具体加速倍数；完整 artifact 恢复、必要 schema 校验和 Python CPU/GIL 开销仍可能主导总时间。保留原验证后再优化，不用新增哈希或全局缓存掩盖开销。
+- 本轮局部实现与验证完成，不等于整体响应性预算完成。S01～S05 历史结论不用于代替本轮证据。
+
+## S06～S09 本轮结果与剩余预算
+
+96751 条、80 来源的同一真实工程副本五轮重载，总打开中位 40.1036 → 36.0918 秒（约减少 10.0%），GUI 安装中位 2.10137 → 0.488574 秒（约减少 76.7%）。before/after 总时长范围分别 36.111～78.364 与 31.485～59.479 秒；全部样本保留，不能承诺稳定加速倍数。
+
+最大心跳间隔中位 2.669 → 2.757 秒，没有改善，远未满足 200 ms；单次冷开 35.212 → 81.528 秒也未改善。当前表格显示来源为 119 行，性能覆盖 ProjectCoordinator/AppContext/Step2，未测完整 MainWindow 启动与包导入耗时。组件准备阶段包含多项工作，不能全部归因于 source artifact；profile 耗时不是普通运行耗时。
+
+详细代码、回归命令、既有失败与性能原始序列见[本轮增量](../../docs/changelogs/project-open-performance/story-06-to-09/2026-11-09-001-project-restore-work.md)。后续按来源 lazy hydration 仍是独立架构切片，本轮不声称已实现或通过其验收。

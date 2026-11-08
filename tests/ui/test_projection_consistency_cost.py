@@ -18,6 +18,7 @@ from transbridge.converter.translation_entry_collection import TranslationEntryC
 from transbridge.ui import projection_consistency
 from transbridge.ui.context import CollectionSlot
 from transbridge.ui.main_window import MainWindow
+from transbridge.ui.project_view_binding import prepare_project_view
 
 
 def _count_content_reads(monkeypatch):
@@ -220,19 +221,19 @@ def test_new_collection_subscribing_while_a_setter_waits_cannot_cache_a_stale_cl
 def test_an_edit_during_a_background_check_is_observed_before_it_returns(view_factory, monkeypatch):  # noqa: F811
     view = view_factory()
     assert not view.context.authoritative_projection_diverged()
-    binding = view.context._project_view
     compared, release = Event(), Event()
-    real = binding._diverged_snapshot
+    consistency = projection_consistency.ProjectionConsistency
+    real = consistency.diverged
     reads = []
 
-    def compare(snapshot):
+    def compare(self, snapshot, slots):
         if not reads:
             compared.set()
             assert release.wait(3)
         reads.append(snapshot)
-        return real(snapshot)
+        return real(self, snapshot, slots)
 
-    monkeypatch.setattr(binding, "_diverged_snapshot", compare)
+    monkeypatch.setattr(consistency, "diverged", compare)
     with ThreadPoolExecutor(max_workers=1) as pool:
         check = pool.submit(view.context.authoritative_projection_diverged)
         assert compared.wait(1)
@@ -254,3 +255,64 @@ def test_background_wait_reuses_the_newly_delivered_evidence(view_factory, monke
     reads = _count_content_reads(monkeypatch)
     assert not view.context.authoritative_projection_diverged()
     assert reads == []
+
+
+def _prepared_open(entries):
+    snapshot = _snapshot(entries, project="new")
+    slot = CollectionSlot("new", TranslationEntryCollection(entries))
+    state = replace(
+        prepare_project_view(snapshot),
+        consistency=projection_consistency.PreparedProjectionConsistency(snapshot, (slot,)),
+    )
+    return snapshot, slot, state
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_install_rechecks_edits_made_after_worker_preparation(view_factory, monkeypatch, nested):  # noqa: F811
+    view = view_factory()
+    ref = ExternalEntryRef("paratranz", "project:1", 1, (("nested", {"values": [1]}),))
+    edited = replace(make_entry("edited"), external_refs=(ref,)) if nested else make_entry("edited")
+    snapshot, slot, state = _prepared_open((edited, make_entry("untouched")))
+    journal = slot.collection.change_journal
+    version = journal.version
+    if nested:
+        dict(ref.metadata)["nested"]["values"].append(2)
+        assert journal.version == version
+    else:
+        with pytest.warns(DeprecationWarning):
+            edited.translation = "unsubmitted"
+        assert journal.version > version
+
+    token = view.context.begin_project_open()
+    view.store.rebuild(snapshot)
+    reads = _count_content_reads(monkeypatch)
+    assert view.context.install_project_open(token, snapshot, (("new", slot),), state=state)
+    assert reads == [edited.identity]
+    assert view.context.finish_project_open(token)
+    assert view.context.authoritative_projection_diverged()
+
+    if nested:
+        dict(ref.metadata)["nested"]["values"].pop()
+    else:
+        with pytest.warns(DeprecationWarning):
+            edited.translation = ""
+    assert not view.context.authoritative_projection_diverged()
+
+
+@pytest.mark.parametrize("replace_input", ["authority rows", "collection"])
+def test_install_checks_current_inputs_when_prepared_evidence_does_not_match(view_factory, replace_input):  # noqa: F811
+    view = view_factory()
+    entry = make_entry("new", translation="prepared")
+    snapshot, slot, state = _prepared_open((entry,))
+    changed = replace(entry, translation="changed")
+    if replace_input == "authority rows":
+        snapshot = _snapshot((changed,), project="new")
+        state = state.committed(snapshot)
+    else:
+        slot.collection = TranslationEntryCollection((changed,))
+
+    token = view.context.begin_project_open()
+    view.store.rebuild(snapshot)
+    assert view.context.install_project_open(token, snapshot, (("new", slot),), state=state)
+    assert view.context.finish_project_open(token)
+    assert view.context.authoritative_projection_diverged()

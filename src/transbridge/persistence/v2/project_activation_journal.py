@@ -21,7 +21,7 @@ from .ids import ProjectId, ProjectRef, VariantId, VariantRef
 from .project_record_guard import require_record_version, verified_preimage
 from .schema import parse_json_bytes, serialize_document, validate_v2
 from .terminology_selection_participant import TerminologySelectionParticipant
-from .validated_reads import decode_validated_read, reuse_validated_reads
+from .validated_reads import decode_record_version, reuse_validated_reads
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -86,25 +86,25 @@ class ProjectActivationProtocol:
         project = activation.candidate_project
         if project is not None:
             project_ref = ProjectRef(ProjectId(project.envelope.identity))
-            records.append(
-                self._record(
-                    project_ref,
-                    project if activation.write_candidate_project else None,
-                    activation.expected_project_revision,
-                    activation.expected_project_hash,
-                    write=activation.write_candidate_project,
-                )
+            record = self._record(
+                project_ref,
+                project if activation.write_candidate_project else None,
+                activation.expected_project_revision,
+                activation.expected_project_hash,
+                write=activation.write_candidate_project,
             )
+            if record is not None:
+                records.append(record)
         if activation.candidate_variant_ref is not None:
-            records.append(
-                self._record(
-                    activation.candidate_variant_ref,
-                    activation.candidate_variant.to_dto() if activation.write_candidate_variant else None,
-                    activation.expected_variant_revision,
-                    activation.expected_variant_hash,
-                    write=activation.write_candidate_variant,
-                )
+            record = self._record(
+                activation.candidate_variant_ref,
+                activation.candidate_variant.to_dto() if activation.write_candidate_variant else None,
+                activation.expected_variant_revision,
+                activation.expected_variant_hash,
+                write=activation.write_candidate_variant,
             )
+            if record is not None:
+                records.append(record)
         if activation.removed_variant is not None:
             ref, revision, digest = activation.removed_variant
             records.append(self._record(ref, None, revision, digest, write=True))
@@ -142,14 +142,15 @@ class ProjectActivationProtocol:
         previous = None
         if self._filesystem.exists(path):
             previous = self._filesystem.read_bytes(path)
-            current = decode_validated_read(repository, ref, previous, validate=validate_v2)
+            current = decode_record_version(repository, ref, previous, validate=validate_v2)
         require_record_version(current, revision, digest, identity=ref.identity.value)
         if current is not None:
             previous = verified_preimage(self._filesystem, repository, ref, current)
-        payload = previous if not write else None if target is None else serialize_document(target.envelope.to_dict())
-        # Unchanged payloads are the validated, hash-verified preimage above.
-        if write and payload is not None:
-            decode_validated_read(repository, ref, payload, validate=validate_v2, reuse_unchanged=True)
+        if not write:
+            return None
+        payload = None if target is None else serialize_document(target.envelope.to_dict())
+        if payload is not None:
+            decode_record_version(repository, ref, payload, validate=validate_v2, reuse_unchanged=True)
         return _record_data(
             "project" if isinstance(ref, ProjectRef) else "variant",
             ref.identity.value,
@@ -208,7 +209,7 @@ class ProjectActivationProtocol:
                         elif record["kind"] != "pointer":
                             ref = self._ref(record)
                             repository = self._projects if isinstance(ref, ProjectRef) else self._variants
-                            decode_validated_read(repository, ref, value, validate=validate_v2)
+                            decode_record_version(repository, ref, value, validate=validate_v2)
                         else:
                             _validate_pointer(parse_json_bytes(value))
             self._validate_participants(document["records"])

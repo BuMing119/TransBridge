@@ -21,13 +21,16 @@ class ProjectCoordinator:
     def __init__(self, host) -> None:
         self._host = host
 
-    def init_workspace(self, *, initial_project_path: str | None = None):
-        """启动时读取 workspace.json，恢复上次项目+版本。"""
+    def init_workspace(self, *, initial_project_path: str | None = None, restore_active: bool = True) -> None:
+        """读取 workspace.json 和筛选设置，按启动意图打开或恢复工程。"""
         ws_path = workspace_path()
         ws = WorkspaceState.load(ws_path)
         self._host.context.workspace = ws
         self._apply_saved_filter_state(ws.last_session.get("filter_state", {}))
 
+        if not restore_active and not initial_project_path:
+            self._show_start_center_empty()
+            return
         if self._host.current_project_opener is None or self._host.runtime_context is None:
             self._show_start_center_failure(
                 "PROJECT_OPENER_UNAVAILABLE",

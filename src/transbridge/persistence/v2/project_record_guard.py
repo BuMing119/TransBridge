@@ -1,8 +1,21 @@
 """Exact record preconditions shared by Project save and activation protocols."""
 
+from dataclasses import dataclass
 import hashlib
 
 from transbridge.application.contracts import DomainError, ErrorCategory
+
+from .models import LoadedRecord
+
+
+@dataclass(frozen=True, slots=True)
+class RecordVersion:
+    revision: int
+    source_hash: str
+
+    @classmethod
+    def from_record(cls, record: LoadedRecord) -> "RecordVersion":
+        return cls(record.value.envelope.revision, record.source_hash)
 
 
 def verified_preimage(filesystem, repository, ref, record):
@@ -17,9 +30,10 @@ def verified_preimage(filesystem, repository, ref, record):
     return raw
 
 
-def require_record_version(record, expected_revision, expected_hash, *, identity):
-    revision = None if record is None else record.value.envelope.revision
-    if not record_matches(record, expected_revision, expected_hash):
+def require_record_version(record: RecordVersion | None, expected_revision, expected_hash, *, identity):
+    revision = None if record is None else record.revision
+    digest = None if record is None else record.source_hash
+    if revision != expected_revision or (expected_hash is not None and digest != expected_hash):
         raise DomainError(
             ErrorCategory.CONFLICT,
             "PROJECT_ACTIVATION_STALE",

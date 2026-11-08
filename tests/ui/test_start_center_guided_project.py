@@ -9,7 +9,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QLabel
 
-from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
+from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult, RequestContext
+from transbridge.application.projects import ProjectCatalogEntry, ProjectCatalogSnapshot
 from transbridge.persistence.workspace import WorkspaceState
 from transbridge.ui.coordinators.guided_project_coordinator import (
     GuidedDraftPhase,
@@ -27,6 +28,7 @@ from transbridge.ui.shell.start_center import (
     StartDestinationState,
 )
 from transbridge.ui.shell.start_center_controller import StartCenterController
+from transbridge.ui.shell.start_center_directory import read_start_center_directory
 
 _APP = QApplication.instance() or QApplication([])
 
@@ -654,43 +656,29 @@ def test_creation_capability_remains_disabled_after_landing_rerender() -> None:
 
 def test_recovery_projection_failure_is_distinguishable_from_an_empty_catalog() -> None:
     class Registry:
+        def names(self):
+            return ("task_recovery",)
+
         def resolve(self, name):
             assert name == "task_recovery"
             raise RuntimeError("catalog unavailable")
 
-    runtime_context = SimpleNamespace(
-        metadata={},
-        owner_id="owner",
-        project_id=None,
-        variant_id=None,
-        session_id="session",
-        permissions=(),
-    )
-    host = SimpleNamespace(
-        app_runtime=SimpleNamespace(use_cases=Registry()),
-        runtime_context=runtime_context,
-    )
-    controller = StartCenterController.__new__(StartCenterController)
-    controller._host = host
-    controller._recovery_diagnostic_message = ""
+    snapshot = read_start_center_directory(Registry(), RequestContext("owner"))
 
-    assert controller._recovery_projection() == ()
-    assert controller._recovery_diagnostic_message == "任务恢复状态暂时不可用。"
+    assert snapshot.recovery == ()
+    assert snapshot.diagnostic == "任务恢复状态暂时不可用。"
 
 
 def test_recent_projects_prefer_v2_read_only_catalog() -> None:
-    snapshot = SimpleNamespace(
-        projects=(
-            SimpleNamespace(
-                project_id="project-1",
-                name="MyMod",
-                path="D:/data/projects/project-1.json",
-                active=True,
-                available=True,
-                reason=None,
-            ),
-        )
-    )
+    snapshot = ProjectCatalogSnapshot((
+        ProjectCatalogEntry(
+            project_id="project-1",
+            name="MyMod",
+            path="D:/data/projects/project-1.json",
+            active=True,
+            available=True,
+        ),
+    ))
 
     class Registry:
         def names(self):
@@ -700,14 +688,7 @@ def test_recent_projects_prefer_v2_read_only_catalog() -> None:
             assert name == "project_catalog"
             return SimpleNamespace(list_projects=lambda: snapshot)
 
-    host = SimpleNamespace(
-        app_runtime=SimpleNamespace(use_cases=Registry()),
-        context=SimpleNamespace(workspace=None, active_project_id="project-1"),
-    )
-    controller = StartCenterController.__new__(StartCenterController)
-    controller._host = host
-
-    recent = controller._recent_project_projection()
+    recent = read_start_center_directory(Registry(), None).project_rows("project-1")
 
     assert len(recent) == 1
     assert recent[0].project_key == "project-1"

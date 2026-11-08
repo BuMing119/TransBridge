@@ -228,11 +228,13 @@ def _json_bytes(value: Any) -> bytes:
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate source artifact JSON key: {key}")
-        result[key] = value
+    result = dict(pairs)
+    if len(result) != len(pairs):
+        seen = set()
+        for key, _ in pairs:
+            if key in seen:
+                raise ValueError(f"duplicate source artifact JSON key: {key}")
+            seen.add(key)
     return result
 
 

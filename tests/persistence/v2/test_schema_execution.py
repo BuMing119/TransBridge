@@ -125,6 +125,26 @@ def test_persistence_schema_errors_match_standard_execution(case):
         assert _errors(optimized, document) == _errors(standard, document)
 
 
+@pytest.mark.parametrize(
+    "expected",
+    ["array", "boolean", "integer", "null", "number", "object", "string", ["null", "integer"]],
+)
+def test_persistence_type_keyword_matches_draft_for_builtin_and_extended_values(expected):
+    class Text(str):
+        pass
+
+    class Object(dict):
+        pass
+
+    schema = {"type": expected}
+    standard = Draft202012Validator(schema)
+    instances = ([], {}, False, None, 0, 1.0, 1.5, "str", Text("str"), Object())
+
+    with schema_execution(_PersistenceValidator, schema) as optimized:
+        for instance in instances:
+            assert _errors(optimized, instance) == _errors(standard, instance)
+
+
 def _count_evolves(monkeypatch, validator_type):
     calls = []
     original = validator_type.evolve

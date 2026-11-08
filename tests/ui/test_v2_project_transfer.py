@@ -1,22 +1,28 @@
 import json
 from pathlib import Path
+from time import monotonic
 from types import SimpleNamespace
 from uuid import uuid4
 from zipfile import ZipFile
 
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMainWindow, QMenu, QMessageBox
 import pytest
 
+from tests.ui.fixtures.project_runtime import project_window_dependencies
 from transbridge.application.contracts import RequestContext
 from transbridge.application.projects import ProjectProvisioningRequest
 from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.bootstrap.runtime import UseCaseRegistry
 from transbridge.persistence.v2 import ProjectId, ProjectRef
 from transbridge.persistence.v2.models import SCHEMA_VERSION
+from transbridge.persistence.workspace import WorkspaceState
 from transbridge.ui.context import AppContext
 from transbridge.ui.coordinators.project_transfer_coordinator import ProjectTransferCoordinator
+from transbridge.ui.main_window import MainWindow
 from transbridge.ui.shell.action_catalog import IntentId
 from transbridge.ui.workbench.widget import WorkbenchWidget
+from transbridge.ui.worker_registry import get_api_worker_registry
 
 
 @pytest.fixture
@@ -232,3 +238,153 @@ def test_package_import_conflicts_require_copy_or_name_and_preserve_existing_pro
     finally:
         host.close()
         services.close()
+
+
+@pytest.mark.parametrize(
+    ("close_stage", "expected_prompts", "publishes"),
+    [
+        ("inspection", [], False),
+        ("copy-confirmation", ["工程已存在"], False),
+        ("name-input", ["工程已存在", "name"], False),
+        ("publication", [], True),
+        ("open-confirmation", ["导入完成"], True),
+    ],
+)
+def test_package_import_stops_gui_continuation_when_closing(
+    qapp, tmp_path, monkeypatch, close_stage, expected_prompts, publishes
+):
+    package = write_import_package(tmp_path)
+    host, services = host_for(tmp_path / "target")
+    host.close_pending = False
+    prompts = []
+    scheduled = []
+    archive = services.project_archive
+    context = host.runtime_context
+    try:
+        if not publishes:
+            archive.import_project(str(package), context)
+        before = services.project_catalog.list_projects().projects
+
+        def start(operation, *, on_result, **_kwargs):
+            result = operation()
+            scheduled.append(result)
+            if (close_stage, len(scheduled)) in {("inspection", 1), ("publication", 2)}:
+                host.close_pending = True
+            on_result(result)
+            return True
+
+        def question(_parent, title, *_args):
+            prompts.append(title)
+            if (close_stage, title) in {("copy-confirmation", "工程已存在"), ("open-confirmation", "导入完成")}:
+                host.close_pending = True
+            return QMessageBox.StandardButton.Yes
+
+        def choose_name(*_args, **_kwargs):
+            prompts.append("name")
+            assert close_stage == "name-input"
+            host.close_pending = True
+            return "Copy", True
+
+        host.start_foreground_task = start
+        monkeypatch.setattr(QMessageBox, "question", question)
+        monkeypatch.setattr(QInputDialog, "getText", choose_name)
+
+        ProjectTransferCoordinator(host).import_transbridge(str(package))
+
+        assert host.close_pending
+        assert prompts == expected_prompts
+        assert len(scheduled) == (2 if publishes else 1)
+        projects = services.project_catalog.list_projects().projects
+        if publishes:
+            assert [item.name for item in projects] == ["GUI project"]
+        else:
+            assert projects == before
+        assert services.project_lifecycle.active is None
+    finally:
+        host.close()
+        services.close()
+
+
+@pytest.mark.parametrize("outcome", ["import", "cancel", "failure", "explicit-project"])
+def test_main_window_startup_package_intent_does_not_restore_last_project(qapp, tmp_path, monkeypatch, outcome):
+    monkeypatch.setattr(
+        "transbridge.paratranz.config_manager.ParatranzConfig.create_or_load",
+        lambda: SimpleNamespace(token="", user_id=None),
+    )
+    monkeypatch.setattr("transbridge.ui.shell.window_lifecycle.WindowLifecycle.restore_state", lambda _self: None)
+    monkeypatch.setattr("transbridge.ui.shell.window_lifecycle.WindowLifecycle.close_event", lambda *_args: True)
+    workspace_path = tmp_path / "workspace.json"
+    workspace = WorkspaceState(workspace_path)
+    workspace.last_session["filter_state"] = {"search_key": "saved filter"}
+    workspace.save()
+    monkeypatch.setattr("transbridge.ui.coordinators.project_coordinator.workspace_path", lambda: workspace_path)
+    package = write_import_package(tmp_path)
+    if outcome == "failure":
+        package.write_bytes(b"invalid archive")
+    prior = project_window_dependencies(tmp_path / "target")
+    try:
+        commands = prior["runtime"].use_cases.resolve("gui_project_commands")
+        name = "GUI project" if outcome == "cancel" else "Previously active"
+        assert commands.create_project(ProjectProvisioningRequest(name), prior["runtime_context"]).is_success
+        catalog = prior["runtime"].use_cases.resolve("project_catalog").list_projects()
+        [old_project] = catalog.projects
+    finally:
+        prior["app_context"].close_projection()
+        prior["runtime"].close()
+
+    dependencies = project_window_dependencies(tmp_path / "target")
+    opener = dependencies["runtime"].use_cases.resolve("current_project_opener")
+    assert opener.has_active_reference
+    restore_attempts = []
+    prepare_active = opener.prepare_active
+
+    def observe_restore(context):
+        restore_attempts.append(context)
+        return prepare_active(context)
+
+    monkeypatch.setattr(opener, "prepare_active", observe_restore)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_args, **_kwargs: ("", False))
+
+    window = None
+    registry = get_api_worker_registry()
+    try:
+        window = MainWindow(
+            **dependencies,
+            initial_import_path=str(package),
+            initial_project_path=old_project.path if outcome == "explicit-project" else None,
+        )
+        window.show()
+        assert window.context.workspace.last_session["filter_state"] == {"search_key": "saved filter"}
+        assert window.workbench.preview.get_filter_state()["search_key"] == "saved filter"
+        assert window.central_stack.currentWidget() is window._start_center
+
+        qapp.processEvents()  # Deliver the startup timer before checking worker quiescence.
+        deadline = monotonic() + 10
+        while registry.busy and monotonic() < deadline:
+            QTest.qWait(1)
+        assert not registry.busy
+
+        assert restore_attempts == []
+        if outcome == "import":
+            assert window.context.project_name == "GUI project"
+            assert window.central_stack.currentWidget() is window.mode_tabs.widget(0)
+        elif outcome == "explicit-project":
+            assert window.context.active_project_id == old_project.project_id
+            assert len(dependencies["runtime"].use_cases.resolve("project_catalog").list_projects().projects) == 1
+        else:
+            assert window.context.active_project_id is None
+            assert window.central_stack.currentWidget() is window._start_center
+            assert window._start_center._open_button.isEnabled()
+            if outcome == "failure":
+                assert "后台操作失败" in window._msg_label.toolTip()
+    finally:
+        if window is not None:
+            window.close_pending = True
+            window._window_lifecycle.auto_saver.stop()
+            window._status_presenter.close()
+            window.close()
+            window.deleteLater()
+            qapp.processEvents()
+        dependencies["app_context"].close_projection()
+        dependencies["runtime"].close()

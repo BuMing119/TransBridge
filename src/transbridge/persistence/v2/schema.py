@@ -294,7 +294,26 @@ def _object_items(validator, schema, instance, parent_schema):
     yield from Draft202012Validator.VALIDATORS["items"](validator, schema, instance, parent_schema)
 
 
-_PersistenceValidator = local_schema_validator({"items": _object_items})
+_EXACT_JSON_TYPES = {
+    "array": list,
+    "boolean": bool,
+    "integer": int,
+    "null": type(None),
+    "object": dict,
+    "string": str,
+}
+
+
+def _builtin_json_type(validator, expected, instance, schema):
+    # This local validator accepts exact built-in types without the general
+    # type-checker dispatch. Keep Draft's checks and errors for unions, numeric
+    # coercions (such as integral floats), subclasses and invalid values.
+    if type(expected) is str and _EXACT_JSON_TYPES.get(expected) is type(instance):
+        return
+    yield from Draft202012Validator.VALIDATORS["type"](validator, expected, instance, schema)
+
+
+_PersistenceValidator = local_schema_validator({"items": _object_items, "type": _builtin_json_type})
 
 
 def validate_v2(document: dict[str, Any], ref: EntityRef) -> PersistenceDto:
@@ -396,8 +415,8 @@ def _validate_semantics(ref: EntityRef, data: dict[str, Any]) -> None:
                 pointer="/data/project_id",
             )
         fingerprints = data.get("source_fingerprints", ())
-        namespaces = [item["namespace"] for item in fingerprints]
-        if len(set(namespaces)) != len(namespaces):
+        namespaces = {item["namespace"] for item in fingerprints}
+        if len(namespaces) != len(fingerprints):
             raise SchemaValidationError(
                 "DUPLICATE_SOURCE_NAMESPACE",
                 "Variant source namespaces must be unique.",

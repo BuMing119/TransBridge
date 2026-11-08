@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
@@ -19,10 +18,10 @@ from transbridge.application.projects.snapshots import ProjectSnapshotPort
 from .project_archive_files import (
     capture_owned_assets,
     capture_sources,
-    is_business_asset,
     member_destination,
     validate_archive,
 )
+from .project_archive_reader import open_import_archive, read_current_archive, read_manifest, read_project_record
 from .project_catalog_document import (
     ProjectCatalogRecord,
     build_project_catalog,
@@ -32,9 +31,8 @@ from .project_catalog_document import (
 from .v2.atomic_documents import AtomicDocumentStore
 from .v2.filesystem import RepositoryPaths
 from .v2.ids import ProjectId, ProjectRef, VariantId, VariantRef
-from .v2.migration import migrate_to_current
 from .v2.models import ProjectDto, VariantDto
-from .v2.schema import parse_json_bytes, validate_v2
+from .v2.schema import validate_v2
 from .v2.variant import VariantSnapshot
 
 
@@ -182,10 +180,23 @@ class ProjectArchiveService:
                 self._lifecycle.validate_export_lease(token, context)
 
     def inspect_import(self, source: str, context: RequestContext) -> ProjectArchiveInspection:
-        """Inspect a project package, transparently normalizing supported formats."""
+        """Fully validate a project package and report import conflicts."""
 
-        with self._prepare_import(source, context) as (_archive, draft):
-            project = draft.project
+        with open_import_archive(source) as archive:
+            project = self._prepare_import(archive, context).project
+        return self._inspect_project(project)
+
+    def inspect_import_conflicts(self, source: str, context: RequestContext) -> ProjectArchiveInspection:
+        """Read conflict-prompt facts. Portable variant and asset validation happens at import."""
+
+        with open_import_archive(source) as archive:
+            if "archive.json" in archive.namelist():
+                project = read_project_record(read_manifest(archive))
+            else:
+                project = self._prepare_import(archive, context).project
+        return self._inspect_project(project)
+
+    def _inspect_project(self, project: ProjectDto) -> ProjectArchiveInspection:
         ref = ProjectRef(ProjectId(project.envelope.identity))
         records = self._catalog_records()
         return ProjectArchiveInspection(
@@ -204,7 +215,8 @@ class ProjectArchiveService:
         requested_name: str | None = None,
         copy_on_identity_conflict: bool = False,
     ) -> str:
-        with self._prepare_import(source, context) as (archive, draft):
+        with open_import_archive(source) as archive:
+            draft = self._prepare_import(archive, context)
             project, variants, snapshots, members = draft.project, draft.variants, draft.snapshots, draft.members
             records = self._catalog_records()
             ref = ProjectRef(ProjectId(project.envelope.identity))
@@ -224,35 +236,22 @@ class ProjectArchiveService:
                 project = self._rename_project(project, requested_name)
             return self._publish(archive, project, variants, snapshots, members, draft.assets, context=context)
 
-    @contextmanager
-    def _prepare_import(self, source: str, context: RequestContext):
-        path = Path(source)
-        if path.suffix.lower() != ".transbridge" or not path.is_file():
-            raise ValueError("请选择 .transbridge 工程包。")
-        with zipfile.ZipFile(path) as archive:
-            decoded = self._decode_archive(archive, context)
-            assets = ()
-            if "archive.json" not in archive.namelist():
-                from .legacy_project_records import LegacyArchiveRecords
-                from .legacy_project_tasks import capture_legacy_task_assets
-
-                assets = capture_legacy_task_assets(
-                    LegacyArchiveRecords(archive),
-                    variant_names=decoded[0].envelope.data["legacy"]["variant_name_map"],
-                )
-            yield archive, ProjectArchiveDraft(*decoded, assets)
-
-    def _decode_archive(self, archive, context):
-        validate_archive(archive)
+    def _prepare_import(self, archive: zipfile.ZipFile, context: RequestContext) -> ProjectArchiveDraft:
         if "archive.json" in archive.namelist():
-            return self._read_current(archive)
+            return ProjectArchiveDraft(*read_current_archive(archive, self._paths))
         if "project.json" in archive.namelist():
             from .legacy_project_archive import decode_legacy_archive
+            from .legacy_project_records import LegacyArchiveRecords
+            from .legacy_project_tasks import capture_legacy_task_assets
 
             project, variants, snapshots = decode_legacy_archive(
                 archive, project_id=ProjectId(self._ids()), source_preparer=self._source_preparer, context=context
             )
-            return project, variants, snapshots, ()
+            assets = capture_legacy_task_assets(
+                LegacyArchiveRecords(archive),
+                variant_names=project.envelope.data["legacy"]["variant_name_map"],
+            )
+            return ProjectArchiveDraft(project, variants, snapshots, (), assets)
         raise ValueError("项目包缺少 archive.json 或 project.json")
 
     def _catalog_records(self) -> tuple[ProjectCatalogRecord, ...]:
@@ -312,76 +311,6 @@ class ProjectArchiveService:
             validate_v2(document["variant"], VariantRef(new_variant_id, new_ref.identity))
             snapshot_copies.append(document)
         return project_copy, tuple(variant_copies), tuple(snapshot_copies)
-
-    def _read_current(self, archive):
-        if archive.getinfo("archive.json").file_size > 256 * 1024**2:
-            raise ValueError("项目包清单过大")
-        manifest = parse_json_bytes(archive.read("archive.json"))
-        if manifest.get("archive_version") != 1:
-            raise ValueError("不支持的项目包版本")
-        project_ref = ProjectRef(ProjectId(manifest["project"]["id"]))
-        project = validate_v2(migrate_to_current(manifest["project"], project_ref).document, project_ref)
-        if not isinstance(project, ProjectDto):
-            raise ValueError("项目包缺少有效工程记录")
-        variants = []
-        for document in manifest["variants"]:
-            ref = VariantRef(VariantId(document["id"]), project_ref.identity)
-            dto = validate_v2(migrate_to_current(document, ref).document, ref)
-            if not isinstance(dto, VariantDto):
-                raise ValueError("项目包版本记录无效")
-            variants.append(VariantSnapshot.from_dto(dto, ref))
-        ids = [item.ref.identity.value for item in variants]
-        if len(ids) != len(set(ids)) or set(ids) != set(project.envelope.data["variant_ids"]):
-            raise ValueError("项目包中的版本列表不完整或重复")
-        snapshots = tuple(manifest.get("snapshots", ()))
-        for snapshot in snapshots:
-            ref = VariantRef(VariantId(snapshot["variant"]["id"]), project_ref.identity)
-            if snapshot.get("schema_version") != 1 or snapshot.get("project_id") != project_ref.identity.value:
-                raise ValueError("项目包快照归属不匹配")
-            if (
-                ref.identity.value not in ids
-                or not isinstance(snapshot.get("name"), str)
-                or not snapshot["name"].strip()
-            ):
-                raise ValueError("项目包快照名称或版本无效")
-            snapshot["variant"] = validate_v2(
-                migrate_to_current(snapshot["variant"], ref).document, ref
-            ).envelope.to_dict()
-        owned = self._paths.guard(os.path.join(self._paths.root, "projects", project_ref.identity.encoded))
-        from .source_artifact_archive import is_artifact_member, validate_artifacts
-
-        candidates = tuple(
-            info.filename
-            for info in archive.infolist()
-            if not info.is_dir() and info.filename != "archive.json" and not is_artifact_member(info.filename)
-        )
-        destinations = [self._paths.guard(member_destination(name, owned)) for name in candidates]
-        if len({os.path.normcase(path) for path in destinations}) != len(destinations):
-            raise ValueError("项目包资产目标重复")
-        members = tuple(
-            name
-            for name in candidates
-            if name.startswith("sources/") or is_business_asset(name.removeprefix("assets/"))
-        )
-        locations = {item["source_id"]: item["member"] for item in manifest["sources"]}
-        sources = project.envelope.data["sources"]
-        if len(locations) != len(manifest["sources"]) or set(locations) != {item["source_id"] for item in sources}:
-            raise ValueError("项目包来源列表不完整或重复")
-        for item in sources:
-            member = locations[item["source_id"]]
-            if member not in members or not member.startswith("sources/"):
-                raise ValueError("项目包缺少来源文件")
-            payload = archive.read(member)
-            if item.get("fingerprint") and hashlib.sha256(payload).hexdigest() != item["fingerprint"]:
-                raise ValueError("项目包来源文件指纹不匹配")
-            from transbridge.application.preflight.sources import source_reference
-
-            item.update(source_reference(item))
-        validate_v2(project.envelope.to_dict(), project_ref)
-        from .source_update_archive import archive_backup_sources
-
-        validate_artifacts(archive, sources, locations, backup_sources=archive_backup_sources(archive))
-        return project, tuple(variants), snapshots, members
 
     def _publish(self, archive, project, variants, snapshots, members, assets=(), *, context=None):
         ref = ProjectRef(ProjectId(project.envelope.identity))

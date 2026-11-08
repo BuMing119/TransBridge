@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 
 from PyQt6.QtWidgets import QFileDialog
@@ -11,13 +12,8 @@ from transbridge.ui.coordinators.project_creation_operation import ProjectCreati
 from transbridge.ui.shell.action_catalog import IntentId
 
 from .project_window_launcher import launch_project_in_new_window
-from .start_center import (
-    RecentProjectViewState,
-    RecoveryItemViewState,
-    StartCenterViewState,
-    StartCenterWidget,
-    StartDestinationState,
-)
+from .start_center import StartCenterViewState, StartCenterWidget, StartDestinationState
+from .start_center_directory import StartCenterDirectoryLoader, StartCenterDirectorySnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +27,11 @@ class StartCenterController:
         self._revision = 0
         self._intent_dispatch = dispatch
         self._project_window_launcher = project_window_launcher or launch_project_in_new_window
-        self._recovery_diagnostic_message = ""
+        self._directory = StartCenterDirectorySnapshot()
+        self._landing_state: StartCenterViewState | None = None
+        self._directory_loader = StartCenterDirectoryLoader(
+            self._apply_directory, is_closing=lambda: getattr(host, "close_pending", False)
+        )
         self._creation_operation = ProjectCreationOperation(host)
         self.guided_project: GuidedProjectCoordinator | None = None
 
@@ -53,6 +53,8 @@ class StartCenterController:
         view.task_center_requested.connect(lambda: self._submit(IntentId.TASK_OPEN_ACTIVITY))
         view.return_to_current_requested.connect(self.show_workbench)
         view.return_to_landing_requested.connect(lambda: self.show(user_requested=bool(host.context.project_name)))
+        if (close_cancelled := getattr(host, "close_cancelled", None)) is not None:
+            close_cancelled.connect(self._request_directory)
         if host.project_commands is None or host.runtime_context is None:
             view.set_creation_available(False, "建项服务不可用")
             return
@@ -91,6 +93,7 @@ class StartCenterController:
         self._render(destination)
 
     def show_workbench(self) -> None:
+        self._leave_landing()
         mode_tabs = getattr(self._host, "mode_tabs", None)
         if mode_tabs is not None and hasattr(mode_tabs, "setCurrentIndex"):
             mode_tabs.setCurrentIndex(0)
@@ -179,6 +182,7 @@ class StartCenterController:
         if self.guided_project is None:
             self._host.show_message("PROJECT_PROVISIONING_UNAVAILABLE: 建项服务不可用。")
             return
+        self._leave_landing()
         if isinstance(source_path, tuple):
             self.guided_project.begin_sources(source_path)
         else:
@@ -213,14 +217,6 @@ class StartCenterController:
         self.show_workbench()
         self._host.show_message(f"本地工程“{state.project_name}”已创建")
 
-    def _show_recovery_details(self, storage_key: str) -> None:
-        recovery = next(
-            (item for item in self._recovery_projection() if item.storage_key == storage_key),
-            None,
-        )
-        if recovery is not None:
-            self._host.show_message(recovery.reason or "该恢复项可在任务中心继续。")
-
     def _render(
         self,
         destination: StartDestinationState,
@@ -230,73 +226,45 @@ class StartCenterController:
     ) -> None:
         self._revision += 1
         context = self._host.context
-        state = StartCenterViewState(
+        self._landing_state = StartCenterViewState(
             destination=destination,
             revision=self._revision,
-            recent_projects=self._recent_project_projection(),
-            recovery_items=self._recovery_projection(),
             active_project_name=context.project_name,
             dirty=context.dirty,
             diagnostic_code=diagnostic_code,
             diagnostic_message=diagnostic_message,
-            recovery_diagnostic_message=self._recovery_diagnostic_message,
         )
-        self._view.render(state)
+        self._render_directory()
         self._show_start_center_view()
+        self._request_directory()
 
-    def _recent_project_projection(self) -> tuple[RecentProjectViewState, ...]:
+    def _leave_landing(self) -> None:
+        self._landing_state = None
+        self._directory_loader.invalidate()
+
+    def _request_directory(self) -> None:
         runtime = self._host.app_runtime
-        if runtime is not None and "project_catalog" in runtime.use_cases.names():
-            snapshot = runtime.use_cases.resolve("project_catalog").list_projects()
-            # The catalog's active flag is the shared startup pointer. Another
-            # GUI process can change it without changing this window's workbench.
-            active_project_id = self._host.context.active_project_id
-            return tuple(
-                RecentProjectViewState(
-                    project_key=item.project_id,
-                    name=item.name,
-                    path=item.path,
-                    available=item.available,
-                    reason=item.reason or "",
-                    active=item.project_id == active_project_id,
-                )
-                for item in snapshot.projects
-            )
-        return ()
+        if runtime is not None and self._landing_state is not None:
+            self._directory_loader.request(self._landing_state.revision, runtime.use_cases, self._host.runtime_context)
 
-    def _recovery_projection(self) -> tuple[RecoveryItemViewState, ...]:
-        runtime = self._host.app_runtime
-        context = self._host.runtime_context
-        if runtime is None or context is None:
-            self._recovery_diagnostic_message = ""
-            return ()
-        try:
-            from transbridge.application.tasks import OwnerRef
+    def _apply_directory(self, revision: int, snapshot: StartCenterDirectorySnapshot) -> None:
+        if self._landing_state is None or self._landing_state.revision != revision:
+            return
+        stack = getattr(self._host, "central_stack", None)
+        if stack is not None and stack.currentWidget() is not self._view:
+            return
+        self._directory = snapshot
+        self._render_directory()
 
-            metadata = dict(context.metadata)
-            actor = OwnerRef(
-                owner_id=context.owner_id,
-                entrypoint=metadata.get("entrypoint", "gui"),
-                project_id=context.project_id,
-                variant_id=context.variant_id,
-                session_id=context.session_id,
-                permissions=context.permissions,
+    def _render_directory(self) -> None:
+        context = self._host.context
+        self._view.render(
+            replace(
+                self._landing_state,
+                recent_projects=self._directory.project_rows(getattr(context, "active_project_id", None)),
+                recovery_items=self._directory.recovery,
+                recovery_diagnostic_message=self._directory.diagnostic,
             )
-            values = runtime.use_cases.resolve("task_recovery").list(actor)
-        except Exception:
-            logger.exception("Failed to project recoverable tasks for the start center")
-            self._recovery_diagnostic_message = "任务恢复状态暂时不可用。"
-            return ()
-        self._recovery_diagnostic_message = ""
-        return tuple(
-            RecoveryItemViewState(
-                storage_key=item.storage_key,
-                title=item.display_name,
-                recoverable=item.recoverable,
-                reason=item.reason_message or item.reason_code,
-                run_id=item.run_id,
-            )
-            for item in values
         )
 
 

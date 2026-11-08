@@ -11,10 +11,10 @@ from PyQt6.QtWidgets import QApplication
 import pytest
 
 from transbridge.application.contracts import RequestContext
-from transbridge.application.projects import ProjectProvisioningRequest
+from transbridge.application.projects import ProjectCatalogEntry, ProjectCatalogSnapshot, ProjectProvisioningRequest
 from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.ui.context import AppContext
-from transbridge.ui.shell.start_center_controller import StartCenterController
+from transbridge.ui.shell.start_center_directory import read_start_center_directory
 from transbridge.ui.shell.start_center_projects import PROJECT_ID_ROLE, StartCenterProjectsPanel
 
 _APP = QApplication.instance() or QApplication([])
@@ -57,10 +57,7 @@ def test_shared_catalog_routes_projects_using_each_surviving_window(tmp_path, mo
             registry = SimpleNamespace(
                 names=lambda: ("project_catalog",), resolve=lambda _name: service.project_catalog
             )
-            controller = StartCenterController(
-                SimpleNamespace(app_runtime=SimpleNamespace(use_cases=registry), context=context), None
-            )
-            projects = controller._recent_project_projection()
+            projects = read_start_center_directory(registry, None).project_rows(context.active_project_id)
             assert [item.project_key for item in projects if item.active] == [context.active_project_id]
 
             panel = StartCenterProjectsPanel()
@@ -95,13 +92,7 @@ def test_shared_catalog_routes_projects_using_each_surviving_window(tmp_path, mo
 
 
 def test_empty_window_does_not_treat_last_opened_project_as_its_workbench():
-    project = SimpleNamespace(project_id="B", name="B", path="B.json", available=True, reason=None, active=True)
-    catalog = SimpleNamespace(list_projects=lambda: SimpleNamespace(projects=(project,)))
+    project = ProjectCatalogEntry(project_id="B", name="B", path="B.json", available=True, active=True)
+    catalog = SimpleNamespace(list_projects=lambda: ProjectCatalogSnapshot((project,)))
     registry = SimpleNamespace(names=lambda: ("project_catalog",), resolve=lambda _name: catalog)
-    controller = StartCenterController(
-        SimpleNamespace(
-            app_runtime=SimpleNamespace(use_cases=registry), context=SimpleNamespace(active_project_id=None)
-        ),
-        None,
-    )
-    assert not controller._recent_project_projection()[0].active
+    assert not read_start_center_directory(registry, None).project_rows(None)[0].active

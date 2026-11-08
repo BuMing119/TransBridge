@@ -23,6 +23,9 @@ class ProjectTransferCoordinator:
     def _service(self, name):
         return self._host.app_runtime.use_cases.resolve(name)
 
+    def _is_closing(self) -> bool:
+        return getattr(self._host, "close_pending", False)
+
     def save_snapshot(self) -> None:
         if not self._host.context.active_variant_id:
             QMessageBox.warning(self._host, "快照", "请先打开一个翻译版本。")
@@ -156,6 +159,8 @@ class ProjectTransferCoordinator:
         context = replace(self._host.runtime_context, project_id=None, variant_id=None, run_id=uuid4().hex)
 
         def choose_strategy(inspection) -> None:
+            if self._is_closing():
+                return
             requested_name = None
             copy_on_conflict = False
             if inspection.identity_conflict:
@@ -167,7 +172,7 @@ class ProjectTransferCoordinator:
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No,
                 )
-                if answer != QMessageBox.StandardButton.Yes:
+                if answer != QMessageBox.StandardButton.Yes or self._is_closing():
                     return
                 copy_on_conflict = True
                 requested_name = self._choose_import_name(f"{inspection.name} 副本")
@@ -178,6 +183,8 @@ class ProjectTransferCoordinator:
                 if requested_name is None:
                     return
 
+            if self._is_closing():
+                return
             self._host.start_foreground_task(
                 lambda: self._service("project_archive").import_project(
                     path,
@@ -190,7 +197,7 @@ class ProjectTransferCoordinator:
             )
 
         self._host.start_foreground_task(
-            lambda: self._service("project_archive").inspect_import(path, context),
+            lambda: self._service("project_archive").inspect_import_conflicts(path, context),
             message="正在检查项目包…",
             on_result=choose_strategy,
         )
@@ -202,12 +209,16 @@ class ProjectTransferCoordinator:
         return name.strip()
 
     def _offer_open_imported(self, target: str) -> None:
+        if self._is_closing():
+            return
         answer = QMessageBox.question(
             self._host,
             "导入完成",
             "项目包已安全导入。是否现在打开？\n当前工程不会在未确认保存策略时被覆盖。",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
+        if self._is_closing():
+            return
         if answer == QMessageBox.StandardButton.Yes:
             self._host.project_coordinator.open_project_path(str(target))
         else:

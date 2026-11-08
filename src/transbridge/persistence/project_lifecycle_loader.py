@@ -12,14 +12,17 @@ from transbridge.application.projects.models import ActiveProject, TransitionTar
 from transbridge.application.projects.source_inputs import missing_inputs_for
 
 from .prepared_project_read import (
+    has_prepared_source_coverage,
     prepared_missing_inputs,
     prepared_project_sources,
     prepared_source_hydrations,
     prepared_variant,
+    reuse_prepared_variant,
     verify_prepared_project,
 )
 from .v2.ids import ProjectRef, VariantRef
 from .v2.models import LoadedRecord, ProjectDto, VariantDto
+from .v2.project_record_guard import RecordVersion
 from .v2.variant import (
     SourceBaseline,
     VariantAggregate,
@@ -91,7 +94,7 @@ class V2ProjectCandidateLoader:
                 "VARIANT_NOT_DECLARED_BY_PROJECT",
                 "The target Variant is not declared by the target Project.",
             )
-        stored, formal_record = self._load_variant(target, context)
+        stored, formal_version = self._load_variant(target, context)
         missing_inputs = prepared_missing_inputs()
         hydrations = prepared_source_hydrations() or ()
         baselines = None
@@ -120,13 +123,16 @@ class V2ProjectCandidateLoader:
         if baselines is None:
             baselines = self._baseline_provider(project, target.variant_ref, context)
         materialized = self._materialize(stored, baselines)
-        missing_inputs = missing_inputs_for(
-            project,
-            materialized,
-            hydrations,
-            {item.source_id or item.namespace: item.diagnostic for item in missing_inputs},
-        )
-        persisted_variant_revision = stored.revision if materialized == stored else None
+        if target.snapshot_ref is not None or not has_prepared_source_coverage(
+            project, materialized, baselines, hydrations, bound_sources
+        ):
+            missing_inputs = missing_inputs_for(
+                project,
+                materialized,
+                hydrations,
+                {item.source_id or item.namespace: item.diagnostic for item in missing_inputs},
+            )
+        persisted_variant_revision = stored.revision if materialized is stored else None
         return ActiveProject(
             project=project,
             variant=VariantAggregate(materialized),
@@ -135,15 +141,19 @@ class V2ProjectCandidateLoader:
             persisted_variant_revision=persisted_variant_revision,
             source_ref=target.snapshot_ref,
             source_project_hash=project_record.source_hash,
-            source_variant_hash=formal_record.source_hash,
-            source_variant_revision=formal_record.value.envelope.revision,
+            source_variant_hash=formal_version.source_hash,
+            source_variant_revision=formal_version.revision,
             missing_inputs=missing_inputs,
         )
 
-    def _load_variant(self, target: TransitionTarget, context: RequestContext) -> tuple[VariantSnapshot, LoadedRecord]:
+    def _load_variant(self, target: TransitionTarget, context: RequestContext) -> tuple[VariantSnapshot, RecordVersion]:
         assert target.variant_ref is not None
         snapshot = None
-        if target.snapshot_ref is not None:
+        if target.snapshot_ref is None:
+            reused = reuse_prepared_variant(self._variants, target.variant_ref)
+            if reused is not None:
+                return reused
+        else:
             if self._snapshot_loader is None:
                 raise DomainError(
                     ErrorCategory.PREREQUISITE,
@@ -171,7 +181,7 @@ class V2ProjectCandidateLoader:
             snapshot = prepared_variant(self._variants, result)
             if snapshot is None:
                 snapshot = VariantSnapshot.from_dto(result.value, target.variant_ref)
-        return snapshot, result
+        return snapshot, RecordVersion.from_record(result)
 
     def _materialize(
         self,
@@ -179,9 +189,12 @@ class V2ProjectCandidateLoader:
         baselines: tuple[SourceBaseline, ...],
     ) -> VariantSnapshot:
         """Add verified defaults without dropping any saved state or changing identity."""
+        if not baselines:
+            return stored
         fingerprints = {item.namespace: item for item in stored.source_fingerprints}
         entries = {entry.entry_key: entry for entry in stored.entries}
         seen = set()
+        changed = False
         for baseline in baselines:
             namespace = baseline.fingerprint.namespace
             if namespace in seen:
@@ -190,20 +203,30 @@ class V2ProjectCandidateLoader:
             previous = fingerprints.get(namespace)
             if previous is not None and previous != baseline.fingerprint:
                 continue
-            fingerprints[namespace] = baseline.fingerprint
+            if previous is None:
+                fingerprints[namespace] = baseline.fingerprint
+                changed = True
             for default in baseline.entries:
                 saved = entries.get(default.entry_key)
                 if saved is None:
                     entries[default.entry_key] = default
-                elif not saved.tombstone:
-                    inferred = set(saved.inferred_fields) & {"stage", "provenance", "revision", "external_refs"}
-                    inferred = {field for field in inferred if getattr(saved, field) != getattr(default, field)}
+                    changed = True
+                elif not saved.tombstone and saved.inferred_fields:
+                    inferred = {
+                        field: getattr(default, field)
+                        for field in saved.inferred_fields
+                        if field in {"stage", "provenance", "revision", "external_refs"}
+                        and getattr(saved, field) != getattr(default, field)
+                    }
                     if inferred:
                         entries[default.entry_key] = replace(
                             saved,
-                            **{field: getattr(default, field) for field in inferred},
+                            **inferred,
                             inferred_fields=tuple(field for field in saved.inferred_fields if field not in inferred),
                         )
+                        changed = True
+        if not changed:
+            return stored
         return VariantSnapshot(
             stored.ref,
             tuple(fingerprints.values()),

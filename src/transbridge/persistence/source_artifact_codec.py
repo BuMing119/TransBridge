@@ -102,6 +102,8 @@ def decode_prepared_artifact(
 ) -> PreparedProjectSource:
     """Restore saved contracts; relocation only changes declared source paths."""
     relocate = _relocator(original_location, location)
+    namespaces: dict[str, SourceNamespace] = {}
+    revisions: dict[int, EntryRevision] = {}
 
     def decode(value):
         if value is None or type(value) in (str, int, bool):
@@ -159,6 +161,24 @@ def decode_prepared_artifact(
             attributes = {"source_id": None, "reference_location": None, **attributes}
         if not isinstance(attributes, dict) or attributes.keys() != _FIELD_SETS[name]:
             raise ValueError(f"source artifact contract fields differ: {name}")
+        # Baseline and hydration repeat these immutable values across rows.
+        # Only exact scalar types can share a previously validated instance.
+        if name == "SourceNamespace" and type(attributes["value"]) is str:
+            raw_namespace = attributes["value"]
+            namespace = namespaces.get(raw_namespace)
+            if namespace is None:
+                namespace = SourceNamespace(raw_namespace)
+                if len(namespaces) < 64:
+                    namespaces[raw_namespace] = namespace
+            return namespace
+        if name == "EntryRevision" and type(attributes["value"]) is int:
+            raw_revision = attributes["value"]
+            revision = revisions.get(raw_revision)
+            if revision is None:
+                revision = EntryRevision(raw_revision)
+                if len(revisions) < 64:
+                    revisions[raw_revision] = revision
+            return revision
         attributes = {key: decode(item) for key, item in attributes.items()}
         if name == "SourceSnapshot" and not isinstance(attributes["content"], bytes):
             raise ValueError("source artifact snapshot requires independently captured bytes")

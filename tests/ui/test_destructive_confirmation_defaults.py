@@ -137,7 +137,9 @@ def _transfer_command(host, monkeypatch):
         imported.append(path)
 
     archive = SimpleNamespace(
-        inspect_import=lambda *_: SimpleNamespace(identity_conflict=True, name_conflict=False, name="Fixture"),
+        inspect_import_conflicts=lambda *_: SimpleNamespace(
+            identity_conflict=True, name_conflict=False, name="Fixture"
+        ),
         import_project=import_project,
     )
     host.runtime_context = RequestContext("confirmation-test")

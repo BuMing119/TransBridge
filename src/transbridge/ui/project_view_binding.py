@@ -12,7 +12,7 @@ from transbridge.application.contracts import DomainError, ErrorCategory, Operat
 from transbridge.application.projections.models import copy_projection_value
 from transbridge.ui.entry_projection import prepare_projected_entries, sync_projected_entries
 from transbridge.ui.project_labels import project_entry_labels
-from transbridge.ui.projection_consistency import ProjectionConsistency
+from transbridge.ui.projection_consistency import PreparedProjectionConsistency, ProjectionConsistency
 from transbridge.ui.projection_types import CollectionSlot
 
 _UNSET = object()
@@ -35,6 +35,7 @@ class ProjectViewState:
     entry_labels: dict = field(default_factory=dict)
     exact_labels: dict = field(default_factory=dict)
     snapshot: object = field(default=None, repr=False, compare=False)
+    consistency: PreparedProjectionConsistency | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def capture(cls, snapshot, previous_labels):
@@ -231,21 +232,26 @@ class ProjectViewBinding:
         if state is not None and (not isinstance(state, ProjectViewState) or state.snapshot is not snapshot):
             raise ValueError("Prepared project view must belong to the exact installation snapshot")
         next_state = state or ProjectViewState.capture(snapshot, self.context._entry_labels_exact)
+        context = self.context
         with self._lock:
             if self._closed or token != self._token:
                 return False
             if self._pending is not _UNSET and _snapshot_identity(self._pending[1]) != _snapshot_identity(snapshot):
                 return False
+            if next_state.consistency is not None:
+                consistency = next_state.consistency.take(snapshot, prepared_slots.values())
+                if consistency is not None:
+                    self._consistency = consistency
+                next_state = replace(next_state, consistency=None)
             self._installed = True
             self._installed_snapshot = snapshot
             self._applied_sequence = self._sequence
             self._pending = _UNSET
             self.installing = True
-        context = self.context
-        try:
             context._slots = prepared_slots
             context._active_key = next(reversed(prepared_slots), None)
             self.failed = False
+        try:
             self._apply_state(next_state)
             context.collection_list_changed.emit()
         finally:
@@ -336,7 +342,7 @@ class ProjectViewBinding:
             return False
         if QThread.currentThread() == self.context.thread():
             snapshot = self.state.snapshot if self.opening else self.store.snapshot()
-            return self._diverged_snapshot(snapshot)
+            return self._consistency.diverged(snapshot, tuple(self.context.slots.values()))
         # The durable commit can precede its queued Qt delivery. A background
         # save waits for that delivery instead of treating the old view as an
         # unsubmitted edit and pausing autosave. Never wait on the Qt thread.
@@ -359,11 +365,13 @@ class ProjectViewBinding:
                 sequence = self._sequence
                 token = self._token
                 installed = self.state.snapshot
+                consistency = self._consistency
+                slots = tuple(self.context.slots.values())
             # Creation checks the old workbench inside its own open transaction.
             # That transaction can only finish after this worker returns. Its
             # authority is the installed view, not the pending next project.
             snapshot = installed if token is not None else self.store.snapshot()
-            diverged = self._diverged_snapshot(snapshot)
+            diverged = consistency.diverged(snapshot, slots)
             with self._lock:
                 if (
                     not self._closed
@@ -374,6 +382,3 @@ class ProjectViewBinding:
                     and self.state.snapshot is installed
                 ):
                     return diverged
-
-    def _diverged_snapshot(self, snapshot):
-        return self._consistency.diverged(snapshot, tuple(self.context.slots.values()))

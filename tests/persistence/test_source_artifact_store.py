@@ -124,6 +124,41 @@ def test_roundtrip_preserves_baseline_hydration_role_diagnostics_and_typed_metad
     assert isinstance(metadata["tuple"][1], list)
 
 
+def test_decode_reuses_only_immutable_entry_values_within_one_read(storage):
+    store, _filesystem = storage
+    artifact_id = store.put(_source())
+    restored, fresh = store.get(artifact_id), store.get(artifact_id)
+    baseline, hydrated = restored.baseline.entries[0], restored.hydration.entries[0]
+    assert baseline.entry_key.namespace is hydrated.entry_key.namespace is restored.baseline.fingerprint.namespace
+    assert baseline.revision is hydrated.revision
+    assert hydrated.entry_key.namespace is not fresh.hydration.entries[0].entry_key.namespace
+    assert hydrated.revision is not fresh.hydration.entries[0].revision
+
+    dict(hydrated.external_refs[0].metadata)["nested"].append("changed")
+    assert dict(baseline.external_refs[0].metadata)["nested"] == [1, (2,)]
+    assert dict(fresh.hydration.entries[0].external_refs[0].metadata)["nested"] == [1, (2,)]
+
+
+@pytest.mark.parametrize("revision", [False, True, 7.0, -1])
+def test_decode_rejects_invalid_revision_even_with_a_cached_valid_revision(storage, revision):
+    store, filesystem = storage
+    artifact_id = store.put(_source(localized=False))
+
+    def mutate(manifest):
+        source = manifest["prepared"]["fields"]
+        if isinstance(revision, bool):
+            baseline = source["baseline"]["fields"]["entries"]["$tuple"][0]["fields"]
+            baseline["revision"]["fields"]["value"] = int(revision)
+        hydration = source["hydration"]["fields"]
+        entry = hydration["entries"]["$tuple"][0]["fields"]
+        entry["revision"]["fields"]["value"] = revision
+
+    artifact_id = _rewrite_manifest(store, filesystem, artifact_id, mutate)
+    with pytest.raises(SourceArtifactCorruptError, match="invalid prepared contracts") as error:
+        store.get(artifact_id)
+    assert str(error.value.__cause__) == "entry revision must be a non-negative integer"
+
+
 def test_reference_is_not_part_of_its_own_content_identity(storage):
     store, _filesystem = storage
     prepared = _source()
@@ -297,15 +332,20 @@ def test_tag_dispatch_keeps_exact_shapes_and_duplicate_mapping_checks(storage, n
         store.get(artifact_id)
 
 
-def test_duplicate_json_keys_remain_invalid(storage):
+@pytest.mark.parametrize("key", ["location", "value"])
+def test_duplicate_json_keys_remain_invalid(storage, key):
     store, filesystem = storage
     artifact_id = store.put(_source())
     raw = filesystem.files[_record_path(store, f"manifests/{artifact_id}.json")]
-    raw = raw[:-1] + b',"location":"duplicate"}'
+    if key == "location":
+        raw = raw[:-1] + b',"location":"duplicate"}'
+    else:
+        raw = raw.replace(b'"value":"source:fixture"', b'"value":"source:fixture","value":"duplicate"', 1)
     artifact_id = hashlib.sha256(raw).hexdigest()
     filesystem.seed(_record_path(store, f"manifests/{artifact_id}.json"), raw)
-    with pytest.raises(SourceArtifactCorruptError, match="manifest is invalid"):
+    with pytest.raises(SourceArtifactCorruptError, match="manifest is invalid") as error:
         store.get(artifact_id)
+    assert str(error.value.__cause__) == f"duplicate source artifact JSON key: {key}"
 
 
 def test_source_snapshot_without_captured_content_cannot_enter_an_artifact(storage):

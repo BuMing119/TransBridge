@@ -11,9 +11,11 @@ from threading import Thread
 import pytest
 
 from transbridge.application.contracts import DomainError
-from transbridge.application.projects.models import TransitionTarget
-from transbridge.persistence.v2.project_activation_journal import _manifest_digest
+from transbridge.application.projects.models import LifecycleActivation, LifecycleSave, TransitionTarget
+from transbridge.persistence.v2.project_activation_journal import ProjectActivationProtocol, _manifest_digest
+from transbridge.persistence.v2.project_save_journal import ProjectSaveProtocol
 from transbridge.persistence.v2.schema import serialize_document
+from transbridge.persistence.v2.variant import VariantAggregate
 
 from . import test_workflow_closure_audit as audit
 
@@ -109,6 +111,57 @@ def test_interruption_after_variant_creation_or_removal_is_recoverable(
             action()
     _open_current(service_factory, context)
     assert _formal_files(tmp_path) == before
+
+
+@pytest.mark.parametrize("journal", ["activation", "save"])
+def test_prepared_open_rechecks_variant_after_interrupted_write_replay(service_factory, tmp_path, monkeypatch, journal):
+    services, context = _new_project(service_factory)
+    active = services.project_lifecycle.active
+    snapshot = active.variant.snapshot()
+    target = replace(snapshot, revision=snapshot.revision + 1)
+    filesystem = services.filesystem
+    project_path = Path(services.projects.path_for(active.project_ref))
+    variant_path = Path(services.variants.path_for(active.formal_variant_ref))
+    original = variant_path.read_bytes()
+    participants = str(tmp_path), filesystem, services.projects, services.variants
+
+    with monkeypatch.context() as patch:
+        if journal == "activation":
+            protocol = ProjectActivationProtocol(*participants)
+            candidate = replace(active, variant=VariantAggregate(target))
+            mutation = LifecycleActivation.capture(active, candidate)
+            _intercept(filesystem, patch, "variant", ProcessInterrupted)
+        else:
+            protocol = ProjectSaveProtocol(*participants)
+            envelope = active.project.envelope
+            project = replace(active.project, envelope=replace(envelope, revision=envelope.revision + 1))
+            mutation = replace(LifecycleSave.capture(active), project=project, variant=target)
+            replace_file = filesystem.replace
+
+            def interrupt_variant(source, destination):
+                replace_file(source, destination)
+                if Path(destination) == variant_path:
+                    raise ProcessInterrupted
+
+            patch.setattr(filesystem, "replace", interrupt_variant)
+        with pytest.raises(ProcessInterrupted):
+            protocol.commit(mutation, "interrupted-before-open")
+
+    assert tuple((tmp_path / f"project-{journal}-journal").glob("*.json"))
+    prepared = services.current_project_opener.prepare_path(project_path, context)
+    assert prepared.is_success, prepared.diagnostics
+    assert prepared.value.prepared_read.snapshot.revision == target.revision
+    assert variant_path.read_bytes() != original
+    views = []
+
+    result = services.current_project_opener.activate(prepared.value, context, prepare_view=views.append)
+
+    assert views
+    assert not result.is_success
+    assert result.diagnostics[0].code == "PROJECT_ACTIVATION_STALE"
+    assert services.project_lifecycle.active is active
+    assert variant_path.read_bytes() == original
+    assert not tuple((tmp_path / f"project-{journal}-journal").glob("*.json"))
 
 
 @pytest.mark.parametrize("stage", ["prepared", "project", "variant", "pointer", "committed"])

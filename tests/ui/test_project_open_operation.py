@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 from threading import Event
 import time
@@ -15,7 +16,7 @@ from transbridge.application.contracts import DomainError, ErrorCategory, Operat
 from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
 from transbridge.application.projects import DirtyDecision
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from transbridge.ui import context as context_module
+from transbridge.ui import context as context_module, projection_consistency
 from transbridge.ui.coordinators import project_open_operation as operation_module
 from transbridge.ui.projection_types import CollectionSlot
 
@@ -31,7 +32,7 @@ def _wait_until(predicate, timeout=3):
     assert predicate()
 
 
-def _snapshot(project, revision=1):
+def _snapshot(project, revision=1, *, entries=()):
     return ProjectionSnapshot(
         f"project:{project}",
         revision,
@@ -42,7 +43,7 @@ def _snapshot(project, revision=1):
             "variant_id": f"{project}-variant",
             "project_revision": revision,
             "variant_revision": revision,
-            "entries": [],
+            "entries": entries,
         },
     )
 
@@ -77,6 +78,8 @@ def opening(monkeypatch):
     class Opener:
         failure = None
         committed = False
+        entries = ()
+        independent_acknowledgement = False
 
         def activate(self, _prepared, _runtime, *, dirty_decision, prepare_view, expected_active_signature):
             observations.append(("activate", QThread.currentThread()))
@@ -86,10 +89,13 @@ def opening(monkeypatch):
             assert release.wait(3)
             if self.failure is not None:
                 return self.failure
-            candidate = _snapshot("new")
+            candidate = _snapshot("new", entries=self.entries)
             payload = prepare_view(candidate)
             observations.append(("prepared", QThread.currentThread()))
-            store.rebuild(_snapshot("new"))
+            acknowledged = (
+                _snapshot("new", entries=self.entries) if self.independent_acknowledgement else replace(candidate)
+            )
+            store.rebuild(acknowledged)
             self.committed = True
             return OperationResult.completed({"name": "new", "sources": [], "view_payload": payload})
 
@@ -172,6 +178,48 @@ def test_blocking_activation_keeps_qt_heartbeat_and_installs_only_on_gui_thread(
     assert case.context.project_name == "new" and not case.context.slots
     assert not case.context.project_opening and case.host.workbench.enabled
     assert len(case.host.successes) == 1 and not case.host.failures
+
+
+@pytest.mark.parametrize("independent_acknowledgement", [False, True])
+def test_cold_consistency_work_stays_off_qt_and_clean_checks_reuse_it(
+    opening, monkeypatch, independent_acknowledgement
+):
+    case = opening
+    opener = case.host.current_project_opener
+    opener.entries = tuple(
+        {
+            "entry_key": {"namespace": "fixture", "local_key": str(index)},
+            "translation": "saved",
+            "stage": 3,
+        }
+        for index in range(2000)
+    )
+    opener.independent_acknowledgement = independent_acknowledgement
+    consistency = projection_consistency.ProjectionConsistency
+    read_state, read_authority = projection_consistency._entry_state, consistency._authority_changes
+    visible_reads, cold_authority_reads = [], []
+
+    def entry_state(entry):
+        visible_reads.append(QThread.currentThread())
+        return read_state(entry)
+
+    def authority_changes(self, snapshot):
+        if snapshot.values["project_id"] == "new" and self._entries is not snapshot.values["entries"]:
+            cold_authority_reads.append(QThread.currentThread())
+        return read_authority(self, snapshot)
+
+    monkeypatch.setattr(projection_consistency, "_entry_state", entry_state)
+    monkeypatch.setattr(consistency, "_authority_changes", authority_changes)
+    case.release.set()
+    assert case.start()
+    _wait_until(lambda: case.host.project_open_worker is None)
+
+    assert len(case.context.collection) == len(opener.entries)
+    assert not case.host.failures and len(case.host.successes) == 1
+    assert not case.context.authoritative_projection_diverged()
+    assert len(visible_reads) == len(opener.entries)
+    assert len(cold_authority_reads) == (2 if independent_acknowledgement else 1)
+    assert all(thread is not _APP.thread() for thread in visible_reads + cold_authority_reads)
 
 
 def test_duplicate_open_stays_rejected_after_worker_exits_until_gui_installation(opening):

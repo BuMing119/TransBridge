@@ -2,7 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import replace
-from threading import Event
+from threading import Event, get_ident
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +12,8 @@ from tests.ui.test_content_projection_merge import _APP, _snapshot, view_factory
 from transbridge.application.io.identity import ExternalEntryRef
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.context import CollectionSlot
+from transbridge.ui.project_view_binding import prepare_project_view
+from transbridge.ui.projection_consistency import PreparedProjectionConsistency, ProjectionConsistency
 
 
 @pytest.fixture
@@ -108,28 +110,34 @@ def test_pending_next_project_is_not_used_as_authority_for_the_old_visible_slots
 
 
 def test_same_token_installation_during_a_background_comparison_forces_a_fresh_read(opening, monkeypatch):
-    binding = opening.context._project_view
-    real_compare = binding._diverged_snapshot
+    snapshot, slots = _next_view(opening)
+    prepared = replace(
+        prepare_project_view(snapshot),
+        consistency=PreparedProjectionConsistency(snapshot, (slot for _, slot in slots)),
+    )
+    real_compare = ProjectionConsistency.diverged
+    gui = get_ident()
     entered, release = Event(), Event()
     reads = []
 
-    def compare(snapshot):
-        reads.append(snapshot)
-        if len(reads) == 1:
-            entered.set()
-            assert release.wait(3)
-        return real_compare(snapshot)
+    def compare(self, snapshot, slots):
+        if get_ident() != gui:
+            reads.append((self, snapshot))
+            if len(reads) == 1:
+                entered.set()
+                assert release.wait(3)
+        return real_compare(self, snapshot, slots)
 
-    monkeypatch.setattr(binding, "_diverged_snapshot", compare)
-    snapshot, slots = _next_view(opening)
+    monkeypatch.setattr(ProjectionConsistency, "diverged", compare)
     future = opening.pool.submit(opening.context.authoritative_projection_diverged)
     try:
         assert entered.wait(1)
-        assert opening.context.install_project_open(opening.token, snapshot, slots)
+        assert opening.context.install_project_open(opening.token, snapshot, slots, state=prepared)
         release.set()
         assert future.result(timeout=1) is False
         assert len(reads) == 2
-        assert reads[-1] is snapshot
+        assert reads[0][0] is not reads[1][0]
+        assert reads[-1][1] is snapshot
     finally:
         release.set()
 

@@ -18,6 +18,7 @@ from transbridge.application.contracts import RequestContext
 from transbridge.application.io import FormatId
 from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
 from transbridge.bootstrap.persistence import build_persistence_v2_services
+from transbridge.persistence import project_archive_reader
 from transbridge.persistence.project_snapshots import ProjectSnapshotRepository
 from transbridge.persistence.v2 import SCHEMA_VERSION, OsPersistenceFilesystem, ProjectId, VariantId, VariantRef
 
@@ -176,9 +177,52 @@ def test_import_rejects_unpackaged_inputs_without_publishing(tmp_path, services_
     else:
         source.write_bytes(b"unpackaged data")
     before = _file_state(target.root)
-    for operation in (target.project_archive.inspect_import, target.project_archive.import_project):
+    for operation in (
+        target.project_archive.inspect_import_conflicts,
+        target.project_archive.inspect_import,
+        target.project_archive.import_project,
+    ):
         with pytest.raises(ValueError, match=r"\.transbridge"):
             operation(str(source), RequestContext("gui"))
+        assert _file_state(target.root) == before
+
+
+def test_current_schema_archive_does_not_run_migration(services_factory, exported_project, monkeypatch):
+    source = exported_project
+    target = services_factory("current-schema")
+
+    def unexpected_migration(*_args):
+        pytest.fail("Current archive records should go directly to strict validation")
+
+    monkeypatch.setattr(project_archive_reader, "migrate_to_current", unexpected_migration)
+    archive = target.project_archive
+    assert archive.inspect_import_conflicts(str(source.bundle), source.context) == archive.inspect_import(
+        str(source.bundle), source.context
+    )
+    path = archive.import_project(str(source.bundle), source.context)
+    assert path == target.projects.path_for(source.project_ref)
+
+
+def test_conflict_inspection_does_not_authorize_a_changed_archive(tmp_path, services_factory, exported_project):
+    source = exported_project
+    target = services_factory("changed-archive")
+    manifest, members = _bundle_content(source.bundle)
+    path = _write_bundle(tmp_path / "selected.transbridge", manifest, members)
+    archive = target.project_archive
+    before = _file_state(target.root)
+
+    inspection = archive.inspect_import_conflicts(str(path), source.context)
+    assert inspection.project_id == source.project_ref.identity.value
+    assert not inspection.requires_copy and not inspection.requires_rename
+
+    manifest["variants"].pop()
+    _write_bundle(path, manifest, members)
+    # Conflict facts are still available. Full inspection and publication
+    # independently reject the edited bundle before writing anything.
+    assert archive.inspect_import_conflicts(str(path), source.context) == inspection
+    for operation in (archive.inspect_import, archive.import_project):
+        with pytest.raises(ValueError, match="版本列表不完整"):
+            operation(str(path), source.context)
         assert _file_state(target.root) == before
 
 
