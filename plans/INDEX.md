@@ -6,6 +6,10 @@
 
 ## 当前实施
 
+- [app-update](app-update/plan.md)：Windows 安装版检查公开 GitHub Releases、下载校验与安全关闭后启动现有安装器；本地实现及相关验证完成，本轮不发布 Release。
+
+- [file-io-dialogs](file-io-dialogs/plan.md)：S01～S04 本地完成；独立导入/导出及固定布局打开文件入口，两种 JSON 分列。S04 扩大回归 1183 通过/4 项既有夹具失败排除，最后 UI 调整后 29 项通过，全库 Ruff 通过；此前验证和限制见计划及记录。
+
 - [eet-integration](eet-integration/plan.md)：EET v3 Classique/BDD 正式来源、工程重开、迁移、GUI/助手原格式写回；本地实现与相关验证完成，保持实验性，最终证据见计划及 [ADR-053](../docs/adr/053-eet-binary-io-integration.md)。
 
 - [sst-integration](sst-integration/plan.md)：完整 SSU8/SSU9 来源与写回、插件新建 SSU9、单个/批量 GUI 与助手流程；本地实现，保持实验性，验证与限制见计划。
@@ -26,7 +30,7 @@
 
 - [plugin-drop-project-choice](plugin-drop-project-choice/plan.md)：S01～S02 本地实现与验证完成；插件拖放按当前工程选择新建/加入，重复提示、未保存内容保护及失败恢复。扩大回归 324 通过、1 跳过、1 项范围外同步断言失败；见[增量记录](../docs/changelogs/plugin-drop-project-choice/story-01-to-02/2026-10-23-001-plugin-drop-project-choice.md)（2026-10-23）。
 
-- [project-open-performance](project-open-performance/plan.md)：S01～S05 本地实现；完整后台打开、重复校验消除、一致视图安装与按需表格模型。旧来源身份按哈希恢复，无法可靠匹配的词条保留在只读恢复中；验证结果及性能预算边界见[增量记录](../docs/changelogs/project-open-performance/story-01-to-05/2026-10-19-001-project-open-performance.md)（2026-10-19）。
+- [project-open-performance](project-open-performance/plan.md)：S06～S09 本地实现、回归与对照完成；普通恢复重复计算、后台一致性证据、指定包启动及归档预检，7 个既有失败已用起点源码复现，Ruff 通过。五轮重载中位 40.10→36.09 秒，GUI 2.10→0.49 秒，心跳 2.67→2.76 秒未改善、200 ms 预算未达；按来源懒加载为后续独立架构，见[本轮增量](../docs/changelogs/project-open-performance/story-06-to-09/2026-11-09-001-project-restore-work.md)（2026-11-09）。S01～S05 本地实现；完整后台打开、重复校验消除、一致视图安装与按需表格模型。旧来源身份按哈希恢复，无法可靠匹配的词条保留在只读恢复中；历史验证结果及性能预算边界见[增量记录](../docs/changelogs/project-open-performance/story-01-to-05/2026-10-19-001-project-open-performance.md)（2026-10-19）。
 
 - [assistant-ui-remediation](assistant-ui-remediation/plan.md)：S01～S26 本地实现、验证与增量记录完成；补齐固定工程/版本绑定、跨工程只读浏览、统一执行前确认、侧栏分组及系统默认窗口外框。后端 170 项、原生窗口 15 项通过，完整 UI 组合保留 1 项超时，未宣称全绿；见[最新增量记录](../docs/changelogs/assistant-ui-remediation/story-24-to-26/2026-10-20-001-project-bound-conversations.md)与[验证报告](../docs/test-reports/assistant-project-conversations-qa-2026-10-19.md)（2026-10-20）。
 

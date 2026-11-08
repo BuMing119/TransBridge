@@ -1,5 +1,13 @@
 # 变更日志索引
 
+- 2026-11-09：[工程恢复重复计算与后台视图证据](project-open-performance/story-06-to-09/2026-11-09-001-project-restore-work.md) — 同次解析/来源覆盖复用、首次一致性准备后台移交、指定工程包启动与轻量冲突预检；分组/扩大回归已核验，7 项既有失败已复现，Ruff 通过；五轮重载中位 40.10→36.09 秒、GUI 2.10→0.49 秒，心跳未改善且 200 ms 预算未达，完整限制见记录。
+
+- 2026-11-08：[固定布局打开翻译文件入口](file-io-dialogs/story-04/2026-11-08-001-open-translation-file.md) — 替换旧解析插件窗口，多格式识别、固定可选译文区及来源快照登记；扩大回归 1183 通过/4 项既有夹具失败排除，最后 UI 复验 29 项通过，全库 Ruff 通过。
+
+- 2026-11-08：[桌面更新检查与安装交接](app-update/story-01-to-02/2026-11-08-001-desktop-update-check-and-install.md) — 侧边栏检查公开 Release、后台下载校验、安全关闭后交给安装器；64 项聚焦回归与全库 Ruff 通过，本轮未发布。
+
+- 2026-11-08：[独立导入译文与导出文件窗口](file-io-dialogs/story-01-to-03/2026-11-08-001-independent-import-export.md) — 简化窗口、自动后台检查、两种 JSON 分列、共享 DSD 快照定位；最终联合 605 项通过，全库 Ruff 通过，4 项既有夹具失败及 Qt 清理偶发异常见记录。
+
 - 2026-11-08：[EET 原格式流程与四格式边界](eet-integration/story-01-to-03/2026-11-08-001-eet-production-integration.md) — 工程/迁移/GUI/助手/统一发布、数字缓存更新及维护注释；1218 项回归通过、1 跳过、2 项基线失败排除，最终命名回归核心 41 项和 UI 92 项通过，Ruff 通过。
 
 - 2026-11-08：[SST 完整读写与软件流程接入](sst-integration/story-01-to-04/2026-11-08-001-sst-production-integration.md) — 源码对照 codec、完整快照与物理身份、插件生成 SSU9、GUI 单个/批量及助手流程，保留实验性；验证批次、旧身份兼容与基线失败见记录。
