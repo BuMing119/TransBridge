@@ -228,13 +228,23 @@ class GuiProjectCommandFacade:
             expected_variant_ref=expected_variant_ref,
         )
 
-    def add_prepared_source(self, prepared, context, *, expected_variant_ref):
+    def add_prepared_source(
+        self,
+        prepared,
+        context,
+        *,
+        expected_variant_ref,
+        expected_project_revision=None,
+        expected_variant_revision=None,
+    ):
         if self._source_mutations is None:
             raise ValueError("工程来源变更服务未配置。")
         return self._source_mutations.add_prepared_source(
             prepared,
             context,
             expected_variant_ref=expected_variant_ref,
+            expected_project_revision=expected_project_revision,
+            expected_variant_revision=expected_variant_revision,
         )
 
     def remove_source(self, locator: str, context: RequestContext) -> OperationResult[SourceMutationResult]:

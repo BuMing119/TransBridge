@@ -74,7 +74,7 @@ def test_menu_builder_connects_each_intent_once() -> None:
 
     assert calls == ["prepare_content", "upload", "assistant", "history_search", "appearance"]
     assert handles.prepare_content.data() == IntentId.WORKBENCH_CONTENT_PREPARE.value
-    assert handles.prepare_content.text() == "为当前工程添加插件…"
+    assert handles.prepare_content.text() == "打开翻译文件…"
     assert handles.smart_assistant is handles.view_assistant
     assert handles.smart_assistant.shortcut().toString() == "Ctrl+Shift+I"
     assert handles.smart_assistant.data() == IntentId.VIEW_SMART_ASSISTANT.value

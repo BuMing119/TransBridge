@@ -425,7 +425,7 @@ def test_legacy_card_refuses_missing_publication_context_without_running_writers
         card.close()
 
 
-def test_card_routes_selection_to_bound_facade_and_preserves_independent_dsd_export(tmp_path, qapp, monkeypatch):
+def test_card_routes_selection_and_dsd_through_bound_export_facade(tmp_path, qapp, monkeypatch):
     context = _context(tmp_path, 3)
     context.esp_path = context.active_slot.esp_path
     calls = []
@@ -453,9 +453,10 @@ def test_card_routes_selection_to_bound_facade_and_preserves_independent_dsd_exp
         assert len(calls[-1][0].slots) == 2
         assert len(context.slots) == 3
         assert not worker_calls
-        card.dsd_btn.click()
-        assert output.exists()
-        assert worker_calls == [True]
-        assert len(calls) == 3
+        card.export_dsd()
+        assert not output.exists()
+        assert worker_calls == []
+        assert len(calls) == 4
+        assert calls[-1][1] == {"batch": False, "output_format": "json.dsd"}
     finally:
         card.close()

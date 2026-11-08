@@ -146,7 +146,7 @@ class WorkflowActionsView(QWidget):
                 button,
                 {
                     IntentId.TRANSLATION_REVIEW: ("查看有疑问",),
-                    IntentId.PUBLISH_WRITE: ("导出整个文件",),
+                    IntentId.PUBLISH_WRITE: ("导出文件",),
                 }[intent],
             )
             button.clicked.connect(lambda checked=False, value=intent: self.intent_requested.emit(value.value))
@@ -180,7 +180,7 @@ class WorkflowActionsView(QWidget):
             button.setText(action.label)
             button.setEnabled(action.enabled)
             description = action.reason or (
-                "写回/发布当前文件的全部词条，不受表格选择或筛选限制；下一步确认输出路径。"
+                "导出当前文件的全部词条，不受表格选择或筛选限制；打开独立窗口选择格式和保存位置。"
                 if action.intent_id is IntentId.PUBLISH_WRITE
                 else action.label
             )

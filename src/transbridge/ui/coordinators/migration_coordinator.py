@@ -11,6 +11,7 @@ from transbridge.application.io import FormatId, legacy_migration, migration_imp
 from transbridge.application.io.eet_source import probe_eet_format
 from transbridge.application.io.migration_import import MigrationImportError
 from transbridge.application.io.migration_snapshot import detached_entries
+from transbridge.application.io.translation_import import prepare_translation_import
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 from transbridge.ui.source_input_state import SourceInputScope, ensure_source_input
@@ -27,6 +28,7 @@ class _Target:
     entries: tuple
     paths: tuple
     strings_lookup: object
+    source_snapshot: object
 
     @classmethod
     def capture(cls, slot):
@@ -38,6 +40,7 @@ class _Target:
             detached_entries(collection),
             _paths(slot),
             getattr(slot, "strings_lookup", None),
+            getattr(slot, "source_snapshot", None),
         )
 
     def is_current(self, context):
@@ -48,6 +51,7 @@ class _Target:
             and tuple(self.collection) == self.entries
             and _paths(self.slot) == self.paths
             and getattr(self.slot, "strings_lookup", None) is self.strings_lookup
+            and getattr(self.slot, "source_snapshot", None) is self.source_snapshot
         )
 
 
@@ -90,7 +94,8 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
         )
         if path
     )
-    host.workbench.show_step2_progress(0, "验证迁移源中…")
+    single_source = getattr(cfg, "import_source_path", None)
+    host.workbench.show_step2_progress(0, "正在导入译文…" if single_source else "验证迁移源中…")
 
     def prepare():
         prepared = []
@@ -104,7 +109,18 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
             eet_source = cfg.eet_path if target.slot is slot and eet_path is None else None
             xt_source = cfg.xt_path if target.slot is slot and xt_path is None else None
             strings_source = cfg.strings_dir if strings_path is None else None
-            if (eet_source and not binary_eet) or xt_source or strings_source:
+            if single_source:
+                legacy = prepare_translation_import(
+                    single_source,
+                    candidate,
+                    format_hint=cfg.import_format_hint,
+                    replace_existing=cfg.replace_existing,
+                    plugin_stem=Path(esp_path).stem if esp_path else "",
+                    strings_lang=cfg.strings_lang,
+                    context=runtime_context,
+                    target_snapshot=target.source_snapshot,
+                )
+            elif (eet_source and not binary_eet) or xt_source or strings_source:
                 legacy = legacy_migration.prepare_legacy_migration(
                     candidate,
                     eet_path=None if binary_eet else eet_source,
@@ -188,12 +204,15 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
         formats = f"（{' + '.join(labels)}）" if labels else ""
         scope = f"共 {updated} 个集合，" if apply_all and updated > 1 else ""
         suffix = f"；{skipped} 条无法唯一匹配已跳过" if skipped else ""
-        host.show_message(f"迁移完成{formats}，{scope}新增 {len(states)} 条译文{suffix}")
+        if single_source:
+            host.show_message("译文导入完成。" if states else "没有可更新的译文，请检查来源或已有译文处理方式。")
+        else:
+            host.show_message(f"迁移完成{formats}，{scope}新增 {len(states)} 条译文{suffix}")
         context.collection_changed.emit(slot.collection)
 
     def failed(message):
         host.workbench.hide_step2_progress()
-        host.show_message(f"迁移失败：{message}")
+        host.show_message(f"{'导入失败' if single_source else '迁移失败'}：{message}")
 
     def completed(result):
         try:

@@ -40,7 +40,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 
 **FR1.6 xTranslator XML 解析**: 系统 SHALL 解析 XT (xTranslator) 格式的 XML 翻译文件。
 
-**FR1.7 JSON 导入**: 系统 SHALL 支持从 DSD 格式 JSON 文件导入翻译条目。
+**FR1.7 JSON 导入**: 系统 SHALL 分别识别 DSD JSON 与 ParaTranz JSON 的内容契约，不能仅以 `.json` 扩展名判断格式。无法自动消歧时 SHALL 要求明确选择格式；空数组、损坏内容和不匹配结构不得静默按另一种格式读取。
 
 **FR1.8 Strings 文件导入**: 系统 SHALL 支持从 `.strings` 文件导入翻译条目。
 
@@ -53,6 +53,8 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR1.9.5 SST 序列化写回**: 原 SST SHALL 保留版本、masters、labels、状态、哈希、记录顺序和未编辑记录，只修改明确绑定的译文（含显式空值）；输出须经预检、staging、全文件回读一致性校验、覆盖确认和备份后原子发布。默认要求选择输出位置。
   - **FR1.9.6 插件新建**: 系统 SHALL 从保存的真实插件及本地化资源快照生成 SSU9，复原 masters、实际字段索引、StringID、文本列表及 EditorID/fallback 哈希。未知字段、VMAD、无法可靠证明的定位和非 ASCII 主文件名 SHALL 明确拒绝。GUI 提供输出格式选择；助手 `write_back(target=sst)` 共用发布流程。正式 MCP 入口当前未暴露读写工具，能力维持不支持。
 
+**FR1.10 固定布局打开文件入口** — *2026-11-08 | 用户确认并实现*: 当前工程的“打开翻译文件…” SHALL 替换旧“解析插件”窗口，支持插件、独立 EET/XML、xTranslator XML/SST 及独立 DSD/ParaTranz JSON 的内容识别或显式格式选择，保留多文件打开。可选译文区域 SHALL 始终占位，未启用时禁用；格式切换、勾选和错误提示不得推动窗口高度或底部按钮。用户可选择保留已有译文、仅填空值，或替换；Strings 语言及插件跳过空原文选项保持固定位置。后台 SHALL 完整准备来源快照及初始译文后登记，拒绝损坏、歧义和重复来源；失败按文件报告，不撤销其他文件的成功。提交 SHALL 绑定原工程/版本及修订；保存工程后可从完整快照恢复，不以重新读取原文件替代捕获内容。无需预览或手动检查。见 [file-io-dialogs S04](../plans/file-io-dialogs/plan.md)。
+
 ### FR2: 翻译条目管理
 
 **FR2.1 统一数据模型**: 系统 SHALL 将所有来源（ESP/EET/xTranslator XML/XT SST/JSON/Strings）的条目统一为 TranslationEntry 格式。
@@ -61,7 +63,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 
 **FR2.3 多选操作**: 系统 SHALL 支持条目的多选（checkbox），可选择性操作部分条目。
 
-**FR2.4 迁移源追加**: 系统 SHALL 支持为已加载的集合追加 EET/XT/Strings 迁移源，合并译文。
+**FR2.4 导入译文** — *2026-11-08 | 用户确认*: 当前文件的“导入译文…” SHALL 打开独立窗口，显示固定目标来源、单个译文文件及已有译文处理策略。支持已翻译插件、两种独立 XML、EET、SST、DSD JSON、ParaTranz JSON 与相关 Strings 来源。默认只填空译文；显式选择替换时可更新已有译文，但保留锁定/隐藏和唯一匹配保护。SHALL NOT 新增原文条目或来源文件；允许对同一目标再次导入。匹配与验证在后台自动执行，提交前复核目标工程/版本/条目状态。窗口不展示匹配预览、填充/替换统计或手动检查步骤；完成、无法应用和失败时提供简明结果。
 
 **FR2.5 Stage 状态系统统一** — *2026-05-07 | 状态: 已实现 | 优先级: P0*: 系统 SHALL 全项目统一使用 ParaTranz 平台的 7 级 stage 定义（0=未翻译、1=已翻译、2=有疑问、3=已检查、5=已审核、9=已锁定、-1=已隐藏）。TranslationEntry.stage 的语义 SHALL 对齐 ParaTranz，所有模块（converter/parser/writer/ui/ai_translator/paratranz）统一修正。
 
@@ -116,6 +118,8 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 **FR4.4 本地化字符串输出**: 系统 SHALL 支持纯本地化模式（仅输出 `.strings` 文件，不修改 ESP）。
 
 **FR4.5 批量写回**: 系统 SHALL 支持批量选择多个插件同时写回。每个文件 SHALL 仅以自身来源快照为模板，统一预检输出冲突与覆盖策略；输出目录的同名文件不得成为输入模板。允许批次中部分文件成功，但来源或定位失配 SHALL 阻止该文件发布，不得静默跳过失配条目。批次 SHALL 保留每个文件的结果、失败诊断与已发生的发布副作用，不支持跨插件套用。
+
+**FR4.6 独立导出窗口** — *2026-11-08 | 用户确认*: “导出文件…” SHALL 打开与导入译文分离的窗口，显示当前来源、可用输出格式及保存位置；DSD JSON 和 ParaTranz JSON SHALL 分列且使用各自序列化契约。原格式写出保留来源身份，只有明确支持的导出路径允许转换。点击导出后 SHALL 自动后台执行现有预检并提交，不展示检查清单、不要求手动检查或再次点击普通执行确认。已有目标覆盖仍需明确授权和备份；输入变化、目标文件变化或工程版本切换不得复用过期检查结果。失败显示可操作原因，不能把不支持的输出伪装为成功。工程保存仍独立于文件导出。实施见 [file-io-dialogs](../plans/file-io-dialogs/plan.md)。
 
 ### FR5: AI 自动翻译
 
@@ -1768,7 +1772,7 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 > **状态（2026-08-25）**：功能与自动化 QA 已完成；初始实现经用户真实应用截图复核后判定视觉差距过大，现已按真实主题返工，等待用户再次视觉确认。用户确认“任务入口 + 本地工程列表”的现代浅色效果图作为信息结构与视觉层级基准；效果图中没有真实数据源或业务合同的搜索、最近时间、翻译进度和工程更多菜单不构成要求。
 
-**FR28.1 任务入口与本地工程双栏** — *状态：已实现（2026-08-25） | 优先级：P0*：开始中心 SHALL 在受约束的居中内容区内，以“开始新任务”和“本地工程”双栏呈现核心入口。建项页的主选择 SHALL 为“选择插件”（按 FR26.3 支持多选并导入同一个工程），并继续提交带插件模式的 `PROJECT_CREATE`；FOMOD 和打开 TransBridge 工程 SHALL 分别复用 `PUBLISH_FOMOD`、`PROJECT_OPEN`，高级空工程 SHALL 作为同一建项页的本地子选择。翻译菜单不得重复提供建项入口，只提供“为当前工程添加插件”。本地工程 SHALL 来自既有只读 Project catalog，活动工程优先、不可用原因可见且不可激活；在 catalog 没有时间字段前不得称为“最近工程”或显示虚构时间。
+**FR28.1 任务入口与本地工程双栏** — *状态：已实现（2026-08-25） | 优先级：P0*：开始中心 SHALL 在受约束的居中内容区内，以“开始新任务”和“本地工程”双栏呈现核心入口。建项页的主选择 SHALL 为“选择插件”（按 FR26.3 支持多选并导入同一个工程），并继续提交带插件模式的 `PROJECT_CREATE`；FOMOD 和打开 TransBridge 工程 SHALL 分别复用 `PUBLISH_FOMOD`、`PROJECT_OPEN`，高级空工程 SHALL 作为同一建项页的本地子选择。翻译菜单不得重复提供建项入口，添加当前工程内容统一使用“打开翻译文件…”（FR1.10）。本地工程 SHALL 来自既有只读 Project catalog，活动工程优先、不可用原因可见且不可激活；在 catalog 没有时间字段前不得称为“最近工程”或显示虚构时间。
 
 **FR28.2 启动目的地与常驻开始导航** — *状态：已实现（2026-08-25） | 优先级：P0*：正常自动恢复成功 SHALL 继续直接进入工作台；无恢复目标、恢复失败或用户主动返回时 SHALL 显示开始中心。开始中心 SHALL 纳入现有 WorkspaceShell/NavigationRail，与“工作台”和“ParaTranz 管理”共享同一壳层；导航只切换现有页面或提交 canonical intent，不拥有工程状态。活动工程行的激活 SHALL 返回现有工作台，不得重新打开工程；用户主动返回开始中心不得关闭工程、清除 dirty 或取消任务。恢复进行中 SHALL 以紧凑状态提示呈现，并阻止会并发切换工程的入口。
 

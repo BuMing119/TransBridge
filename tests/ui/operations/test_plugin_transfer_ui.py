@@ -100,7 +100,9 @@ def test_output_picker_keeps_selected_plugin_and_requires_explicit_overwrite(tra
     assert not dialog._overwrite.isChecked()
     dialog._preflight_button.click()
     case.workers[-1].complete()
-    assert not dialog._confirm_button.isEnabled()
+    assert dialog._confirm_button.isEnabled()
+    assert not dialog._preflight.ready
+    assert not case.queued
     assert "覆盖" in dialog._checks.text()
     dialog._edit_button.click()
     dialog._overwrite.setChecked(True)
@@ -133,8 +135,8 @@ def test_transfer_preflight_is_deferred_and_submit_reuses_frozen_check(transfer_
     assert len(parsed_paths) == 1
     assert dialog._confirm_button.isEnabled(), dialog._checks.text()
     assert dialog._checks.text() == "✓ 预检通过"
-    assert dialog._transfer_summary.isVisible()
-    assert "精确匹配" in dialog._transfer_summary.text()
+    assert not dialog._transfer_summary.isVisible()
+    assert not dialog._checks_scroll.isVisible()
     assert "hydration" not in dialog._summary.text()
     assert "staging" not in dialog._summary.text()
     dialog._confirm_button.click()
@@ -143,7 +145,7 @@ def test_transfer_preflight_is_deferred_and_submit_reuses_frozen_check(transfer_
 
 
 @pytest.mark.parametrize("invalid", ["missing", "broken", "unmatched"])
-def test_invalid_or_unmatched_plugin_reports_inline_and_keeps_confirm_disabled(transfer_ui, invalid):
+def test_invalid_or_unmatched_plugin_reports_inline_and_blocks_submission(transfer_ui, invalid):
     case = transfer_ui
     dialog = case.dialog
     if invalid == "missing":
@@ -158,7 +160,8 @@ def test_invalid_or_unmatched_plugin_reports_inline_and_keeps_confirm_disabled(t
     case.workers[-1].complete()
     assert not dialog._preflight_running
     assert dialog.isVisible()
-    assert not dialog._confirm_button.isEnabled()
+    assert dialog._confirm_button.isEnabled()
+    assert not dialog._preflight.ready
     assert dialog._edit_button.isEnabled()
     assert dialog._close_button.isEnabled()
     assert "套用" in dialog._checks.text()
@@ -177,7 +180,7 @@ def test_changing_output_invalidates_old_confirmation(transfer_ui):
     token = dialog._preflight.confirmation_token
     assert token is not None
     dialog._field_edits["target_path"].setText(str(case.target.with_stem("another-output")))
-    assert not dialog._confirm_button.isEnabled()
+    assert dialog._confirm_button.isEnabled()
     assert dialog._preflight is None
     dialog.confirm_requested.emit(dialog._plan.session_id, token)
     assert not case.queued

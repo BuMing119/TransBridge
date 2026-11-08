@@ -34,6 +34,7 @@ def prepare_legacy_migration(
     plugin_stem: str = "",
     strings_lang: str = "english",
     context: RequestContext | None = None,
+    overwrite_strings: bool = False,
 ) -> LegacyMigrationDraft:
     """Preserve EET → XT → Strings matching/overwrite order without publishing.
 
@@ -53,7 +54,7 @@ def prepare_legacy_migration(
         if strings_dir:
             lookup = _read_strings(Path(strings_dir), plugin_stem, strings_lang, context)
             if lookup:
-                applied_count += candidate.update_from_strings_lookup(lookup)
+                applied_count += candidate.update_from_strings_lookup(lookup, overwrite=overwrite_strings)
     except MigrationImportError:
         raise
     except Exception as exc:

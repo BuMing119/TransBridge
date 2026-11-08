@@ -15,7 +15,9 @@ class ExecutionReceipt:
     details: str
 
 
-def execution_receipt(activity, result: OperationResult | None, *, label: str, is_batch: bool) -> ExecutionReceipt:
+def execution_receipt(
+    activity, result: OperationResult | None, *, label: str, is_batch: bool, show_transfer_counts: bool = True
+) -> ExecutionReceipt:
     status = {
         JobState.FAILED: "failed",
         JobState.CANCELLED: "cancelled",
@@ -35,11 +37,11 @@ def execution_receipt(activity, result: OperationResult | None, *, label: str, i
         value = result.value if isinstance(result.value, dict) else {}
         report = value.get("transfer_report")
         if isinstance(report, dict):
-            if status == "completed":
+            if status == "completed" and show_transfer_counts:
                 lines.append(
                     f"已套用 {report.get('writable_count', 0)} 条译文，目标保留 {report.get('preserved_count', 0)} 条。"
                 )
-            else:
+            elif status != "completed":
                 lines.append("套用未完整完成，请检查已产生文件。")
             for issue in report.get("issues", ()):
                 if isinstance(issue, dict):

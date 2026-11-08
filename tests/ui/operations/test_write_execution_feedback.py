@@ -149,13 +149,13 @@ def test_write_reports_terminal_result_with_real_runtime(write_case, qapp, monke
     assert subject._close_button.text() == "关闭"
     assert subject._close_button.isEnabled()
     assert subject._preflight_button.isEnabled()
-    assert not subject._confirm_button.isEnabled()
+    assert subject._confirm_button.isEnabled()  # A new click runs a fresh automatic check.
     assert all(subscription.closed for subscription in case.subscriptions)
     if outcome == "completed":
-        assert "写回完成" in subject._checks.text()
+        assert "导出完成" in subject._checks.text()
         assert "预检" not in subject._checks.text()
     else:
-        assert "如需重试，请重新运行预检" in subject._checks.text()
+        assert "如需重试，请再次点击导出文件" in subject._checks.text()
     if outcome in {"completed", "partial"}:
         assert str(case.target) in subject._checks.text()
     if outcome in {"failed", "partial"}:
@@ -186,10 +186,10 @@ def test_real_write_displays_the_committed_output_and_can_run_fresh_preflight(wr
     assert case.tasks.list(case.owner)[0].state is JobState.COMPLETED
     assert case.target.exists()
     assert str(case.target) in subject._checks.text()
-    assert "写回完成" in subject._checks.text()
+    assert "导出完成" in subject._checks.text()
     subject._preflight_button.click()
     _finish_preflight(case.facade, subject)
-    assert not subject._confirm_button.isEnabled()  # The output now exists, requiring explicit overwrite.
+    assert not subject._preflight.ready  # The output now exists, requiring explicit overwrite.
     subject._edit_button.click()
     subject._field_edits["overwrite_confirmed"].setChecked(True)
     subject._preflight_button.click()

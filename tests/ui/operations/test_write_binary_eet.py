@@ -50,7 +50,10 @@ def test_single_gui_eet_write_preserves_complete_saved_document(tmp_path, featur
     draft = feature.feature.create_draft(context, False, {"target_path": str(output)})
     assert draft.request.format_id is FormatId.BINARY_EET
     assert "实验性" in draft.mode_summary
-    assert not any(item.field_id in {"plugin_path", "output_format"} for item in draft.editable_fields)
+    assert not any(item.field_id == "plugin_path" for item in draft.editable_fields)
+    choices = next(item for item in draft.editable_fields if item.field_id == "output_format")
+    assert choices.value == "binary.eet"
+    assert {value for value, _ in choices.options} == {"binary.eet", "json.paratranz", "json.dsd"}
     result = _submit(feature, draft)
     assert result.outcome is OperationOutcome.COMPLETED, result.diagnostics
     actual = EetDocument.from_bytes(output.read_bytes())
@@ -68,7 +71,9 @@ def test_mixed_gui_batch_writes_native_eet_and_plugin_without_conversion(tmp_pat
     output = tmp_path / "out"
     draft = feature.feature.create_draft(context, True, {"output_directory": str(output)})
     assert {item.format_id for item in draft.request.drafts} == {FormatId.PLUGIN_SSE, FormatId.BINARY_EET}
-    assert not any(item.field_id == "output_format" for item in draft.editable_fields)
+    choices = next(item for item in draft.editable_fields if item.field_id == "output_format")
+    assert choices.value == "auto"
+    assert "sst.ssu9" not in dict(choices.options)
     result = _submit(feature, draft)
     assert result.outcome is OperationOutcome.COMPLETED, result.diagnostics
     assert {path.name for path in output.iterdir()} == {"source-0.esp", "dictionary.eet"}

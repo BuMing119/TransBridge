@@ -193,9 +193,10 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ActionDescriptor(IntentId.PROJECT_IMPORT, "导入 .transbridge…", ActionSection.FILE, danger=DangerLevel.CAUTION),
     ActionDescriptor(
         IntentId.SOURCE_MIGRATE,
-        "导入已有译文…",
+        "导入译文…",
         ActionSection.TRANSLATION,
-        aliases=("迁移源", "EET", "XT", "SST", "Strings"),
+        aliases=("导入已有译文", "迁移源", "EET", "XT", "SST", "DSD JSON", "ParaTranz JSON", "Strings"),
+        status_tip="从文件导入译文到当前内容；保留或替换已有译文，不添加新的来源文件",
     ),
     ActionDescriptor(
         IntentId.TRANSLATION_AI,
@@ -241,10 +242,11 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ),
     ActionDescriptor(
         IntentId.WORKBENCH_CONTENT_PREPARE,
-        "为当前工程添加插件…",
+        "打开翻译文件…",
         ActionSection.TRANSLATION,
         placement=IntentPlacement.CONTEXTUAL,
-        aliases=("当前工程加载插件", "添加新插件"),
+        aliases=("当前工程加载插件", "添加新插件", "解析插件", "打开文件", "EET", "SST", "DSD JSON", "ParaTranz JSON"),
+        status_tip="打开文件作为当前工程的新翻译内容；可同时导入一份已有译文",
     ),
     ActionDescriptor(
         IntentId.SYNC_UPLOAD,
@@ -267,16 +269,19 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ),
     ActionDescriptor(
         IntentId.PUBLISH_WRITE,
-        "写回当前文件…",
+        "导出文件…",
         ActionSection.SYNC_PUBLISH,
         placement=IntentPlacement.PRIMARY,
         danger=DangerLevel.CAUTION,
+        aliases=("写回当前文件", "DSD JSON", "ParaTranz JSON"),
+        status_tip="选择当前文件的输出格式和保存位置，自动检查后导出",
     ),
     ActionDescriptor(
         IntentId.PUBLISH_WRITE_BATCH,
-        "批量写回文件…",
+        "批量导出文件…",
         ActionSection.SYNC_PUBLISH,
         danger=DangerLevel.CAUTION,
+        aliases=("批量写回文件",),
     ),
     ActionDescriptor(
         IntentId.PUBLISH_FOMOD,

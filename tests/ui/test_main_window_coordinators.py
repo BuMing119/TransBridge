@@ -91,21 +91,18 @@ def test_parse_dialog_receives_real_window_host(monkeypatch) -> None:
     observed = []
     host = object()
 
-    class Dialog:
-        class DialogCode:
-            Accepted = 1
+    class OpenFiles:
+        def __init__(self, parent, parser):
+            observed.append((parent, parser))
 
-        def __init__(self, *, mode, parent) -> None:
-            observed.append((mode, parent))
+        def open(self):
+            return "new-window"
 
-        def exec(self) -> int:
-            return 0
-
-    monkeypatch.setattr("transbridge.ui.workbench._parse_config_dialog.ParseConfigDialog", Dialog)
-
-    ParseCoordinator(host).parse_plugin()
-
-    assert observed == [("parse", host)]
+    monkeypatch.setattr("transbridge.ui.coordinators.open_file_coordinator.OpenFileCoordinator", OpenFiles)
+    parser = ParseCoordinator(host)
+    assert parser.parse_plugin() == "new-window"
+    assert parser.parse_plugin() == "new-window"
+    assert observed == [(host, parser)]
 
 
 def test_authoritative_source_import_commits_initial_states_without_second_variant_command() -> None:
@@ -204,8 +201,8 @@ def test_migration_draft_is_non_blocking_and_owned_until_finished(monkeypatch) -
         accepted = Signal()
         finished = Signal()
 
-        def __init__(self, *, mode, parent) -> None:
-            self.mode = mode
+        def __init__(self, slot, *, parent) -> None:
+            self.slot = slot
             self.parent = parent
             self.modal = None
             self.visible = False
@@ -226,7 +223,7 @@ def test_migration_draft_is_non_blocking_and_owned_until_finished(monkeypatch) -
         context=SimpleNamespace(active_slot=SimpleNamespace(collection=object()), uses_authoritative_projection=False),
         show_message=lambda _message: None,
     )
-    monkeypatch.setattr("transbridge.ui.workbench._parse_config_dialog.ParseConfigDialog", Dialog)
+    monkeypatch.setattr("transbridge.ui.workbench.translation_import_dialog.TranslationImportDialog", Dialog)
     coordinator = ParseCoordinator(host)
 
     dialog = coordinator.apply_migration()

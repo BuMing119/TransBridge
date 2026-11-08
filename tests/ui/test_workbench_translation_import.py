@@ -1,6 +1,7 @@
 """Exercise the actual toolbar, migration dialog and retained background worker."""
 
 import gc
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -166,12 +167,12 @@ def test_toolbar_import_retains_slow_worker_and_commits_plugin_once(project, too
     assert after.entries[0].translation == "你好"
     assert project.ctx.collection.get(entry.identity).translation == "你好"
     assert not project.ctx.authoritative_projection_diverged()
-    assert any("新增 1 条译文" in message for message in toolbar.host.messages)
+    assert "译文导入完成。" in toolbar.host.messages
 
     _open_import(toolbar, source)
     _until(project.app, lambda: toolbar.progress[-1] == "hidden")
     assert project.services.project_lifecycle.active.variant.snapshot() == after
-    assert any("新增 0 条译文" in message for message in toolbar.host.messages)
+    assert any("没有可更新的译文" in message for message in toolbar.host.messages)
 
 
 def test_bad_plugin_reports_failure_and_keeps_project_unchanged(project, toolbar):
@@ -186,11 +187,11 @@ def test_bad_plugin_reports_failure_and_keeps_project_unchanged(project, toolbar
 
     assert project.ctx.collection is collection
     assert project.services.project_lifecycle.active.variant.snapshot() == before
-    assert any("迁移失败" in message for message in toolbar.host.messages)
+    assert any("导入失败" in message for message in toolbar.host.messages)
 
 
 @pytest.mark.parametrize("all_conflicted", [False, True])
-def test_toolbar_plugin_conflicts_skip_entries_and_report_count(project, toolbar, all_conflicted):
+def test_toolbar_plugin_conflicts_skip_entries_without_showing_counts(project, toolbar, all_conflicted):
     entry = _source(project)
     records = [(0x801, "OtherNpc", "第一种"), (0x801, "OtherNpc", "第二种")]
     if not all_conflicted:
@@ -205,8 +206,10 @@ def test_toolbar_plugin_conflicts_skip_entries_and_report_count(project, toolbar
     assert after.revision == before.revision + (0 if all_conflicted else 1)
     assert project.ctx.collection.get(entry.identity).translation == ("" if all_conflicted else "你好")
     assert not project.ctx.authoritative_projection_diverged()
-    assert any("迁移完成" in message and "2 条无法唯一匹配已跳过" in message for message in toolbar.host.messages)
-    assert not any("迁移失败" in message for message in toolbar.host.messages)
+    expected = "没有可更新的译文" if all_conflicted else "译文导入完成"
+    assert any(expected in message for message in toolbar.host.messages)
+    assert not any("条译文" in message or "匹配已跳过" in message for message in toolbar.host.messages)
+    assert not any("导入失败" in message for message in toolbar.host.messages)
 
 
 def test_project_edit_during_import_rejects_stale_plugin_draft(project, toolbar, monkeypatch):
@@ -245,6 +248,19 @@ def test_toolbar_without_loaded_source_explains_import_requirement(project, tool
     assert not toolbar.host.workers
     assert not toolbar.host.parse_coordinator._owned_dialogs
     assert toolbar.host.messages
+
+
+def test_dsd_import_into_saved_plugin_source_uses_native_locator(project, toolbar):
+    entry = _source(project)
+    source = project.root / "translated.json"
+    source.write_text(json.dumps([{"form_id": "00000800|source.esp", "type": "NPC_ FULL", "string": "你好"}]))
+    toolbar.widget._btn_import.click()
+    dialog = next(iter(toolbar.host.parse_coordinator._owned_dialogs))
+    assert dialog.prefill_migration_source(str(source), "json", "json.dsd")
+    dialog.accept()
+    _until(project.app, lambda: toolbar.progress[-1] == "hidden")
+    assert project.ctx.collection.get(entry.identity).translation == "你好", toolbar.host.messages
+    assert "译文导入完成。" in toolbar.host.messages
 
 
 def test_import_dialog_rejects_target_changed_before_submit(project, toolbar):

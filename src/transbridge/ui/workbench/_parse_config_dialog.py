@@ -1,7 +1,7 @@
 """
-解析配置对话框。
-从 Step1 提取，用于「文件 → 解析插件…」和「文件 → 应用迁移源…」菜单项。
-支持两种模式：parse（完整表单）和 migrate（仅迁移源部分）。
+旧解析配置的兼容表单与 ParseConfig 数据契约。
+主工作台已分别使用 OpenFileDialog（打开翻译文件）和 TranslationImportDialog（导入译文）。
+保留 parse/migrate 模式供旧 Step1 和兼容调用；主菜单不得再接回此表单。
 """
 
 from dataclasses import dataclass, field

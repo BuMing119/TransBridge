@@ -41,28 +41,12 @@ class ParseCoordinator:
         self._owned_dialogs: set[object] = set()
 
     def parse_plugin(self):
-        """弹出解析配置对话框，执行后台解析。"""
-        from ..workbench._parse_config_dialog import ParseConfigDialog
+        """Compatibility action name; the shell now opens the unified file window."""
+        from .open_file_coordinator import OpenFileCoordinator
 
-        dlg = ParseConfigDialog(mode="parse", parent=self._host)
-        if dlg.exec() != ParseConfigDialog.DialogCode.Accepted:
-            return
-
-        cfg = dlg.get_config()
-
-        if cfg.source_mode == "eet":
-            if not cfg.eet_path:
-                self._host.show_message("请先选择 ESP-ESM Translator 文件")
-                return
-            self._run_parse_eet(cfg)
-        else:
-            if not cfg.esp_paths:
-                self._host.show_message("请先选择插件文件")
-                return
-            if len(cfg.esp_paths) > 1:
-                self._run_batch_parse_esp(cfg)
-            else:
-                self._run_parse_esp(cfg)
+        if not hasattr(self, "_open_files"):
+            self._open_files = OpenFileCoordinator(self._host, self)
+        return self._open_files.open()
 
     def apply_migration(
         self,
@@ -78,9 +62,9 @@ class ParseCoordinator:
         authority = self._capture_authoritative_target()
         original_collection = slot.collection
 
-        from ..workbench._parse_config_dialog import ParseConfigDialog
+        from ..workbench.translation_import_dialog import TranslationImportDialog
 
-        dlg = ParseConfigDialog(mode="migrate", parent=self._host)
+        dlg = TranslationImportDialog(slot, parent=self._host)
         if source_path is not None and not dlg.prefill_migration_source(source_path, drop_kind or "", format_id):
             self._host.show_message("DROP_MIGRATION_ADAPTER_UNAVAILABLE: 已识别该来源，但当前工程尚无对应迁移适配器。")
             return
@@ -96,8 +80,16 @@ class ParseCoordinator:
             cfg = dlg.get_config()
             json_path = getattr(cfg, "json_path", None)
             sst_path = getattr(cfg, "sst_path", None)
-            if not any([cfg.eet_path, cfg.xt_path, cfg.tp_path, cfg.strings_dir, json_path, sst_path]):
-                self._host.show_message("请先选择迁移源文件")
+            if not any([
+                getattr(cfg, "import_source_path", None),
+                cfg.eet_path,
+                cfg.xt_path,
+                cfg.tp_path,
+                cfg.strings_dir,
+                json_path,
+                sst_path,
+            ]):
+                self._host.show_message("请先选择译文文件")
                 return
             if (json_path or sst_path or cfg.tp_path) and any([cfg.eet_path, cfg.xt_path, cfg.strings_dir]):
                 self._host.show_message(

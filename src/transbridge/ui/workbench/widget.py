@@ -290,11 +290,13 @@ class WorkbenchWidget(QWidget):
         self._collection_combo.currentIndexChanged.connect(self._on_collection_switch)
         row.addWidget(self._collection_combo, stretch=1)
 
-        self._btn_import = QPushButton("导入已有译文…")
-        self._btn_import.setAccessibleName("导入已有译文")
+        self._btn_import = QPushButton("导入译文…")
+        self._btn_import.setAccessibleName("导入译文")
         self._btn_import.setFlat(True)
         ComponentStyle.apply_static(self._btn_import, ComponentKind.BUTTON)
-        self._btn_import.setToolTip("从已翻译插件、JSON、XML、SST 或 Strings 导入当前内容的译文")
+        self._btn_import.setToolTip(
+            "从已翻译插件、DSD JSON、ParaTranz JSON、XML、EET、SST 或 Strings 导入当前内容的译文"
+        )
         self._btn_import.clicked.connect(lambda: self.intent_requested.emit(IntentId.SOURCE_MIGRATE.value))
         row.addWidget(self._btn_import)
 
@@ -310,8 +312,8 @@ class WorkbenchWidget(QWidget):
             lambda: self.intent_requested.emit(IntentId.TERMINOLOGY_WORKBENCH.value)
         )
         manage_menu.addSeparator()
-        self._btn_new = manage_menu.addAction("为当前工程添加插件…")
-        self._btn_new.setToolTip("选择插件并加载为当前工程的新翻译内容")
+        self._btn_new = manage_menu.addAction("打开翻译文件…")
+        self._btn_new.setToolTip("选择插件、XML、EET、SST 或 JSON 作为当前工程的新翻译内容")
         self._btn_new.triggered.connect(self._on_new_slot)
         manage_menu.addSeparator()
         self._btn_remove = manage_menu.addAction("移除当前翻译内容…")

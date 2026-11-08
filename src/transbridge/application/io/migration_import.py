@@ -67,7 +67,7 @@ class _ImportedEntry:
     sst_key: tuple[int, str] | None = None
     original: str | None = None
     requires_original_match: bool = False
-    dsd_key: tuple[str, str] | None = None
+    dsd_key: tuple[str, str, int | None] | None = None
     editor_id: str | None = None
 
 
@@ -240,6 +240,8 @@ def _parse_json(
             parsed = parse_dsd_entries(records)
         except (KeyError, TypeError, ValueError) as exc:
             raise MigrationImportError("MIGRATION_JSON_RECORD_INVALID", "记录不符合 DSD 格式。") from exc
+        if any(_dsd_record_key(entry) is None for entry in parsed):
+            raise MigrationImportError("MIGRATION_DSD_LOCATOR_INVALID", "DSD 记录缺少插件归属或字段，无法安全匹配。")
         return tuple(
             _ImportedEntry(
                 entry.identity,
@@ -249,7 +251,7 @@ def _parse_json(
                 entry.stage,
                 original=entry.original,
                 requires_original_match=entry.requires_original_match or entry.dsd_type == "QUST CNAM",
-                dsd_key=_dsd_quest_key(entry),
+                dsd_key=_dsd_record_key(entry),
             )
             for entry in parsed
         ), len(records) - len(parsed)
@@ -345,7 +347,7 @@ def _map_to_target(
     by_legacy: dict[str, set[EntryKey]] = {}
     by_external: dict[tuple[str, str, str, object], set[EntryKey]] = {}
     by_sst: dict[tuple[int, str], set[EntryKey]] = {}
-    by_dsd: dict[tuple[str, str], set[EntryKey]] = {}
+    by_dsd: dict[tuple[str, str, int | None], set[EntryKey]] = {}
     for entry in target_entries:
         for legacy in {entry.id, entry.key, entry.identity.local_key}:
             by_legacy.setdefault(legacy, set()).add(entry.identity)
@@ -354,7 +356,7 @@ def _map_to_target(
         sst_key = target_locator(entry)
         if sst_key is not None:
             by_sst.setdefault(sst_key, set()).add(entry.identity)
-        dsd_key = _dsd_quest_key(entry)
+        dsd_key = _dsd_record_key(entry)
         if dsd_key is not None:
             by_dsd.setdefault(dsd_key, set()).add(entry.identity)
 
@@ -373,8 +375,9 @@ def _map_to_target(
         if source.sst_key is not None:
             candidates.update(by_sst.get(source.sst_key, ()))
         if source.dsd_key is not None:
-            # QUST CNAM DSD omits editor ID/stage index. Its explicit locator
-            # is plugin-qualified FormID + field + exact original text.
+            # DSD does not require EditorID. Use its native plugin-qualified
+            # FormID + field/index, never an unqualified cross-plugin match.
+            # QUST CNAM omits the index and still requires exact original text.
             candidates = set(by_dsd.get(source.dsd_key, ()))
 
         if source.editor_id:
@@ -414,10 +417,16 @@ def _map_to_target(
     return proposals, unmatched, unproved
 
 
-def _dsd_quest_key(entry: TranslationEntry) -> tuple[str, str] | None:
-    if entry.dsd_type != "QUST CNAM" or not entry.form_id_with_plugin:
+def _dsd_record_key(entry: TranslationEntry) -> tuple[str, str, int | None] | None:
+    if not entry.dsd_type or not entry.form_id_with_plugin or "|" not in entry.form_id_with_plugin:
         return None
-    return entry.form_id_with_plugin.casefold(), entry.dsd_type
+    if not all(entry.form_id_with_plugin.split("|", 1)):
+        return None
+    return (
+        entry.form_id_with_plugin.casefold(),
+        entry.dsd_type,
+        None if entry.dsd_type == "QUST CNAM" else entry.dsd_index,
+    )
 
 
 __all__ = ["MigrationImportDraft", "MigrationImportError", "prepare_migration_import"]

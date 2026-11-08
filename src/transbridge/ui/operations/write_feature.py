@@ -7,6 +7,12 @@ from pathlib import Path
 from threading import RLock
 
 from transbridge.application.io.contracts import FormatId
+from transbridge.application.io.json_export import (
+    JSON_EXPORT_FORMATS,
+    JsonExportDraft,
+    JsonExportWorkload,
+    preflight_json_export,
+)
 from transbridge.application.io.operation_write import HydratedWriteDraft, HydratedWriteWorkload, WritePreflightCheck
 from transbridge.application.io.plugin_transfer import (
     PluginTransferDraft,
@@ -33,6 +39,7 @@ from .write_batch import (
     isolate_batch_output_conflicts,
     retarget_write_batch,
 )
+from .write_json_export import json_export_plan, native_export_plan, with_json_choices
 from .write_plan import _write_plan
 
 
@@ -42,6 +49,12 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
     transfer_preflights = PluginTransferPreflightService(write_preflights=write_preflights)
 
     def write_checks(value: object) -> tuple[PreflightCheckState, ...]:
+        if isinstance(value, JsonExportDraft):
+            checked = preflight_json_export(value, write_preflights)
+            with cache_lock:
+                write_cache[id(value)] = checked
+                _trim_cache(write_cache)
+            return tuple(_display_check(item) for item in checked.checks)
         if isinstance(value, PluginTransferDraft):
             checked = transfer_preflights.preflight(value)
             with cache_lock:
@@ -120,6 +133,14 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         )
 
     def create_write(context, batch: bool, values):
+        native_values = dict(values)
+        json_output = native_values.get("output_format") in JSON_EXPORT_FORMATS
+        if json_output:
+            native_values.pop("output_format")
+        plan = create_native_write(context, batch, native_values)
+        return json_export_plan(plan, tuple(values.items())) if json_output else with_json_choices(plan)
+
+    def create_native_write(context, batch: bool, values):
         if batch:
             drafts = []
             failures = []
@@ -218,6 +239,13 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         return _write_plan(PluginTransferDraft(request, plugin_path) if plugin_path else request)
 
     def edit_write(draft, fields):
+        edits = dict(fields)
+        if edits.get("output_format", getattr(draft.request, "format_id", None)) in JSON_EXPORT_FORMATS:
+            return json_export_plan(draft, fields)
+        draft = native_export_plan(draft)
+        return with_json_choices(edit_native_write(draft, fields))
+
+    def edit_native_write(draft, fields):
         if isinstance(draft, OperationPlanDraft) and isinstance(draft.request, _HydratedWriteBatch):
             edits = dict(fields)
             overwrite = _edited_flag(edits, "overwrite_confirmed")
@@ -255,6 +283,24 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         return _write_plan(PluginTransferDraft(edited, plugin_path) if plugin_path else edited)
 
     def submit_write(draft, preflight, owner: OwnerRef, tasks: TaskRuntime):
+        if isinstance(draft, OperationPlanDraft) and isinstance(draft.request, JsonExportDraft):
+            request = draft.request
+            with cache_lock:
+                checked = write_cache.pop(id(request), None)
+            if checked is None or not checked.ready:
+                raise OperationCompositionError("JSON 导出检查已失效，请重试导出。")
+            return operation_tasks.submit(
+                OperationTaskRequest(
+                    OperationKind.WRITE,
+                    preflight.request_digest,
+                    draft.input_fingerprint,
+                    "导出 JSON 文件",
+                    JsonExportWorkload(checked),
+                    True,
+                    tuple(source.target_path for source in request.sources),
+                ),
+                owner,
+            )
         if isinstance(draft, OperationPlanDraft) and isinstance(draft.request, PluginTransferDraft):
             request = draft.request
             with cache_lock:
@@ -341,7 +387,7 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         return bool(not batch and slot is not None and getattr(slot, "collection", None) is not None)
 
     def discard_write(draft) -> None:
-        if isinstance(draft, OperationPlanDraft) and isinstance(draft.request, _HydratedWriteBatch):
+        if isinstance(draft, OperationPlanDraft) and isinstance(draft.request, (_HydratedWriteBatch, JsonExportDraft)):
             request = draft.request
         else:
             request = _write_request(draft)

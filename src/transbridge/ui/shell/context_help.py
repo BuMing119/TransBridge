@@ -100,6 +100,14 @@ class ContextHelpController:
 
 DEFAULT_CONTEXT_HELP = ContextHelpCatalog((
     ContextHelpTopic(
+        "open-translation-file",
+        "打开翻译文件",
+        "把插件、XML、EET、SST、DSD JSON 或 ParaTranz JSON 打开为当前工程的新翻译内容。",
+        "首次打开文件时使用；已有译文为可选来源，勾选后启用固定区域，不改变窗口高度。",
+        aliases=("解析插件", "打开文件", "添加新插件"),
+        related_intents=(IntentId.WORKBENCH_CONTENT_PREPARE,),
+    ),
+    ContextHelpTopic(
         "local-project",
         "本地翻译工程",
         "在本机保存同一项翻译工作的来源、翻译版本和历史还原点。",
@@ -178,10 +186,10 @@ DEFAULT_CONTEXT_HELP = ContextHelpCatalog((
     ),
     ContextHelpTopic(
         "write-back",
-        "写回文件",
+        "导出文件",
         "把当前译文发布到受支持的插件或输出文件。",
-        "完成检查且准备生成正式文件时使用；提交前确认目标、备份和覆盖范围。",
-        aliases=("发布", "导出译文"),
+        "从工作台的“导出文件”打开独立窗口，选择格式与保存位置后直接导出；有问题时显示原因。",
+        aliases=("发布", "导出译文", "写回文件", "DSD JSON", "ParaTranz JSON"),
         related_intents=(IntentId.PUBLISH_WRITE, IntentId.PUBLISH_WRITE_BATCH),
     ),
     ContextHelpTopic(

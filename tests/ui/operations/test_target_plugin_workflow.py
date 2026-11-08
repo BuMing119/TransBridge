@@ -150,7 +150,8 @@ def test_selected_esp_uses_background_preview_and_preserves_project(transfer_cas
         assert case.output.read_bytes() == expected.read_bytes()
         assert str(case.output) in case.dialog._checks.text()
         assert case.dialog._checks.text().count(str(case.output)) == 1
-        assert "已套用 1 条译文，目标保留 2 条" in case.dialog._checks.text()
+        assert "已套用" not in case.dialog._checks.text()
+        assert "目标保留" not in case.dialog._checks.text()
         assert "将套用" not in case.dialog._checks.text()
         assert "TRANSFER_PRESERVED" not in case.dialog._checks.text()
         assert "PUBLISHED" not in case.dialog._checks.text()
@@ -162,7 +163,10 @@ def test_selected_esp_uses_background_preview_and_preserves_project(transfer_cas
         case.dialog._details_button.click()
         assert case.dialog._details.isVisible()
         case.dialog._select_plugin("")
-        assert "选项已变化" in case.dialog._checks.text()
+        assert not case.dialog._checks_scroll.isVisible()
+        assert case.dialog._preflight is None
+        assert dict(case.dialog.edited_values())["target_path"] == ""
+        assert not case.queued
         assert not case.dialog._details.isVisible()
         assert not case.dialog._progress.isVisible()
     assert case.old.read_bytes() == case.old_bytes

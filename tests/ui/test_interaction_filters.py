@@ -64,7 +64,7 @@ def test_scope_does_not_claim_unselected_rows_and_export_remains_whole_file(prev
     assert actions._selection_label.text() == "已选 0 条 / 筛选结果 0 条"
     export = actions._buttons[IntentId.PUBLISH_WRITE]
     assert export.isEnabled()
-    assert export.text() == "导出整个文件"
+    assert export.text() == "导出文件"
     assert "不受表格选择或筛选限制" in export.toolTip()
     assert len(preview._ctx.collection) == 3
 

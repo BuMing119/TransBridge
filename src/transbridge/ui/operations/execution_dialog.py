@@ -16,6 +16,7 @@ class ExecutionPlanDialog(OperationPlanDialog):
     execution_status_changed = pyqtSignal(str, str)
     requires_async_preflight = True
     operation_label = "写回"
+    show_transfer_counts = True
 
     def __init__(self, plan, parent=None):
         self._execution_running = False
@@ -107,7 +108,13 @@ class ExecutionPlanDialog(OperationPlanDialog):
             return
         self.set_execution_running(False)
         self._close_button.setText("关闭")
-        receipt = execution_receipt(activity, result, label=self.operation_label, is_batch=self._plan.is_batch)
+        receipt = execution_receipt(
+            activity,
+            result,
+            label=self.operation_label,
+            is_batch=self._plan.is_batch,
+            show_transfer_counts=self.show_transfer_counts,
+        )
         semantic = {"completed": SemanticState.SUCCESS, "failed": SemanticState.ERROR}.get(
             receipt.status, SemanticState.WARNING
         )

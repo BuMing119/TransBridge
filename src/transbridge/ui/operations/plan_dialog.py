@@ -33,6 +33,8 @@ from .preflight_view import OperationPreflightResult, PreflightCheckStatus
 class OperationPlanDialog(QDialog):
     """Presentation only: feature coordinators own draft mapping and submit."""
 
+    choice_editor_type = QComboBox
+
     preflight_requested = pyqtSignal(str, object)
     return_to_edit_requested = pyqtSignal(str, object)
     confirm_requested = pyqtSignal(str, object)
@@ -130,7 +132,7 @@ class OperationPlanDialog(QDialog):
                 )
                 editor.setChecked(field.value.casefold() == "true")
             elif field.control is EditableControl.CHOICE:
-                editor = QComboBox()
+                editor = self.choice_editor_type()
                 for value, label in field.options:
                     editor.addItem(label, value)
                 editor.setCurrentIndex(editor.findData(field.value))

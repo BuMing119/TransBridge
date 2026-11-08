@@ -124,7 +124,7 @@ def test_completed_task_center_state_is_localized_and_not_partial(qapp):
     try:
         panel.render_activity(activity)
         assert panel._current.item(0).text().endswith("已完成")
-        assert "写回完成" in dialog._checks.text()
+        assert "导出完成" in dialog._checks.text()
         assert "可以关闭此窗口" not in dialog._checks.text()
         assert "重试" not in dialog._checks.text()
         assert dialog._close_button.isEnabled()

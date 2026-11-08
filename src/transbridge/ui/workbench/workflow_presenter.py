@@ -248,11 +248,11 @@ class WorkbenchWorkflowPresenter:
             ),
             ContextActionViewState(
                 IntentId.PUBLISH_WRITE,
-                "导出整个文件",
+                "导出文件",
                 write_ready and write_supported,
                 None
                 if write_ready and write_supported
-                else (no_scope if not write_ready else "当前翻译内容不支持直接写回"),
+                else (no_scope if not write_ready else "当前翻译内容不支持导出文件"),
             ),
             ContextActionViewState(
                 IntentId.WORKBENCH_MANAGE,

@@ -1,12 +1,10 @@
-"""Workbench write intents: all plugin/XML publication uses operation plans."""
+"""Workbench export intent; all formats share the export dialog and publication boundary."""
 
 from dataclasses import dataclass
-from pathlib import Path
 
-from PyQt6.QtWidgets import QFileDialog, QMessageBox, QPushButton
+from PyQt6.QtWidgets import QMessageBox
 
 from transbridge.ui.foundation.adapters import ThemeView
-from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
 from transbridge.ui.operations.errors import OperationCompositionError
 
 from .base import OpCard
@@ -27,10 +25,9 @@ class _SelectedWriteContext:
 class WriteCard(OpCard):
     def __init__(self, ctx, run_worker, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(
-            "写回插件/XML",
-            "预检后写回插件、ESP-ESM Translator XML、ESP-ESM Translator EET、"
-            "xTranslator XML 或 xTranslator SST，也可从插件生成 xTranslator SST。",
-            "写回",
+            "导出文件",
+            "按原格式导出，或选择 ParaTranz JSON、DSD JSON 等受支持的格式。",
+            "导出文件",
             parent,
             theme_view=theme_view,
         )
@@ -41,11 +38,6 @@ class WriteCard(OpCard):
         self.batch_btn.clicked.connect(self.batch_write)
         self.eet_btn = self.btn
         self.xt_btn = self.btn
-        self.dsd_btn = QPushButton("导出 DSD", self)
-        self.dsd_btn.setAccessibleName("独立导出 DSD JSON")
-        ComponentStyle.apply_static(self.dsd_btn, ComponentKind.BUTTON)
-        self.dsd_btn.clicked.connect(self.export_dsd)
-        self.layout().itemAt(self.layout().count() - 1).layout().addWidget(self.dsd_btn)
 
     def update_batch_visibility(self):
         self.set_batch_visible(self._presenter.batch_available)
@@ -80,57 +72,8 @@ class WriteCard(OpCard):
         QMessageBox.warning(self, "批量写回不可用" if batch else "写回不可用", message)
 
     def export_dsd(self):
-        """DSD is a separate export, never a fallback from failed publication."""
-        collection = self._ctx.collection
-        if not collection:
-            QMessageBox.warning(self, "无法导出", "当前没有可导出的翻译条目。")
+        """Keep the legacy callable, routing it through the guarded export UI."""
+        if self._operation_plan_facade is None:
+            QMessageBox.warning(self, "无法导出", "导出服务尚未接入，请重新打开工程。")
             return
-        self._write_dsd(collection)
-
-    def _write_dsd(self, collection):
-        """导出为 DSD 格式 JSON 文件。"""
-        esp_path = getattr(self._ctx, "esp_path", None)
-        if esp_path:
-            default_name = Path(esp_path).stem + "_dsd.json"
-            default_dir = str(Path(esp_path).parent)
-        else:
-            default_name = "export_dsd.json"
-            default_dir = ""
-
-        save_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "导出 DSD JSON",
-            str(Path(default_dir) / default_name) if default_dir else default_name,
-            "JSON 文件 (*.json);;所有文件 (*)",
-        )
-        if not save_path:
-            return
-
-        def _write():
-            # 统计有译文的条目数
-            count = sum(1 for e in collection if e.translation)
-            collection.to_dsd_json_file(save_path)
-            return count, Path(save_path)
-
-        def _on_done(result):
-            count, out_path = result
-            if count == 0:
-                QMessageBox.warning(
-                    self,
-                    "导出完成",
-                    f"没有已翻译的条目，导出文件为空。\n\n保存至：{out_path}",
-                )
-            else:
-                QMessageBox.information(
-                    self,
-                    "导出完成",
-                    f"已导出 {count} 条译文到 DSD JSON。\n\n保存至：{out_path}",
-                )
-
-        self._run_worker(
-            _write,
-            on_result=_on_done,
-            on_error=lambda e: QMessageBox.critical(self, "DSD 导出失败", e),
-            progress_total=0,
-            progress_msg="正在导出 DSD JSON…",
-        )
+        self._operation_plan_facade.begin_write(self._ctx, batch=False, output_format="json.dsd")

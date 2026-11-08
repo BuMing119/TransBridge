@@ -2,7 +2,9 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
-from PyQt6.QtWidgets import QFileDialog, QPushButton
+from PyQt6.QtCore import Qt
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QFileDialog, QPushButton, QStyle, QStyleOptionComboBox
 import pytest
 
 from tests.contracts.io.test_localized_hydrated_publication import localized as localized_fixture
@@ -257,9 +259,50 @@ def test_single_save_as_button_preserves_filename_and_restore_requires_new_confi
     assert dict(case.dialog.edited_values())["target_path"] == str(destination)
     assert not case.dialog._overwrite.isChecked()
     case.dialog._overwrite.setChecked(True)
-    case.dialog._restore_output()
-    assert dict(case.dialog.edited_values())["target_path"] == ""
+    restore = next(item for item in case.dialog.findChildren(QPushButton) if item.text() == "保存回原文件")
+    restore.click()
+    assert dict(case.dialog.edited_values())["target_path"] == str(source)
     assert not case.dialog._overwrite.isChecked()
+
+
+@pytest.mark.parametrize("format_id", ["sst.ssu9", "json.dsd", "json.paratranz"])
+def test_save_original_cannot_overwrite_source_with_another_format(write_dialog, format_id):
+    dialog = write_dialog.dialog
+    choice = dialog._field_edits["output_format"]
+    choice.setCurrentIndex(choice.findData(format_id))
+    assert not dialog._save_original_button.isEnabled()
+    dialog._restore_output()
+    assert dict(dialog.edited_values())["target_path"] == ""
+    choice.setCurrentIndex(choice.findData("plugin.sse"))
+    assert dialog._save_original_button.isEnabled()
+    dialog._save_original_button.click()
+    assert dict(dialog.edited_values())["target_path"] == next(iter(write_dialog.context.slots))
+
+
+def test_save_original_rechecks_reference_before_using_path(write_dialog):
+    dialog = write_dialog.dialog
+    Path(next(iter(write_dialog.context.slots))).unlink()
+    dialog._restore_output()
+    assert dict(dialog.edited_values())["target_path"] == ""
+    assert not dialog._save_original_button.isEnabled()
+
+
+def test_output_format_arrow_opens_choice_popup(write_dialog, qapp):
+    choice = write_dialog.dialog._field_edits["output_format"]
+    option = QStyleOptionComboBox()
+    choice.initStyleOption(option)
+    arrow = choice.style().subControlRect(
+        QStyle.ComplexControl.CC_ComboBox, option, QStyle.SubControl.SC_ComboBoxArrow, choice
+    )
+    QTest.mouseClick(choice, Qt.MouseButton.LeftButton, pos=arrow.center())
+    qapp.processEvents()
+    try:
+        assert choice.view().isVisible()
+        assert not choice.isEditable()
+        assert choice.findData("json.dsd") >= 0
+        assert choice.findData("json.paratranz") >= 0
+    finally:
+        choice.hidePopup()
 
 
 def test_save_picker_does_not_suggest_a_missing_reference(write_dialog, monkeypatch):
@@ -290,7 +333,7 @@ def test_batch_save_as_directory_button_and_restore_are_available_in_write_ui(wr
     assert values["output_directory"] == destination
     assert values["overwrite_confirmed"] == "false"
     edited = case.dialog._plan.request_digest
-    assert case.dialog._preflight is None and not case.dialog._confirm_button.isEnabled()
+    assert case.dialog._preflight is None and case.dialog._confirm_button.isEnabled()
     case.dialog._restore_output()
     assert dict(case.dialog.edited_values())["output_directory"] == ""
     assert case.dialog._plan.request_digest == edited  # The coordinator applies edits only when preflight is requested.
@@ -320,7 +363,7 @@ def test_batch_save_as_ui_rechecks_destination_and_publishes_all_files(tmp_path,
     try:
         dialog._preflight_button.click()
         _finish_preflight(facade, dialog)
-        assert not dialog._confirm_button.isEnabled()  # An output directory must be chosen.
+        assert not dialog._preflight.ready  # An output directory must be chosen before publication.
         dialog._browse_directory()
         assert dialog._preflight is None
         dialog._preflight_button.click()
