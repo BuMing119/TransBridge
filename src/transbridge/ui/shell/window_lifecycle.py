@@ -381,6 +381,9 @@ class WindowLifecycle:
         )
         self._host.workbench.hide_step2_progress()
         self.auto_saver.start()
+        close_cancelled = getattr(self._host, "close_cancelled", None)
+        if close_cancelled is not None:
+            close_cancelled.emit()
         ai_tasks = getattr(self._host.workbench, "ai_tasks", None)
         if ai_tasks is not None:
             ai_tasks.resume()

@@ -261,6 +261,7 @@ class ShellIntentComposition:
         register(IntentId.TASK_RETRY, _call(self._show_task_center), availability=self._has_task_runtime)
         register(IntentId.HELP_CONTEXT, _call(self._show_context_help))
         register(IntentId.HELP_ABOUT, _call(host.show_about))
+        register(IntentId.HELP_CHECK_UPDATE, _call(host.update_controller.check_manually))
         register(IntentId.APP_EXIT, _call(host.close))
 
     def _open_project(self, payload: Mapping[str, str]) -> object:

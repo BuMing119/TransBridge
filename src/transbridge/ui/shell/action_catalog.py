@@ -72,6 +72,7 @@ class IntentId(StrEnum):
     SETTINGS_MESSAGES = "settings.messages"
     HELP_CONTEXT = "help.context"
     HELP_ABOUT = "help.about"
+    HELP_CHECK_UPDATE = "help.check-update"
     APP_EXIT = "app.exit"
     TASK_OPEN_ACTIVITY = "task.open-activity"
     TASK_RETRY = "task.retry"
@@ -314,6 +315,7 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ActionDescriptor(IntentId.SETTINGS_MESSAGES, "ParaTranz 私信", ActionSection.SETTINGS),
     ActionDescriptor(IntentId.HELP_CONTEXT, "功能与术语帮助", ActionSection.HELP),
     ActionDescriptor(IntentId.HELP_ABOUT, "关于 TransBridge", ActionSection.HELP),
+    ActionDescriptor(IntentId.HELP_CHECK_UPDATE, "检查更新", ActionSection.HELP),
     ActionDescriptor(IntentId.APP_EXIT, "退出", ActionSection.FILE, shortcut="Ctrl+Q"),
     ActionDescriptor(
         IntentId.TASK_OPEN_ACTIVITY,

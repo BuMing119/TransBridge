@@ -117,7 +117,7 @@ def test_navigation_utilities_have_hover_contract_and_user_presence_is_semantic(
         button for button in navigation.findChildren(QToolButton) if button.property("tbNavIntent") is True
     ]
 
-    assert [button.text().strip().split()[-1] for button in utility_buttons] == ["设置", "帮助", "关于"]
+    assert [button.text().strip() for button in utility_buttons] == ["检查更新", "设置", "帮助", "关于"]
     assert all(button.testAttribute(Qt.WidgetAttribute.WA_Hover) for button in utility_buttons)
     assert all(button.hasMouseTracking() for button in utility_buttons)
 
@@ -143,6 +143,29 @@ def test_navigation_utilities_have_hover_contract_and_user_presence_is_semantic(
     assert avatar.text() == "本"
     assert presence.text() == "本地模式"
     assert presence_dot.property("tbConnectionState") == "local"
+    shell.close()
+
+
+def test_navigation_update_intent_and_available_state() -> None:
+    shell = WorkspaceShell()
+    emitted: list[str] = []
+    shell.intent_requested.connect(emitted.append)
+    button = shell.navigation._update_button
+
+    button.click()
+    assert emitted == [IntentId.HELP_CHECK_UPDATE.value]
+    assert button.accessibleName() == "检查更新"
+    assert button.property("tbUpdateAvailable") is False
+
+    shell.navigation.set_update_available(True, "0.2.2")
+    assert button.text() == "发现新版本"
+    assert button.accessibleName() == "发现新版本"
+    assert "0.2.2" in button.accessibleDescription()
+    assert button.property("tbUpdateAvailable") is True
+
+    shell.navigation.set_update_available(False)
+    assert button.text() == "检查更新"
+    assert button.accessibleDescription() == "检查更新"
     shell.close()
 
 

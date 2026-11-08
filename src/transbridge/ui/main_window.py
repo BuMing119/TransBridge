@@ -1,6 +1,6 @@
 import logging
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtWidgets import QMainWindow, QMessageBox
 
 from transbridge import __version__
@@ -25,6 +25,7 @@ from .shell.progressive_menu_bar import ProgressiveMenuBar
 from .shell.start_center import StartCenterWidget
 from .shell.start_center_controller import StartCenterController
 from .shell.status_presenter import StatusPresenter
+from .shell.update_controller import UpdateController
 from .shell.window_lifecycle import WindowLifecycle
 from .workbench.widget import WorkbenchWidget
 from .workers import ApiWorker, get_http_error_bus
@@ -40,6 +41,8 @@ def _composition_port(field: str) -> property:
 
 
 class MainWindow(QMainWindow):
+    close_cancelled = pyqtSignal()
+
     context = _composition_port("_ctx")
     workbench = _composition_port("_workbench")
     app_runtime = _composition_port("_app_runtime")
@@ -142,6 +145,7 @@ class MainWindow(QMainWindow):
             from .operations.production import build_operation_plan_facade
 
             self._operation_plan_facade = build_operation_plan_facade(runtime, runtime_context)
+        self.update_controller = UpdateController(self)
         self._intent_composition = ShellIntentComposition(self)
 
         self._setup_op_cards()
@@ -155,6 +159,7 @@ class MainWindow(QMainWindow):
         ComponentStyle.apply_static(progressive_menu, ComponentKind.MENU)
         progressive_menu.bind_existing_menus()
         self._init_central()
+        self.update_controller.bind_navigation(self._mode_tabs.navigation)
         self._init_start_center_controller()
         self._status_presenter = StatusPresenter(self, self._ctx)
         self._status_presenter.start()
@@ -179,17 +184,23 @@ class MainWindow(QMainWindow):
             self._tool_windows.load_current_user()
 
         self._window_lifecycle = WindowLifecycle(self)
+        self.close_cancelled.connect(self.update_controller.cancel_installation)
         self._window_lifecycle.restore_state()
-        self._project_coordinator.init_workspace(initial_project_path=initial_project_path)
-        if initial_import_path:
+        if initial_import_path and not initial_project_path:
+            self._project_coordinator.init_workspace(restore_active=False)
             QTimer.singleShot(0, lambda: self._open_initial_import_when_idle(initial_import_path))
+        else:
+            self._project_coordinator.init_workspace(initial_project_path=initial_project_path)
 
         # 自动保存 — 编辑操作触发防抖
         self._window_lifecycle.start()
         self._auto_saver = self._window_lifecycle.auto_saver
         self._ctx.dirty_changed.connect(lambda: self._workbench.project_bar.set_save_dirty(self._ctx.dirty))
+        self.update_controller.start()
 
     def _open_initial_import_when_idle(self, path: str) -> None:
+        if self._close_pending:
+            return
         workers = (self._foreground_worker, self._save_worker, self._project_open_worker)
         if getattr(self._ctx, "project_opening", False) or any(worker is not None for worker in workers):
             QTimer.singleShot(100, lambda: self._open_initial_import_when_idle(path))
@@ -197,8 +208,10 @@ class MainWindow(QMainWindow):
         self._project_transfer_coordinator.import_transbridge(path)
 
     def closeEvent(self, event):
+        self.update_controller.prepare_for_close()
         if not self._close_pending and not self._dialogue_editor.can_close():
             event.ignore()
+            self.update_controller.cancel_installation()
             return
         if self._window_lifecycle.close_event(event):
             project_saves = getattr(self, "_project_save_coordinator", None)

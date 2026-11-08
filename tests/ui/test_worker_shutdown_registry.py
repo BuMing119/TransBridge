@@ -90,6 +90,17 @@ def host(monkeypatch):
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
+def test_cancelled_close_notifies_update_handoff(host) -> None:
+    host.close_cancelled = Mock()
+    host.lifecycle._close_pending = True
+    host.close_pending = True
+
+    host.lifecycle.cancel_close()
+
+    assert host.close_pending is False
+    host.close_cancelled.emit.assert_called_once_with()
+
+
 @pytest.mark.parametrize("owner", ["host", "child"])
 def test_close_waits_for_generic_and_child_workers_before_final_save(host, owner):
     release = threading.Event()

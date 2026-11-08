@@ -119,6 +119,8 @@ class NavigationRail(QFrame):
         self._paratranz_button = self._add_page(layout, "ParaTranz", "language", 1)
         layout.addStretch(1)
 
+        self._update_button = self._add_intent(layout, "检查更新", "download", IntentId.HELP_CHECK_UPDATE)
+        self.set_update_available(False)
         self._add_intent(layout, "设置", "settings", IntentId.SETTINGS_APPEARANCE)
         self._add_intent(layout, "帮助", "help-circle", IntentId.HELP_CONTEXT)
         self._add_intent(layout, "关于", "info-circle", IntentId.HELP_ABOUT)
@@ -204,11 +206,12 @@ class NavigationRail(QFrame):
         layout.addWidget(button)
         return button
 
-    def _add_intent(self, layout: QVBoxLayout, text: str, icon_id: str, intent: IntentId) -> None:
+    def _add_intent(self, layout: QVBoxLayout, text: str, icon_id: str, intent: IntentId) -> QToolButton:
         button = self._button(text, icon_id)
         button.setProperty("tbNavIntent", True)
         button.clicked.connect(lambda _checked=False, value=intent: self.intent_requested.emit(value.value))
         layout.addWidget(button)
+        return button
 
     def _button(self, text: str, icon_id: str) -> QToolButton:
         button = NavigationButton(self)
@@ -241,6 +244,17 @@ class NavigationRail(QFrame):
         button = self._page_group.button(index)
         if button is not None:
             button.setChecked(True)
+
+    def set_update_available(self, available: bool, version: str | None = None) -> None:
+        button = self._update_button
+        label = "发现新版本" if available else "检查更新"
+        detail = f"TransBridge v{version} 可用，点击查看更新" if available and version else label
+        button.setText(label)
+        button.setAccessibleName(label)
+        button.setAccessibleDescription(detail)
+        button.setToolTip(detail)
+        button.setProperty("tbUpdateAvailable", available)
+        self._refresh_dynamic_style(button)
 
     def set_user(self, user: dict | None) -> None:
         if not user:
