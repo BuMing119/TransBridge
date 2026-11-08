@@ -18,6 +18,8 @@
 
 - Follow `pyproject.toml`: Ruff formatting, double quotes, 120-character lines, and sorted imports.
 - Keep changes small and local; preserve public APIs and file-format fidelity unless the task explicitly changes them.
+- Do not reinvent the wheel: reuse existing project capabilities, standard-library features, and suitable existing dependencies before writing custom implementations.
+- Do not introduce hashing without a concrete need. Prefer direct comparisons or other non-hash validation whenever they meet the requirement; use hash-based verification only when necessary and explain why.
 - When correcting code, configuration, or documentation, update the canonical source at the root cause and remove superseded or contradictory content. Do not append compensating notes, overrides, duplicated clauses, or patch-layer workarounds unless the artifact is explicitly historical or incremental (such as a changelog or migration record), or compatibility requires it; document any required temporary layer and its removal condition.
 - Add or update focused regression tests for behavior changes and bug fixes.
 - Keep UI work responsive: place long-running work in the established worker/coordinator patterns rather than blocking the Qt event loop.
