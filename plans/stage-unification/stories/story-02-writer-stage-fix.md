@@ -122,5 +122,5 @@ def _write_entry(self, entry, ...):
 
 ## 风险与注意事项
 
-- **风险 1**: EET 格式本身不支持 7 级状态（只有 status=0/99 二元），stage>=2 的精确状态在 EET 写回时会丢失。缓解：这是 EET 格式限制，ParaTranz 上传时会恢复精确状态
+- **风险 1**: 此 Story 的 EET XML writer 使用 status=0/99 映射，无法完整表达 ParaTranz 阶段；这不是二进制 EET 的格式限制。二进制写回按 [ADR-053](../../../docs/adr/053-eet-binary-io-integration.md)保留原生 STATUS，只更新有效译文及数字缓存。
 - **注意 1**: `status_node.text` 设置后，对应的 translation 元素也需要同步控制（status=0 不写 translation，status=99 写 translation）

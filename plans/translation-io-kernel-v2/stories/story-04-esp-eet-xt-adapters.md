@@ -1,7 +1,7 @@
 # Story 04：ESP/EET/XT Adapter 与调用链修复
 
 - 所属 Plan：[Translation I/O Kernel V2](../plan.md)
-- 状态：实现完成，综合 QA 通过（2026-08-18）
+- 状态：原 XML/插件范围于2026-08-18完成；SST 当前按 ADR-052 实验性开放，EET 二进制按 [ADR-053](../../../docs/adr/053-eet-binary-io-integration.md)完成本地实现与相关验证，能力实验性，最终证据见 [EET 集成计划](../../eet-integration/plan.md)。
 - 追溯：FR18.2/18.6/18.8；ADR-017；R-014/R-015
 - 依赖：S01/S02；platform S03/S05
 
@@ -19,7 +19,7 @@ ESP/EET/XT 通过统一端口完成 parse→modify→write→reparse；消除 Ag
 2. 把 PluginParser 的 plugin/strings lookup/source path 包入 snapshot lease；EET/XT 保存 XML template、encoding/BOM 和定位键。
 3. Agent/GUI parser tools 只调用 parse use case，Slot 兼容对象保存 snapshot ref 而非猜测路径。
 4. Writer 使用完整 EntryKey/source locator；无法唯一定位返回 conflict diagnostic。
-5. 建立 facade 对比旧输出；DSD/SST Reader 仅 experimental，未验证 writer 不注册。
+5. DSD 保持既有实验性；SST 完整读写按 ADR-052 实验性注册。EET 二进制按 ADR-053 使用唯一 codec、完整快照、eet-v1 物理身份、译文缓存同步和全文件发布校验；GUI/助手共享实现，正式 MCP 不增读写工具。
 
 ## 边界、迁移与测试
 

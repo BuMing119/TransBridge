@@ -182,12 +182,14 @@ class SourceInputCoordinator:
         if format_id is None:
             formats = (
                 ("ESP / ESM / ESL 插件", FormatId.PLUGIN_SSE),
-                ("XTranslator XML", FormatId.XML_XT),
-                ("ESP-ESM Translator XML", FormatId.XML_EET),
-                ("ESP-ESM Translator EET", FormatId.BINARY_EET),
+                ("xTranslator XML (.xml)", FormatId.XML_XT),
+                ("ESP-ESM Translator XML (.xml)", FormatId.XML_EET),
+                ("ESP-ESM Translator EET (.eet，实验性)", FormatId.BINARY_EET),
                 ("ParaTranz JSON", FormatId.JSON_PARATRANZ),
-                ("SST SSU8", FormatId.SST_SSU8),
-                ("SST SSU9", FormatId.SST_SSU9),
+                ("DSD JSON", FormatId.JSON_DSD),
+                ("TransBridge JSON", FormatId.JSON_TRANSBRIDGE),
+                ("xTranslator SST (.sst，SSU8)", FormatId.SST_SSU8),
+                ("xTranslator SST (.sst，SSU9)", FormatId.SST_SSU9),
             )
             choice, accepted = QInputDialog.getItem(
                 self._parent,

@@ -16,9 +16,12 @@ from transbridge.application.contracts import (
 from transbridge.application.io import (
     FormatId,
     ParseRequest,
+    ProbeRequest,
+    ProbeStatus,
     SourceDescriptor,
     TranslationIoUseCase,
 )
+from transbridge.application.io.catalog import default_format_catalog
 from transbridge.application.io.identity import SourceNamespace
 from transbridge.application.projects.provisioning import (
     PreparedProjectSource,
@@ -90,10 +93,11 @@ class TranslationIoProjectSourcePreparer:
         )
         if (parsed.outcome is not OperationOutcome.COMPLETED and not allowed_partial) or parsed.source_snapshot is None:
             code = parsed.diagnostics[0].code if parsed.diagnostics else "PROJECT_SOURCE_PARSE_FAILED"
+            detail = parsed.diagnostics[0].message if parsed.diagnostics else ""
             raise DomainError(
                 ErrorCategory.PREREQUISITE,
                 code,
-                "工程来源无法解析为可验证基线。",
+                f"工程来源无法解析为可验证基线。{detail}",
             )
         if request.expected_fingerprint is not None and request.expected_fingerprint != parsed.source_snapshot.sha256:
             raise DomainError(
@@ -119,6 +123,28 @@ class TranslationIoProjectSourcePreparer:
 def _infer_format(path: Path) -> FormatId:
     if path.suffix.lower() in _PLUGIN_SUFFIXES:
         return FormatId.PLUGIN_SSE
+    try:
+        content = path.read_bytes()
+    except OSError as exc:
+        raise DomainError(
+            ErrorCategory.INPUT,
+            "PROJECT_SOURCE_READ_FAILED",
+            f"无法读取工程来源（{type(exc).__name__}），请检查文件是否存在及读取权限。",
+        ) from exc
+    # Reuse adapter probes too: XML signatures may have a UTF-8 BOM or UTF-16 encoding.
+    probe = default_format_catalog().resolve(
+        ProbeRequest(SourceDescriptor(str(path), path.name, len(content)), content)
+    )
+    if probe.status is ProbeStatus.EXACT:
+        return probe.candidates[0]
+    if probe.status is ProbeStatus.AMBIGUOUS:
+        candidates = tuple(item.value for item in probe.candidates)
+        raise DomainError(
+            ErrorCategory.INPUT,
+            "PROJECT_SOURCE_FORMAT_REQUIRED",
+            f"工程来源符合多个格式（{'、'.join(candidates)}），请明确选择格式。",
+            details={"candidates": candidates},
+        )
     raise DomainError(
         ErrorCategory.INPUT,
         "PROJECT_SOURCE_FORMAT_REQUIRED",

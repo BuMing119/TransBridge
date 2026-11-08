@@ -126,7 +126,8 @@ DEFAULT_CONTEXT_HELP = ContextHelpCatalog((
     ContextHelpTopic(
         "translation-content",
         "翻译内容",
-        "表示当前可编辑的词条集合，也可来自 JSON、EET、XT、SST 等非插件来源。",
+        "表示当前可编辑的词条集合，也可来自 JSON、ESP-ESM Translator XML、ESP-ESM Translator EET、"
+        "xTranslator XML 或 xTranslator SST。",
         "来源不是插件、来源类型不确定或多个来源合并时使用这个称呼。",
         aliases=("词条", "CollectionSlot"),
         related_intents=(IntentId.WORKBENCH_MANAGE,),

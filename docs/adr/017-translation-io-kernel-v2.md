@@ -116,10 +116,11 @@ Localized Strings 写回必须从完整 source snapshot 克隆 string_id 映射�
 | ParaTranz JSON | 支持目标 | 支持目标 | P0 | GUI/Agent/MCP 共用 use case |
 | ESP/ESM/ESL | 支持目标 | 支持目标 | P0 | GUI/Agent/FOMOD 共用合同 |
 | EET XML | 支持目标 | 支持目标 | P0 | GUI/Agent 共用合同 |
+| EET 二进制 v3 Classique/BDD | 实验性 | 实验性原格式写回 | 完整快照/物理记录保真 | [ADR-053](053-eet-binary-io-integration.md) 扩展 GUI/Agent 与工程重开；正式 MCP 无读写工具 |
 | XT XML | 支持目标 | 支持目标 | P0 | GUI/Agent 共用合同 |
 | Localized Strings | 支持目标 | 支持目标 | P0 完整性 | 通过 plugin snapshot |
 | DSD JSON | 实验性 | 实验性或显式不支持 | P1 | 不宣称发布级 |
-| SST Reader | 实验性 | — | P1 | SST Writer 关闭 |
+| SST 读写 | 实验性 | 完整来源快照与记录绑定 | P1 | Writer 经 [ADR-052](052-sst-io-integration.md) 开放实验性 GUI/Agent 发布；正式 MCP 读写未开放 |
 | BSA/Strings 补全与完整上下文 | 渐进 | 渐进 | P1 | capability gate |
 
 “支持目标”表示本 ADR 的验收目标，不表示当前代码已通过。只有合同语料、成功链和 fidelity 门禁通过后，capability 才能从 unavailable/experimental 提升为 supported。

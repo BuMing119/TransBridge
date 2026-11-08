@@ -75,7 +75,11 @@ class PublishCoordinator:
                 validation = result.validation
                 committed = result.published
         except Exception as exc:  # noqa: BLE001 - map all filesystem/adapter faults
-            result = _exception_result(target.path, exc, validation)
+            result = (
+                _cancelled_result(target.path, validation)
+                if _cancelled(request)
+                else _exception_result(target.path, exc, validation)
+            )
 
         cleanup_error: BaseException | None = None
         if prepared is not None and not committed:

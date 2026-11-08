@@ -4,16 +4,26 @@
 
 将 `TranslationEntryCollection` 的翻译内容写回各种格式的文件：
 - ESP/ESM 插件文件（支持 inline 和 localised 模式）
-- EET XML 文件（更新已有文件）
-- XT XML 文件（更新已有文件）
+- ESP-ESM Translator XML 文件（更新已有文件）
+- xTranslator XML 文件（更新已有文件）
+
+## 二进制 EET 原格式发布
+
+`binary.eet` 的格式写出由 `parser/eet_binary_codec.py` 负责，产品调用由共享 application adapter
+与 `publish/eet_fidelity.py` 负责，本轮接入状态见 [ADR-053](../adr/053-eet-binary-io-integration.md)
+和 [EET 集成计划](../../plans/eet-integration/plan.md)。此路径不调用 XML writer/builder。
+完整快照、来源摘要与 `eet-v1:{ordinal}` 记录签名校验通过后，只改变译文及其数字缓存；
+保留空译文、原生状态、图标、短语表和原文字段。暂存后全文件回读，不仅检查变更行。
+GUI/助手单个及批量沿用备份与原子发布；不支持插件→EET、从零新建完整 EET 或原文哈希重算。
+能力实验性，正式 MCP 未开放文件读写；正式接入已完成本地实现与相关验证，最终证据见集成计划。
 
 ## 文件清单
 
 | 文件 | 职责 |
 |------|------|
 | `plugin_writer.py` | 写入 ESP/ESM 插件文件 + strings 文件 |
-| `eet_xml_writer.py` | 更新已有 EET XML 文件 |
-| `xt_xml_writer.py` | 更新已有 XT XML 文件 |
+| `eet_xml_writer.py` | 更新已有 ESP-ESM Translator XML 文件 |
+| `xt_xml_writer.py` | 更新已有 xTranslator XML 文件 |
 
 ---
 
@@ -151,7 +161,7 @@ else:
 
 **路径**: `src/transbridge/writer/eet_xml_writer.py`
 
-**职责**: 根据已有的 `EET_XmlParser` 更新 EET XML 文件中的翻译内容。
+**职责**: 根据已有的 `EET_XmlParser` 更新 ESP-ESM Translator XML 文件中的翻译内容。
 
 #### 构造函数
 
@@ -198,7 +208,7 @@ entry = fallback_index.get((original, f"{grup}:{champ}"))
 
 **路径**: `src/transbridge/writer/xt_xml_writer.py`
 
-**职责**: 根据已有的 `XT_XmlParser` 更新 XT XML 文件中的翻译内容。
+**职责**: 根据已有的 `XT_XmlParser` 更新 xTranslator XML 文件中的翻译内容。
 
 #### 构造函数
 
@@ -269,7 +279,7 @@ if result["strings_written"]:
 # 纯本地化模式：仅生成 Output/Strings/MyMod_chinese.*strings，原 ESP 不修改
 ```
 
-### 更新 EET XML
+### 更新 ESP-ESM Translator XML
 
 ```python
 from src.transbridge.writer.eet_xml_writer import EETWriter
@@ -289,7 +299,7 @@ print(f"更新了 {updated} 个条目")
 writer.write("translation_updated.xml")
 ```
 
-### 更新 XT XML
+### 更新 xTranslator XML
 
 ```python
 from src.transbridge.writer.xt_xml_writer import XTWriter

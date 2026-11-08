@@ -46,7 +46,7 @@ def slot_from_hydration(source, *, plugin=None, projection_update=None) -> Colle
         label=PureWindowsPath(source.location).stem,
         collection=collection_from_hydration(source, projection_update=projection_update),
         esp_path=reference or None if format_id is FormatId.PLUGIN_SSE else None,
-        eet_path=reference or None if format_id is FormatId.XML_EET else None,
+        eet_path=reference or None if format_id in {FormatId.XML_EET, FormatId.BINARY_EET} else None,
         xt_path=reference or None if format_id is FormatId.XML_XT else None,
         plugin=plugin,
         source_snapshot=source.source_snapshot,

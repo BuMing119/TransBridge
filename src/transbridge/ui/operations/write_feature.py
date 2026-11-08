@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 from threading import RLock
 
+from transbridge.application.io.contracts import FormatId
 from transbridge.application.io.operation_write import HydratedWriteDraft, HydratedWriteWorkload, WritePreflightCheck
 from transbridge.application.io.plugin_transfer import (
     PluginTransferDraft,
@@ -180,7 +181,15 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
                     )
             if not drafts and not failures:
                 raise OperationCompositionError("请选择至少一个来源进行写回")
-            return _write_batch_plan(_HydratedWriteBatch(tuple(drafts), tuple(failures), output_directory))
+            request = _HydratedWriteBatch(tuple(drafts), tuple(failures), output_directory)
+            request = retarget_write_batch(
+                request,
+                output_directory,
+                overwrite=overwrite,
+                pack_bsa=pack_bsa,
+                output_format=str(values.get("output_format") or "auto"),
+            )
+            return _write_batch_plan(request)
         slot = getattr(context, "active_slot", None)
         if slot is None or any(
             getattr(slot, name, None) is None for name in ("source_snapshot", "format_id", "collection")
@@ -194,7 +203,7 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         overwrite = bool(values.get("overwrite_confirmed", False))
         request = HydratedWriteDraft(
             slot.source_snapshot,
-            slot.format_id,
+            FormatId(values.get("output_format") or slot.format_id),
             entries,
             target,
             collection.collection_revision.value,
@@ -204,6 +213,8 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
             options=(("pack_bsa", bool(values.get("pack_bsa", False))),),
             entry_projection=values.get("entry_projection"),
         )
+        if request.format_id is not FormatId.PLUGIN_SSE:
+            plugin_path = ""
         return _write_plan(PluginTransferDraft(request, plugin_path) if plugin_path else request)
 
     def edit_write(draft, fields):
@@ -216,6 +227,7 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
                 edits.get("output_directory", draft.request.output_directory).strip(),
                 overwrite=overwrite,
                 pack_bsa=_edited_flag(edits, "pack_bsa", packed),
+                output_format=edits.get("output_format"),
             )
             return _write_batch_plan(request)
         value = _write_request(draft)
@@ -225,6 +237,7 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         overwrite = _edited_flag(edits, "overwrite_confirmed")
         edited = replace(
             request,
+            format_id=FormatId(edits.get("output_format", request.format_id)),
             target_path=target,
             conflict_policy=(PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL),
             options=tuple(
@@ -237,6 +250,8 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         plugin_path = edits.get(
             "plugin_path", value.plugin_path if isinstance(value, PluginTransferDraft) else ""
         ).strip()
+        if edited.format_id is not FormatId.PLUGIN_SSE:
+            plugin_path = ""
         return _write_plan(PluginTransferDraft(edited, plugin_path) if plugin_path else edited)
 
     def submit_write(draft, preflight, owner: OwnerRef, tasks: TaskRuntime):

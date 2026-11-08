@@ -1,5 +1,15 @@
 # 变更日志索引
 
+- 2026-11-08：[EET 原格式流程与四格式边界](eet-integration/story-01-to-03/2026-11-08-001-eet-production-integration.md) — 工程/迁移/GUI/助手/统一发布、数字缓存更新及维护注释；1218 项回归通过、1 跳过、2 项基线失败排除，最终命名回归核心 41 项和 UI 92 项通过，Ruff 通过。
+
+- 2026-11-08：[SST 完整读写与软件流程接入](sst-integration/story-01-to-04/2026-11-08-001-sst-production-integration.md) — 源码对照 codec、完整快照与物理身份、插件生成 SSU9、GUI 单个/批量及助手流程，保留实验性；验证批次、旧身份兼容与基线失败见记录。
+
+- 2026-11-07：[统一译文来源格式能力](maintenance/translation-import/2026-11-07-003-source-format-parity.md) — 编码 XML 拖放、JSON/SST 共享读取与保存恢复、二进制 EET 明确拒绝、Excel 筛选清理；扩大回归 829 通过/1 跳过，3 失败及 12 夹具错误已用 HEAD 复现，另补充输入 8 项通过，全库 Ruff/格式通过；UI 停滞边界见记录。
+
+- 2026-11-07：[统一 XML 译文来源入口](guided-ui-workflows/story-02-04-project-creation/2026-11-07-005-xml-translation-source.md) — 新建工程可选择并按内容识别 EET/XT XML，覆盖 BOM/UTF-16、保存重开和输入移走恢复；18 项新增用例通过，扩大回归 145 通过/1 项既有断言失败，全库 Ruff/格式通过。
+
+- 2026-11-06：[强制上传前确认空译文覆盖风险](paratranz-categorized-upload/story-12/2026-11-06-002-force-upload-confirmation.md) — 普通/分类、单插件/批量及强制补传均需明确确认，默认取消，保留原补传策略；153 项回归及全库 Ruff/格式通过。
+
 - 2026-11-05：[实际译名方案关联、预览与独立版本保存](terminology-localization-profiles/story-11-to-13-variant-schemes/2026-11-05-001-variant-scheme-preview-save.md) — 临时预览不改正文或 AI；原文门控全量转换、默认另存与明确覆盖、SQLite/Variant 可恢复关联和旧快照兼容；核心245、UI113、AI32项通过，保存恢复分批证据见专项 QA。
 
 - 2026-11-04：[本地词表直达与独立 ParaTranz 导入](terminology-ui-remediation/story-16/2026-11-04-001-direct-import-entry.md) — 删除插件来源列表，本地直接选文件，ParaTranz 独立按钮；保留两种策略与预览确认，81 项独立回归及 Ruff/格式检查通过。

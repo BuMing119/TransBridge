@@ -169,7 +169,7 @@ def test_successful_migration_survives_another_selected_source_failure(project, 
     assert all(slot.eet_path == cfg.eet_path and slot.xt_path is None for slot in project.ctx.slots.values())
     assert not project.ctx.authoritative_projection_diverged()
     assert "2 个集合的迁移部分失败" in parsing.messages[-1]
-    assert "XTranslator XML" in parsing.messages[-1] and str(bad) in parsing.messages[-1]
+    assert "xTranslator XML" in parsing.messages[-1] and str(bad) in parsing.messages[-1]
 
 
 @pytest.mark.parametrize("source", ["xt", "tp"])
@@ -204,7 +204,8 @@ def test_wrong_xml_format_is_reported_instead_of_registering_completed_migration
         assert all(not entry.translation for entry in slot.collection)
     assert not project.ctx.authoritative_projection_diverged()
     assert "迁移部分失败" in parsing.messages[-1]
-    assert f"所选格式 xml.{source}" in parsing.messages[-1]
+    expected_format_message = "内容不是 ESP-ESM Translator" if source == "eet" else "所选格式 xml.xt"
+    assert expected_format_message in parsing.messages[-1]
 
 
 @pytest.mark.parametrize("source", ["eet", "xt"])

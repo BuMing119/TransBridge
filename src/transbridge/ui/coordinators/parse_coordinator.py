@@ -52,7 +52,7 @@ class ParseCoordinator:
 
         if cfg.source_mode == "eet":
             if not cfg.eet_path:
-                self._host.show_message("请先选择 EET XML 文件")
+                self._host.show_message("请先选择 ESP-ESM Translator 文件")
                 return
             self._run_parse_eet(cfg)
         else:
@@ -101,7 +101,7 @@ class ParseCoordinator:
                 return
             if (json_path or sst_path or cfg.tp_path) and any([cfg.eet_path, cfg.xt_path, cfg.strings_dir]):
                 self._host.show_message(
-                    "MIGRATION_MIXED_LEGACY_UNSUPPORTED: 插件/JSON/SST 导入请与 XML/Strings 来源分开执行。"
+                    "MIGRATION_MIXED_LEGACY_UNSUPPORTED: 插件/JSON/SST 导入请与 EET/XT/Strings 来源分开执行。"
                 )
                 return
             self._run_migrate(slot, cfg)
@@ -338,24 +338,26 @@ class ParseCoordinator:
         eet_path = cfg.eet_path
         authority = self._capture_authoritative_target()
         publication = [authority]
-        self._host.workbench.show_step2_progress(0, "解析 EET 中…")
+        self._host.workbench.show_step2_progress(0, "解析 ESP-ESM Translator 文件中…")
         self._host.workbench.set_step2_parsing(True)
 
         def _do():
-            collection = TranslationEntryCollection.from_eet_xml(Path(eet_path))
+            from transbridge.ui.eet_source import parse_eet_collection
+
+            collection, parsed = parse_eet_collection(eet_path, self._host.context.runtime_context)
             migration = prepare_parse_migrations(collection, cfg, context=self._host.context.runtime_context)
             collection = migration.collection
             collection, hydration = self._commit_authoritative_source(
                 eet_path,
                 collection,
-                format_id="xml.eet",
+                format_id=parsed.format_id.value,
                 expected_authority=authority,
                 committed_authority=publication,
             )
-            return collection, migration.applied_count, hydration, migration
+            return collection, migration.applied_count, hydration, migration, parsed
 
         def _on_done(result):
-            collection, migrate_count, hydration, migration = result
+            collection, migrate_count, hydration, migration, parsed = result
             self._host.workbench.hide_step2_progress()
             self._host.workbench.set_step2_parsing(False)
             label = Path(eet_path).stem
@@ -365,8 +367,8 @@ class ParseCoordinator:
                 eet_path=eet_path,
                 xt_path=cfg.xt_path if "xt_path" in migration.completed_sources else None,
                 migrate_count=migrate_count,
-                source_snapshot=None if hydration is None else hydration.source_snapshot,
-                format_id=None if hydration is None else hydration.format_id,
+                source_snapshot=parsed.source_snapshot if hydration is None else hydration.source_snapshot,
+                format_id=parsed.format_id if hydration is None else hydration.format_id,
             )
             self._finish_parse(
                 source_slot_key(hydration) if hydration is not None else eet_path,

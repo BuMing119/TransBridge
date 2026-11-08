@@ -2,7 +2,11 @@
 
 ## 项目简介
 
-TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 ESP/ESM 插件、EET/XT XML 与 ParaTranz 平台之间的翻译条目转换、上传和同步。内置 AI 自动翻译功能，支持多轮批量翻译与五阶段后处理。
+- [二进制 EET 读写实验](dev/eet-experiment.md)：ESP-ESM Translator v3 完整读写、数字缓存、3DNPC语料及原格式发布；[ADR-053](adr/053-eet-binary-io-integration.md)、[集成计划](../plans/eet-integration/plan.md)，全流程本地实现与相关验证完成，保持实验性，最终证据见集成计划。
+
+- [SST 读写与使用说明](dev/sst-experiment.md)：SSU8/SSU9 完整读写、插件生成 SSU9、GUI/助手集成及实验性边界；[ADR-052](adr/052-sst-io-integration.md)、[实施计划](../plans/sst-integration/plan.md)。
+
+TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 ESP/ESM 插件、EET/xTranslator XML 与 ParaTranz 平台之间的翻译条目转换、上传和同步。内置 AI 自动翻译功能，支持多轮批量翻译与五阶段后处理。
 
 - **技术栈**: Python 3.12.12+, uv, PyQt6, openpyxl, pandas, openai>=1.0, anthropic>=0.20
 - **仓库**: 本地 git 仓库，主分支 `main`
@@ -30,6 +34,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 编号 | 标题 | 状态 |
 |------|------|------|
+| [ADR-053](adr/053-eet-binary-io-integration.md) | 二进制 EET 完整来源身份、缓存同步与原格式发布 | 提议；本地实现与相关验证完成，实验性 |
+| [ADR-052](adr/052-sst-io-integration.md) | 完整 SST 来源、原格式写回与插件新建 SSU9 | 提议；本地集成完成，实验性，80份 New ANK 扩展语料通过 |
 | [ADR-051](adr/051-self-contained-project-storage.md) | 正式项目自包含存储与单一升级边界 | 已接受；S01～S03 本地实现与 QA 完成，999 通过、1 项环境跳过；S04 本地实现与相关 QA 完成，广域未全绿，见 [计划](../plans/project-self-contained-storage/plan.md) |
 | [ADR-048](adr/048-ai-project-concurrency-and-terms.md) | AI 多插件并发、共享术语与参考差异综合校对 | S01～S13 本地实现及相关验证完成；术语不再是翻译通过条件，见 [S11～S13 记录](changelogs/ai-project-concurrency/story-11-to-13/2026-10-24-001-terminology-advisory-review.md) |
 | [ADR-047](adr/047-opt-in-categorized-project-upload.md) | 普通与分类上传使用文件 API | 已接受；任务标题命名及手动补传保持。GUI/助手共用无 Qt 应用层下载用例，按插件目录读取并匹配、保存，本轮结束清理，不新增索引或校验。见[使用说明](dev/paratranz-categorized-upload.md) |

@@ -25,6 +25,61 @@ qapp = qapp_fixture
 localized = localized_fixture
 
 
+def test_plugin_output_choice_creates_sst_from_saved_source(tmp_path, feature):
+    from transbridge.parser.xt.sst_codec import SstDocument
+
+    context = _context(tmp_path)
+    source = Path(next(iter(context.slots)))
+    original = source.read_bytes()
+    initial = feature.feature.create_draft(context, False, {})
+    choices = next(field for field in initial.editable_fields if field.field_id == "output_format")
+    assert ("sst.ssu9", "xTranslator SST SSU9（实验性）") in choices.options
+    target = tmp_path / "dictionary.sst"
+    edited = feature.feature.edit_draft(initial, (("output_format", "sst.ssu9"), ("target_path", str(target))))
+    assert edited.request.format_id is FormatId.SST_SSU9
+    assert edited.request.source_snapshot.format_id is FormatId.PLUGIN_SSE
+    result = _submit(feature, edited)
+    assert result.outcome is OperationOutcome.COMPLETED, result.diagnostics
+    document = SstDocument.from_bytes(target.read_bytes())
+    assert [record.translation for record in document.records] == ["译文0", "译文1"]
+    assert source.read_bytes() == original
+    assert len(result.artifact_refs) == 1
+
+
+def test_sst_output_selection_clears_stale_plugin_path_and_overwrite(qapp, tmp_path, feature):
+    context = _context(tmp_path)
+    initial = feature.feature.create_draft(context, False, {})
+    plan = feature.feature.mapper.present("sst-output", 1, initial)
+    dialog = WritePlanDialog(plan, context)
+    dialog._field_edits["target_path"].setText(str(tmp_path / "old.esp"))
+    dialog._field_edits["overwrite_confirmed"].setChecked(True)
+    choice = dialog._field_edits["output_format"]
+    choice.setCurrentIndex(choice.findData("sst.ssu9"))
+    assert dialog._field_edits["target_path"].text() == ""
+    assert not dialog._field_edits["overwrite_confirmed"].isChecked()
+    dialog.close()
+
+
+@pytest.mark.parametrize("initial_selection", [False, True])
+def test_batch_plugin_sst_choice_publishes_each_dictionary(tmp_path, feature, initial_selection):
+    from transbridge.parser.xt.sst_codec import SstDocument
+
+    context = _context(tmp_path, 2)
+    originals = {path: Path(path).read_bytes() for path in context.slots}
+    output = tmp_path / "dictionaries"
+    values = {"output_format": "sst.ssu9", "output_directory": str(output)}
+    draft = feature.feature.create_draft(context, True, values if initial_selection else {})
+    if not initial_selection:
+        draft = feature.feature.edit_draft(draft, tuple(values.items()))
+    result = _submit(feature, draft)
+    assert result.outcome is OperationOutcome.COMPLETED, result.diagnostics
+    for path, content in originals.items():
+        assert Path(path).read_bytes() == content
+        document = SstDocument.from_bytes((output / Path(path).with_suffix(".sst").name).read_bytes())
+        assert len(document.records) == 2
+    assert len(result.artifact_refs) == 2
+
+
 @pytest.mark.parametrize("batch", [False, True])
 def test_default_write_requires_output_selection_before_explicit_overwrite(tmp_path, feature, batch):
     context = _context(tmp_path, 2 if batch else 1)

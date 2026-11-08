@@ -78,7 +78,10 @@ class SourceInputView(QWidget):
         source_row.addWidget(QLabel("解析来源："))
         self.source_group = QButtonGroup(self)
         self.esp_radio = QRadioButton("ESP 插件（标准）")
-        self.eet_only_radio = QRadioButton("EET XML")
+        self.eet_only_radio = QRadioButton("ESP-ESM Translator")
+        self.eet_only_radio.setToolTip(
+            "按内容识别两种独立格式：ESP-ESM Translator XML (.xml) 和 ESP-ESM Translator EET (.eet)。"
+        )
         self.esp_radio.setChecked(True)
         self.source_group.addButton(self.esp_radio, 0)
         self.source_group.addButton(self.eet_only_radio, 1)
@@ -95,13 +98,13 @@ class SourceInputView(QWidget):
         )
         self.form.addRow("插件文件 *", self.esp_row_widget)
         self.eet_row_widget, self.eet_input, self.eet_browse_button, self.eet_clear_button = self._file_row(
-            "可选，迁移旧 EET 译文", self.browse_eet
+            "可选，导入 ESP-ESM Translator 已有译文", self.browse_eet
         )
-        self.form.addRow("EET XML", self.eet_row_widget)
+        self.form.addRow("ESP-ESM Translator 文件", self.eet_row_widget)
         self.xt_row_widget, self.xt_input, self.xt_browse_button, self.xt_clear_button = self._file_row(
-            "可选，迁移旧 XT 译文", self.browse_xt
+            "可选，导入 xTranslator XML 已有译文", self.browse_xt
         )
-        self.form.addRow("XT XML", self.xt_row_widget)
+        self.form.addRow("xTranslator XML", self.xt_row_widget)
         (
             self.translated_plugin_row_widget,
             self.translated_plugin_input,
@@ -110,9 +113,9 @@ class SourceInputView(QWidget):
         ) = self._file_row("可选，从已汉化插件提取译文", self.browse_translated_plugin)
         self.form.addRow("已翻译插件", self.translated_plugin_row_widget)
         self.sst_row_widget, self.sst_input, self.sst_browse_button, self.sst_clear_button = self._file_row(
-            "可选，从 SST 文件导入译文", self.browse_sst
+            "可选，从 xTranslator SST 导入译文", self.browse_sst
         )
-        self.form.addRow("SST 文件", self.sst_row_widget)
+        self.form.addRow("xTranslator SST", self.sst_row_widget)
 
         self.strings_row_widget = QWidget()
         strings_row = QHBoxLayout(self.strings_row_widget)
@@ -222,10 +225,14 @@ class SourceInputView(QWidget):
         self.esp_input.setToolTip("\n".join(paths))
 
     def browse_eet(self) -> None:
-        self._browse_file(self.eet_input, "选择 EET XML 文件", "XML 文件 (*.xml);;所有文件 (*)")
+        self._browse_file(
+            self.eet_input,
+            "选择 ESP-ESM Translator 文件",
+            "ESP-ESM Translator EET (*.eet);;ESP-ESM Translator XML (*.xml);;所有文件 (*)",
+        )
 
     def browse_xt(self) -> None:
-        self._browse_file(self.xt_input, "选择 XT XML 文件", "XML 文件 (*.xml);;所有文件 (*)")
+        self._browse_file(self.xt_input, "选择 xTranslator XML 文件", "xTranslator XML (*.xml);;所有文件 (*)")
 
     def browse_translated_plugin(self) -> None:
         self._browse_file(
@@ -235,7 +242,7 @@ class SourceInputView(QWidget):
         )
 
     def browse_sst(self) -> None:
-        self._browse_file(self.sst_input, "选择 SST 文件", "SST 文件 (*.sst);;所有文件 (*)")
+        self._browse_file(self.sst_input, "选择 xTranslator SST 文件", "xTranslator SST (*.sst);;所有文件 (*)")
 
     def _browse_file(self, field: QLineEdit, title: str, file_filter: str) -> None:
         path, _ = QFileDialog.getOpenFileName(self, title, "", file_filter)

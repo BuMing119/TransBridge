@@ -16,7 +16,7 @@ from .diagnostics import technical_error
 if TYPE_CHECKING:
     from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
-_VALID_EXTENSIONS = {".esp", ".esm", ".esl", ".xml", ".json", ".sst"}  # E1 + C4
+_VALID_EXTENSIONS = {".esp", ".esm", ".esl", ".xml", ".eet", ".json", ".sst"}  # E1 + C4
 
 
 def _sanitize_error(msg: str, path: str) -> str:
@@ -77,18 +77,19 @@ _PARSER_DISPATCH = {
         "label": "ESP 插件",
     },
     "eet": {
-        "format_id": "xml.eet",
-        "label": "EET XML",
+        # Legacy tool name retained for compatibility. This selects the
+        # producer's independent .eet or XML parser by content, not one format.
+        "label": "ESP-ESM Translator 文件",
     },
     "xt": {
         "format_id": "xml.xt",
-        "label": "XT XML",
+        "label": "xTranslator XML",
     },
     "sst": {
         "module": "transbridge.parser.xt.sst_parser",
         "class": "SST_Parser",
         "parse_fn": lambda m, path: m().parse(path),
-        "label": "SST 二进制",
+        "label": "xTranslator SST",
     },
     "json": {
         "label": "JSON 导入",
@@ -140,7 +141,7 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
                 raw_entries=list(parsed_json.raw_entries),
                 parse_unmapped=list(parsed_json.unmapped),
             )
-        elif "format_id" in dispatch:
+        elif "format_id" in dispatch or file_type in {"sst", "eet"}:
             from transbridge.application.contracts import OperationOutcome, RequestContext
             from transbridge.application.io import (
                 FormatId,
@@ -151,20 +152,36 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
             from transbridge.entrypoints.agent import parse_translation_source
 
             source = Path(path)
-            format_id = FormatId(dispatch["format_id"])
-            parsed = parse_translation_source(
-                TranslationIoUseCase(),
-                ParseRequest(
-                    SourceDescriptor(str(source), source.name, source.stat().st_size),
-                    RequestContext("smart-assistant-parser"),
-                    format_id,
-                ),
+            format_id = None if file_type in {"sst", "eet"} else FormatId(dispatch["format_id"])
+            request = ParseRequest(
+                SourceDescriptor(str(source), source.name, source.stat().st_size),
+                RequestContext("smart-assistant-parser"),
+                format_id,
             )
+            if file_type == "eet":
+                from transbridge.application.io.eet_source import parse_eet_source
+
+                parsed = parse_eet_source(
+                    source, request.context, cancellation=getattr(ctx, "cancellation_token", None)
+                )
+            elif file_type == "sst":
+                from dataclasses import replace
+
+                from transbridge.application.io.sst_adapter import SstAdapter
+
+                content = source.read_bytes()
+                format_id = {b"SSU8": FormatId.SST_SSU8, b"SSU9": FormatId.SST_SSU9}.get(content[:4])
+                if format_id is None:
+                    return ToolResult.fail("SST 文件头无效；仅支持 SSU8 / SSU9。")
+                parsed = SstAdapter(format_id).parse_bytes(replace(request, format_hint=format_id), content)
+            else:
+                parsed = parse_translation_source(TranslationIoUseCase(), request)
             if parsed.outcome not in {OperationOutcome.COMPLETED, OperationOutcome.PARTIAL}:
                 message = "; ".join(diagnostic.message for diagnostic in parsed.diagnostics)
                 return ToolResult.fail(f"解析 {dispatch['label']} 失败: {message}")
             collection = _to_collection(parsed.entries)
             source_snapshot = parsed.source_snapshot
+            format_id = parsed.format_id
             task.record.update(
                 parse_outcome=parsed.outcome.value, parse_diagnostics=[item.to_dict() for item in parsed.diagnostics]
             )
@@ -228,7 +245,7 @@ _PARAM_SCHEMAS = {
         },
     },
     "parse_eet": {
-        "path": {"type": "str", "required": True, "description": "Path to the EET XML file"},
+        "path": {"type": "str", "required": True, "description": "Path to EET v3 binary or ESP-ESM Translator XML"},
         "action": {
             "type": "str",
             "required": False,
@@ -304,15 +321,15 @@ def _register_parser_tools():
             },
             {
                 "name": "parse_eet",
-                "display_name": "解析EET",
-                "description": "①Parse an EET XML translation file (Elder Scrolls Translation format with an <EET> root element). ②Parameters: path (required, EET XML), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: create_slot supports later write_back target=eet inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; use get_app_state to inspect eet_file.",  # noqa: E501
+                "display_name": "解析 ESP-ESM Translator 文件",
+                "description": "①Parse EET v3 binary (experimental) or ESP-ESM Translator XML (DocumentElement root), detected by content. ②Parameters: path (required), action=create_slot/append. ③Returns source or merge counts. create_slot retains a full snapshot for write_back target=eet; append maps binary EET translations only to unique record/type/original matches in the active collection. Binary writes preserve original metadata and rebuild changed translation numeric caches. Paths must be within RuntimeContext authorized roots.",  # noqa: E501
                 "execute": _tool_parse_eet,
                 "parameters": _PARAM_SCHEMAS.get("parse_eet", {}),
                 "permission": "write",
             },
             {
                 "name": "parse_xt",
-                "display_name": "解析XT",
+                "display_name": "解析 xTranslator XML",
                 "description": "①Parse an XT XML translation file (xTranslator format for Skyrim mod translation, with an <XT> root element). ②Parameters: path (required, XT XML), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: create_slot supports later write_back target=xt inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; use get_app_state to inspect xt_file.",  # noqa: E501
                 "execute": _tool_parse_xt,
                 "parameters": _PARAM_SCHEMAS.get("parse_xt", {}),
@@ -320,8 +337,8 @@ def _register_parser_tools():
             },
             {
                 "name": "parse_sst",
-                "display_name": "解析SST",
-                "description": "①Parse an SST binary translation file. SSU8 contains single-language records; SSU9 contains bilingual multi-string records with a plugin-name header. ②Parameters: path (required, .sst), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: write_back is unsupported because SST serialization is disabled; data is available only for browsing, filtering, and statistics. append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; sst_file is tracked through get_app_state.",  # noqa: E501
+                "display_name": "解析 xTranslator SST",
+                "description": "①Parse SSU8/SSU9 SST dictionaries with strict record boundaries and a complete source snapshot. Both formats contain original and translated text. ②Parameters: path (required, .sst), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Experimental write_back(target=sst) preserves the native format and metadata; old sources without current record identity require re-import. append requires has_active_collection and merges only uniquely proven matches. Paths must be within RuntimeContext authorized roots.",  # noqa: E501
                 "execute": _tool_parse_sst,
                 "parameters": _PARAM_SCHEMAS.get("parse_sst", {}),
                 "permission": "write",

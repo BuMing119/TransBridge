@@ -1,7 +1,7 @@
 """Tests for the CapabilityMatrix generator (release-hardening-v2 Story 04).
 
 Asserts that every format and every entrypoint has exactly one result, that
-the SST Writer is pinned to unsupported, that missing results and empty
+the SST and binary EET writers remain experimental, that missing results and empty
 matrices are rejected, and that UI/Agent/MCP surfaces return identical
 capability ids and reasons.
 """
@@ -40,23 +40,22 @@ def test_every_format_and_entrypoint_has_a_result() -> None:
     assert matrix.entries == ENTRYPOINTS
 
 
-def test_sst_writer_is_pinned_unsupported() -> None:
+def test_binary_exchange_writers_are_experimental() -> None:
     matrix = build_capability_matrix()
 
-    for fmt in (FormatId.SST_SSU8, FormatId.SST_SSU9):
+    for fmt in (FormatId.SST_SSU8, FormatId.SST_SSU9, FormatId.BINARY_EET):
         for entry in ("write", "roundtrip", "publish"):
             cell = matrix.cell(fmt, entry)
-            assert cell.state is CapabilityState.UNAVAILABLE
-            assert "SST Writer" in cell.reason
+            assert cell.state is CapabilityState.DEGRADED
+            assert "experimental" in cell.reason
 
 
 def test_unsupported_and_experimental_never_reported_available() -> None:
     matrix = build_capability_matrix()
 
-    # BINARY_EET writer is unavailable in the policy ceiling.
-    assert matrix.cell(FormatId.BINARY_EET, "write").state is CapabilityState.UNAVAILABLE
-    # JSON_DSD has no V2 adapter, so even though its ceiling is experimental it
-    # must never be reported as available.
+    assert matrix.cell(FormatId.BINARY_EET, "write").state is CapabilityState.DEGRADED
+    assert matrix.cell(FormatId.BINARY_EET, "mcp").state is CapabilityState.UNAVAILABLE
+    # JSON_DSD's experimental adapter must never be reported as available.
     assert matrix.cell(FormatId.JSON_DSD, "read").state is not CapabilityState.AVAILABLE
     # A supported format is available.
     assert matrix.cell(FormatId.XML_EET, "read").state is CapabilityState.AVAILABLE

@@ -7,7 +7,8 @@ from dataclasses import dataclass, replace
 import logging
 from pathlib import Path
 
-from transbridge.application.io import legacy_migration, migration_import
+from transbridge.application.io import FormatId, legacy_migration, migration_import
+from transbridge.application.io.eet_source import probe_eet_format
 from transbridge.application.io.migration_import import MigrationImportError
 from transbridge.application.io.migration_snapshot import detached_entries
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -96,16 +97,17 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
         states = {}
         labels = []
         skipped = 0
+        binary_eet = bool(cfg.eet_path and probe_eet_format(cfg.eet_path) is FormatId.BINARY_EET)
         for target in targets:
             candidate = TranslationEntryCollection(target.entries)
             esp_path, eet_path, xt_path, strings_path, _language = target.paths
             eet_source = cfg.eet_path if target.slot is slot and eet_path is None else None
             xt_source = cfg.xt_path if target.slot is slot and xt_path is None else None
             strings_source = cfg.strings_dir if strings_path is None else None
-            if eet_source or xt_source or strings_source:
+            if (eet_source and not binary_eet) or xt_source or strings_source:
                 legacy = legacy_migration.prepare_legacy_migration(
                     candidate,
-                    eet_path=eet_source,
+                    eet_path=None if binary_eet else eet_source,
                     xt_path=xt_source,
                     strings_dir=strings_source,
                     plugin_stem=Path(esp_path).stem if esp_path else "",
@@ -115,8 +117,9 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
             else:
                 legacy = legacy_migration.LegacyMigrationDraft(candidate)
             candidate = legacy.collection
-            if target.slot is slot and sources:
-                candidate, formats, unmatched = _prepare_structured(sources, candidate, runtime_context)
+            structured_sources = sources + (((cfg.eet_path, FormatId.BINARY_EET),) if binary_eet else ())
+            if target.slot is slot and structured_sources:
+                candidate, formats, unmatched = _prepare_structured(structured_sources, candidate, runtime_context)
                 labels.extend(formats)
                 skipped += unmatched
             previous = {entry.identity: (entry.translation, entry.stage) for entry in target.entries}
@@ -179,6 +182,8 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
                     target.slot.strings_lang = cfg.strings_lang
             if changes and getattr(cfg, "sst_path", None) and target.slot is slot:
                 target.slot.sst_path = cfg.sst_path
+            if changes and eet_source and target.slot.eet_path is None:
+                target.slot.eet_path = eet_source
         host.workbench.hide_step2_progress()
         formats = f"（{' + '.join(labels)}）" if labels else ""
         scope = f"共 {updated} 个集合，" if apply_all and updated > 1 else ""

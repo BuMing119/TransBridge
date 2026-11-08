@@ -66,10 +66,9 @@ class ParsePresenter:
             slot_migrated = 0
             if current is slot:
                 if request.eet_path and current.eet_path is None:
-                    try:
-                        slot_migrated += collection.update_from_eet_xml(Path(request.eet_path))
-                    except Exception:
-                        pass
+                    from transbridge.ui.eet_source import apply_eet_migration
+
+                    slot_migrated += apply_eet_migration(collection, request.eet_path)
                 if request.xt_path and current.xt_path is None:
                     try:
                         parser = XT_XmlParser.from_file(request.xt_path)

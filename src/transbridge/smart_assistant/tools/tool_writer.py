@@ -149,7 +149,7 @@ _PARAM_SCHEMAS = {
         "target": {
             "type": "str",
             "required": True,
-            "description": "esp/eet/xt/strings, or auto with explicit source_keys; auto preserves each source's format",
+            "description": "esp/eet/xt/strings/sst, or auto with source_keys; auto preserves the source format",
         },
         "path": {
             "type": "str",
@@ -206,7 +206,10 @@ def _register_writer_tools():
                 "description": (
                     "①Publish translations from the parsed source snapshot with validation, backups "
                     "and guarded atomic publication. "
-                    "②Arguments: target esp/eet/xt/strings; auto preserves each explicitly selected source's format. "
+                    "②Arguments: target esp/eet/xt/strings/sst; auto preserves each selected source's format. "
+                    "eet preserves binary EET v3 or EET XML according to the captured source; binary is experimental. "
+                    "sst preserves native SSU8/SSU9 or exports plugin sources as experimental SSU9; "
+                    "plugin-to-SST requires an explicit .sst path or output_dir. "
                     "source_keys selects exact keys returned by list_collections; omit for the active source. "
                     "output_dir saves original filenames together for all formats; path selects one output file. "
                     "strings requires output_dir and publishes the plugin and its localized resources together. "

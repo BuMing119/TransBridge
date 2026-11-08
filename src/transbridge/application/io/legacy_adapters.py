@@ -226,10 +226,18 @@ class EetXmlAdapter(_LegacyFormatAdapter):
             return self._cancelled_parse(request)
         try:
             content = _local_path(request.source.uri).read_bytes()
+        except (OSError, ValueError) as exc:
+            return self._failed_parse(request, Diagnostic("EET_PARSE_FAILED", f"EET XML cannot be read: {exc}"))
+        return self.parse_bytes(request, content)
+
+    def parse_bytes(self, request: ParseRequest, content: bytes) -> ParseResult:
+        if _cancelled(request.cancellation):
+            return self._cancelled_parse(request)
+        try:
             root = ET.fromstring(content)
             if root.tag.rsplit("}", 1)[-1] != "DocumentElement":
                 raise ValueError("unexpected EET root element")
-            parser = EET_XmlParser.from_file(_local_path(request.source.uri))
+            parser = EET_XmlParser.from_string(content)
         except (OSError, ValueError, ET.ParseError) as exc:
             return self._failed_parse(
                 request,

@@ -1,205 +1,141 @@
-# parser/xt/sst_serializer.py — SST binary serializer (SSU9 write-back)
-"""基于 SST_Parser 解析结果，模板重建 SSU9 格式 SST 二进制文件。
-
-不增删记录，不修改 header，保留 extra/subrecords 原样。仅支持 SSU9。
-"""
+"""Lossless SST creation and updates with explicit record identity."""
 
 from __future__ import annotations
 
 from dataclasses import replace
+import os
 from pathlib import Path
-import struct
-from typing import TYPE_CHECKING
+import tempfile
 
-if TYPE_CHECKING:
-    from .sst_parser import SST_Entry, SST_Parser
+from .sst_codec import SstDocument, SstRecord
+from .sst_parser import SST_Entry, SST_Parser
 
 
 class SST_Serializer:
-    """SSU9 二进制序列化器：from_parser → to_bytes → save。
+    """Serialize a complete document without losing header or record metadata."""
 
-    仅支持 SSU9 格式（SSU8 的 tail 格式未完全理解）。
-    """
+    def __init__(self, document: SstDocument) -> None:
+        document.to_bytes()
+        self.document = document
 
-    def __init__(
-        self, magic: bytes, header: bytes, records: list[tuple[SST_Entry, bytes]], trailing: bytes = b""
-    ) -> None:
-        self._magic = magic
-        self._header = header
-        self._records = records  # [(entry, tail_bytes), ...]
-        self._trailing = trailing  # 文件末尾未解析的残余字节
-
-    # ── 工厂方法 ─────────────────────────────────────────────────
+    @classmethod
+    def from_document(cls, document: SstDocument) -> SST_Serializer:
+        return cls(document)
 
     @classmethod
     def from_parser(cls, sst: SST_Parser) -> SST_Serializer:
-        """从 SST_Parser 实例创建序列化器。
-
-        支持 SSU8 和 SSU9。SST_Parser 必须是通过 from_file() 解析的。
-        """
-        if not sst._magic:
-            raise ValueError("SST_Parser 缺少原始二进制数据，请用 from_file() 解析")
-
-        records: list[tuple[SST_Entry, bytes]] = []
-        for entry in sst.entries:
-            if not entry._raw:
-                raise ValueError("SST_Entry 缺少原始二进制数据 (_raw)，请用 SST_Parser.from_file() 解析")
-            records.append((entry, entry._tail))
-
-        return cls(sst._magic, sst._raw_header, records, trailing=getattr(sst, "_trailing", b""))
+        if sst.document is None or sst._trailing:
+            raise ValueError("SST serialization requires a complete parsed document")
+        if len(sst.entries) != len(sst.document.records) or any(
+            entry.ordinal != i for i, entry in enumerate(sst.entries)
+        ):
+            raise ValueError("SST template entries were added, removed, or reordered; use create_new explicitly")
+        return cls(replace(sst.document, records=tuple(entry.to_record() for entry in sst.entries)))
 
     @classmethod
-    def create_new(cls, plugin_name: str, entries: list[SST_Entry]) -> SST_Serializer:
-        """从零创建 SSU9 SST 文件（无需模板 SST 文件）。
+    def create_new(
+        cls,
+        plugin_name: str,
+        entries: list[SST_Entry | SstRecord],
+        *,
+        magic: bytes = b"SSU9",
+        masters: tuple[str, ...] | None = None,
+        labels: tuple[tuple[int, str], ...] = (),
+        flag: int = 0,
+    ) -> SST_Serializer:
+        """Create a complete file; use SstRecord entries for explicit metadata.
 
-        构建最小 SSU9 header + 逐条记录序列化。
-        返回的序列化器可直接 ``save()`` 或继续 ``update_and_save()``。
+        A supplied master table is used verbatim. Otherwise SSU9 uses the plugin
+        name as its sole master; SSU8 has no master table. No hash is guessed.
         """
-        header = cls._build_ssu9_header(plugin_name)
-        records: list[tuple[SST_Entry, bytes]] = [(e, cls._build_ssu9_record(e)) for e in entries]
-        return cls(b"SSU9", header, records)
-
-    # ── 核心序列化 ─────────────────────────────────────────────
+        if masters is None:
+            masters = (plugin_name,) if magic == b"SSU9" and plugin_name else ()
+        records = tuple(entry.to_record() if isinstance(entry, SST_Entry) else entry for entry in entries)
+        return cls(SstDocument(magic, flag, tuple(masters), tuple(labels), records))
 
     def to_bytes(self) -> bytes:
-        """重建完整 SST 二进制（header + 逐条记录 + 尾部残余）。
-
-        模板路径（from_parser）：使用 ``_rebuild_ssu8/9`` 基于原始二进制重建。
-        从零创建路径（create_new）：使用 ``_build_ssu9_record`` 基于当前 entry 字段重建。
-        """
-        parts = [self._header]
-        for entry, tail in self._records:
-            if entry._raw:
-                rebuild = self._rebuild_ssu8 if self._magic == b"SSU8" else self._rebuild_ssu9
-                parts.append(rebuild(entry, tail))
-            else:
-                # 从零创建的记录：基于当前 entry 字段重建（支持 update_and_save 后重新序列化）
-                parts.append(self._build_ssu9_record(entry))
-        if self._trailing:
-            parts.append(self._trailing)
-        return b"".join(parts)
-
-    # ── SSU9 record rebuild ────────────────────────────────────
+        return self.document.to_bytes()
 
     @staticmethod
-    def _rebuild_ssu9(entry: SST_Entry, tail: bytes) -> bytes:
-        """SSU9: 26B 头 + eng_text UTF-16LE + chn_len(4B) + chn_text + extra."""
-        head = bytearray(entry._raw[:26])
-        eng_bytes = entry.text.encode("utf-16-le")
-        # 更新头中可能被修改的字段：form_id / unk12 / f2 / str_len
-        unk12 = ((entry.group_index << 16) | ((entry.index - 1) & 0xFFFF)) & 0xFFFFFFFF
-        struct.pack_into("<I", head, 0, entry.form_id & 0xFFFFFFFF)
-        struct.pack_into("<I", head, 12, unk12)
-        struct.pack_into("<I", head, 16, entry.f2 & 0xFFFFFFFF)
-        struct.pack_into("<H", head, 22, len(eng_bytes))
-        result = bytes(head) + eng_bytes
-
-        chn_bytes = entry.translated_text.encode("utf-16-le") if entry.translated_text else b""
-        result += struct.pack("<I", len(chn_bytes))
-        result += chn_bytes
-
-        # 原样追加 extra/subrecords（跳过原 chn_len + chn_text）
-        if len(tail) >= 4:
-            orig_chn_len = struct.unpack_from("<I", tail, 0)[0]
-            if orig_chn_len <= 100000:
-                extra_start = 4 + orig_chn_len
-                if extra_start <= len(tail):
-                    result += tail[extra_start:]
-
-        return bytes(result)
-
-    # ── SSU9 from-scratch builders ─────────────────────────────
-
-    @staticmethod
-    def _build_ssu9_header(plugin_name: str) -> bytes:
-        """构建最小 SSU9 header（不含 master list）。
-
-        Header 结构:
-          [SSU9 4B][type 2B 0x0600][? 2B 0x0000][name_len 2B **big**][? 2B 0x0000]
-          [name UTF-16LE name_len B]
-          [0x0000 0x0000 终止符][8B 0x00 metadata]
-        """
-        name_utf16 = plugin_name.encode("utf-16-le")
-        parts = [
-            b"SSU9",
-            struct.pack("<H", 0x0006),  # type
-            struct.pack("<H", 0x0000),  # ?
-            struct.pack(">H", len(name_utf16)),  # name_len (BIG-ENDIAN)
-            struct.pack("<H", 0x0000),  # ?
-            name_utf16,
-            b"\x00\x00\x00\x00",  # terminator
-            b"\x00" * 8,  # metadata
-        ]
-        return b"".join(parts)
-
-    @staticmethod
-    def _build_ssu9_record(entry: SST_Entry) -> bytes:
-        """从 SST_Entry 字段构建完整 SSU9 记录（26B 头 + eng_text + chn_len + chn_text）。
-
-        unk12 从 index + group_index 反向计算。
-        str_idx 默认为 0x0100（标准记录）。
-        """
-        edid_bytes = entry.rec.encode("ascii").ljust(8, b"\0")[:8]
-        unk12 = ((entry.group_index << 16) | ((entry.index - 1) & 0xFFFF)) & 0xFFFFFFFF
-        f2 = entry.f2 if entry.f2 else entry.form_id
-        str_idx = 0x0100
-        eng_bytes = entry.text.encode("utf-16-le")
-        chn_bytes = entry.translated_text.encode("utf-16-le") if entry.translated_text else b""
-
-        head = struct.pack(
-            "<I8sIIHHH",
-            entry.form_id & 0xFFFFFFFF,
-            edid_bytes,
-            unk12,
-            f2 & 0xFFFFFFFF,
-            str_idx,
-            len(eng_bytes),
-            0x0000,  # pad
-        )
-        return head + eng_bytes + struct.pack("<I", len(chn_bytes)) + chn_bytes
-
-    # ── SSU8 record rebuild ────────────────────────────────────
-
-    @staticmethod
-    def _rebuild_ssu8(entry: SST_Entry, tail: bytes) -> bytes:
-        """SSU8: 24B 头 + eng_text UTF-16LE + trail_len(4B) + trail_data + tail_fields.
-
-        _raw = 24B head + eng_text (str_len bytes).
-        _tail = trail_len(4B) + trail_data + sep(1B) + global_seq(4B) + extra(2B).
-        """
-        # 1. 复制 24B 头，覆盖 str_len（SSU8 的 str_len 是 4B LE 在 offset 20）
-        head = bytearray(entry._raw[:24])
-        eng_bytes = entry.text.encode("utf-16-le")
-        struct.pack_into("<I", head, 20, len(eng_bytes))  # SSU8: str_len 为 uint32 LE
-
-        result = bytes(head) + eng_bytes
-
-        # 2. trail_len + trail_data (Chinese UTF-16LE) + 原样 tail_fields
-        chn_bytes = entry.translated_text.encode("utf-16-le") if entry.translated_text else b""
-        result += struct.pack("<I", len(chn_bytes))
-        result += chn_bytes
-
-        # 3. 原样追加 sep(1B) + global_seq(4B) + extra(2B)，位于 tail 中 trail_data 之后
-        if len(tail) >= 4:
-            orig_trail_len = struct.unpack_from("<I", tail, 0)[0]
-            tail_fields_start = 4 + orig_trail_len
-            if tail_fields_start <= len(tail):
-                result += tail[tail_fields_start:]
-
-        return bytes(result)
-
-    # ── 保存与更新 ─────────────────────────────────────────────
-
-    def save(self, path: str | Path, overwrite: bool = False) -> Path:
-        """写入文件。overwrite=False 时目标已存在则抛 FileExistsError。"""
+    def _save_document(document: SstDocument, path: str | Path, overwrite: bool) -> Path:
+        data = document.to_bytes()
         dest = Path(path)
         if dest.exists() and not overwrite:
-            raise FileExistsError(f"文件已存在: {dest}")
+            raise FileExistsError(f"File already exists: {dest}")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_suffix(".tmp")
-        tmp.write_bytes(self.to_bytes())
-        tmp.replace(dest)
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                prefix=f".{dest.name}.", suffix=".tmp", dir=dest.parent, delete=False
+            ) as out:
+                temporary = Path(out.name)
+                out.write(data)
+                out.flush()
+                os.fsync(out.fileno())
+            if overwrite:
+                os.replace(temporary, dest)
+            elif os.name == "nt":
+                # Windows rename is exclusive and also works on volumes without hard links.
+                os.rename(temporary, dest)
+            else:
+                # Exclusive publication: a racing writer can never be overwritten.
+                os.link(temporary, dest)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         return dest
+
+    def save(self, path: str | Path, overwrite: bool = False) -> Path:
+        return self._save_document(self.document, path, overwrite)
+
+    def update_record(self, ordinal: int, *, text: str | None = None, translated_text: str | None = None) -> bool:
+        """Update one physical record in memory. Empty strings are real edits."""
+        if type(ordinal) is not int or not 0 <= ordinal < len(self.document.records):
+            raise ValueError(f"SST record ordinal is out of range: {ordinal!r}")
+        records = list(self.document.records)
+        original = records[ordinal]
+        records[ordinal] = replace(
+            original,
+            original=original.original if text is None else text,
+            translation=original.translation if translated_text is None else translated_text,
+        )
+        candidate = replace(self.document, records=tuple(records))
+        candidate.to_bytes()
+        self.document = candidate
+        return records[ordinal] != original
+
+    def _match(self, update: dict) -> int | None:
+        if unknown := set(update) - {"ordinal", "form_id", "rec", "index", "text", "translated_text"}:
+            raise ValueError(f"Unknown SST update fields: {sorted(unknown)}")
+        if "ordinal" not in update and "form_id" not in update:
+            raise ValueError("SST update requires ordinal or form_id")
+        for key, lower, upper in (("form_id", 0, 0xFFFFFFFF), ("index", 1, 65536)):
+            if key in update and (type(update[key]) is not int or not lower <= update[key] <= upper):
+                raise ValueError(f"Invalid SST {key} selector: {update[key]!r}")
+        if "rec" in update and (not isinstance(update["rec"], str) or len(update["rec"]) != 8):
+            raise ValueError("SST rec selector must contain exactly eight characters")
+        if "ordinal" in update:
+            ordinal = update["ordinal"]
+            if type(ordinal) is not int or not 0 <= ordinal < len(self.document.records):
+                raise ValueError(f"SST record ordinal is out of range: {ordinal!r}")
+            candidates = [ordinal]
+        else:
+            if ("rec" in update or "index" in update) and not {"rec", "index"} <= update.keys():
+                raise ValueError("SST composite identity requires rec, form_id, and one-based index")
+            candidates = range(len(self.document.records))
+        matches = []
+        for i in candidates:
+            record = self.document.records[i]
+            expected = {
+                "form_id": record.form_id,
+                "rec": record.record_type + record.field_type,
+                "index": record.index + 1,
+            }
+            if all(key not in update or update[key] == value for key, value in expected.items()):
+                matches.append(i)
+        if len(matches) > 1:
+            raise ValueError("Ambiguous SST identity; specify physical ordinal or unique rec/form_id/index")
+        return matches[0] if matches else None
 
     def update_and_save(
         self,
@@ -207,60 +143,44 @@ class SST_Serializer:
         translated_text: str,
         path: str | Path,
         overwrite: bool = False,
+        *,
+        ordinal: int | None = None,
+        rec: str | None = None,
+        index: int | None = None,
     ) -> bool:
-        """修改指定 form_id 的第一条记录的 translated_text 后写回。
-
-        返回 True（找到并修改）或 False（未找到）。
-        """
-        found = False
-        new_records: list[tuple[SST_Entry, bytes]] = []
-        for entry, tail in self._records:
-            if not found and entry.form_id == form_id:
-                entry = replace(entry, translated_text=translated_text)
-                found = True
-            new_records.append((entry, tail))
-
-        if not found:
+        """Update one uniquely identified record; form_id ambiguity is an error."""
+        update = {"form_id": form_id, "translated_text": translated_text}
+        update.update({
+            key: value for key, value in {"ordinal": ordinal, "rec": rec, "index": index}.items() if value is not None
+        })
+        if self._match(update) is None:
             return False
-
-        self._records = new_records
-        self.save(path, overwrite=overwrite)
+        self.update_entries([update], path, overwrite)
         return True
 
-    def update_entries(
-        self,
-        updates: list[dict],
-        path: str | Path,
-        overwrite: bool = False,
-    ) -> dict:
-        """批量修改后写回。
-
-        updates: [{form_id: int, translated_text: str, text: str}, ...]
-        返回 {matched: int, updated: int, not_found: list[int]}。
-        """
-        # 构建查找表
-        lookup: dict[int, dict] = {}
-        for u in updates:
-            fid = u.get("form_id")
-            if fid is not None:
-                lookup[fid] = u
-
-        matched = 0
-        updated = 0
-        new_records: list[tuple[SST_Entry, bytes]] = []
-        for entry, tail in self._records:
-            if entry.form_id in lookup:
-                matched += 1
-                upd = lookup[entry.form_id]
-                new_trans = upd.get("translated_text", entry.translated_text)
-                new_text = upd.get("text", entry.text)
-                if new_trans != entry.translated_text or new_text != entry.text:
-                    entry = replace(entry, translated_text=new_trans, text=new_text)
-                    updated += 1
-            new_records.append((entry, tail))
-
-        not_found = [fid for fid in lookup if not any(e.form_id == fid for e, _ in new_records)]
-
-        self._records = new_records
-        self.save(path, overwrite=overwrite)
+    def update_entries(self, updates: list[dict], path: str | Path, overwrite: bool = False) -> dict:
+        """Validate all identities before saving or mutating the in-memory file."""
+        records = list(self.document.records)
+        matched = updated = 0
+        not_found = []
+        seen = set()
+        for update in updates:
+            ordinal = self._match(update)
+            if ordinal is None:
+                not_found.append(update.get("form_id", update.get("ordinal")))
+                continue
+            if ordinal in seen:
+                raise ValueError(f"Duplicate SST update for physical ordinal {ordinal}")
+            seen.add(ordinal)
+            matched += 1
+            original = records[ordinal]
+            records[ordinal] = replace(
+                original,
+                original=update.get("text", original.original),
+                translation=update.get("translated_text", original.translation),
+            )
+            updated += records[ordinal] != original
+        candidate = replace(self.document, records=tuple(records))
+        self._save_document(candidate, path, overwrite)
+        self.document = candidate
         return {"matched": matched, "updated": updated, "not_found": not_found}

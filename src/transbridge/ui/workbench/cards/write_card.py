@@ -28,7 +28,8 @@ class WriteCard(OpCard):
     def __init__(self, ctx, run_worker, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(
             "写回插件/XML",
-            "预检当前译文后安全写回 ESP 插件或 EET/XT XML 文件。",
+            "预检后写回插件、ESP-ESM Translator XML、ESP-ESM Translator EET、"
+            "xTranslator XML 或 xTranslator SST，也可从插件生成 xTranslator SST。",
             "写回",
             parent,
             theme_view=theme_view,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from threading import RLock
 
-from transbridge.application.io import default_format_catalog
+from transbridge.application.io import FormatId, default_format_catalog
 from transbridge.application.projects.prepared_source_results import (
     decode_prepared_source,
     encode_prepared_source,
@@ -50,7 +50,16 @@ def publish_import(target, path, label, collection, snapshot, format_id, action,
     if action == "append":
         if snapshot is not None:
             task.record["input_snapshot"] = encode_source_snapshot(snapshot)
-        task.candidates(tuple(collection))
+        candidates = tuple(collection)
+        if format_id in {FormatId.SST_SSU8, FormatId.SST_SSU9}:
+            from ._sst_import import prepare_sst_candidates
+
+            candidates = prepare_sst_candidates(task, candidates, snapshot)
+        elif format_id is FormatId.BINARY_EET:
+            from ._eet_import import prepare_eet_candidates
+
+            candidates = prepare_eet_candidates(task, candidates, snapshot)
+        task.candidates(candidates)
         result = task.finish()
         result.data.update(
             action="append",

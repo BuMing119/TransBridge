@@ -230,6 +230,38 @@ def test_multi_plugin_draft_preserves_options_and_paths_when_prepare_fails():
     assert len(coordinator.state.source_paths) == 3
 
 
+def test_existing_translation_picker_includes_xml_and_preserves_selection(monkeypatch, creation):
+    paths = ("D:/translations/eet.xml", "D:/translations/xt.xml")
+    filters = []
+
+    def choose(_parent, _title, _directory, file_filter):
+        filters.append(file_filter)
+        return list(paths), ""
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", choose)
+    coordinator = creation.controller.guided_project
+    coordinator.begin_sources(_PATHS)
+    creation.view._migration_button.click()
+
+    assert "*.xml" in filters[0].split(";;")[0]
+    assert "*.sst" in filters[0].split(";;")[0]
+    assert "*.xls" not in filters[0]
+    assert "*.eet" in filters[0].split(";;")[0]
+    assert coordinator.state.migration_sources == tuple(str(Path(path)) for path in paths)
+    assert all(str(Path(path)) in creation.view._migration_label.toolTip() for path in paths)
+
+    # Cancelling a second selection must not clear the accepted XML sources.
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", lambda *_args: ([], ""))
+    creation.view._migration_button.click()
+    assert coordinator.state.migration_sources == tuple(str(Path(path)) for path in paths)
+    assert coordinator.create()
+    operation, _callbacks = creation.pending.pop(0)
+    operation()
+    assert tuple(source.location for source in creation.commands.requests[-1].migration_sources) == tuple(
+        str(Path(path)) for path in paths
+    )
+
+
 def test_many_selected_plugins_use_a_scrollable_list(creation, layout_app):
     coordinator = creation.controller.guided_project
     paths = tuple(f"D:/mods/Plugin-{index}.esp" for index in range(50))

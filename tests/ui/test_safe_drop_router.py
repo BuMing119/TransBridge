@@ -24,7 +24,6 @@ def _write(path: Path, content: bytes) -> Path:
     ("name", "content", "kind", "format_id"),
     (
         ("Demo.esp", b"TES4" + b"\0" * 12, DropKind.PLUGIN, "plugin.sse"),
-        ("translated.eet", b"EET_" + b"\0" * 12, DropKind.EET, "binary.eet"),
         ("translated.xml", b"<DocumentElement/>", DropKind.EET, "xml.eet"),
         ("translated.xml", b"<SSTXMLRessources/>", DropKind.XT, "xml.xt"),
         ("translated.sst", b"SSU8" + b"\0" * 12, DropKind.SST, "sst.ssu8"),
@@ -65,6 +64,24 @@ def test_transbridge_archive_is_safely_inspected_and_only_proposed(tmp_path: Pat
     assert result.candidate is not None
     assert result.candidate.intent_id is IntentId.PROJECT_IMPORT
     assert not (tmp_path / "project.json").exists(), "inspection must not extract the archive"
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16", "utf-16-be"])
+@pytest.mark.parametrize("root,format_id", [("DocumentElement", "xml.eet"), ("SSTXMLRessources", "xml.xt")])
+def test_xml_drop_recognizes_encoded_bounded_prefix(tmp_path, encoding, root, format_id):
+    path = tmp_path / "source.xml"
+    path.write_bytes((f"<{root}>" + "a" * 1000 + f"</{root}>").encode(encoding))
+    result = DropRouter(budget=DropBudget(max_probe_bytes=128)).resolve((path,))
+    assert result.status is DropResolutionStatus.CANDIDATE
+    assert result.candidate.payload_mapping()["format_id"] == format_id
+
+
+def test_binary_eet_drop_keeps_binary_format_for_full_parse_validation(tmp_path):
+    source = _write(tmp_path / "translated.eet", b"EET_" + b"\0" * 12)
+    result = DropRouter().resolve((source,))
+    assert result.status is DropResolutionStatus.CANDIDATE
+    assert result.items[0].kind is DropKind.EET
+    assert result.candidate.payload_mapping()["format_id"] == "binary.eet"
 
 
 def test_fomod_archive_requires_marker_and_only_proposes_operation_plan(tmp_path: Path) -> None:

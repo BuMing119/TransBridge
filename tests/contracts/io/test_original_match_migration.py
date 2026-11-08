@@ -200,7 +200,9 @@ def test_legacy_import_original_matching_is_exact_and_does_not_take_first_siblin
         result = list(match_xt_updates(entries, source))
     else:
         source = [
-            SimpleNamespace(form_id=0x800, index=1, text=entry.original, translated_text=f"translation {index}")
+            SimpleNamespace(
+                rec="NPC_FULL", form_id=0x800, index=1, text=entry.original, translated_text=f"translation {index}"
+            )
             for index, entry in enumerate(entries)
         ]
         collection = TranslationEntryCollection(entries)

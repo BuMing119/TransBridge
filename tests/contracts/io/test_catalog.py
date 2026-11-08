@@ -143,9 +143,9 @@ def test_policy_ceiling_prevents_experimental_or_unavailable_promotion() -> None
     snapshot = next(item for item in catalog.capability_snapshot() if item.format_id is FormatId.SST_SSU9)
 
     assert snapshot.capability.read is CapabilityLevel.EXPERIMENTAL
-    assert snapshot.capability.write is CapabilityLevel.UNAVAILABLE
-    assert snapshot.capability.round_trip is CapabilityLevel.UNAVAILABLE
-    assert snapshot.capability.publish is CapabilityLevel.UNAVAILABLE
+    assert snapshot.capability.write is CapabilityLevel.EXPERIMENTAL
+    assert snapshot.capability.round_trip is CapabilityLevel.EXPERIMENTAL
+    assert snapshot.capability.publish is CapabilityLevel.EXPERIMENTAL
 
 
 def test_default_catalog_registers_only_implemented_adapters() -> None:
@@ -153,9 +153,14 @@ def test_default_catalog_registers_only_implemented_adapters() -> None:
     implemented_ids = {
         FormatId.PLUGIN_SSE,
         FormatId.XML_EET,
+        FormatId.BINARY_EET,
         FormatId.XML_XT,
         FormatId.JSON_PARATRANZ,
         FormatId.STRINGS,
+        FormatId.JSON_DSD,
+        FormatId.JSON_TRANSBRIDGE,
+        FormatId.SST_SSU8,
+        FormatId.SST_SSU9,
         FormatId.DLSTRINGS,
         FormatId.ILSTRINGS,
     }
@@ -169,7 +174,15 @@ def test_default_catalog_registers_only_implemented_adapters() -> None:
     assert paratranz.capability.write is CapabilityLevel.SUPPORTED
     assert paratranz.capability.publish is CapabilityLevel.UNAVAILABLE
     assert all(item.adapter_id for item in implemented)
-    assert all(item.capability.read is CapabilityLevel.SUPPORTED for item in implemented)
-    assert all(item.capability.publish is CapabilityLevel.UNAVAILABLE for item in implemented)
+    assert all(item.capability.read is not CapabilityLevel.UNAVAILABLE for item in implemented)
+    assert all(
+        item.capability.publish
+        is (
+            CapabilityLevel.EXPERIMENTAL
+            if item.format_id in {FormatId.SST_SSU8, FormatId.SST_SSU9, FormatId.BINARY_EET}
+            else CapabilityLevel.UNAVAILABLE
+        )
+        for item in implemented
+    )
     assert all(item.capability.read is CapabilityLevel.UNAVAILABLE for item in unregistered)
     assert all(item.reasons for item in unregistered)

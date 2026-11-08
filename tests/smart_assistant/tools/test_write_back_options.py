@@ -61,6 +61,42 @@ def _result(manager, started, status="completed"):
     return _finish(manager, started, status).result
 
 
+def test_assistant_plugin_to_sst_uses_shared_publication(sources, manager):
+    from transbridge.parser.xt.sst_codec import SstDocument
+
+    output = sources.root / "sst-output"
+    original = sources.plugin.read_bytes()
+    started = tool_writer._tool_write_back({"target": "sst", "output_dir": str(output)}, sources.ctx)
+    result = _result(manager, started)
+    target = output / sources.plugin.with_suffix(".sst").name
+    assert result["artifacts"] == [str(target)]
+    assert len(SstDocument.from_bytes(target.read_bytes()).records) == len(sources.ctx.active_slot.collection)
+    assert sources.plugin.read_bytes() == original
+
+
+def test_restored_plugin_sst_output_uses_saved_display_name(sources, manager):
+    from transbridge.parser.xt.sst_codec import SstDocument
+
+    slot = sources.ctx.active_slot
+    slot.esp_path = None
+    slot.source_snapshot = replace(
+        slot.source_snapshot,
+        source=replace(slot.source_snapshot.source, uri="source:restored-identity", display_name="SavedPlugin.esp"),
+    )
+    output = sources.root / "restored-output"
+    started = tool_writer._tool_write_back({"target": "sst", "output_dir": str(output)}, sources.ctx)
+    result = _result(manager, started)
+    path = output / "SavedPlugin.sst"
+    assert result["artifacts"] == [str(path)]
+    assert SstDocument.from_bytes(path.read_bytes()).masters == ("savedplugin.esp",)
+
+
+def test_assistant_sst_conversion_requires_explicit_destination(sources, manager):
+    rejected = tool_writer._tool_write_back({"target": "sst"}, sources.ctx)
+    assert not rejected.success and rejected.error_code == "OUTPUT"
+    assert manager.list_all() == []
+
+
 @pytest.mark.parametrize(
     "format_id,target", [(FormatId.PLUGIN_SSE, "esp"), (FormatId.XML_EET, "eet"), (FormatId.XML_XT, "xt")]
 )

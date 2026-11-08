@@ -120,8 +120,8 @@ class AppContext(QObject):
     # 只读属性（委托到活跃槽位，向后兼容）
     collection: Collection | None     # 当前活跃集合
     esp_path: str | None              # 当前活跃集合的插件路径
-    eet_path: str | None              # 当前活跃集合的 EET XML 路径
-    xt_path: str | None               # 当前活跃集合的 XT XML 路径
+    eet_path: str | None              # 当前活跃集合的 ESP-ESM Translator XML 路径
+    xt_path: str | None               # 当前活跃集合的 xTranslator XML 路径
     strings_lang: str                 # strings 文件语言标签（默认 "chinese"）
     migrate_count: int                # 当前活跃集合的迁移条目数
     plugin: object | None             # 当前活跃集合的 Plugin 实例
@@ -291,10 +291,10 @@ WorkbenchWidget
 
 | 模式 | 可见行 | 构建方式 |
 |------|--------|---------|
-| ESP 插件（标准） | 插件文件（必填）、EET XML（可选）、XT XML（可选）、已翻译插件（可选）、Strings 目录（可选） | `PluginParser` → Collection |
-| EET XML（仅迁移旧译文） | EET XML（必填）、XT XML（可选）、已翻译插件（可选） | `Collection.from_eet_xml()` → Collection |
+| ESP 插件（标准） | 插件文件（必填）、ESP-ESM Translator XML（可选）、xTranslator XML（可选）、已翻译插件（可选）、Strings 目录（可选） | `PluginParser` → Collection |
+| ESP-ESM Translator 来源 | ESP-ESM Translator XML（.xml）或独立的 ESP-ESM Translator EET（.eet，v3 Classique/BDD），可独立来源或迁移已有译文 | 内容识别 → 共享 application adapter；二进制实验性 |
 
-EET 模式构建的集合 `plugin=None`。WriteCard 的"写回 ESP"选项将被禁用。
+EET 来源的集合 `plugin=None`，不因此启用插件写回。二进制 EET 经完整快照与 `eet-v1` 绑定进入原格式单个/批量写回；工程重开沿用保存来源。ESP-ESM Translator XML 与 EET 是两种独立格式，按内容识别并按快照 FormatId 原格式写回。长任务复用 worker/coordinator，不启动外部翻译器。参见 [EET 集成计划](../../plans/eet-integration/plan.md)；本地全流程实现与相关验证已完成，保持实验性。
 
 #### Strings 目录（本地化插件导入翻译）
 
@@ -334,8 +334,8 @@ EET 模式构建的集合 `plugin=None`。WriteCard 的"写回 ESP"选项将被�
 
 **解析完成后写入 ctx**（通过 `ctx.add_slot(key, CollectionSlot(...))`）:
 - `slot.esp_path` ← ESP 文件路径（EET 模式为 None）
-- `slot.eet_path` ← EET XML 路径
-- `slot.xt_path` ← XT XML 路径
+- `slot.eet_path` ← ESP-ESM Translator XML 路径
+- `slot.xt_path` ← xTranslator XML 路径
 - `slot.strings_path` ← Strings 目录路径
 - `slot.strings_lang` ← strings 文件语言标签（用于写入时命名）
 - `slot.migrate_count` ← 迁移条目总数
@@ -360,7 +360,7 @@ ESP_2 ──PluginParser──> Collection_2 ──► slot_2（无迁移源）
 后续可单独为每个 slot 配置迁移源
 
 [EET 模式]
-EET XML ──Collection.from_eet_xml()──> TranslationEntryCollection
+ESP-ESM Translator XML ──Collection.from_eet_xml()──> TranslationEntryCollection
                                            │
                                            ├─► apply_xt_entries()       [可选]
                                            └─► update_from_translated_plugin()  [可选]
@@ -484,9 +484,9 @@ BSA 模式禁止覆盖来源依赖的原归档，避免仅包含 STRINGS 的输�
 
 `writer.write_back` 保留 admin 权限、确认及授权目录要求。默认仍处理当前活动来源，未指定路径时写回原位置；覆盖必须显式传 `overwrite=true`，并先备份。
 
-- `output_dir` 适用于 ESP/ESM/ESL、EET XML、XT XML，按来源原名另存到同一目录，不添加后缀。单文件 `path` 可自定义文件名并优先于 `output_dir`；保留 `target=strings` 必须提供目录且优先使用目录的旧语义。
+- `output_dir` 适用于插件与四种独立翻译格式：ESP-ESM Translator XML、ESP-ESM Translator EET、xTranslator XML、xTranslator SST。原格式另存通常保留来源名；从误标为 `.xml` 的文件识别到 EET 时派生 `.eet`，插件导出 SST 时派生 `.sst`。单文件 `path` 可自定义文件名并优先于 `output_dir`；保留 `target=strings` 必须提供目录且优先使用目录的旧语义。
 - `source_keys` 是 `list_collections` 返回的 `key` 列表，只处理明确选择的来源，不切换活动集合；省略仍是当前来源。空列表、重复或未知 key 拒绝执行；多个来源不接受同一个 `path`，可指定统一 `output_dir` 或按原位置写回。
-- `target` 保留 `esp/eet/xt/strings`；显式选择来源时可用 `auto`，混合批量保持每个来源自己的格式。
+- `target` 为 `esp/eet/xt/strings/sst`；历史 `eet` 按快照分别路由 ESP-ESM Translator XML 与 EET，`xt` 为 xTranslator XML，`sst` 为 xTranslator SST；显式选择来源时可用 `auto`，混合批量保持每个来源自己的格式。
 - `pack_bsa` 默认 `false`，继续生成散装 STRINGS；`true` 只对带本地化资源的插件打包，混合批量中的 XML 仍正常输出。沿用原归档、散装优先读取及输出重名保护。
 - 批量先固定来源、译文和译名方案，检查全部授权及逐来源预检；无效来源选择、快照或授权直接拒绝建任务。独立来源的输出冲突/已有文件等预检失败保留回执，其他可写来源继续；全部阻断时不建任务。
 - 单文件启动结果仍为 `{task_id,path}`；批量返回 `{task_id,paths,source_keys}`。等待终态后查看 `outcomes` 中的来源 key、状态和实际 `artifacts`。部分完成或取消会保留已提交文件及未执行来源的回执，不能只凭任务的成功/失败标记判断是否有文件写出。

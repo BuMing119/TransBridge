@@ -1,228 +1,76 @@
-"""EET binary format parser (*.eet files).
+"""EET binary query facade backed by the strict current-format codec.
 
-Binary format v2 structure:
-  Header:   magic "EET_" (4B) | version uint32 LE | section_count uint32 LE
-  Section1: "GAME" (4B) | uint16 LE (=0)
-  Section2: "LINE" (4B) | record_count uint32 LE | [records...]
-  Section3: "PHRA" (4B) | section_size uint32 LE | phrase_count uint32 LE | [data...]
-
-Each LINE record:
-  size uint32 LE (total, including this field)
-  field_count uint32 LE (=4)
-  GRUP 4B fixed ASCII
-  ID: len uint32 LE + UTF-8
-  EDID: len uint32 LE + UTF-8
-  CHAMP: len uint32 LE + UTF-8
-  ORIGINAL: len uint32 LE + UTF-8
-  TRADUIT: len uint32 LE + UTF-8
-  PERSO: len uint32 LE + UTF-8 (often empty)
-  STATUS: uint32 LE
-  INDEX: uint16 LE
-  IDSTEXTE: uint16 LE
-  COMMENTAIRE: len uint32 LE + UTF-8 (often empty)
-  hash1: uint32 LE
-  extra_len: uint32 LE | extra_str: UTF-8 (copy of ORIGINAL)
-  hash2: uint32 LE (== hash1)
-  [zero padding to size] | FFFFFFFF separator
+EET v3 Classique and BDD files are supported by this parser. Product I/O remains
+unregistered pending application validation; use scripts.eet_lab for experiments.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
-import logging
 from pathlib import Path
-import struct
 
-from transbridge.parser.eet_parser import EET_Entry
-
-logger = logging.getLogger(__name__)
-
-_MAGIC = b"EET_"
-_REC_SEP = 0xFFFFFFFF
-
-
-def _read_str(data: bytes, pos: int) -> tuple[str, int]:
-    """Read a length-prefixed UTF-8 string. Returns (string, new_position)."""
-    length = struct.unpack_from("<I", data, pos)[0]
-    pos += 4
-    if length == 0:
-        return "", pos
-    s = data[pos : pos + length].decode("utf-8", errors="replace")
-    pos += length
-    return s, pos
+from .eet_binary_codec import EetDocument
+from .eet_parser import EET_Entry
 
 
 class EET_BinaryParser:
-    """Parser for EET binary translation files (*.eet).
+    """Expose XML-compatible entries while retaining the complete binary document."""
 
-    Parses the three-section binary format produced by the EET translation tool.
-    Compatible with EET_XmlParser query interface (find, get_by_grup, etc.).
-    """
-
-    def __init__(self, entries: list[EET_Entry], game_data: int = 0, phrases: bytes = b"") -> None:
+    def __init__(
+        self,
+        entries: list[EET_Entry],
+        game_data: int | str = 0,
+        phrases: bytes = b"",
+        *,
+        document: EetDocument | None = None,
+    ) -> None:
         self.entries = entries
         self.game_data = game_data
-        self.phrases = phrases  # raw PHRA section bytes
-
-        # Build lookup indices
+        self.phrases = phrases
+        self.document = document
         self._by_key: dict[tuple[str, str, str, str], list[EET_Entry]] = {}
         self._by_grup: dict[str, list[EET_Entry]] = {}
         self._by_id: dict[str, list[EET_Entry]] = {}
         self._by_edid: dict[str, list[EET_Entry]] = {}
-
-        for e in entries:
-            self._by_key.setdefault(e.key, []).append(e)
-            self._by_grup.setdefault(e.grup, []).append(e)
-            self._by_id.setdefault(e.id, []).append(e)
-            if e.edid:
-                self._by_edid.setdefault(e.edid, []).append(e)
-
-    # ── Factory ──
+        for entry in entries:
+            self._by_key.setdefault(entry.key, []).append(entry)
+            self._by_grup.setdefault(entry.grup, []).append(entry)
+            self._by_id.setdefault(entry.id, []).append(entry)
+            if entry.edid:
+                self._by_edid.setdefault(entry.edid, []).append(entry)
 
     @classmethod
     def from_file(cls, path: str | Path) -> EET_BinaryParser:
-        """Parse an EET binary file. Auto-detects binary vs XML."""
-        data = Path(path).read_bytes()
-        if data[:4] == _MAGIC:
-            return cls._parse_binary(data)
-        raise ValueError(f"Not a valid EET binary file: {path}")
+        return cls.from_bytes(Path(path).read_bytes())
 
-    # ── Binary parser ──
+    @classmethod
+    def from_bytes(cls, content: bytes) -> EET_BinaryParser:
+        return cls.from_document(EetDocument.from_bytes(content))
 
     @classmethod
     def _parse_binary(cls, data: bytes) -> EET_BinaryParser:
-        version = struct.unpack_from("<I", data, 4)[0]
-        if version != 2:
-            raise ValueError(f"Unsupported EET binary version: {version}")
-
-        section_count = struct.unpack_from("<I", data, 8)[0]
-        pos = 12
-
-        entries: list[EET_Entry] = []
-        game_data = 0
-        phrases = b""
-
-        for _ in range(section_count):
-            if pos + 4 > len(data):
-                break
-            sec_name = data[pos : pos + 4].decode("ascii")
-            pos += 4
-
-            if sec_name == "GAME":
-                game_data = struct.unpack_from("<H", data, pos)[0]
-                pos += 2
-
-            elif sec_name == "LINE":
-                # record_count is informational; we parse until a non-record pattern
-                _record_count = struct.unpack_from("<I", data, pos)[0]
-                pos += 4
-                entries, pos = cls._parse_line_records(data, pos)
-
-            elif sec_name == "PHRA":
-                phra_size = struct.unpack_from("<I", data, pos)[0]
-                pos += 4
-                phrases = data[pos : pos + phra_size]
-                pos += phra_size
-
-            else:
-                logger.warning("Unknown section name: %r at offset 0x%X", sec_name, pos - 4)
-                break
-
-        return cls(entries=entries, game_data=game_data, phrases=phrases)
+        return cls.from_bytes(data)
 
     @classmethod
-    def _parse_line_records(cls, data: bytes, pos: int) -> tuple[list[EET_Entry], int]:
-        """Parse all records in the LINE section. Returns (entries, new_position)."""
-        entries: list[EET_Entry] = []
-        data_len = len(data)
-
-        while pos < data_len - 12:
-            rec_size = struct.unpack_from("<I", data, pos)[0]
-
-            # Terminate on separator gap or invalid size
-            if rec_size == _REC_SEP:
-                pos += 4
-                continue
-            if rec_size < 24 or rec_size > 200_000:
-                break
-
-            # Sanity: field_count must be 4 and GRUP must be ASCII
-            fc = struct.unpack_from("<I", data, pos + 4)[0]
-            if fc != 4:
-                break
-            grup_bytes = data[pos + 8 : pos + 12]
-            if not all(32 <= b < 127 for b in grup_bytes):
-                break
-
-            rec_start = pos
-            try:
-                entry = cls._parse_one_record(data, pos)
-                if entry is not None:
-                    entries.append(entry)
-            except (struct.error, UnicodeDecodeError, IndexError) as exc:
-                logger.warning("Failed to parse record at offset 0x%X: %s", pos, exc)
-
-            pos = rec_start + rec_size
-
-            # Consume separator
-            if pos + 4 <= data_len and struct.unpack_from("<I", data, pos)[0] == _REC_SEP:
-                pos += 4
-
-        return entries, pos
-
-    @classmethod
-    def _parse_one_record(cls, data: bytes, pos: int) -> EET_Entry | None:
-        """Parse a single record at the given offset. Returns EET_Entry or None."""
-        _size = struct.unpack_from("<I", data, pos)[0]
-        pos += 4
-
-        _field_count = struct.unpack_from("<I", data, pos)[0]  # always 4
-        pos += 4
-
-        grup = data[pos : pos + 4].decode("ascii")
-        pos += 4
-
-        id_val, pos = _read_str(data, pos)
-        edid_val, pos = _read_str(data, pos)
-        champ_val, pos = _read_str(data, pos)
-        original, pos = _read_str(data, pos)
-        traduit, pos = _read_str(data, pos)
-
-        perso, pos = _read_str(data, pos)
-
-        status = struct.unpack_from("<I", data, pos)[0]
-        pos += 4
-
-        index = struct.unpack_from("<H", data, pos)[0]
-        pos += 2
-
-        idstexte = struct.unpack_from("<H", data, pos)[0]
-        pos += 2
-
-        commentaire, pos = _read_str(data, pos)
-
-        # Hash section: hash1 + extra original copy + hash2 — skip (validates only)
-        # _hash1 = struct.unpack_from("<I", data, pos)[0]
-        # pos += 4
-        # extra_str, pos = _read_str(data, pos)
-        # _hash2 = struct.unpack_from("<I", data, pos)[0]
-        # pos += 4
-        # Remaining bytes in record are zero padding — consumed by size-based positioning
-
-        return EET_Entry(
-            grup=grup,
-            id=id_val,
-            edid=edid_val,
-            champ=champ_val,
-            original=original,
-            traduit=traduit,
-            perso=perso,
-            index=index if index != 0 else None,
-            status=status,
-            idstexte=idstexte if idstexte != 0 else None,
-            commentaire=commentaire,
-            icon=None,
-        )
+    def from_document(cls, document: EetDocument) -> EET_BinaryParser:
+        entries = [
+            EET_Entry(
+                grup=record.group,
+                id=record.form_id,
+                edid=record.editor_id,
+                champ=record.field,
+                original=record.original,
+                traduit=record.translation,
+                perso=record.personal,
+                index=record.index,
+                status=record.status,
+                idstexte=record.text_id,
+                commentaire=record.comment,
+                icon=record.icon,
+            )
+            for record in document.records
+        ]
+        return cls(entries, document.game, document.phrase_payload() or b"", document=document)
 
     # ── Query interface (mirrors EET_XmlParser) ──
 

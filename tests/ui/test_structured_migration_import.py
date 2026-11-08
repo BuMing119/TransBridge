@@ -95,6 +95,16 @@ def test_reviewed_drop_format_reaches_the_migration_draft() -> None:
     assert calls == [("D:/migration.json", "json", "json.paratranz")]
 
 
+def test_binary_eet_and_xml_can_prefill_content_probed_eet_migration_field():
+    dialog = ParseConfigDialog(mode="migrate")
+    assert dialog.prefill_migration_source("binary.eet", "eet", "binary.eet")
+    assert dialog.get_config().eet_path == "binary.eet"
+    assert not dialog.prefill_migration_source("unknown.eet", "eet", "unknown.binary")
+    assert dialog.prefill_migration_source("translated.xml", "eet", "xml.eet")
+    assert dialog.get_config().eet_path == "translated.xml"
+    dialog.close()
+
+
 def test_real_v2_json_migration_commits_once_and_updates_visible_projection(project) -> None:
     target = source_fixtures.load_source(project)
     source = project.root / "migration.json"
@@ -133,7 +143,7 @@ def test_real_v2_ssu8_migration_uses_the_same_atomic_commit_chain(project) -> No
     project.source.write_text(
         f"""<?xml version="1.0" encoding="utf-8"?>
 <DocumentElement><ESP>
-<GRUP>NPC_</GRUP><ID>{sst_entry.form_id:08X}</ID><EDID>Mudcrab</EDID><CHAMP>FULL</CHAMP>
+<GRUP>{sst_entry.rec[:4]}</GRUP><ID>{sst_entry.form_id:08X}</ID><EDID>Mudcrab</EDID><CHAMP>{sst_entry.rec[4:]}</CHAMP>
 <ORIGINAL>{escape(sst_entry.text)}</ORIGINAL><TRADUIT></TRADUIT><PERSO></PERSO>
 <INDEX>{sst_entry.index}</INDEX><STATUS>0</STATUS><IDSTEXTE>1</IDSTEXTE>
 <COMMENTAIRE></COMMENTAIRE><ICON>0</ICON>

@@ -19,6 +19,15 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 
 ### FR1: 插件文件解析
 
+**翻译文件格式命名规范**：以下是四种独立格式，产品名称、扩展名与内容识别不得混为同一格式的 XML/二进制变体：
+
+- ESP-ESM Translator XML（`.xml`），历史技术 ID 为 `xml.eet`。
+- ESP-ESM Translator EET（`.eet`），历史技术 ID 为 `binary.eet`。
+- xTranslator XML（`.xml`），技术 ID 为 `xml.xt`。
+- xTranslator SST（`.sst`），版本 ID 为 `sst.ssu8` / `sst.ssu9`。
+
+技术 ID 保留兼容，不表示这些格式相同；SSU8/SSU9 是 SST 的两个版本。两个 XML 格式由内容方言区分，误命名文件由内容识别。历史 `parse_eet` 工具可兼容识别 ESP-ESM Translator 的两种独立格式，但写回 SHALL 严格遵循来源快照的 FormatId，不互转、不合并格式身份。
+
 **FR1.1 ESP/ESM/ESL 解析**: 系统 SHALL 解析 Bethesda 插件文件（ESP/ESM/ESL），提取所有可翻译字符串及其上下文信息。
 
 **FR1.2 批量解析**: 系统 SHALL 支持同时选择多个 ESP 文件进行批量解析，每个文件独立管理。
@@ -27,25 +36,26 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 
 **FR1.4 上下文提取**: 系统 SHALL 为 NPC（性别/种族/职业）、INFO（说话者/情绪/任务关联）、DIAL（任务关联）提取额外上下文信息。
 
-**FR1.5 EET XML 解析**: 系统 SHALL 解析 EET (Elder-scrolls-Enhanced-Translator) 格式的 XML 翻译文件。
+**FR1.5 ESP-ESM Translator XML 与 EET 来源解析** — *2026-11-08 | 二进制本地实现完成，实验性*: 系统 SHALL 按内容识别 ESP-ESM Translator XML（`.xml`）和 ESP-ESM Translator EET（`.eet`）这两种独立格式。XML 保持既有解析行为；二进制仅接入已验证的 v3 Classique(1)/BDD(2)，严格检查长度、计数、UTF-8、记录与缓存边界，不返回截断后的部分成功。系统 SHALL 保留完整来源快照、全部物理记录及原生字段，使用来源命名空间内 `eet-v1:{ordinal}`、codec 版本和摘要签名绑定身份，支持独立来源、建项/追加、工程保存重开及唯一匹配的译文迁移。重复定位不得去重；向插件迁移时，双方已知 EditorID SHALL 按 casefold 相同，只有未知时才沿用 FormID、记录/字段和原文唯一匹配，重开后从 metadata 保留身份。旧身份缺少绑定时拒绝猜测写回。见 [ADR-053](adr/053-eet-binary-io-integration.md)。
 
-**FR1.6 XT XML 解析**: 系统 SHALL 解析 XT (xTranslator) 格式的 XML 翻译文件。
+**FR1.6 xTranslator XML 解析**: 系统 SHALL 解析 XT (xTranslator) 格式的 XML 翻译文件。
 
 **FR1.7 JSON 导入**: 系统 SHALL 支持从 DSD 格式 JSON 文件导入翻译条目。
 
 **FR1.8 Strings 文件导入**: 系统 SHALL 支持从 `.strings` 文件导入翻译条目。
 
-**FR1.9 XT SST 二进制解析与迁移源** — *2026-05-08 | 状态: 已实现 | 优先级: P1*: 系统 SHALL 解析 XT (xTranslator) 的 SST 二进制文件（`SSU8` / `SSU9` 格式），提取 EDID、FormID、字符串文本、译文、子记录关联数据等字段，转为 TranslationEntry 统一格式。SST 文件作为新的迁移源类型（与现有 EET/XT XML/Strings 并列），用于将 SST 中的译文追加合并到当前集合。
+**FR1.9 XT SST 读写与插件词典导出** — *2026-11-08 | 状态: 实验性实现 | 优先级: P1*: 系统 SHALL 严格解析 xTranslator `SSU8` / `SSU9`，保存完整来源快照与所有物理记录，支持建项、编辑、保存重开、译文迁移及原格式写回；插件来源可生成新 SSU9。布局和哈希依据固定上游源码版本，见 [ADR-052](adr/052-sst-io-integration.md)。
 
-  - **FR1.9.1 二进制解析**: 解析器 SHALL 识别 `SSU8` / `SSU9` 魔数，按记录结构逐条解析。SSU8: 记录类型(2B) + EDID(8B) + Field_A(4B) + FormID(4B) + 字符串长度(4B LE) + UTF-16LE 字符串(N B) + 尾部长度(4B LE) + 尾部数据(M B) + 序号(4B LE) + 额外ID(2B LE)。SSU9: FormID(4B) + EDID(8B) + unk12(4B) + f2(4B) + str_idx(2B) + str_len(2B) + pad(2B) + UTF-16LE English(N B) + chn_len(4B) + UTF-16LE Chinese(N B) + extra/subrecords。解析失败时 SHALL 跳过异常条目并记录警告。
-  - **FR1.9.2 迁移源集成**: SST 迁移源 SHALL 在 Step2 迁移源按钮区域提供加载入口。加载后 SST 条目与当前集合按匹配键（FormID + index）合并译文。
-  - **FR1.9.3 格式校验**: 解析器 SHALL 校验魔数（非 `SSU8`/`SSU9` 则拒绝）、条目完整性（截断条目跳过并警告）、UTF-16LE 解码（失败则跳过并警告）、空文件（仅 header 无条目则返回空集合）。
-  - **FR1.9.4 兼容性**: 新增解析器 SHALL NOT 修改现有 `XT_XmlParser` 的行为。SST 和 XML 两种格式独立解析，互不影响。
-  - **FR1.9.5 SST 序列化写回** — *2026-05-09 | 状态: 已实现 | 优先级: P1*: 系统 SHALL 支持将修改后的译文序列化回 SST 二进制格式。基于已解析的 SST 文件作为模板，修改条目的 `translated_text` / `text` 字段后，重建完整 SST 文件（Header 原样复制，记录重新序列化时更新 chn_len + chn_text，extra/subrecords 原样保留）。支持输出到新文件（默认）或原地覆盖（`--in-place`），提供单条 `update_entry()` 和批量 `update_entries()` 接口。不增删记录，不从零创建新 SST 文件。
+  - **FR1.9.1 二进制解析**: SSU8 头包含 magic、flag、labels；SSU9 另含 masters。两者记录均为固定 27 字节 `<BiI4s4sHHIBB` 加原文、译文两段 int32 字节长度和 UTF-16LE 数据，逐条读取到 EOF。记录签名不是 EditorID，哈希不可反解为 EditorID；不得扫描猜测记录位置或构造假嵌套关系。
+  - **FR1.9.2 迁移源集成**: SST SHALL 复用已有译文来源入口；只在 FormID、记录类型、字段及原文唯一匹配时迁移，不把字段物理序号当作业务索引。歧义不得自动覆盖。
+  - **FR1.9.3 格式校验**: 魔数、范围、长度、计数、截断和残余数据不合法 SHALL 拒绝整个文件并给出诊断；完整空词典允许零条目。保留 UTF-16 代码单元以实现无损往返。
+  - **FR1.9.4 兼容性**: 新来源 SHALL 使用命名空间、版本化物理序号、记录签名及来源摘要绑定。旧工程保留打开编辑；缺少可靠绑定时阻止写回并提示重新导入，不猜测旧身份。XML 行为独立。
+  - **FR1.9.5 SST 序列化写回**: 原 SST SHALL 保留版本、masters、labels、状态、哈希、记录顺序和未编辑记录，只修改明确绑定的译文（含显式空值）；输出须经预检、staging、全文件回读一致性校验、覆盖确认和备份后原子发布。默认要求选择输出位置。
+  - **FR1.9.6 插件新建**: 系统 SHALL 从保存的真实插件及本地化资源快照生成 SSU9，复原 masters、实际字段索引、StringID、文本列表及 EditorID/fallback 哈希。未知字段、VMAD、无法可靠证明的定位和非 ASCII 主文件名 SHALL 明确拒绝。GUI 提供输出格式选择；助手 `write_back(target=sst)` 共用发布流程。正式 MCP 入口当前未暴露读写工具，能力维持不支持。
 
 ### FR2: 翻译条目管理
 
-**FR2.1 统一数据模型**: 系统 SHALL 将所有来源（ESP/EET/XT XML/XT SST/JSON/Strings）的条目统一为 TranslationEntry 格式。
+**FR2.1 统一数据模型**: 系统 SHALL 将所有来源（ESP/EET/xTranslator XML/XT SST/JSON/Strings）的条目统一为 TranslationEntry 格式。
 
 **FR2.2 条目预览与筛选**: 系统 SHALL 提供条目列表预览，支持按翻译阶段（stage）、分类（context category）、关键词筛选。
 
@@ -56,11 +66,11 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 **FR2.5 Stage 状态系统统一** — *2026-05-07 | 状态: 已实现 | 优先级: P0*: 系统 SHALL 全项目统一使用 ParaTranz 平台的 7 级 stage 定义（0=未翻译、1=已翻译、2=有疑问、3=已检查、5=已审核、9=已锁定、-1=已隐藏）。TranslationEntry.stage 的语义 SHALL 对齐 ParaTranz，所有模块（converter/parser/writer/ui/ai_translator/paratranz）统一修正。
 
   - **FR2.5.1 Stage 语义定义**: TranslationEntry.stage SHALL 使用 ParaTranz 值——0=未翻译、1=已翻译、2=有疑问、3=已检查、5=已审核（未开启二次校对的项目审核词条时直接设为此状态）、9=已锁定（仅管理员可解锁，词条强制按译文导出）、-1=已隐藏（词条强制按原文导出）。内部不再使用自行定义的 stage 语义。
-  - **FR2.5.2 数据源映射**: 各数据源的 stage SHALL 映射到 ParaTranz 值——ESP 解析后初始化为 stage=0（未翻译）；XT/EET/Strings 导入有译文时设为 stage=1（已翻译）；DSD JSON 导入有译文时设为 stage=1；ParaTranz 下载直接保留 API 返回的 stage 值。EET 的二元状态（status=99/traduit）映射为 stage=1。
+  - **FR2.5.2 数据源映射**: 各数据源的 stage SHALL 映射到 ParaTranz 值——ESP 解析后初始化为 stage=0（未翻译）；XT/EET/Strings 导入有译文时设为 stage=1（已翻译）；DSD JSON 导入有译文时设为 stage=1；ParaTranz 下载直接保留 API 返回的 stage 值。ESP-ESM Translator XML 的二元状态（status=99/traduit）映射为 stage=1；二进制 EET 导入按译文映射编辑阶段，原生 STATUS 单独保留，写回不由 stage 重建其数值。
   - **FR2.5.3 UI 状态标签**: Step2 的状态筛选标签 SHALL 显示全部 7 个 stage 标签（计数为 0 的隐藏），按实际 stage 值精确筛选。替代当前错误的 3 状态简化映射（{0:未翻译, 1:有疑问, 2:已翻译}）。
   - **FR2.5.4 Stage 色条**: 每行 SHALL 在行首显示 3px 宽的 Stage 色条，颜色使用已有的 `_STAGE_COLORS` 映射（0灰/1蓝/2橙/3青/5绿/9红/-1深灰）。行背景色：stage=0=白色，stage∈{1,2,3,5}=浅绿 #E8F5E9，stage=9=浅红 #FFEBEE，stage=-1=浅灰 #F5F5F5。
   - **FR2.5.5 Stage 与标记独立**: Stage 状态标签和标记标签（★/?/✓）SHALL 为两行独立的筛选标签，AND 叠加。Stage 反映平台客观状态，标记反映译者主观工作标签。
-  - **FR2.5.6 写回修正**: EET/XT/ESP 写回时 SHALL 正确处理所有 stage 值——有译文（stage≥1）的条目写回为已翻译状态，已锁定（stage=9）强制写回译文，已隐藏（stage=-1）强制写回原文。
+  - **FR2.5.6 写回修正**: EET/XT/ESP 写回时 SHALL 正确处理所有 stage 值——有译文（stage≥1）的条目按对应格式的发布策略处理，已锁定（stage=9）强制写回译文，已隐藏（stage=-1）强制写回原文；二进制 EET 原生 STATUS 保持快照值，文本变化时同步更新译文数字缓存。
   - **FR2.5.7 AI 翻译适配**: AI 翻译的"未翻译"筛选 SHALL 使用 `stage == 0`（语义不变，值不变）。overwrite 模式下跳过 stage=9（已锁定）和 stage=-1（已隐藏）。
 
 ### FR3: ParaTranz 平台集成
@@ -99,9 +109,9 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 
 **FR4.1 ESP 写回**: 系统 SHALL 支持将译文写回 ESP/ESM/ESL 插件（inline 和 localised 两种模式）。单插件写回 SHALL 支持直接选择已有目标插件，以该插件为模板套用当前版本译文，无需先保存项目或执行“更新源文件”。仅将定位、原文和记录归属可唯一确认的有效译文套用到目标身份；新增、原文变化、缺失、歧义及不允许发布的条目 SHALL 保留目标内容并逐条报告，不阻止其余可写条目。共享本地化 ID 不得间接改写应保留的引用。默认输出翻译副本，显式覆盖已有文件时备份；后台预检固定目标与输出指纹，执行和提交时拒绝预检后的文件变化。校验 SHALL 比较本次目标模板与成品，不要求新版与旧项目来源一致。该操作 SHALL 不更新项目来源、翻译版本或 dirty 状态；长期项目来源迁移仍由“更新源文件”处理。实施见 [target-plugin-write](../plans/target-plugin-write/plan.md)。
 
-**FR4.2 EET XML 写回**: 系统 SHALL 支持更新已有 EET XML 文件或新建 EET XML 文件。
+**FR4.2 ESP-ESM Translator XML 与 EET 写回** — *2026-11-08 | 二进制本地实现完成，实验性*: 系统 SHALL 保持 ESP-ESM Translator XML 的底层更新/新建能力；二进制 v3 Classique/BDD SHALL 以完整可信快照原格式写回，经来源摘要、物理记录签名及原文验证后，只更新有效译文及其数字缓存，保留状态、注释、图标、短语表、原文侧缓存和哈希。显式空译文有效；数字缓存使用已验证的显式默认设置，不读取外部程序设置产生隐藏变化。GUI 单个/批量和助手 SHALL 共用预检、staging、全文件回读保真、备份与原子发布，失败不发布该文件。不新增插件→EET、原文编辑/哈希重算或 MCP 文件读写工具，不自动运行外部翻译器。
 
-**FR4.3 XT XML 写回**: 系统 SHALL 支持更新已有 XT XML 文件或新建 XT XML 文件。
+**FR4.3 xTranslator XML 写回**: 系统 SHALL 支持更新已有 xTranslator XML 文件或新建 xTranslator XML 文件。
 
 **FR4.4 本地化字符串输出**: 系统 SHALL 支持纯本地化模式（仅输出 `.strings` 文件，不修改 ESP）。
 
@@ -196,7 +206,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 **FR5.16 项目全来源术语库构建、版本管理与质量报告** — *2026-08-28 | 状态: 已确认 | 优先级: P1*: 系统 SHALL 允许用户以当前项目的完整来源清单和当前激活 Variant 为输入，构建和维护一份有版本的项目级术语库，并生成质量分析报告与版本更新日志。功能范围 SHALL 由项目权威状态决定，不得缩减为当前工作台已打开的单个 `TranslationEntryCollection`、当前激活插件或 `AppContext.slots` 的临时内容。
 
   - **FR5.16.1 用户目标与入口**: 用户 SHALL 能从当前项目发起“构建项目术语库”，查看将被处理的来源、预计条目规模和当前 Variant 身份，并在正式保存术语库前查看构建预览。未打开项目、项目没有来源或没有激活 Variant 时，系统 SHALL 禁止启动并说明缺少的前置条件。
-  - **FR5.16.2 项目级输入范围**: 构建范围 SHALL 默认包含当前项目中全部已登记且启用的来源，包括项目内的 ESP/ESM/ESL 插件及其关联 EET XML、XT XML、STRINGS、ParaTranz/TransBridge JSON 等当前具备可靠读取能力的格式。来源无需预先显示在工作台或转换为 UI 集合；未登记的磁盘文件、插件引用但未登记的 master、游戏安装目录和其他项目 SHALL NOT 被自动扫描或纳入。
+  - **FR5.16.2 项目级输入范围**: 构建范围 SHALL 默认包含当前项目中全部已登记且启用的来源，包括项目内的 ESP/ESM/ESL 插件及其关联 ESP-ESM Translator XML、xTranslator XML、STRINGS、ParaTranz/TransBridge JSON 等当前具备可靠读取能力的格式。来源无需预先显示在工作台或转换为 UI 集合；未登记的磁盘文件、插件引用但未登记的 master、游戏安装目录和其他项目 SHALL NOT 被自动扫描或纳入。
   - **FR5.16.3 当前 Variant 语义**: 构建 SHALL 使用当前激活 Variant 的完整翻译状态，包括尚未写回插件或 XML、但已经属于该 Variant 当前状态的译文、stage 和来源证据。其他 Variant 默认不参与本次构建；切换 Variant 后 SHALL 视为不同的构建输入，不得把不同 Variant 的译名静默合并。
   - **FR5.16.4 来源关系与有效双语语料**: 系统 SHALL 在抽取前形成项目级有效双语语料，而不是把各文件解析结果简单连接。插件原文、关联迁移源译文和当前 Variant 译文描述同一条目时 SHALL 形成一条带完整来源链的双语证据；同一来源关系存在歧义时 SHALL 产生诊断，不得猜测某个 XML 属于哪个插件或静默覆盖候选。独立双语来源 MAY 作为独立证据参与，但必须保持其独立来源身份。
   - **FR5.16.5 稳定构建快照**: 构建开始时 SHALL 固化项目 ID、项目修订、Variant ID、Variant 修订、来源清单、来源格式和来源指纹。构建期间项目、Variant 或来源文件发生变化时，本次结果 SHALL 标记为过期或冲突，不得冒充当前项目的最新完整术语库。
@@ -681,7 +691,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 ### 在范围内
 
 - ESP/ESM/ESL 插件的可翻译字符串提取与写回
-- EET/XT XML 翻译文件的读写
+- EET/xTranslator XML 翻译文件的读写
 - ParaTranz 翻译平台 API 集成
 - AI 辅助翻译（LLM 调用 + 术语管理 + 后处理）
 - 本地术语库管理（JSON/Excel/动态提取）
@@ -740,9 +750,9 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 Agent SHALL 可触发所有 Step1 文件解析操作，解析结果自动加载到 AppContext。
 
 - **FR9.1.1 parse_esp** (`write`): 解析 ESP/ESM/ESL 插件。参数：`file_paths: list[str]`（支持多选）、`extract_strings: bool`（是否提取 strings 文件）、`language: str`（strings 语言，默认 "english"）。返回：解析结果摘要（插件名/条目数/上下文分类统计）。
-- **FR9.1.2 parse_eet** (`write`): 解析 EET XML 文件。参数：`file_path: str`、`as_migration_source: bool`（是否作为迁移源追加到当前集合）。返回：解析结果摘要。
-- **FR9.1.3 parse_xt** (`write`): 解析 XT XML 文件。参数：`file_path: str`、`as_migration_source: bool`。返回：解析结果摘要。
-- **FR9.1.4 parse_sst** (`write`): 解析 XT SST 二进制文件（SSU8/SSU9）。参数：`file_path: str`、`as_migration_source: bool`。返回：格式类型/记录数/EDID 列表。
+- **FR9.1.2 parse_eet** (`write`): 按内容识别 ESP-ESM Translator XML（`.xml`）或实验性 ESP-ESM Translator EET（`.eet`，v3 Classique/BDD）两种独立格式；历史工具名不合并其来源身份。参数：`path: str`、`action: create_slot|append`（默认 create_slot；append 将译文作为迁移源追加）。返回：任务结果与解析摘要。
+- **FR9.1.3 parse_xt** (`write`): 解析 xTranslator XML 文件。参数：`file_path: str`、`as_migration_source: bool`。返回：解析结果摘要。
+- **FR9.1.4 parse_sst** (`write`): 严格解析 XT SST（SSU8/SSU9）。参数：`path: str`、`action: create_slot|append`（默认 create_slot）。create_slot 保存完整来源并返回集合/条目数；append 按 FormID、字段类型、原文唯一匹配到现有目标身份，通过权威任务成果提交译文，未匹配项保留以供检查。不得把文件内哈希表示为可还原的 EDID 列表。
 - **FR9.1.5 import_json** (`write`): 从 JSON 文件导入翻译条目。参数：`file_path: str`。返回：导入条目数。
 - **FR9.1.6 import_strings** (`write`): 从 .strings 文件导入翻译条目。参数：`directory: str`、`language: str`。返回：导入条目数/匹配率。
 
@@ -868,25 +878,18 @@ Agent SHALL 可操作 ParaTranz 平台的完整工作流。
 
 ---
 
-#### FR9.6 文件写回独立工具 (namespace: `writer`)
+#### FR9.6 共享文件写回工具（namespace: `writer`）
 
-将现有单一 `write_back` 工具拆分为 4 个独立工具，每个对应一种写回目标格式。保留 `admin` 权限级别。
+四种独立翻译格式 SHALL 共用现有 `writer.write_back`，以完整来源快照的 FormatId 选择 adapter；工具名或 target 的历史简写不改变格式身份。此工具同时处理插件与本地化资源输出，权限为 `admin`，沿用已授权任务范围、预检、覆盖确认和备份；不另设 `write_to_eet` 等独立工具，`write_back` 不是 deprecated。
 
-- **FR9.6.1 write_to_esp** (`admin`): 写回译文到 ESP/ESM 插件。参数：`mode: str`（"inline"/"localised"）、`output_dir: str`（localised 模式下的输出目录，可选）。返回：写回结果（模式/写入条目数/输出路径）。
-- **FR9.6.2 write_to_eet** (`admin`): 写回/新建 EET XML 文件。参数：`output_path: str`（可选，不传则更新源文件）、`create_new: bool`（默认 false）。返回：写回结果。
-- **FR9.6.3 write_to_xt** (`admin`): 写回/新建 XT XML 文件。参数：`output_path: str`（可选）、`create_new: bool`（默认 false）。返回：写回结果。
-- **FR9.6.4 write_to_strings** (`admin`): 输出纯本地化 strings 文件。参数：`output_dir: str`、`language: str`（可选）。返回：输出的文件列表。
+- **FR9.6.1 插件写回**：`write_back(target="esp")` SHALL 使用保存的插件及本地化资源快照，按来源实际结构生成产物，不提供助手 `mode` 参数。`pack_bsa` 默认为 false；仅本地化插件可显式选择打包 STRINGS。
+- **FR9.6.2 ESP-ESM Translator 两种独立格式的写回**：历史兼容值 `write_back(target="eet")` SHALL 按快照分别路由 ESP-ESM Translator XML（`xml.eet`）或 ESP-ESM Translator EET（`binary.eet`），不得把 EET 交给 XML builder。EET v3 Classique/BDD 保持实验性，只允许可信快照上的原格式写回及译文数字缓存同步。不暴露 `write_to_eet`、`output_path` 或 `create_new` 参数；底层 XML builder 的新建能力不是助手公开新建 API。
+- **FR9.6.3 xTranslator 两种独立格式的写回**：`write_back(target="xt")` SHALL 写回 xTranslator XML（`xml.xt`）；`write_back(target="sst")` SHALL 保留来源 SST 的 SSU8/SSU9 版本。唯一已提供的跨格式导出是保存插件→实验性 SSU9，须明确新的 `.sst` 输出位置或目录；不把 SST 与 xTranslator XML 互转，也不提供助手 `create_new` 参数。
+- **FR9.6.4 本地化资源与共同参数**：`write_back(target="strings")` SHALL 要求 `output_dir`，发布插件与关联本地化资源。所有 target 共用 `path`、`output_dir`、`source_keys`、`overwrite`、`pack_bsa`；`target="auto"` 配合 `source_keys` 按各来源快照保留格式。单文件 `path` 优先于目录（strings 除外）；多个来源不得共用单个 path。缺少可用参考位置时 SHALL 明确提供 path 或 output_dir。从错误 `.xml` 文件名识别到 EET 内容后，目录输出 SHALL 派生 `.eet`。
 
-**关联 Agent**: `writer` Agent（新增）— 拥有以上 4 个工具，所有 admin 级工具需用户确认。
+**结果与发布合同**：返回 task_id 与单个 path 或批量 paths/source_keys；调用方 SHALL 等待任务终态，依据逐来源 outcomes、实际 artifacts 和 diagnostics 判断结果，不把“任务已启动”称为文件已写出。批量独立成员可分别成功或失败。
 
-**注意**: `get_write_status` 已裁剪（信息在 UI 中已可见）。
-
-**向后兼容**: 保留现有 `write_back` 工具标记为 `deprecated`，内部转发到对应的新工具。
-
-**异常场景**:
-- 无已解析的 ESP/EET/XT 源文件时调用对应写回 → 返回错误提示
-- 输出路径不存在 → 自动创建父目录
-- ESP 写回时格式损坏 → 不修改原文件，返回错误
+**异常场景**：缺少可信来源快照、格式不匹配、旧物理身份、来源/目标在预检后变化或保真失败 SHALL 阻止该文件发布并返回诊断；不得退回直接 XML 构建或按扩展名强制转格式。已有输出需显式 overwrite，发布前备份；正式 MCP 不因共用 application 而新增文件读写工具。
 
 ---
 
@@ -929,7 +932,7 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 
 **FR9.9.4 工具 schema 格式**: 所有新工具 SHALL 使用现有 `ToolSpec` 数据类定义，通过 `ToolRegistry.register()` 注册到对应 namespace。参数定义 SHALL 使用 `{"name": {"type": "str", "description": "..."}}` 格式。工具执行函数 SHALL 返回 `ToolResult` 数据类。
 
-**FR9.9.5 向后兼容**: 现有 6 个 v1 工具 SHALL 保留不变（迁移至 `tool_v1.py` 模块，返回格式升级为 ToolResult，行为不变）。`write_back` 工具标记 deprecated 但仍可用。现有 Skill（translate_with_terms）和 MCP 适配器不受影响。V1 兼容性 SHALL 通过 snapshot 测试验证。
+**FR9.9.5 向后兼容**: 现有 6 个 v1 工具 SHALL 保留不变（迁移至 `tool_v1.py` 模块，返回格式升级为 ToolResult，行为不变）。`writer.write_back` 为当前共享写回入口，不标记 deprecated；公开参数及格式边界遵循 FR9.6。现有 Skill（translate_with_terms）和 MCP 适配器不受影响。V1 兼容性 SHALL 通过 snapshot 测试验证。
 
 **FR9.9.6 工具描述规范**: 每个工具的 description SHALL 清晰描述功能、参数含义和返回值结构，供 LLM 在 function calling 时准确匹配意图。涉及副作用（修改数据/文件/产生费用）的工具 SHALL 在 description 中明确标注。
 
@@ -1276,7 +1279,7 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 - **FR15.1.1 翻译记忆数据模型**: 翻译记忆 SHALL 采用「一文件一 mod + 单表权威对象 + 双索引」模型——(a) 词典以**模组文件**（.esp/.esl/.esm，未来 .txt）为粒度，一本词典 = 一个 mod 的词条集合，存储为一个 `.tbdict` 文件（内容为 JSON）；(b) 每本词典带单值 `scope` 属性（project 项目专属 / global 全局共享）标记其词条可使用范围，scope 用词条的使用范围属性而非切割维度，支持通过 GUI 切换；(c) 每本词典内部单表权威对象 `entries`（译文只存一份）+ 键索引 `key_index`（`EditorID:FormID|index~context` → 对象 + 键命中数）+ 文本索引 `text_index`（规范化原文 → 对象 + 文本命中数），命中计数落在索引而非对象；(d) 词典条目额外持久化 `source_mod`（来源 mod 名，从打开文件路径推断）与 `form_id_with_plugin`（完整 FormID 含插件名，用于精细去重/诊断/未来 txt 回溯）；(e) 词条主键由 `sha1(mod名 | 原文)` 派生，**不含 scope**，保证词条身份与词典位置解耦、跨 scope 切换不换 ID；(f) 匹配键取值来源为 `TranslationEntry.id`，存储层按不透明字符串处理。更新语义：同名 mod 只存一本词典，重复写入时「新增追加、已存在原文覆盖新译文、从不删除」，支持叠加合并。
 - **FR15.1.2 来源一：从已译 ESP 抽取**: 系统 SHALL 支持从旧版中文 FOMOD 中已翻译的插件文件（ESP/ESM/ESL）抽取「原文→译文」映射写入翻译记忆。抽取复用现有 `PluginParser` 解析能力。
-- **FR15.1.3 来源二：XT/EET XML 词典导入**: 系统 SHALL 支持读入 XTranslator/EET 导出的 XML 翻译词典文件，将其中已翻译条目写入翻译记忆，复用现有 `XT_XmlParser`/`EET_XmlParser`。
+- **FR15.1.3 来源二：XT/ESP-ESM Translator XML 词典导入**: 系统 SHALL 支持读入 XTranslator/EET 导出的 XML 翻译词典文件，将其中已翻译条目写入翻译记忆，复用现有 `XT_XmlParser`/`EET_XmlParser`。
 - **FR15.1.4 来源三：ParaTranz 项目拉取**: 系统 SHALL 支持从 ParaTranz 项目拉取已翻译词条写入翻译记忆，复用现有文件读取与内容映射边界。
 - **FR15.1.5 来源叠加与冲突**: 多来源翻译记忆 SHALL 支持叠加合并；同一原文存在多译文时 SHALL 按来源优先级（可配置）或保留最早记录，冲突记录在报告中列出。
 
@@ -1473,7 +1476,7 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 **FR18.7 原子发布** — *状态：已确认 | 优先级：P0*：正式输出 SHALL 先在隔离位置生成并验证，再原子发布到目标位置。若存在致命诊断、取消、完整性校验失败或目标冲突，系统 SHALL 保留既有正式产物并报告失败；备份策略 SHALL 可配置且可验证。
 
-**FR18.8 格式支持矩阵** — *状态：已确认 | 优先级：P0*：系统 SHALL 对每种格式分别公布读取、写出、往返、GUI、Agent、MCP 和发布能力为“支持”“实验性”“不支持”。本轮 P0 验收范围为 ParaTranz JSON 双 ID、ESP/EET/XT 公共成功链和 Localized Strings 数据完整性；SST Writer 保持关闭。DSD、SST Reader、BSA/Strings 补全及完整上下文能力的发布级别待本次需求确认。
+**FR18.8 格式支持矩阵** — *状态：已确认；SST/EET 二进制于 2026-11-08 增量实施 | 优先级：P0*：系统 SHALL 对每种格式分别公布读取、写出、往返、GUI、Agent、MCP 和发布能力为“支持”“实验性”“不支持”。ParaTranz JSON 双 ID、ESP/EET/XT 公共成功链和 Localized Strings 数据完整性沿用既有门禁；SST 与二进制 EET v3 Classique/BDD 的读写、往返、GUI、Agent 和发布标为实验性，正式 MCP 无读写工具时保持不支持。不得将样本往返通过等同于全面 xTranslator 或 ESP-ESM Translator 兼容。
 
 **FR18.9 Stage 离散语义** — *状态：已确认 | 优先级：P0*：Stage SHALL 按离散枚举解释，不得使用 `stage >= n` 一类范围判断替代状态集合。`hidden(-1)` 写出原文且不参与 AI 翻译；`locked(9)` 不参与 AI 翻译。`locked(9)` 且译文为空时的发布策略待本次需求确认。
 
@@ -1507,7 +1510,7 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 <a id="fr19-source-update"></a>
 
-**FR19.14 更新源文件与全部翻译版本迁移** — *2026-10-01 | 状态：已实现并通过本地验证（需求补录，非真实远端验收） | 优先级：P1*：用户 SHALL 能为工程中已登记的独立来源选择同格式新版文件，更新词条内容与顺序并迁移全部正式翻译版本。功能名统一为“更新源文件…”，覆盖 ESP/ESM/ESL、EET XML、XT XML 等具有可靠解析与条目身份的现有来源格式；不得限定为“更新插件”，也不得通过先删除再新增来代替迁移。
+**FR19.14 更新源文件与全部翻译版本迁移** — *2026-10-01 | 状态：已实现并通过本地验证（需求补录，非真实远端验收） | 优先级：P1*：用户 SHALL 能为工程中已登记的独立来源选择同格式新版文件，更新词条内容与顺序并迁移全部正式翻译版本。功能名统一为“更新源文件…”，覆盖 ESP/ESM/ESL、ESP-ESM Translator XML、xTranslator XML 等具有可靠解析与条目身份的现有来源格式；不得限定为“更新插件”，也不得通过先删除再新增来代替迁移。
 
   - **FR19.14.1 入口与作用域**：工程菜单、工作台工程管理和只读恢复窗口 SHALL 提供入口，明确当前源文件、新版文件及目标工程。恢复其他工程时 SHALL 保留当前工作台。正常活动工程有未保存修改时 SHALL 先完成保存；未打开工程、没有可更新来源、格式无效或来源身份不唯一时 SHALL 给出可操作说明，不修改来源登记。
   - **FR19.14.2 可审阅预览**：正式更新前 SHALL 展示新增、移除、内容未变、原文/上下文变化、无法核验、顺序变化及影响版本数。顺序变化可与其他差异重叠，不得把各计数冒充互斥总数。取消或关闭预览 SHALL 不执行来源迁移；预览前已明确完成的普通保存不因此撤销。解析、比较与提交 SHALL 不阻塞界面事件循环。
@@ -1935,7 +1938,7 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 用户于 2026-08-18 确认本节整体需求及以下行为：
 
 1. `locked(9)` 且译文为空时 SHALL 阻止正式发布；预览 MAY 回退显示原文，但 SHALL 产生阻断诊断。
-2. DSD 与 SST Reader 保留为实验性；SST Writer 关闭；BSA/Strings 补全与完整上下文列为 P1 渐进验收。
+2. DSD 与 SST 读写保留为实验性；SST 按 FR1.9/ADR-052 验证，正式 MCP 读写尚未开放；BSA/Strings 补全与完整上下文列为 P1 渐进验收。
 3. NFR1.1～NFR1.3 的数值作为初始门禁；Phase 3 MAY 根据可复现实测提出调整，但任何放宽 SHALL 重新获得范围确认。
 
 ## 助手长期记忆需求（草稿，2026-09-13）

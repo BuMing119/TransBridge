@@ -1,7 +1,7 @@
 """
 步骤1：源文件选择与解析。
 支持多集合管理：可同时打开多个插件/EET集合，通过顶部选择栏切换。
-支持两种解析来源：ESP 插件（标准）或 EET XML（仅迁移旧译文）。
+支持插件和 ESP-ESM Translator 来源；XML 与 EET 是独立格式，按内容识别。
 支持批量选择ESP文件，一次解析多个插件。
 已加载集合可追加迁移源（每种仅限一次）。
 """
@@ -105,7 +105,7 @@ class Step1SourceWidget(QWidget):
         for legacy_name, view_name in aliases.items():
             setattr(self, legacy_name, getattr(self._source_view, view_name))
         self._esp_form_label = "插件文件 *"
-        self._eet_form_label = "EET XML"
+        self._eet_form_label = "ESP-ESM Translator 文件"
 
     # ── 锁定/解锁表单 ─────────────────────────────────────────
 
@@ -172,11 +172,11 @@ class Step1SourceWidget(QWidget):
         # EET 行：ESP 模式为可选（有清除按钮），EET 模式为必填（隐藏清除按钮）
         self._eet_clear_btn.setVisible(esp_mode)
         if esp_mode:
-            self._eet_input.setPlaceholderText("可选，迁移旧 EET 译文")
+            self._eet_input.setPlaceholderText("可选，导入 ESP-ESM Translator 已有译文")
             self._parse_btn.setText("▶ 解析插件")
         else:
-            self._eet_input.setPlaceholderText("选择 EET XML 文件…")
-            self._parse_btn.setText("▶ 解析 EET")
+            self._eet_input.setPlaceholderText("选择 ESP-ESM Translator 文件…")
+            self._parse_btn.setText("▶ 解析来源文件")
 
     # ── 集合选择栏 ────────────────────────────────────────────
 
@@ -204,7 +204,7 @@ class Step1SourceWidget(QWidget):
         # 同步输入框并锁定（无论是否切换，只要指向已存在的 slot 就锁定）
         slot = self._ctx.slots.get(key) if key else None
         if slot:
-            is_eet_only = slot.format_id in {FormatId.XML_EET, FormatId.XML_XT} or (
+            is_eet_only = slot.format_id in {FormatId.XML_EET, FormatId.XML_XT, FormatId.BINARY_EET} or (
                 slot.format_id is None and slot.esp_path is None and slot.eet_path is not None
             )
             self._rb_esp.setChecked(not is_eet_only)
@@ -320,7 +320,7 @@ class Step1SourceWidget(QWidget):
         if eet_only:
             eet_path = self._eet_input.text().strip()
             if not eet_path:
-                self._status_lbl.setText("请先选择 EET XML 文件")
+                self._status_lbl.setText("请先选择 ESP-ESM Translator 文件")
                 return
             self._run_parse_eet(eet_path)
         else:
@@ -494,10 +494,9 @@ class Step1SourceWidget(QWidget):
             collection = TranslationEntryCollection(entries)
             migrate_count = 0
             if eet_path:
-                try:
-                    migrate_count += collection.update_from_eet_xml(Path(eet_path))
-                except Exception:
-                    pass
+                from transbridge.ui.eet_source import apply_eet_migration
+
+                migrate_count += apply_eet_migration(collection, eet_path)
             if xt_path:
                 try:
                     xp = XT_XmlParser.from_file(xt_path)
@@ -558,11 +557,13 @@ class Step1SourceWidget(QWidget):
 
         self._parse_btn.setEnabled(False)
         self._progress.show()
-        self._status_lbl.setText("解析 EET 中…")
+        self._status_lbl.setText("解析 ESP-ESM Translator 文件中…")
         self.parse_started.emit()
 
         def _do():
-            collection = TranslationEntryCollection.from_eet_xml(Path(eet_path))
+            from transbridge.ui.eet_source import parse_eet_collection
+
+            collection, parsed = parse_eet_collection(eet_path)
             migrate_count = 0
             if xt_path:
                 try:
@@ -575,10 +576,10 @@ class Step1SourceWidget(QWidget):
                     migrate_count += collection.update_from_translated_plugin(Path(tp_path))
                 except Exception:
                     pass
-            return collection, migrate_count
+            return collection, migrate_count, parsed
 
         def _on_done(result):
-            collection, migrate_count = result
+            collection, migrate_count, parsed = result
             label = Path(eet_path).stem
             slot = CollectionSlot(
                 label=label,
@@ -586,6 +587,8 @@ class Step1SourceWidget(QWidget):
                 eet_path=eet_path,
                 xt_path=xt_path,
                 migrate_count=migrate_count,
+                source_snapshot=parsed.source_snapshot,
+                format_id=parsed.format_id,
             )
             self._finish_parse(eet_path, slot, collection)
 

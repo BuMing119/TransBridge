@@ -84,7 +84,8 @@ class SourceUpdateCoordinator:
         filters = {
             "plugin.sse": "插件 (*.esp *.esm *.esl)",
             "xml.eet": "ESP-ESM Translator XML (*.xml)",
-            "xml.xt": "XTranslator XML (*.xml)",
+            "binary.eet": "ESP-ESM Translator EET (*.eet)",
+            "xml.xt": "xTranslator XML (*.xml)",
         }
         replacement, _ = QFileDialog.getOpenFileName(
             self._host,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 import hashlib
 import json
+from pathlib import Path
 from typing import Protocol
 
 from transbridge.application.contracts import OperationOutcome, OperationResult
@@ -42,7 +43,9 @@ class FormatAdapterRenderer:
     def render(self, request: WriteRequest, staging_path: str) -> OperationResult[tuple[str, ...]]:
         staged_request = replace(
             request,
-            target=SourceDescriptor(staging_path, display_name=request.target.display_name),
+            target=SourceDescriptor(
+                staging_path, display_name=request.target.display_name or Path(request.target.uri).name
+            ),
         )
         return self._adapter.write(staged_request)
 
@@ -81,6 +84,14 @@ class FormatRoundTripValidator:
 
         if request.format_id is FormatId.PLUGIN_SSE:
             return validate_plugin_fidelity(request, staging_path)
+        if request.format_id is FormatId.BINARY_EET:
+            from .eet_fidelity import validate_eet_fidelity
+
+            return validate_eet_fidelity(request, content, self._adapter)
+        if request.format_id in {FormatId.SST_SSU8, FormatId.SST_SSU9}:
+            from .sst_fidelity import validate_sst_fidelity
+
+            return validate_sst_fidelity(request, content, self._adapter)
 
         namespace = _entry_namespace(request.entries)
         parsed = self._adapter.parse(

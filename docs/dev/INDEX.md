@@ -2,7 +2,10 @@
 
 ## 项目简介
 
-TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 ESP/ESM 插件、EET/XT XML 与 ParaTranz 平台之间的翻译条目转换、上传和同步。内置 AI 自动翻译功能，支持多轮批量翻译。
+- [EET 完整读写与实验](eet-experiment.md)：v3 Classique/BDD、数字缓存、3DNPC语料与实验性正式接入；[ADR-053](../adr/053-eet-binary-io-integration.md)。
+- [SST 完整读写与实验](sst-experiment.md)：SSU8/SSU9、GUI/助手写回与插件新建；80份 New ANK 扩展语料。
+
+TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 ESP/ESM 插件、EET/xTranslator XML 与 ParaTranz 平台之间的翻译条目转换、上传和同步。内置 AI 自动翻译功能，支持多轮批量翻译。
 
 ## 核心数据结构文档
 
@@ -54,11 +57,13 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | `NPCContext` / `InfoContext` / `DialContext` | `src/transbridge/parser/plugin/item.py` | 上下文数据类 |
 | `PluginStringsLookup` | `src/transbridge/parser/strings_file.py` | 本地化字符串查表 |
 | `PluginStringsWriter` | `src/transbridge/parser/strings_file.py` | 本地化字符串写入器 |
-| `EET_Entry` / `EET_XmlParser` | `src/transbridge/parser/eet_parser.py` | EET XML条目与解析器 |
-| `XT_Entry` / `XT_XmlParser` | `src/transbridge/parser/xt_parser.py` | XT XML条目与解析器 |
+| `EET_Entry` / `EET_XmlParser` | `src/transbridge/parser/eet_parser.py` | ESP-ESM Translator XML条目与解析器 |
+| `EetDocument` / `EetRecord` | `src/transbridge/parser/eet_binary_codec.py` | EET v3 完整二进制模型与读写 |
+| `EetNumberCache` / `EetNumberOptions` | `src/transbridge/parser/eet_number_cache.py` | 数字缓存读写与显式生成规则 |
+| `XT_Entry` / `XT_XmlParser` | `src/transbridge/parser/xt_parser.py` | xTranslator XML条目与解析器 |
 | `PluginWriter` | `src/transbridge/writer/plugin_writer.py` | ESP/ESM写入器，支持inline/localised模式 |
-| `EETWriter` / `EETBuilder` | `src/transbridge/writer/eet_xml_*.py` | EET XML更新器/构建器 |
-| `XTWriter` / `XTBuilder` | `src/transbridge/writer/xt_xml_*.py` | XT XML更新器/构建器 |
+| `EETWriter` / `EETBuilder` | `src/transbridge/writer/eet_xml_*.py` | ESP-ESM Translator XML更新器/构建器 |
+| `XTWriter` / `XTBuilder` | `src/transbridge/writer/xt_xml_*.py` | xTranslator XML更新器/构建器 |
 | `AutoTranslator` | `src/transbridge/ai_translator/translator.py` | AI翻译控制器，支持暂停/停止/断点续传 |
 | `TranslatorConfig` | `src/transbridge/ai_translator/translator.py` | 翻译配置（llm_config/esp_path/overwrite） |
 | `TranslationResult` | `src/transbridge/ai_translator/translator.py` | 翻译结果（success/failed/skipped/new_terms） |
@@ -201,7 +206,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 |------|------|
 | `add(entry, overwrite=True)` | 添加/更新条目（无独立update方法） |
 | `from_plugin(path)` | 从 ESP/ESM 导入 |
-| `from_eet_xml(path)` | 从 EET XML 导入 |
+| `from_eet_xml(path)` | 从 ESP-ESM Translator XML 导入 |
 | `apply_xt_entries(xt_entries)` | 应用 XT 译文 |
 | `update_from_translated_plugin(path)` | 从已翻译插件提取译文 |
 | `to_json_file(path)` | 保存为 JSON |

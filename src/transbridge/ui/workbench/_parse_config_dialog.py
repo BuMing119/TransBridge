@@ -77,7 +77,10 @@ class ParseConfigDialog(QDialog):
             source_row.addWidget(QLabel("解析来源："))
             self._src_group = QButtonGroup(self)
             self._rb_esp = QRadioButton("ESP 插件（标准）")
-            self._rb_eet_only = QRadioButton("EET XML")
+            self._rb_eet_only = QRadioButton("ESP-ESM Translator")
+            self._rb_eet_only.setToolTip(
+                "按内容识别两种独立格式：ESP-ESM Translator XML (.xml) 和 ESP-ESM Translator EET (.eet)。"
+            )
             self._rb_esp.setChecked(True)
             self._src_group.addButton(self._rb_esp, 0)
             self._src_group.addButton(self._rb_eet_only, 1)
@@ -102,12 +105,14 @@ class ParseConfigDialog(QDialog):
             esp_row.addWidget(esp_browse)
             form.addRow("插件文件 *", self._esp_row)
 
-        # ── EET XML ──
+        # ── ESP-ESM Translator 文件 ──
         self._eet_row = QWidget()
         eet_row = QHBoxLayout(self._eet_row)
         eet_row.setContentsMargins(0, 0, 0, 0)
         self._eet_input = QLineEdit()
-        placeholder = "可选，迁移旧 EET 译文" if self._mode == "parse" else "选择 EET XML 文件…"
+        placeholder = (
+            "可选，导入 ESP-ESM Translator 已有译文" if self._mode == "parse" else "选择 ESP-ESM Translator 文件…"
+        )
         self._eet_input.setPlaceholderText(placeholder)
         self._eet_input.setReadOnly(True)
         eet_browse = QPushButton("浏览")
@@ -120,14 +125,14 @@ class ParseConfigDialog(QDialog):
         eet_row.addWidget(self._eet_input)
         eet_row.addWidget(eet_browse)
         eet_row.addWidget(eet_clear)
-        form.addRow("EET XML", self._eet_row)
+        form.addRow("ESP-ESM Translator 文件", self._eet_row)
 
-        # ── XT XML ──
+        # ── xTranslator XML ──
         self._xt_row = QWidget()
         xt_row = QHBoxLayout(self._xt_row)
         xt_row.setContentsMargins(0, 0, 0, 0)
         self._xt_input = QLineEdit()
-        self._xt_input.setPlaceholderText("可选，迁移旧 XT 译文")
+        self._xt_input.setPlaceholderText("可选，导入 xTranslator XML 已有译文")
         self._xt_input.setReadOnly(True)
         xt_browse = QPushButton("浏览")
         xt_browse.setMinimumWidth(60)
@@ -139,7 +144,7 @@ class ParseConfigDialog(QDialog):
         xt_row.addWidget(self._xt_input)
         xt_row.addWidget(xt_browse)
         xt_row.addWidget(xt_clear)
-        form.addRow("XT XML", self._xt_row)
+        form.addRow("xTranslator XML", self._xt_row)
 
         # ── 已翻译插件 ──
         self._tp_row = QWidget()
@@ -191,7 +196,7 @@ class ParseConfigDialog(QDialog):
             sst_row = QHBoxLayout(self._sst_row)
             sst_row.setContentsMargins(0, 0, 0, 0)
             self._sst_input = QLineEdit()
-            self._sst_input.setPlaceholderText("选择 SSU8 / SSU9 SST 文件…")
+            self._sst_input.setPlaceholderText("选择 xTranslator SST 文件（SSU8 / SSU9）…")
             self._sst_input.setReadOnly(True)
             sst_browse = QPushButton("浏览")
             sst_browse.setMinimumWidth(60)
@@ -208,7 +213,7 @@ class ParseConfigDialog(QDialog):
             sst_row.addWidget(sst_browse)
             sst_row.addWidget(sst_clear)
             sst_row.addWidget(self._sst_format)
-            form.addRow("SST 译文", self._sst_row)
+            form.addRow("xTranslator SST", self._sst_row)
 
         # ── Strings 目录 ──
         self._strings_row = QWidget()
@@ -296,8 +301,12 @@ class ParseConfigDialog(QDialog):
         esp_mode = self._rb_esp.isChecked()
         if hasattr(self, "_esp_row"):
             self._form.setRowVisible(self._esp_row, esp_mode)
-        self._form.labelForField(self._eet_row).setText("EET XML" if esp_mode else "EET XML *")
-        self._eet_input.setPlaceholderText("可选，迁移旧 EET 译文" if esp_mode else "请选择作为解析来源的 EET XML 文件")
+        self._form.labelForField(self._eet_row).setText(
+            "ESP-ESM Translator 文件" if esp_mode else "ESP-ESM Translator 文件 *"
+        )
+        self._eet_input.setPlaceholderText(
+            "可选，导入 ESP-ESM Translator 已有译文" if esp_mode else "请选择作为解析来源的 ESP-ESM Translator 文件"
+        )
         self._clear_feedback()
 
     def _clear_feedback(self):
@@ -327,12 +336,19 @@ class ParseConfigDialog(QDialog):
             self._esp_input.setToolTip("\n".join(paths))
 
     def _browse_eet(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择 EET XML 文件", "", "XML 文件 (*.xml);;所有文件 (*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择 ESP-ESM Translator 文件",
+            "",
+            "ESP-ESM Translator EET (*.eet);;ESP-ESM Translator XML (*.xml);;所有文件 (*)",
+        )
         if path:
             self._eet_input.setText(path)
 
     def _browse_xt(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择 XT XML 文件", "", "XML 文件 (*.xml);;所有文件 (*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择 xTranslator XML 文件", "", "xTranslator XML (*.xml);;所有文件 (*)"
+        )
         if path:
             self._xt_input.setText(path)
 
@@ -349,7 +365,9 @@ class ParseConfigDialog(QDialog):
             self._json_input.setText(path)
 
     def _browse_sst(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择 SST 译文文件", "", "SST 文件 (*.sst);;所有文件 (*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择 xTranslator SST 文件", "", "xTranslator SST (*.sst);;所有文件 (*)"
+        )
         if path:
             self._sst_input.setText(path)
 
@@ -373,7 +391,7 @@ class ParseConfigDialog(QDialog):
             is_eet = hasattr(self, "_rb_eet_only") and self._rb_eet_only.isChecked()
             if is_eet:
                 if not self._eet_input.text().strip():
-                    self._show_input_error("请选择作为解析来源的 EET XML 文件。", self._eet_input)
+                    self._show_input_error("请选择作为解析来源的 ESP-ESM Translator 文件。", self._eet_input)
                     return
             else:
                 if not self._esp_paths and not self._esp_input.text().strip():
@@ -390,7 +408,9 @@ class ParseConfigDialog(QDialog):
                 config.strings_dir,
             )):
                 self._show_input_error(
-                    "请选择至少一个迁移来源（EET、XT、已翻译插件、JSON、SST 或 Strings 目录）。", self._eet_input
+                    "请选择至少一个迁移来源（ESP-ESM Translator 文件、xTranslator XML、xTranslator SST、"
+                    "已翻译插件、JSON 或 Strings 目录）。",
+                    self._eet_input,
                 )
                 return
         self.accept()
@@ -428,6 +448,8 @@ class ParseConfigDialog(QDialog):
         if self._mode != "migrate":
             return False
         if kind == "eet":
+            if format_id not in (None, "xml.eet", "binary.eet"):
+                return False
             self._eet_input.setText(path)
         elif kind == "xt":
             self._xt_input.setText(path)

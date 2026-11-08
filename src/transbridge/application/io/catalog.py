@@ -50,12 +50,18 @@ def _capability(
 
 
 _EXPERIMENTAL = CapabilityLevel.EXPERIMENTAL
-_UNAVAILABLE = CapabilityLevel.UNAVAILABLE
 
 FORMAT_POLICY_CEILINGS: dict[FormatId, FormatCapability] = {
     FormatId.PLUGIN_SSE: _capability(localized=CapabilityLevel.SUPPORTED),
     FormatId.XML_EET: _capability(),
-    FormatId.BINARY_EET: _capability(write=_UNAVAILABLE, round_trip=_UNAVAILABLE, publish=_UNAVAILABLE),
+    FormatId.BINARY_EET: _capability(
+        read=_EXPERIMENTAL,
+        write=_EXPERIMENTAL,
+        round_trip=_EXPERIMENTAL,
+        gui=_EXPERIMENTAL,
+        agent=_EXPERIMENTAL,
+        publish=_EXPERIMENTAL,
+    ),
     FormatId.XML_XT: _capability(),
     FormatId.JSON_PARATRANZ: _capability(mcp=CapabilityLevel.SUPPORTED),
     FormatId.JSON_DSD: _capability(
@@ -69,19 +75,19 @@ FORMAT_POLICY_CEILINGS: dict[FormatId, FormatCapability] = {
     FormatId.JSON_TRANSBRIDGE: _capability(),
     FormatId.SST_SSU8: _capability(
         read=_EXPERIMENTAL,
-        write=_UNAVAILABLE,
-        round_trip=_UNAVAILABLE,
+        write=_EXPERIMENTAL,
+        round_trip=_EXPERIMENTAL,
         gui=_EXPERIMENTAL,
         agent=_EXPERIMENTAL,
-        publish=_UNAVAILABLE,
+        publish=_EXPERIMENTAL,
     ),
     FormatId.SST_SSU9: _capability(
         read=_EXPERIMENTAL,
-        write=_UNAVAILABLE,
-        round_trip=_UNAVAILABLE,
+        write=_EXPERIMENTAL,
+        round_trip=_EXPERIMENTAL,
         gui=_EXPERIMENTAL,
         agent=_EXPERIMENTAL,
-        publish=_UNAVAILABLE,
+        publish=_EXPERIMENTAL,
     ),
     FormatId.STRINGS: _capability(localized=CapabilityLevel.SUPPORTED),
     FormatId.DLSTRINGS: _capability(localized=CapabilityLevel.SUPPORTED),
@@ -204,8 +210,11 @@ class FormatCatalog:
 
 
 def default_format_catalog() -> FormatCatalog:
+    from .eet_adapter import EetAdapter
+    from .import_adapters import JsonImportAdapter
     from .legacy_adapters import EetXmlAdapter, SsePluginAdapter, XtXmlAdapter
     from .paratranz import ParatranzJsonAdapter
+    from .sst_adapter import SstAdapter
     from .strings_adapter import LocalizedStringsAdapter
 
     return FormatCatalog(
@@ -213,7 +222,12 @@ def default_format_catalog() -> FormatCatalog:
             ParatranzJsonAdapter(),
             SsePluginAdapter(),
             EetXmlAdapter(),
+            EetAdapter(),
             XtXmlAdapter(),
+            JsonImportAdapter(FormatId.JSON_DSD),
+            JsonImportAdapter(FormatId.JSON_TRANSBRIDGE),
+            SstAdapter(FormatId.SST_SSU8),
+            SstAdapter(FormatId.SST_SSU9),
             LocalizedStringsAdapter(FormatId.STRINGS),
             LocalizedStringsAdapter(FormatId.DLSTRINGS),
             LocalizedStringsAdapter(FormatId.ILSTRINGS),
@@ -286,8 +300,8 @@ def _probe_content(request: ProbeRequest) -> tuple[set[FormatId], list[ProbeEvid
 
 
 def _xml_root(data: bytes) -> str | None:
-    if not data.lstrip().startswith(b"<"):
-        return None
+    # ElementTree detects BOMs and XML encodings itself. Keep the pull parser:
+    # drag/drop intentionally passes only a bounded prefix of large files.
     parser = ET.XMLPullParser(events=("start",))
     try:
         parser.feed(data)
@@ -329,7 +343,7 @@ def json_format_evidence(data: bytes) -> dict[FormatId, str]:
         result[FormatId.JSON_DSD] = "dsd-entry-array"
 
     paratranz_shape = all({"key", "original"}.issubset(item) for item in payload)
-    internal_only = {"string_id", "full_form_id", "dsd_type", "dsd_index", "dsd_editor_id"}
+    internal_only = {"entry_key", "string_id", "full_form_id", "dsd_type", "dsd_index", "dsd_editor_id"}
     has_internal_only = any(internal_only.intersection(item) for item in payload)
     ids = [item.get("id") for item in payload if "id" in item]
     if paratranz_shape and not has_internal_only:

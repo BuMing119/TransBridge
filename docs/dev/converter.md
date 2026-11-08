@@ -62,6 +62,11 @@
 - 对话文本: `QuestName:000456CD|1~INFO:NAM1|000789EF`（含quest_formid）
 - EET条目: `EditorID:000123AB|1~GRUP:CHAMP`
 
+二进制 EET 的权威 key 不沿用以上 XML 业务 id：完整来源快照中的物理记录使用
+`eet-v1:{ordinal}`，并以来源命名空间、codec 版本及记录签名绑定。转换位于独立
+`converter/eet_entries.py`，保留重复记录；迁移到插件要求 FormID、记录/字段和原文唯一，双方已知 EditorID 时还须 casefold 相同，只有未知时才沿用前述条件。EditorID 从 metadata 保留至重开。
+写回阶段不由 ParaTranz stage 重建 EET 原生 STATUS。参见 [ADR-053](../adr/053-eet-binary-io-integration.md)。
+
 #### Context 格式
 
 ```
@@ -160,7 +165,7 @@ class TranslationEntryCollection:
 
 | 方法 | 说明 |
 |------|------|
-| `from_eet_xml(path)` | 从 EET XML 文件导入（类方法） |
+| `from_eet_xml(path)` | 从 ESP-ESM Translator XML 文件导入（类方法） |
 | `from_plugin(path)` | 从 ESP/ESM 文件导入（类方法） |
 | `from_json_file(path)` | 从 JSON 文件恢复（类方法） |
 | `from_entries(entries)` | 从已有条目构建（类方法） |
@@ -312,12 +317,12 @@ print(f"总条目: {len(collection)}")
 print(f"已翻译: {len(collection.filter(lambda e: e.stage == 1))}")
 ```
 
-### 从 EET XML 更新译文
+### 从 ESP-ESM Translator XML 更新译文
 
 ```python
 collection = TranslationEntryCollection.from_plugin("MyMod.esp")
 
-# 应用 EET XML 中的译文
+# 应用 ESP-ESM Translator XML 中的译文
 updated = collection.update_from_eet_xml("translations.xml")
 print(f"更新了 {updated} 条")
 ```

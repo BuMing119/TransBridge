@@ -6,6 +6,10 @@
 
 ## 当前实施
 
+- [eet-integration](eet-integration/plan.md)：EET v3 Classique/BDD 正式来源、工程重开、迁移、GUI/助手原格式写回；本地实现与相关验证完成，保持实验性，最终证据见计划及 [ADR-053](../docs/adr/053-eet-binary-io-integration.md)。
+
+- [sst-integration](sst-integration/plan.md)：完整 SSU8/SSU9 来源与写回、插件新建 SSU9、单个/批量 GUI 与助手流程；本地实现，保持实验性，验证与限制见计划。
+
 - [project-self-contained-storage](project-self-contained-storage/plan.md)：S01～S04 本地实现与相关 QA 完成；schema 5 来源捕获状态、部分保存反馈与导航、归档及换源备份依赖闭包。S01～S03 单次联合 999 通过、1 项环境跳过，见[原增量](../docs/changelogs/project-self-contained-storage/story-01-to-03/2026-11-03-001-self-contained-project-storage.md)；S04 最终聚焦 50 通过，广域 1158 通过/4 失败/1 跳过（一次权限失败复跑通过，其余既有断言/硬链接环境失败），全库 Ruff/2349 文件格式通过，见[恢复增量](../docs/changelogs/project-self-contained-storage/story-04/2026-11-03-001-automatic-source-content-repair.md)和 [ADR-051](../docs/adr/051-self-contained-project-storage.md)（2026-11-03）。
 
 - [application-preflight](application-preflight/plan.md)：S01～S10 本地实现、相关验证与清理完成；S10 写回输入清单、批量补充、明确部分范围和验证限制见[S10 增量](../docs/changelogs/application-preflight/story-10/2026-10-29-001-batch-source-inputs.md)。助手原请求恢复见[增量 003](../docs/changelogs/application-preflight/story-09/2026-10-29-003-assistant-source-inputs.md)，无损物化、桌面范围和两项既有合同失败见[增量 002](../docs/changelogs/application-preflight/story-05-to-08/2026-10-28-002-on-demand-source-inputs.md)。历史证据与 [ADR-050](../docs/adr/050-application-preflight-and-optional-source-reference.md) 提议标签保留（2026-10-29）。

@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 import hashlib
 from pathlib import Path
 
+from transbridge.application.io.contracts import FormatId
 from transbridge.application.io.operation_write import HydratedWriteDraft
 from transbridge.application.io.operation_write_batch import (
     HydratedWriteBatchWorkload,
@@ -15,6 +16,7 @@ from transbridge.application.io.operation_write_batch import (
 )
 from transbridge.application.io.plugin_localized_sources import _snapshot_localized_sources
 from transbridge.application.io.publish import ConflictPolicy as PublishConflictPolicy
+from transbridge.application.io.write_formats import SST_FORMATS
 
 from .mappers import OperationPlanDraft
 from .plan_view import EditableControl, EditableFieldState
@@ -28,10 +30,13 @@ class _HydratedWriteBatch:
     drafts: tuple[HydratedWriteDraft, ...]
     failures: tuple[_WriteBatchFailure, ...] = ()
     output_directory: str = ""
+    output_format: str = "auto"
 
     def __post_init__(self) -> None:
         if not self.drafts and not self.failures:
             raise ValueError("批量写回至少需要一个来源文件")
+        if self.output_format not in {"auto", "sst.ssu9"}:
+            raise ValueError("批量输出格式必须为 auto 或 sst.ssu9")
 
 
 def batch_write_target(source: Path, output_directory: str) -> str:
@@ -40,26 +45,49 @@ def batch_write_target(source: Path, output_directory: str) -> str:
 
 
 def retarget_write_batch(
-    request: _HydratedWriteBatch, output_directory: str, *, overwrite: bool, pack_bsa: bool | None = None
+    request: _HydratedWriteBatch,
+    output_directory: str,
+    *,
+    overwrite: bool,
+    pack_bsa: bool | None = None,
+    output_format: str | None = None,
 ) -> _HydratedWriteBatch:
-    changed = output_directory != request.output_directory
+    mode = request.output_format if output_format is None else output_format
+    if mode not in {"auto", "sst.ssu9"}:
+        raise ValueError("批量输出格式必须为 auto 或 sst.ssu9")
+    if mode == "sst.ssu9" and not _can_export_sst(request):
+        raise ValueError("批量 SST 输出仅支持已确认的插件和 SST 来源；其他格式请保留原格式")
+    changed = output_directory != request.output_directory or mode != request.output_format
+
+    def retarget(item):
+        source_format = item.source_snapshot.format_id
+        target_format = (
+            FormatId.SST_SSU9 if mode == "sst.ssu9" and source_format is FormatId.PLUGIN_SSE else source_format
+        )
+        source = Path(item.source_snapshot.source.display_name or item.source_snapshot.source.uri)
+        normalize_eet_suffix = target_format is FormatId.BINARY_EET and source.suffix.lower() != ".eet"
+        if target_format is not source_format:
+            source = source.with_suffix(".sst")
+        elif normalize_eet_suffix:
+            source = source.with_suffix(".eet")
+        options = dict(item.options)
+        if target_format in SST_FORMATS:
+            options["pack_bsa"] = False
+        elif pack_bsa is not None:
+            options["pack_bsa"] = pack_bsa
+        return replace(
+            item,
+            format_id=target_format,
+            target_path=batch_write_target(source, output_directory)
+            if changed or target_format is not item.format_id or normalize_eet_suffix
+            else item.target_path,
+            conflict_policy=PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL,
+            options=tuple(options.items()),
+        )
+
     return replace(
         request,
-        drafts=tuple(
-            replace(
-                item,
-                target_path=batch_write_target(
-                    Path(item.source_snapshot.source.display_name or item.source_snapshot.source.uri), output_directory
-                )
-                if changed
-                else item.target_path,
-                conflict_policy=PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL,
-                options=item.options
-                if pack_bsa is None
-                else tuple({**dict(item.options), "pack_bsa": pack_bsa}.items()),
-            )
-            for item in request.drafts
-        ),
+        drafts=tuple(retarget(item) for item in request.drafts),
         failures=tuple(
             replace(item, target_path=batch_write_target(Path(item.source_path), output_directory))
             if changed and item.source_path
@@ -67,6 +95,15 @@ def retarget_write_batch(
             for item in request.failures
         ),
         output_directory=output_directory,
+        output_format=mode,
+    )
+
+
+def _can_export_sst(request: _HydratedWriteBatch) -> bool:
+    return (
+        bool(request.drafts)
+        and not request.failures
+        and all(item.source_snapshot.format_id in {FormatId.PLUGIN_SSE, *SST_FORMATS} for item in request.drafts)
     )
 
 
@@ -77,9 +114,15 @@ def _write_batch_plan(request: _HydratedWriteBatch) -> OperationPlanDraft:
     overwrite = all(item.conflict_policy is PublishConflictPolicy.EXPLICIT_OVERWRITE for item in request.drafts)
     resource_mode = (
         "；本地化资源打包为 BSA"
-        if any(dict(item.options).get("pack_bsa", False) for item in request.drafts)
+        if any(
+            item.format_id is FormatId.PLUGIN_SSE and dict(item.options).get("pack_bsa", False)
+            for item in request.drafts
+        )
         else "；本地化资源输出散装 STRINGS"
-        if any(_snapshot_localized_sources(item.source_snapshot) for item in request.drafts)
+        if any(
+            item.format_id is FormatId.PLUGIN_SSE and _snapshot_localized_sources(item.source_snapshot)
+            for item in request.drafts
+        )
         else ""
     )
     projection = next((item.entry_projection for item in request.drafts if item.entry_projection is not None), None)
@@ -98,7 +141,13 @@ def _write_batch_plan(request: _HydratedWriteBatch) -> OperationPlanDraft:
         target_revision=f"{len(existing)} existing / {len(targets) - len(existing)} missing",
         input_fingerprint=fingerprint,
         scope_summary=f"{len(targets)} 个来源文件，{len(entries)} 个条目",
-        mode_summary=("另存到指定目录，保留各来源原名" if request.output_directory else "选择输出目录，保留各来源原名")
+        mode_summary=(
+            "插件生成 xTranslator SST SSU9（实验性）；已有 SST 保留原格式与原名"
+            if request.output_format == "sst.ssu9"
+            else "另存到指定目录，保留各来源原名"
+            if request.output_directory
+            else "选择输出目录，保留各来源原名"
+        )
         + resource_mode
         + scheme_mode,
         conflict_summary="全部覆盖已确认" if overwrite else "保留已有输出，继续写出其他文件",
@@ -106,6 +155,19 @@ def _write_batch_plan(request: _HydratedWriteBatch) -> OperationPlanDraft:
         is_batch=True,
         estimated_impact=(("objects", len(entries)), ("files", len(targets))),
         editable_fields=(
+            *(
+                (
+                    EditableFieldState(
+                        "output_format",
+                        "输出格式",
+                        request.output_format,
+                        control=EditableControl.CHOICE,
+                        options=(("auto", "各来源原格式"), ("sst.ssu9", "xTranslator SST（插件生成 SSU9，实验性）")),
+                    ),
+                )
+                if _can_export_sst(request)
+                else ()
+            ),
             EditableFieldState("output_directory", "输出目录", request.output_directory, required=True),
             *(
                 (
@@ -118,7 +180,10 @@ def _write_batch_plan(request: _HydratedWriteBatch) -> OperationPlanDraft:
                         control=EditableControl.BOOLEAN,
                     ),
                 )
-                if any(_snapshot_localized_sources(item.source_snapshot) for item in request.drafts)
+                if any(
+                    item.format_id is FormatId.PLUGIN_SSE and _snapshot_localized_sources(item.source_snapshot)
+                    for item in request.drafts
+                )
                 else ()
             ),
             EditableFieldState(

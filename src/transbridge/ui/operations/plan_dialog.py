@@ -5,6 +5,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -43,7 +44,7 @@ class OperationPlanDialog(QDialog):
         self.setModal(False)
         self._plan = plan
         self._preflight: OperationPreflightResult | None = None
-        self._field_edits: dict[str, QLineEdit | QCheckBox] = {}
+        self._field_edits: dict[str, QLineEdit | QCheckBox | QComboBox] = {}
         self.setWindowTitle(plan.title)
         configure_accessible_widget(self, name=plan.title, description="检查操作范围、预检结果并确认执行")
         self.setMinimumWidth(520)
@@ -128,6 +129,11 @@ class OperationPlanDialog(QDialog):
                     else field.label
                 )
                 editor.setChecked(field.value.casefold() == "true")
+            elif field.control is EditableControl.CHOICE:
+                editor = QComboBox()
+                for value, label in field.options:
+                    editor.addItem(label, value)
+                editor.setCurrentIndex(editor.findData(field.value))
             else:
                 editor = QLineEdit(field.value)
             editor.setEnabled(field.enabled)
@@ -169,7 +175,14 @@ class OperationPlanDialog(QDialog):
 
     def edited_values(self) -> tuple[tuple[str, str], ...]:
         return tuple(
-            (field_id, ("true" if editor.isChecked() else "false") if isinstance(editor, QCheckBox) else editor.text())
+            (
+                field_id,
+                ("true" if editor.isChecked() else "false")
+                if isinstance(editor, QCheckBox)
+                else str(editor.currentData() or "")
+                if isinstance(editor, QComboBox)
+                else editor.text(),
+            )
             for field_id, editor in self._field_edits.items()
         )
 

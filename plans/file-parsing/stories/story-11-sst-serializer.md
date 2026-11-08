@@ -1,321 +1,68 @@
-# Story 11: SST 二进制序列化器
+# Story 11：SST 完整写回与新建
 
-**所属方案**: `plans/file-parsing/plan.md`
-**技术模块**: `src/transbridge/parser/xt/` (新建 + 修改)
-**状态**: 已确认
-**创建日期**: 2026-05-09
+- 所属方案：[文件解析](../plan.md)。
+- 当前集成：[SST 正式读写与插件导出](../../sst-integration/plan.md)，最终验证证据由该计划汇总。
+- 架构：[ADR-052](../../../docs/adr/052-sst-io-integration.md)。
+- 状态：2026-11-08 格式层、产品本地发布与 GUI/助手入口集成完成，能力实验性。
 
-## 前置依赖
+## 目标与约束
 
-### 上游 Story
-- **Story-09**（同 plan）：已完成 → 提供 `SST_Parser` + `SST_Entry` + `SST_Subrecord`。本 Story 需在 `SST_Entry` 追加 `_raw` 字段，在 `SST_Parser` 追加 `_raw_header` / `_magic` 属性。
+通过唯一生产 codec 完整写出 SSU8/SSU9，支持原格式译文更新和明确的新建。现有 parser 产生完整 `SstDocument`；serializer 不再模板拼接错误的 26 字节头，不使用假 extra/subrecords，也不猜测缺失的 Header 信息。
 
-### 跨 Plan 依赖
-- `file-writing/plan.md` → `PluginWriter.write()`（写回流程）。SST 序列化器是独立模块，不直接依赖写回流程，但写回流程后续可集成 `SST_Serializer` 作为新的输出格式。
+内部 `SST_Serializer` 是格式 API；用户可见原格式发布仍经 application 快照身份校验、staging、回读验证、覆盖确认和备份。没有全面上游验收的能力保持实验性，不能仅因内部往返通过而宣称发布级兼容。
 
-### 引用的架构决策
-- ADR-001: TranslationEntry 统一数据模型
-- ADR-002: Collection 数据中枢
+## 公开接口
 
----
-
-## 验收标准
-
-（从 plan 原样复制）
-
-- [ ] `SST_Serializer.from_parser(sst: SST_Parser)` 从解析器实例创建序列化器，保留原始二进制数据供模板复制
-- [ ] `to_bytes()` 重建完整 SST 二进制，与源文件字节级一致（未修改时）
-- [ ] `update_and_save(form_id, new_text, path)` 修改指定记录的 translated_text 后写回
-- [ ] `update_entries(updates: list)` 批量修改后写回
-- [ ] 修改 `text`（English）后，str_len 和记录偏移同步更新
-- [ ] 修改 `translated_text`（Chinese）后，chn_len 同步更新，后续数据正确偏移
-- [ ] `overwrite=False` 时输出到新路径，`overwrite=True` 时覆盖原文件
-- [ ] 输出文件能被 `SST_Parser.from_file()` 重新解析，条目数一致、文本正确
-- [ ] 非 SSU9 文件调用时明确报错（SSU8 不支持写回）
-
----
-
-## 数据流
-
-```
-SST_Parser.from_file("input.sst")  ← 解析时保留 _raw_header + 每条 SST_Entry._raw
-    │
-    ▼
-用户修改: entry.translated_text = "新译文"
-    │  或: modified_entries = {form_id: {text, translated_text}}
-    ▼
+```python
+SST_Serializer.from_document(document)
 SST_Serializer.from_parser(parser)
-    │  持有: _magic, _raw_header, [(entry, tail_bytes), ...]
-    │
-    ├─→ update_and_save(form_id, "新译文", "output.sst")
-    │        │
-    │        ▼ 内部调用
-    │   _rebuild_record(entry, raw_head, chn_text)
-    │        │
-    │        ▼ 返回 bytes
-    │   to_bytes() → Header + Σ(record_bytes)
-    │        │
-    │        ▼
-    │   save(path) → "output.sst"
-    │
-    └─→ update_entries([{form_id: 123, translated_text: "A"}, ...], "out.sst")
-             │
-             ▼ 批量修改缓存 → to_bytes() → save()
-
-验证: SST_Parser.from_file("output.sst") → 条目数一致, 文本匹配
+SST_Serializer.create_new(
+    plugin_name, entries, *, magic=b"SSU9", masters=None, labels=(), flag=0
+)
+serializer.to_bytes()
+serializer.update_record(ordinal, *, text=None, translated_text=None)
+serializer.save(path, overwrite=False)
+serializer.update_and_save(
+    form_id, translated_text, path, overwrite=False, *, ordinal=None, rec=None, index=None
+)
+serializer.update_entries(updates, path, overwrite=False)
 ```
 
-SSU9 记录二进制结构（26B 固定头 + 可变尾）：
-```
-[form_id 4B][edid 8B][unk12 4B][f2 4B][str_idx 2B][str_len 2B][pad 2B]
-[eng_text N*2B UTF-16LE]
-[chn_len 4B LE][chn_text M*2B UTF-16LE]
-[extra/subrecords ...]
-```
+`document` 是完整当前模型。`from_parser()` 保留所有原始 metadata，允许 facade 文本编辑；不允许悄悄新增、删除或重排模板 entries，新文件显式用 `create_new()`。新建可直接提供 `SstRecord` 以声明所有字段；兼容 `SST_Entry` 保留其 record 元数据。SSU8 不允许非空 master 表。SSU9 显式 masters 按给定顺序保存，否则以非空 plugin_name 为唯一 master。
 
-## 关键接口
+## 更新身份与原子性
 
-### SST_Entry 扩展（修改现有）
+- `ordinal` 为零基物理记录位置，可精确区分相同 FormID、字段、索引甚至同文本的记录。
+- 不使用 ordinal 时，`rec + form_id + index` 必须完整且唯一；此处兼容 index 是 1-based。
+- 旧仅 `form_id` 调用只有唯一候选时有效。多义抛出 ValueError，不更新第一条或全部同 FormID 记录。
+- 批量请求的重复定位、未知字段、非法值和多义匹配在保存前拒绝。`translated_text=""` 明确清空；`update_record(..., translated_text=None)` 表示不改该字段。
+- 序列化和保存成功后才提交批量内存状态；失败保留原 document。默认不覆盖目标，唯一同目录临时文件避免触碰用户已有 `.tmp`。
+- 无修改时全文件字节一致；修改指定译文时保留其他记录、原文、masters、labels、flag、StringID、索引、Hash、collab 和 params。底层不自动清除 validated 等状态位。
 
-```python
-@dataclass(frozen=True)
-class SST_Entry:
-    # ── 现有字段（不变）──
-    rec: str
-    form_id: int
-    text: str
-    index: int = 0
-    trail_hash: bytes = field(default_factory=bytes)
-    extra: int = 0
-    global_seq: int = 0
-    f2: int = 0
-    translated_text: str = ""
-    subrecords: tuple[SST_Subrecord, ...] = ()
+## 产品原格式发布
 
-    # ── 新增字段 ──
-    _raw: bytes = field(default_factory=bytes, repr=False)
-    # SSU9: 原始 26B head + eng_text (不含 tail)
-    # 序列化时先写 _raw[:26] 固定头，再写 eng_text，再写 chn_len + chn_text + tail
-```
+`SstAdapter` 从保存快照构造完整 document。输入条目使用命名空间内 `sst-v2:{ordinal}` key，必须有 codec 版本 2、record index/signature、原文和来源绑定。更新先验证身份与快照一致，再用现有阶段策略决定发布文本，最后更新被选 ordinal。
 
-### SST_Parser 扩展（修改现有）
+完整候选文件进入 staging，回读检查全部 header 与记录，再交给统一发布。旧来源缺少 v2 身份时返回明确诊断及重新导入/迁移路径，不使用旧错误 key 兜底。选择原格式输出时 SSU8 保持 SSU8、SSU9 保持 SSU9。
 
-```python
-class SST_Parser:
-    _raw_header: bytes = b""   # 新增: 原始 header (magic 4B + ... + name + null + metadata)
-    _magic: bytes = b""        # 新增: b"SSU8" 或 b"SSU9"
+## 从插件新建 SSU9
 
-    # from_file() / _parse_ssu9() 中填充 _raw_header 和 _magic
-    # SST_Entry 构造时传入 _raw 参数
-```
+`application/io/sst_export.py` 只接受已保存的真实 Skyrim 插件快照与可验证词条，不从显示文本或旧 SST key 伪造插件身份。
 
-### SST_Serializer（新建）
+- 从物理字段顺序计算同名字段 index/index_max；根据经过验证的 record/field 映射选择列表 0/1/2。
+- 保留真实 FormID、本地化 StringID 和原文；读取 TES4 master 顺序并加入插件名。
+- EditorID Hash 使用上游算法；无 EDID 时使用经 load-order 规范化的 FormID 文本 fallback。
+- 阶段策略决定译文与发布状态；默认不把未知记录解释成通用列表字段。
+- VMAD 属性、非 ASCII master/插件文件名、未知字段映射及不完整或冲突来源暂拒绝，并给出稳定诊断。
+- 插件→SSU9 是单独输出格式，不能覆盖输入插件或在导入迁移时隐式触发。
 
-```python
-class SST_Serializer:
-    """基于 SST_Parser 解析结果，模板重建 SST 二进制文件。
+GUI 与助手共用发布用例，并明确显示来源与目标格式。正式 MCP 当前仍为 foundation，未开放文件解析/写回工具，其 read/write 能力为 unavailable。新建 SSU9 仍为实验性，需持续补充不同插件、重复字段与上游重新加载的验收证据。
 
-    不增删记录，不修改 header，保留 extra/subrecords 原样。
-    仅支持 SSU9 格式。
-    """
+## 验证
 
-    def __init__(self, magic: bytes, header: bytes,
-                 records: list[tuple["SST_Entry", bytes]]) -> None: ...
-    # records: [(entry, tail_bytes), ...]
-    # tail_bytes = chn_len(4B) + chn_text + extra/subrecords（原始，未解析）
-
-    @classmethod
-    def from_parser(cls, sst: "SST_Parser") -> "SST_Serializer": ...
-    # 校验 magic != b"SSU8"（不支持）
-    # 遍历 sst.entries，提取 _raw 字段 + 重构 tail_bytes
-
-    def to_bytes(self) -> bytes: ...
-    # Header + Σ _rebuild_record(entry, tail_bytes, entry.translated_text, entry.text)
-    # 未修改时结果与源文件完全一致
-
-    def save(self, path: str | Path) -> Path: ...
-    # 写 to_bytes() 到文件（原子写入：.tmp → rename）
-
-    def update_and_save(self, form_id: int, translated_text: str,
-                        path: str | Path, overwrite: bool = False) -> bool: ...
-    # 找到 form_id 匹配的第一条记录 → 修改 translated_text → to_bytes() → save()
-    # 返回 True（找到并修改）或 False（未找到）
-    # overwrite=False: path 若已存在则报 FileExistsError
-
-    def update_entries(self, updates: list[dict],
-                       path: str | Path, overwrite: bool = False) -> dict: ...
-    # updates: [{form_id: int, translated_text: str, text: str}, ...]
-    # 返回 {matched: int, updated: int, not_found: list[int]}
-    # text 可选，用于修改 English 原文
-```
-
-### 内部方法
-
-```python
-def _rebuild_record(self, entry: SST_Entry, tail: bytes,
-                    eng_text: str, chn_text: str) -> bytes: ...
-# 1. 从 entry._raw[:26] 复制固定头
-# 2. 用 struct.pack 覆盖 str_len（从 eng_text 重新计算字符数）
-# 3. 写 eng_text.encode("utf-16-le")
-# 4. 计算 chn_bytes = chn_text.encode("utf-16-le")
-# 5. 写 struct.pack("<I", len(chn_bytes)) + chn_bytes
-# 6. 追加原始 extra/subrecords（从 tail 中提取：跳过 4B chn_len + chn_text）
-#    定位方式: orig_chn_len = struct.unpack_from("<I", tail, 0)[0]
-#             extra_start = 4 + orig_chn_len
-```
-
----
-
-## 实现步骤
-
-### 步骤 1: 扩展 SST_Parser 和 SST_Entry 保留原始二进制
-
-**涉及文件**: `src/transbridge/parser/xt/sst_parser.py`（修改）
-
-**实现要点**:
-- `SST_Entry` 新增 `_raw: bytes` 字段（默认 `b""`，repr=False）
-- `SST_Parser.__init__` 新增 `raw_header: bytes = b""` 和 `magic: bytes = b""` 参数（默认值保证向后兼容）
-- `SST_Parser._parse_ssu9()` 中：
-  - 保存 `_raw_header = data[:start]`（magic + plugin name + null + metadata）
-  - 保存 `_magic = b"SSU9"`
-  - 每条记录构造时传入 `_raw = data[off : off + 26 + eng_len]`（26B头 + eng_text）
-- `SST_Parser._parse_ssu8()` 中保存 `_magic = b"SSU8"`（_raw 不需要，SSU8 不支持写回）
-- 所有现有测试和调用方不受影响（新字段有默认值）
-
-**边界条件**:
-- `_raw` 可能为空（旧版 SST_Entry 直接构造）→ 序列化时检查并报错
-- `raw_header` 可能为空（旧版 Parser）→ from_parser 时检查
-
-**测试策略**:
-- 解析 SSU9 文件后，验证 `_raw_header[:4] == b"SSU9"` 和 `_magic == b"SSU9"`
-- 验证每条 entry._raw 长度 >= 26
-
----
-
-### 步骤 2: 新建 SST_Serializer 类骨架与 from_parser
-
-**涉及文件**: `src/transbridge/parser/xt/sst_serializer.py`（新建）
-
-**实现要点**:
-- 定义 `SST_Serializer` 类，构造器保存 `_magic`、`_header`、`_records: list[tuple[SST_Entry, bytes]]`
-- `from_parser(sst)`:
-  1. 校验 `sst._magic != b"SSU8"`，是则 raise ValueError
-  2. 校验 `sst._raw_header` 非空
-  3. 遍历 `sst.entries`：
-     - 提取 `entry._raw`（26B头 + eng_text）
-     - 提取 tail_bytes：从 entry._raw 之后到源文件末尾（实际上需要在 parser 中也保存 tail）
-  
-  **设计调整**：当前 SST_Entry._raw 只保留了 26B头+eng_text，但 tail（chn_len+chn_text+extra）没有存储。需要在 `_parse_ssu9()` 中也保留 tail 数据。
-
-  修改方案：在 `_parse_ssu9()` 中，每条 SST_Entry 构造时多传一个 `_tail: bytes` 字段（tail = data[after_eng : next_off]）。
-
-- `from_parser` 中的 `records` 结构改为 `[(entry, tail_bytes), ...]`
-
-**边界条件**:
-- entry._raw 为空 → raise ValueError("SST_Entry 缺少原始二进制数据，请用 SST_Parser.from_file() 解析")
-- entry._tail 为空 → 仅无 Chinese 文本的条目，正常处理
-
-**测试策略**:
-- `from_parser(parser)` 成功构造
-- from_parser 后 records 长度 == len(parser.entries)
-
----
-
-### 步骤 3: 实现 _rebuild_record 与 to_bytes
-
-**涉及文件**: `src/transbridge/parser/xt/sst_serializer.py`
-
-**实现要点**:
-- `_rebuild_record(entry, tail, eng_text, chn_text)`:
-  ```python
-  # 1. 复制固定头 26B，覆盖 str_len
-  head = bytearray(entry._raw[:26])
-  eng_bytes = eng_text.encode("utf-16-le")
-  struct.pack_into("<H", head, 22, len(eng_text))  # str_len = 字符数
-  
-  # 2. 写 eng_text
-  result = bytes(head) + eng_bytes
-  
-  # 3. 写 chn_len + chn_text
-  chn_bytes = chn_text.encode("utf-16-le")
-  result += struct.pack("<I", len(chn_bytes))
-  result += chn_bytes
-  
-  # 4. 追加原始 extra/subrecords（跳过原 chn_len + chn_text）
-  if len(tail) >= 4:
-      orig_chn_len = struct.unpack_from("<I", tail, 0)[0]
-      extra_start = 4 + orig_chn_len
-      if extra_start <= len(tail):
-          result += tail[extra_start:]
-  
-  return bytes(result)
-  ```
-- `to_bytes()`: `_header + b"".join(_rebuild_record(e, tail, e.text, e.translated_text) for e, tail in self._records)`
-
-**边界条件**:
-- eng_text 包含 emoji/特殊字符 → UTF-16LE 正确编码（surrogate pairs）
-- chn_text 为空 → chn_len=0，不写 chn_bytes
-- tail 为空或过短 → 跳过 extra 追加
-- 未修改条目的 to_bytes() 结果应与源文件完全一致
-
-**测试策略**:
-- 解析 → 不修改 → to_bytes() → 与源文件 bytes 逐字节比对
-- 修改一条 translated_text → to_bytes() → 重新解析验证文本
-
----
-
-### 步骤 4: 实现 update_and_save 与 update_entries
-
-**涉及文件**: `src/transbridge/parser/xt/sst_serializer.py`
-
-**实现要点**:
-- `update_and_save(form_id, translated_text, path, overwrite=False)`:
-  1. 遍历 records，找 `entry.form_id == form_id` 的第一条
-  2. 找到 → 修改缓存（替换 entry 的 translated_text）→ `to_bytes()` → `save(path, overwrite)`
-  3. 未找到 → return False
-- `save(path, overwrite=False)`:
-  1. Path(path) 已存在且 overwrite=False → raise FileExistsError
-  2. 原子写入：写 .tmp → os.replace
-- `update_entries(updates, path, overwrite=False)`:
-  1. 构建 `{form_id: {translated_text, text}}` 查找表
-  2. 遍历 records，匹配 form_id 则应用修改
-  3. `to_bytes()` → `save()`
-  4. 返回统计
-
-**边界条件**:
-- 同一 form_id 多条记录 → 全部更新（by form_id 匹配）
-- translated_text 和 text 均可选 → 不传则不修改该字段
-- path 目录不存在 → save() 中自动创建
-
-**测试策略**:
-- update_and_save 不存在的 form_id → 返回 False
-- update_entries 批量修改 → 重新解析验证每条文本
-- overwrite=False 时重复写入 → FileExistsError
-
----
-
-### 步骤 5: 更新包导出
-
-**涉及文件**: `src/transbridge/parser/xt/__init__.py`（修改）
-
-**实现要点**:
-- 添加 `from .sst_serializer import SST_Serializer`
-- `__all__` 包含 `SST_Serializer`
-
----
-
-## 文件变更清单
-
-| 文件 | 操作 | 说明 |
-|------|------|------|
-| `parser/xt/sst_parser.py` | 修改 | SST_Entry 加 `_raw`、`_tail` 字段；SST_Parser 加 `_raw_header`、`_magic`；构造时填充 |
-| `parser/xt/sst_serializer.py` | 新建 | SST_Serializer 完整实现（~180行） |
-| `parser/xt/__init__.py` | 修改 | 导出 SST_Serializer |
-
-## 风险与注意事项
-
-- **风险 1**: SSU9 格式未文档化，extra 段结构不完整理解 → **缓解**: extra 原样拷贝不解析，保证写回后字节一致
-- **风险 2**: Unicode 代理对（emoji）导致 str_len 计算错误 → **注意**: UTF-16LE 编码中代理对占 2 个码元（4 字节），`len(text)` 为 Python 字符数（proxy 对算 1），与 SSU9 的 str_len 语义一致
-- **注意 1**: SST_Entry 是 frozen dataclass，`translated_text` 不可原地修改。需要在 `update_and_save` 中用 `dataclasses.replace(entry, translated_text=new_text)` 创建新实例
-- **注意 2**: 批量更新时注意不要重复编码/写回，所有修改一次性应用到缓存，最后统一 `to_bytes()` + `save()`
-- **注意 3**: 原始 binary 的保留对向后兼容重要——新增 `_raw`、`_tail`、`_raw_header` 字段都设默认值，不影响旧代码直接构造 SST_Entry / SST_Parser
+- `test_sst_lab_codec.py` 用独立 wire 夹具验证完整布局、两个格式及损坏拒绝。
+- `test_sst_parser_serializer.py` 覆盖 facade 保真、从零新建、空译文、唯一 composite/ordinal 更新、FID 多义拒绝、失败原子性与默认不覆盖。
+- 真实本地 19 个输入、9,690 条记录零修改字节一致；所有记录须完整回读，不能只检查已选文本。
+- `test_sst_lab_cli.py` 验证诊断脚本调用相同生产 codec。
+- application 继续验证源绑定、取消、旧身份拒绝、失败不污染、发布回读和插件新建；入口与持久化回归由正式集成计划记录。
+- 历史 changelog/旧 QA 报告作为当时过程保留，不再承担当前格式规范或兼容性结论。

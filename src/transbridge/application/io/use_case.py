@@ -45,6 +45,20 @@ class TranslationIoUseCase:
             )
         return adapter.parse(request)
 
+    def parse_bytes(self, request: ParseRequest, content: bytes) -> ParseResult:
+        """Parse already-captured bytes without reopening a mutable source path."""
+        adapter = self._catalog.adapter(request.format_hint) if request.format_hint is not None else None
+        parser = getattr(adapter, "parse_bytes", None)
+        if parser is None:
+            return ParseResult(
+                OperationOutcome.FAILED,
+                request.format_hint or FormatId.JSON_TRANSBRIDGE,
+                request.source,
+                diagnostics=(Diagnostic("FORMAT_BYTES_PARSE_UNAVAILABLE", "所选格式不支持直接解析已捕获的内容。"),),
+                stats=ParseStats(failed=1),
+            )
+        return parser(request, content)
+
     def write(self, request: WriteRequest) -> OperationResult[tuple[str, ...]]:
         adapter = self._catalog.adapter(request.format_id)
         if adapter is None:

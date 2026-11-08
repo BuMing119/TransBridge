@@ -24,7 +24,6 @@ from .contracts import CapabilityLevel, FormatId, SourceDescriptor, SourceSnapsh
 from .mutation import EntrySnapshot
 from .plugin_bsa_output import conflicting_loose_outputs
 from .plugin_localized_sources import localized_physical_inputs
-from .plugin_write import plugin_artifact_paths
 from .publish import (
     BackupPolicy,
     ConflictPolicy,
@@ -39,6 +38,7 @@ from .publish import (
 )
 from .publish.target_directory import output_parent_available
 from .stage_policy import DEFAULT_STAGE_POLICY, StageOperation, StagePolicyPort
+from .write_formats import SST_FORMATS, source_output_compatible, write_artifact_paths
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +57,7 @@ class HydratedWriteDraft:
     entry_projection: FrozenWriteEntryProjection | None = None
 
     def __post_init__(self) -> None:
-        if self.source_snapshot.format_id is not self.format_id:
+        if not source_output_compatible(self.source_snapshot.format_id, self.format_id):
             raise ValueError("hydrated write format must match its source snapshot")
         if not self.entries:
             raise ValueError("hydrated write requires immutable entry input")
@@ -184,8 +184,26 @@ class HydratedWritePreflightService:
                 "格式适配器必须同时支持写入与回读验证。",
             )
         )
-        paths = plugin_artifact_paths(draft.source_snapshot, target, draft.options)
-        loose_conflicts = conflicting_loose_outputs(draft.source_snapshot, target, draft.options)
+        paths = write_artifact_paths(draft.source_snapshot, target, draft.options, format_id=draft.format_id)
+        loose_conflicts = (
+            conflicting_loose_outputs(draft.source_snapshot, target, draft.options)
+            if draft.format_id is FormatId.PLUGIN_SSE
+            else ()
+        )
+        if draft.format_id in {*SST_FORMATS, FormatId.BINARY_EET} and adapter is not None:
+            validation = adapter.validate_write(
+                WriteRequest(
+                    target=SourceDescriptor(target),
+                    format_id=draft.format_id,
+                    entries=entries,
+                    variant_revision=draft.variant_revision,
+                    context=draft.context,
+                    source_snapshot=draft.source_snapshot,
+                    options=tuple({**dict(draft.options), "source_authority": "hydration-v2"}.items()),
+                    stage_policy=self._stage_policy,
+                )
+            )
+            checks.extend(WritePreflightCheck(item.code, False, item.message) for item in validation.diagnostics)
         if loose_conflicts:
             checks.append(
                 WritePreflightCheck(
@@ -257,7 +275,7 @@ class HydratedWritePreflightService:
             )
         )
         snapshot_content = draft.source_snapshot.content
-        snapshot_valid = draft.source_snapshot.format_id is draft.format_id and (
+        snapshot_valid = source_output_compatible(draft.source_snapshot.format_id, draft.format_id) and (
             snapshot_content is None or hashlib.sha256(snapshot_content).hexdigest() == draft.source_snapshot.sha256
         )
         if draft.format_id is FormatId.PLUGIN_SSE:
@@ -319,7 +337,9 @@ class HydratedWriteWorkload:
             return _failed("FORMAT_ADAPTER_UNAVAILABLE", "写回格式适配器不可用。", run_context.ref.run_id)
         if self._preflight.artifact_fingerprints and tuple(
             self._filesystem.canonicalize(path)
-            for path in plugin_artifact_paths(draft.source_snapshot, draft.target_path, draft.options)
+            for path in write_artifact_paths(
+                draft.source_snapshot, draft.target_path, draft.options, format_id=draft.format_id
+            )
         ) != tuple(path for path, _fingerprint in self._preflight.artifact_fingerprints):
             return _failed("TARGET_PATH_CHANGED", "输出目录在预检后发生变化。", run_context.ref.run_id)
         request_metadata = dict(draft.context.metadata)

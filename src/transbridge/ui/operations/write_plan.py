@@ -8,8 +8,8 @@ from transbridge.application.io.contracts import FormatId
 from transbridge.application.io.operation_write import HydratedWriteDraft
 from transbridge.application.io.plugin_localized_sources import _snapshot_localized_sources
 from transbridge.application.io.plugin_transfer import PluginTransferDraft
-from transbridge.application.io.plugin_write import plugin_artifact_paths
 from transbridge.application.io.publish import BackupPolicy, ConflictPolicy as PublishConflictPolicy
+from transbridge.application.io.write_formats import SST_FORMATS, write_artifact_paths
 
 from .mappers import OperationPlanDraft
 from .plan_view import EditableControl, EditableFieldState
@@ -23,7 +23,9 @@ def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPla
         if not request.target_path.strip()
         else (request.target_path,)
         if transfer
-        else plugin_artifact_paths(request.source_snapshot, request.target_path, request.options)
+        else write_artifact_paths(
+            request.source_snapshot, request.target_path, request.options, format_id=request.format_id
+        )
     )
     target_exists = any(Path(path).exists() for path in artifact_paths)
     stages = tuple(item.stage for item in request.entries)
@@ -34,9 +36,9 @@ def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPla
     )
     resource_mode = (
         "；本地化资源打包为 BSA"
-        if dict(request.options).get("pack_bsa", False)
+        if request.format_id is FormatId.PLUGIN_SSE and dict(request.options).get("pack_bsa", False)
         else "；本地化资源输出散装 STRINGS"
-        if _snapshot_localized_sources(request.source_snapshot)
+        if request.format_id is FormatId.PLUGIN_SSE and _snapshot_localized_sources(request.source_snapshot)
         else ""
     )
     projection = request.entry_projection
@@ -48,7 +50,15 @@ def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPla
         target_revision="existing" if target_exists else "missing",
         input_fingerprint=request.source_snapshot.sha256 + ("" if projection is None else f":{projection.identity}"),
         scope_summary=f"{len(request.entries)} 个项目条目",
-        mode_summary=("将当前译文匹配到所选插件，预检后写出" if transfer else "导出当前文件的译文，验证后写出")
+        mode_summary=(
+            "将当前译文匹配到所选插件，预检后写出"
+            if transfer
+            else "写出 xTranslator SST（实验性），完整回读验证后写出"
+            if request.format_id in SST_FORMATS
+            else "按原格式写出 ESP-ESM Translator EET（实验性），完整回读验证后写出"
+            if request.format_id is FormatId.BINARY_EET
+            else "导出当前文件的译文，验证后写出"
+        )
         + resource_mode
         + scheme_mode,
         conflict_summary="已确认覆盖现有文件"
@@ -61,6 +71,19 @@ def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPla
             else (("objects", len(request.entries)), ("files", len(artifact_paths)))
         ),
         editable_fields=(
+            *(
+                (
+                    EditableFieldState(
+                        "output_format",
+                        "输出格式",
+                        request.format_id.value,
+                        control=EditableControl.CHOICE,
+                        options=(("plugin.sse", "原插件格式"), ("sst.ssu9", "xTranslator SST SSU9（实验性）")),
+                    ),
+                )
+                if request.source_snapshot.format_id is FormatId.PLUGIN_SSE and not transfer
+                else ()
+            ),
             *plugin_fields,
             EditableFieldState("target_path", "输出路径", request.target_path, required=True),
             *(

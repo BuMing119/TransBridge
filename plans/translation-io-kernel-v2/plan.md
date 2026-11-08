@@ -1,6 +1,6 @@
 # Translation I/O Kernel V2
 
-- **状态**：实现完成，综合 QA 通过（2026-08-18）
+- **状态**：原 I/O Kernel 实现与综合 QA 于 2026-08-18 完成；SST 当前能力于 2026-11-08 按 [SST 正式集成](../sst-integration/plan.md)更新为实验性读写。
 - **日期**：2026-08-18
 - **需求**：FR18、FR17.1～17.4、FR19.1～19.3、NFR2.1、NFR3.1、NFR5.1
 - **架构**：ADR-017、ADR-001/002/009/015 的 2026-08-18 增量
@@ -9,7 +9,7 @@
 
 ## 目标与边界
 
-建立 FormatAdapter、ParseRequest/Result、WriteRequest/Result、SourceSnapshot、EntryKey/ExternalEntryRef、StagePolicy 和原子发布合同。P0 发布范围为 ParaTranz JSON 双 ID、ESP/EET/XT 公共成功链与 Localized Strings 完整性；DSD/SST Reader 标为实验性，SST Writer 保持关闭，BSA/Strings 补全和完整上下文为 P1。
+建立 FormatAdapter、ParseRequest/Result、WriteRequest/Result、SourceSnapshot、EntryKey/ExternalEntryRef、StagePolicy 和原子发布合同。原 P0 发布范围为 ParaTranz JSON 双 ID、ESP/EET/XT 公共成功链与 Localized Strings 完整性。当前 DSD 保持实验性；SST SSU8/SSU9 读取、原格式写回和插件新建 SSU9 按 [ADR-052](../../docs/adr/052-sst-io-integration.md)接入统一发布，读写/往返/GUI/助手/发布能力均为实验性。二进制 EET v3 Classique/BDD 按 [ADR-053](../../docs/adr/053-eet-binary-io-integration.md)接入相同来源/身份/发布合同，保持实验性，实施与 QA 见 [EET 集成计划](../eet-integration/plan.md)。正式 MCP 仅 foundation，文件 read/write 不可用。BSA/Strings 补全和完整上下文仍按对应 P1 验收。
 
 本 Plan 不拥有活动 Project/Variant、Task 状态或远端 ParaTranz 同步；解析返回值无共享状态副作用，写入通过显式请求和 mutation/发布端口完成。
 
@@ -22,7 +22,7 @@
 - **目标**：统一不一致的 parser/writer 构造和隐式格式判断。
 - **文件落点**：新增 `src/transbridge/application/io/` 或等价稳定包；兼容 `src/transbridge/parser/`、`writer/`；`tests/contracts/io/`。
 - **实施**：定义 FormatId、FormatCapability、Parse/Write Request/Result、SourceDescriptor、SourceSnapshot、Diagnostic 和统计；建立读/写/往返/入口/发布支持矩阵；合法空、partial、failed、cancelled 分离。
-- **验收**：格式歧义需确认；DSD JSON/ParaTranz JSON/内部 JSON 不因扩展名混淆；parser 不写 AppContext；SST Writer capability 始终 unavailable。
+- **验收**：格式歧义需确认；DSD JSON/ParaTranz JSON/内部 JSON 不因扩展名混淆；parser 不写 AppContext；SST capability 如实标为 experimental，正式 MCP 保持 unavailable，不把内部 codec 成功提升为全面上游兼容。
 - **测试**：格式探测 corpus、空文件、损坏/部分损坏/取消、能力矩阵 snapshot。
 
 ### Story 02：EntryKey、ExternalEntryRef 与受控 ChangeSet
@@ -51,7 +51,7 @@
 
 - **目标**：让公开解析/写出入口与真实模块、构造参数和 source context 一致。
 - **文件落点**：`src/transbridge/parser/`、`writer/`、Agent parser/writer tools、application adapters、格式 fixtures。
-- **实施**：逐格式封装现有实现；修复 EET/XT dispatch；ParseResult 携带 writer 所需完整 source context；Writer 使用完整字符串身份；DSD/SST Reader 保持实验标记。
+- **实施**：逐格式封装现有实现；修复 EET/XT dispatch；ParseResult 携带 writer 所需完整 source context；Writer 使用完整字符串身份；DSD 保持实验标记，SST 使用完整 codec 与 v2 物理记录身份，原格式写回及新建的实验性边界由 SST 集成计划管理。
 - **验收**：ESP/EET/XT 可由统一端口 parse→modify→write→reparse；没有无参构造错配；unsupported/experimental 状态准确。
 - **测试**：每格式至少一条真实成功链和一条损坏输入；GUI/Agent 调用同一 adapter 的 parity 测试。
 
@@ -89,4 +89,4 @@
 - 风险：V1 key 迁移错误会造成错配。控制：先生成只读映射报告，冲突不自动合并。
 - 风险：原子替换在跨卷/网络盘语义不同。控制：staging 固定同卷；能力不足时拒绝正式发布。
 - 回退：旧 parser/writer 只能作为 adapter 内部实现切回；公共合同和双 ID 数据不可回退为 `id == key`。
-- 完成门禁：六个 Story 各有成功链与 changelog；支持矩阵由可重放 fixture 证明；SST Writer 未被意外开放。
+- 完成门禁：六个 Story 各有成功链与 changelog；支持矩阵由可重放 fixture 证明。SST 仅开放已接入的实验性 GUI/助手/application 读写路径；缺少 v2 身份、非支持转换或正式 MCP 请求不得被误报为可写。

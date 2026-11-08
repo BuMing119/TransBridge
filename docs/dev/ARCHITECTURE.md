@@ -51,9 +51,9 @@
 ```
 ESP/ESM ──PluginParser──> PluginStringWithContext ──create──> TranslationEntry ──┐
                                                                                  │
-EET XML ──EET_XmlParser──> EET_Entry ──create──────────────────────────────────> Collection
+ESP-ESM Translator XML ──EET_XmlParser──> EET_Entry ──create──────────────────────────────────> Collection
                                                                                  │
-XT XML ──XT_XmlParser──> XT_Entry ──apply───────────────────────────────────────┘
+xTranslator XML ──XT_XmlParser──> XT_Entry ──apply───────────────────────────────────────┘
 ```
 
 详细说明：
@@ -86,7 +86,15 @@ PluginParser.parse_plugin()
 - NPC/INFO/DIAL记录会提取额外的上下文信息
 - `editor_id=None` 时继承上一个有效值（REFR:FULL除外）
 
-#### EET解析
+#### EET 二进制正式来源
+
+`binary.eet` 与 XML 按内容区分；严格 codec → 完整 SourceSnapshot → `eet-v1:{ordinal}`
+投影的依赖方向与 SST 一致。GUI/助手共用 adapter、存储恢复、迁移和发布，Qt 不接触 wire 字段。
+变化译文及数字缓存一同更新，来源/记录绑定、全文件回读、备份和原子发布在 application 边界完成。
+当前 v3 类型1/2保持实验性，不新增插件→EET 或 MCP 文件读写。见 [ADR-053](../adr/053-eet-binary-io-integration.md)
+及[实施计划](../../plans/eet-integration/plan.md)；本地正式接入与相关验证已完成，能力保持实验性。
+
+#### ESP-ESM Translator XML 解析
 
 ```python
 parser = EET_XmlParser.from_file("translation.xml")
@@ -105,8 +113,8 @@ parser = XT_XmlParser.from_file("translation.xml")
 
 ```
 Collection ──PluginWriter──> ESP/ESM + .strings
-Collection ──EETWriter/EETBuilder──> EET XML (更新/新建)
-Collection ──XTWriter/XTBuilder──> XT XML (更新/新建)
+Collection ──EETWriter/EETBuilder──> ESP-ESM Translator XML (更新/新建)
+Collection ──XTWriter/XTBuilder──> xTranslator XML (更新/新建)
 Collection ──to_json_file──> JSON
 ```
 
@@ -149,7 +157,7 @@ PluginWriter.write()
 - `apply_collection` 使用 `get_by_key()` 匹配条目
 - 需要处理 `editor_id=None` 的继承逻辑（与 Parser 一致）
 
-#### EET XML 写入
+#### ESP-ESM Translator XML 写入
 
 **更新已有文件**（EETWriter）：
 ```
@@ -181,7 +189,7 @@ EETBuilder.build(collection, output)
                 └─► 生成 <ESP> 子节点
 ```
 
-#### XT XML 写入
+#### xTranslator XML 写入
 
 **更新已有文件**（XTWriter）：
 ```
@@ -663,8 +671,8 @@ src/transbridge/
 ├── parser/                    # 文件解析
 │   ├── __init__.py
 │   ├── plugin_parser.py       # ESP/ESM解析入口
-│   ├── eet_parser.py          # EET XML解析
-│   ├── xt_parser.py           # XT XML解析
+│   ├── eet_parser.py          # ESP-ESM Translator XML解析
+│   ├── xt_parser.py           # xTranslator XML解析
 │   ├── strings_file.py        # .strings/.dlstrings/.ilstrings读写
 │   ├── plugin/                # ESP/ESM解析核心
 │   │   ├── __init__.py
@@ -678,10 +686,10 @@ src/transbridge/
 ├── writer/                    # 文件写入
 │   ├── __init__.py
 │   ├── plugin_writer.py       # ESP/ESM写入器（inline/localised模式）
-│   ├── eet_xml_writer.py      # EET XML更新器
-│   ├── eet_xml_builder.py     # EET XML构建器（新建）
-│   ├── xt_xml_writer.py       # XT XML更新器
-│   └── xt_xml_builder.py      # XT XML构建器（新建）
+│   ├── eet_xml_writer.py      # ESP-ESM Translator XML更新器
+│   ├── eet_xml_builder.py     # ESP-ESM Translator XML构建器（新建）
+│   ├── xt_xml_writer.py       # xTranslator XML更新器
+│   └── xt_xml_builder.py      # xTranslator XML构建器（新建）
 │
 ├── paratranz/                 # ParaTranz集成
 │   ├── __init__.py

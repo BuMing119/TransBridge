@@ -3,10 +3,8 @@
 The matrix is derived from the format capability registry (``FormatCatalog``)
 combined with optional dependency reports.  For every format and every entry,
 exactly one result cell must be produced; a missing cell is a hard error and
-an empty matrix is rejected at construction time.  Unspported/experimental
-levels are never reported as *available*, and the SST Writer is pinned to
-``unavailable`` regardless of any adapter claim so no entrypoint can advertise
-write support it cannot provide.
+an empty matrix is rejected at construction time. Unsupported/experimental
+levels are never reported as *available*. SST and binary EET writing remain experimental.
 
 The UI / Agent / MCP accessors share the exact same capability id and reason
 for a given (format, entry), guaranteeing cross-entrypoint consistency.
@@ -52,17 +50,11 @@ _ENTRY_CAPABILITY_ID: dict[str, str] = {
     "publish": "format.publish",
 }
 
-# Formats whose Writer is architecturally pinned to unsupported on every
-# entrypoint that implies writing.
-_SST_FORMATS: frozenset[str] = frozenset({"sst.ssu8", "sst.ssu9"})
-
 _LEVEL_TO_STATE: dict[CapabilityLevel, CapabilityState] = {
     CapabilityLevel.UNAVAILABLE: CapabilityState.UNAVAILABLE,
     CapabilityLevel.EXPERIMENTAL: CapabilityState.DEGRADED,
     CapabilityLevel.SUPPORTED: CapabilityState.AVAILABLE,
 }
-
-_WRITE_IMPLYING = frozenset({"write", "roundtrip", "publish"})
 
 
 class CapabilityMatrixError(ValueError):
@@ -161,15 +153,7 @@ def _derive_cell(
     level = getattr(capability, field)
     state = _LEVEL_TO_STATE[level]
 
-    # SST Writer is pinned unsupported: no entrypoint that implies writing may
-    # ever report write capability for an SST format.
-    if format_id.value in _SST_FORMATS and entry in _WRITE_IMPLYING:
-        if state is not CapabilityState.UNAVAILABLE:
-            state = CapabilityState.UNAVAILABLE
-
-    if format_id.value in _SST_FORMATS and entry in _WRITE_IMPLYING:
-        reason = "SST Writer is architecturally unsupported (policy ceiling forbids write/roundtrip/publish)"
-    elif state is CapabilityState.UNAVAILABLE:
+    if state is CapabilityState.UNAVAILABLE:
         reason = f"capability {entry!r} not available for {format_id.value}"
     elif state is CapabilityState.DEGRADED:
         reason = f"capability {entry!r} is experimental for {format_id.value}"

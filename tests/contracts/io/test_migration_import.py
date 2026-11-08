@@ -120,18 +120,18 @@ def test_ambiguous_empty_json_is_rejected_without_touching_target(tmp_path: Path
     assert tuple(entry.snapshot() for entry in target) == before
 
 
-def test_ssu8_draft_uses_form_id_and_index_without_mutating_target() -> None:
+def test_ssu8_draft_uses_form_id_field_and_original_without_mutating_target() -> None:
     source = Path("tests/trans_exe/xt/ssu8/ccbgssse010-petdwarvenarmoredmudcrab_english_chinese.sst")
     sst_entries = SST_Parser.from_file(str(source)).entries
     counts = Counter((entry.form_id, entry.index) for entry in sst_entries)
     sst_entry = next(entry for entry in sst_entries if counts[(entry.form_id, entry.index)] == 1)
     target_entry = TranslationEntry(
-        id=f"Mudcrab:{sst_entry.form_id:08X}|{sst_entry.index}~NPC_:FULL",
+        id=f"Mudcrab:{sst_entry.form_id:08X}|{sst_entry.index}~{sst_entry.rec}",
         key="mudcrab",
         original=sst_entry.text,
         translation="",
         stage=0,
-        context="NPC_:FULL",
+        context=f"{sst_entry.rec[:4]}:{sst_entry.rec[4:]}",
     )
     target = _collection(target_entry)
 
@@ -180,12 +180,11 @@ def test_ssu8_without_translated_text_has_stable_diagnostic(tmp_path: Path) -> N
     source = tmp_path / "untranslated.sst"
     source.write_bytes(
         b"SSU8"
-        + (b"\0" * 12)
-        + struct.pack("<H8sII2sI", 0x0500, b"NPC_FULL", 0, 1, b"\x01\0", len(original))
+        + (b"\0" * 5)
+        + struct.pack("<BiI4s4sHHIBB", 0, 0, 1, b"NPC_", b"FULL", 0, 0, 0, 0, 0)
+        + struct.pack("<i", len(original))
         + original
-        + struct.pack("<I", 0)
-        + b"\0"
-        + struct.pack("<IH", 1, 1)
+        + struct.pack("<i", 0)
     )
     target = _collection(
         TranslationEntry(

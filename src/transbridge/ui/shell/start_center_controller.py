@@ -199,7 +199,9 @@ class StartCenterController:
             self._host,
             "选择已有译文",
             "",
-            "支持的翻译来源 (*.eet *.json *.xlsx *.xls *.esp *.esm *.esl);;所有文件 (*)",
+            "支持的翻译来源 (*.xml *.eet *.json *.sst *.esp *.esm *.esl);;"
+            "ESP-ESM Translator EET (*.eet);;ESP-ESM Translator XML (*.xml);;xTranslator XML (*.xml);;"
+            "xTranslator SST (*.sst);;JSON (*.json);;所有文件 (*)",
         )
         if paths:
             self.guided_project.set_migration_sources(tuple(paths))

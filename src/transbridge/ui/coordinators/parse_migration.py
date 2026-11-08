@@ -32,15 +32,15 @@ def prepare_parse_migrations(
     """Keep successful sources while rejecting each failed source atomically.
 
     Preserve the existing EET → XT → translated plugin → Strings precedence.
-    EET parsing already supplied the primary XML, so only plugin parsing applies
+    EET parsing already supplied the primary source, so only plugin parsing applies
     it as a migration. Explicitly selected sources must use strict readers.
     """
     completed = set()
     failures = []
     applied = 0
     for field, label, path in (
-        ("eet_path", "EET XML", config.eet_path if plugin_path else None),
-        ("xt_path", "XTranslator XML", config.xt_path),
+        ("eet_path", "ESP-ESM Translator 文件", config.eet_path if plugin_path else None),
+        ("xt_path", "xTranslator XML", config.xt_path),
         ("tp_path", "已翻译插件", config.tp_path),
         ("strings_dir", "Strings", config.strings_dir if plugin_path else None),
     ):
@@ -49,6 +49,10 @@ def prepare_parse_migrations(
         try:
             if field == "tp_path":
                 candidate, count = _translated_plugin(collection, path, context)
+            elif field == "eet_path":
+                from transbridge.ui.eet_source import prepare_eet_migration
+
+                candidate, count = prepare_eet_migration(collection, path, context)
             else:
                 draft = prepare_legacy_migration(
                     collection,

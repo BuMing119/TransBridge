@@ -73,7 +73,7 @@ TranslationEntry 的 `id` 字段采用统一格式：
 | Plugin NPC | `MyNPC:000123AB\|1~NPC_:FULL` | NPC全名 |
 | Plugin对话 | `QuestName:000456CD\|1~INFO:NAM1\|000789EF` | 对话文本，含quest_formid |
 | Plugin任务 | `MyQuest:000789EF\|1~QUST:CNAM` | 任务名称 |
-| EET XML | `EditorID:000123AB\|1~GRUP:CHAMP` | EET条目 |
+| ESP-ESM Translator XML | `EditorID:000123AB\|1~GRUP:CHAMP` | EET条目 |
 
 > **注意**: 对话类型（INFO/DIAL）的ID会在末尾附加 quest_formid，格式为 `~TYPE:FIELD|quest_formid`
 
@@ -205,17 +205,17 @@ def merge(self, other: TranslationEntryCollection, *, overwrite: bool = True) ->
 | 类方法 | 来源 | 说明 |
 |--------|------|------|
 | `from_plugin(path)` | ESP/ESM插件 | 解析插件生成条目 |
-| `from_eet_xml(path)` | EET XML文件 | 解析EET格式XML |
+| `from_eet_xml(path)` | ESP-ESM Translator XML文件 | 解析EET格式XML |
 | `from_json_file(path)` | JSON文件 | 从序列化JSON加载 |
 | `from_entries(entries)` | 条目列表 | 通用构造方法 |
 
 ### 数据更新方法
 
 ```python
-# 从EET XML更新译文
+# 从ESP-ESM Translator XML更新译文
 def update_from_eet_xml(self, path: str | Path) -> int
 
-# 从XT XML更新译文
+# 从xTranslator XML更新译文
 def apply_xt_entries(self, xt_entries: Iterable[XT_Entry]) -> int
 
 # 从已翻译插件更新译文
@@ -400,9 +400,18 @@ PluginStringWithContext ──create_from_plugin_entry──> TranslationEntry
 
 ---
 
+## EetDocument / EetRecord
+
+二进制 EET 使用 `parser/eet_binary_codec.py` 的 frozen dataclass 保存完整 v3 Classique/BDD，
+与下面的 XML `EET_Entry` 分开。`EetDocument` 保存版本、类型、游戏名、物理记录和可选短语表；
+`EetRecord` 保存全部原文字段、译文、状态、注释、图标、原文哈希与双侧数字缓存。
+项目投影以命名空间内 `eet-v1:{ordinal}`、codec 版本与签名绑定，不能按 FormID 去重。
+数据流为内容探测→adapter→完整来源快照+entries→持久化重开→校验后原格式发布。
+具体合同见 [ADR-053](../adr/053-eet-binary-io-integration.md)，正式接入验证见[计划](../../plans/eet-integration/plan.md)。
+
 ## EET_Entry
 
-EET XML格式的翻译条目。
+ESP-ESM Translator XML格式的翻译条目。
 
 ### 类定义
 
@@ -449,7 +458,7 @@ EET_Entry ──create_from_eet_entry──> TranslationEntry
 
 ## XT_Entry
 
-XT XML格式的翻译条目。
+xTranslator XML格式的翻译条目。
 
 ### 类定义
 
@@ -488,9 +497,9 @@ XT_Entry + TranslationEntry ──try_update_from_xt──> TranslationEntry（�
 ```
 ESP/ESM ──PluginParser──> PluginStringWithContext ──create_from_plugin_entry──> TranslationEntry
                                                                                         │
-EET XML ──EET_XmlParser──> EET_Entry ──create_from_eet_entry──────────────────────> TranslationEntry ──add──> Collection
+ESP-ESM Translator XML ──EET_XmlParser──> EET_Entry ──create_from_eet_entry──────────────────────> TranslationEntry ──add──> Collection
                                                                                         │
-XT XML ──XT_XmlParser──> XT_Entry ──apply_xt_entries────────────────────────────────> TranslationEntry
+xTranslator XML ──XT_XmlParser──> XT_Entry ──apply_xt_entries────────────────────────────────> TranslationEntry
 ```
 
 ### 更新流程
@@ -514,8 +523,8 @@ update_from_eet_xml()      apply_xt_entries()      update_from_translated_plugin
 
 ```
 Collection ──PluginWriter──> ESP/ESM + .strings文件
-Collection ──EET_XML_Writer──> EET XML
-Collection ──XT_XML_Writer──> XT XML
+Collection ──EET_XML_Writer──> ESP-ESM Translator XML
+Collection ──XT_XML_Writer──> xTranslator XML
 Collection ──to_json_file──> JSON
 ```
 

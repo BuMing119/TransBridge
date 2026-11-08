@@ -10,8 +10,8 @@ from transbridge.application.io import FormatId
 from transbridge.application.io.operation_write import HydratedWriteDraft, HydratedWritePreflightService
 from transbridge.application.io.operation_write_batch import isolate_batch_output_conflicts
 from transbridge.application.io.plugin_localized_sources import _snapshot_localized_sources
-from transbridge.application.io.plugin_write import plugin_artifact_paths
 from transbridge.application.io.publish import BackupPolicy, ConflictPolicy
+from transbridge.application.io.write_formats import SST_FORMATS, source_output_compatible, write_artifact_paths
 from transbridge.application.terminology_profiles import TerminologyProfileWriteProjectionSource
 
 from .file_undo_capture import authorize_file_outputs
@@ -36,8 +36,8 @@ class PreparedWriteBack:
 
 def prepare_write_back(args: dict, ctx) -> PreparedWriteBack:
     target = str(args.get("target", "")).lower()
-    if target not in {*_FORMATS, "auto"}:
-        raise RequestError("WRITE_TARGET_INVALID", "无效的 target；可选 esp/eet/xt/strings/auto。")
+    if target not in {*_FORMATS, "sst", "auto"}:
+        raise RequestError("WRITE_TARGET_INVALID", "无效的 target；可选 esp/eet/xt/sst/strings/auto。")
     selected = _selected_sources(args, ctx)
     if target == "auto" and "source_keys" not in args:
         raise RequestError("WRITE_SOURCE_SELECTION_REQUIRED", "target=auto 必须显式提供 source_keys。")
@@ -60,32 +60,57 @@ def prepare_write_back(args: dict, ctx) -> PreparedWriteBack:
         snapshot, collection = getattr(slot, "source_snapshot", None), getattr(slot, "collection", None)
         if not collection:
             raise RequestError("COLLECTION_NOT_LOADED", f"来源没有加载翻译集合：{key}")
-        if snapshot is None or (target != "auto" and snapshot.format_id is not _FORMATS[target]):
+        if snapshot is None:
             raise RequestError("SOURCE_SNAPSHOT_REQUIRED", f"来源缺少匹配的快照，请先解析对应源文件：{key}")
-        if snapshot.format_id not in set(_FORMATS.values()):
+        # Historical target="eet" covers ESP-ESM Translator sources. Preserve
+        # the snapshot's independent XML_EET/BINARY_EET format; it is not a
+        # request to convert XML into EET (or the reverse).
+        output_format = (
+            (snapshot.format_id if snapshot.format_id in SST_FORMATS else FormatId.SST_SSU9)
+            if target == "sst"
+            else snapshot.format_id
+            if target == "auto" or target == "eet" and snapshot.format_id is FormatId.BINARY_EET
+            else _FORMATS[target]
+        )
+        if not source_output_compatible(snapshot.format_id, output_format):
+            raise RequestError("SOURCE_SNAPSHOT_REQUIRED", f"来源缺少匹配的快照，请先解析对应源文件：{key}")
+        if snapshot.format_id not in {*_FORMATS.values(), *SST_FORMATS, FormatId.BINARY_EET}:
             raise RequestError("SOURCE_FORMAT_UNSUPPORTED", f"来源格式不支持写回：{key}")
-        source = Path(snapshot.source.uri)
+        source = Path(snapshot.source.display_name or snapshot.source.uri)
         reference_field = {
             FormatId.PLUGIN_SSE: "esp_path",
             FormatId.XML_EET: "eet_path",
+            FormatId.BINARY_EET: "eet_path",
             FormatId.XML_XT: "xt_path",
+            FormatId.SST_SSU8: "sst_path",
+            FormatId.SST_SSU9: "sst_path",
         }[snapshot.format_id]
         reference = getattr(slot, reference_field, None)
+        converting = snapshot.format_id is not output_format
+        if converting and not directory and not file_path:
+            raise RequestError("OUTPUT", "从插件生成 SST 必须提供新的 path 或 output_dir。")
         if not directory and not file_path and not reference:
             raise RequestError("OUTPUT", f"来源没有参考输出位置，请提供 path 或 output_dir：{key}")
         destination = (
-            Path(directory) / source.name
+            Path(directory)
+            / (
+                source.with_suffix(".sst").name
+                if converting
+                else source.with_suffix(".eet").name
+                if output_format is FormatId.BINARY_EET
+                else source.name
+            )
             if directory and (target == "strings" or not file_path)
             else Path(file_path or reference)
         )
         # Keep lexical components for the authorization policy to reject links.
         path = str(Path(os.path.abspath(destination if destination.is_absolute() else base / destination)))
-        options = (("pack_bsa", packed and snapshot.format_id is FormatId.PLUGIN_SSE),)
-        authorize_file_outputs(ctx, plugin_artifact_paths(snapshot, path, options))
+        options = (("pack_bsa", packed and output_format is FormatId.PLUGIN_SSE),)
+        authorize_file_outputs(ctx, write_artifact_paths(snapshot, path, options, format_id=output_format))
         drafts.append(
             HydratedWriteDraft(
                 snapshot,
-                snapshot.format_id,
+                output_format,
                 tuple(entry.snapshot() for entry in collection),
                 path,
                 collection.collection_revision.value,
@@ -97,7 +122,9 @@ def prepare_write_back(args: dict, ctx) -> PreparedWriteBack:
                 options=options,
             )
         )
-    if packed and not any(_snapshot_localized_sources(item.source_snapshot) for item in drafts):
+    if packed and not any(
+        item.format_id is FormatId.PLUGIN_SSE and _snapshot_localized_sources(item.source_snapshot) for item in drafts
+    ):
         raise RequestError("WRITE_BSA_UNSUPPORTED", "所选来源没有可打包的本地化 STRINGS。")
     factory = getattr(ctx, "terminology_profile_service_factory", None)
     projection = (

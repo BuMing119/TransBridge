@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtWidgets import QApplication, QDialog, QMainWindow, QWidget
 
 from transbridge.application.contracts import OperationResult, RequestContext
+from transbridge.application.io import FormatId
 from transbridge.ui.coordinators import source_update_coordinator as module
 from transbridge.ui.coordinators.source_update_coordinator import SourceUpdateCoordinator
 from transbridge.ui.shell.action_catalog import IntentId
@@ -18,6 +19,23 @@ from transbridge.ui.shell.menu_builder import MenuBuilder, MenuCallbacks
 from transbridge.ui.source_update_preview import SourceUpdatePreviewDialog
 
 _APP = QApplication.instance() or QApplication([])
+
+
+def test_binary_eet_source_update_chooses_native_eet_file_filter(monkeypatch):
+    host, _events = _host(monkeypatch)
+    source = SimpleNamespace(source_id="source", location="old.eet", format_id=FormatId.BINARY_EET, label="EET")
+    service = host.app_runtime.use_cases.resolve("project_source_updates")
+    service.list_sources = lambda *_args: OperationResult.completed((source,))
+    filters = []
+
+    def choose(_parent, _title, _directory, file_filter):
+        filters.append(file_filter)
+        return "", ""
+
+    monkeypatch.setattr(module.QFileDialog, "getOpenFileName", choose)
+    SourceUpdateCoordinator(host).start_current()
+    assert filters == ["ESP-ESM Translator EET (*.eet);;所有文件 (*)"]
+    host.close()
 
 
 def _preview():

@@ -217,25 +217,10 @@ class TranslationEntry:
 
     @classmethod
     def create_from_sst_entry(cls, sst_entry: "SST_Entry") -> "TranslationEntry":
-        """
-        从 SST_Entry 实例创建 TranslationEntry 实例
-        :param sst_entry: SST_Entry 实例
-        :return: TranslationEntry 实例
-        """
-        id_value = f"{sst_entry.rec}:{sst_entry.form_id:08X}|{sst_entry.index}"
-        rec = cls._rec_display(sst_entry.rec)
-        translation = sst_entry.translated_text if sst_entry.translated_text else ""
-        stage = STAGE_TRANSLATED if translation else STAGE_UNTRANSLATED
-        return cls(
-            id=id_value,
-            key=id_value,
-            original=sst_entry.text,
-            translation=translation,
-            stage=stage,
-            context=rec,
-            # f2 = FNV-1a(editor_id) for named entries; grouping key for bare-FormID entries
-            editor_id=f"0x{sst_entry.f2:08X}" if sst_entry.f2 else "",
-        )
+        """Map a physical SST record through the canonical format conversion."""
+        from transbridge.converter.sst_entries import create_sst_entry
+
+        return create_sst_entry(sst_entry)
 
     @classmethod
     def create_from_plugin_entry(
@@ -354,46 +339,10 @@ class TranslationEntry:
         entry: "TranslationEntry",
         sst: "SST_Entry",
     ) -> "TranslationEntry | None":
-        """尝试用 SST_Entry 更新已有的 TranslationEntry。
+        """Match exact FormID, record/field signature and original text."""
+        from transbridge.converter.sst_matching import update_entry
 
-        匹配策略: form_id + index（SST 有 form_id，比 XT 的 edid+index 更精确）。
-        - 不匹配则返回 None
-        - 匹配但不满足更新条件则返回原 entry
-        - 匹配且满足条件则返回更新后的新 entry
-        """
-
-        # ---------- 1. 从 ESP ID 解析 form_id 和 index ----------
-
-        # TranslationEntry.id 形如 "edid:form_id|index~TYPE:FIELD"
-        # 或不含 ~ 后缀（如 SST 自身创建的条目）
-        after_colon = entry.id.split(":", 1)[1]  # "form_id|index~TYPE"
-        form_id_hex, _, rest = after_colon.partition("|")  # form_id, "|", "index~TYPE"
-        index_str = rest.split("~")[0]
-        entry_index = int(index_str) if index_str else None
-
-        # ---------- 2. form_id 匹配 ----------
-
-        if f"{sst.form_id:08X}" != form_id_hex.upper():
-            return None
-
-        # ---------- 3. index 匹配 ----------
-
-        if entry_index is not None and entry_index != sst.index:
-            return None
-
-        if entry.requires_original_match and sst.text != entry.original:
-            return None
-
-        # ---------- 4. 判断是否满足更新条件 ----------
-
-        should_update = entry.stage == STAGE_UNTRANSLATED and not entry.translation and bool(sst.translated_text)
-
-        if not should_update:
-            return entry
-
-        # ---------- 5. 返回更新后的新实例 ----------
-
-        return replace(entry, translation=sst.translated_text, stage=STAGE_TRANSLATED)
+        return update_entry(entry, sst)
 
     def to_dict(self) -> dict[str, Any]:
         """

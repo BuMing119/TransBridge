@@ -30,6 +30,7 @@ class WritePlanDialog(ExecutionPlanDialog):
         self._overwrite = None
         source = getattr(getattr(_context, "active_slot", None), "source_snapshot", None)
         self._source_reference = source.source.uri if source is not None else ""
+        self._source_format = str(getattr(source, "format_id", ""))
         super().__init__(plan, parent)
         self.setMinimumWidth(680)
         self._transfer_summary = QLabel(self)
@@ -54,6 +55,8 @@ class WritePlanDialog(ExecutionPlanDialog):
                 if field_id == "overwrite_confirmed":
                     self._overwrite = editor
                     editor.toggled.connect(self._options_changed)
+                elif field_id == "output_format":
+                    editor.currentIndexChanged.connect(self._output_format_changed)
                 elif field_id == "pack_bsa":
                     editor.setText("将 STRINGS 打包为 BSA（默认不勾选）")
                     editor.setToolTip("仅打包本次本地化字符串资源；不勾选时生成散装文件。")
@@ -123,6 +126,18 @@ class WritePlanDialog(ExecutionPlanDialog):
         if self._overwrite is not None:
             self._overwrite.setChecked(False)
 
+    def _output_format_changed(self, *_args) -> None:
+        if self._rendering:
+            return
+        for field in ("target_path", "output_directory"):
+            if field in self._field_edits:
+                self._field_edits[field].clear()
+        plugin = self._field_edits.get("plugin_path")
+        if plugin is not None:
+            plugin.clear()
+        self._clear_overwrite()
+        self._options_changed()
+
     def _select_plugin(self, path: str) -> None:
         if self._execution_running or self._preflight_running:
             return
@@ -147,11 +162,29 @@ class WritePlanDialog(ExecutionPlanDialog):
         reference = existing_reference(
             plugin.text().strip() if plugin is not None and plugin.text().strip() else self._source_reference
         )
+        format_editor = self._field_edits.get("output_format")
+        sst_output = (
+            format_editor is not None and format_editor.currentData() == "sst.ssu9"
+        ) or self._source_reference.lower().endswith(".sst")
+        binary_eet_output = self._source_format == "binary.eet"
+        suggested = (
+            Path(reference).with_suffix(".sst").name
+            if sst_output and reference
+            else Path(reference).with_suffix(".eet").name
+            if binary_eet_output and reference
+            else Path(reference).name
+            if reference
+            else ""
+        )
         path, _filter = QFileDialog.getSaveFileName(
             self,
             "另存为",
-            self._field_edits["target_path"].text() or (Path(reference).name if reference else ""),
-            "所有文件 (*)",
+            self._field_edits["target_path"].text() or suggested,
+            "xTranslator SST (*.sst)"
+            if sst_output
+            else "ESP-ESM Translator EET (*.eet)"
+            if binary_eet_output
+            else "所有文件 (*)",
             options=QFileDialog.Option.DontConfirmOverwrite,
         )
         if path:

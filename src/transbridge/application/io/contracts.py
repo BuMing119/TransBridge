@@ -26,6 +26,11 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 class FormatId(StrEnum):
     PLUGIN_SSE = "plugin.sse"
+    # Four independent file-format contracts, grouped only by producer:
+    # ESP-ESM Translator XML (.xml) != ESP-ESM Translator EET (.eet);
+    # xTranslator XML (.xml) != xTranslator SST (.sst, SSU8/SSU9).
+    # Keep these persisted IDs stable: "eet" in XML_EET names the producer,
+    # not a binary EET variant. Never interchange their readers or writers.
     XML_EET = "xml.eet"
     BINARY_EET = "binary.eet"
     XML_XT = "xml.xt"

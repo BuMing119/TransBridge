@@ -8,12 +8,15 @@ command once.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 import json
 import logging
 from pathlib import Path
 
 from transbridge.application.contracts import OperationOutcome, RequestContext
+from transbridge.converter.eet_matching import known_editor_id
+from transbridge.converter.sst_matching import target_locator
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.parser.xt.sst_parser import SST_Parser
@@ -61,10 +64,11 @@ class _ImportedEntry:
     translation: str
     stage: int
     external_refs: tuple[ExternalEntryRef, ...] = ()
-    sst_key: tuple[int, int] | None = None
+    sst_key: tuple[int, str] | None = None
     original: str | None = None
     requires_original_match: bool = False
     dsd_key: tuple[str, str] | None = None
+    editor_id: str | None = None
 
 
 def prepare_migration_import(
@@ -104,7 +108,7 @@ def prepare_migration_import(
         raise MigrationImportError("MIGRATION_FORMAT_UNSUPPORTED", "无法识别迁移源格式或文件内容不完整。")
 
     format_id = probe.candidates[0]
-    if format_id not in _JSON_FORMATS | _SST_FORMATS | {FormatId.PLUGIN_SSE}:
+    if format_id not in _JSON_FORMATS | _SST_FORMATS | {FormatId.PLUGIN_SSE, FormatId.BINARY_EET}:
         raise MigrationImportError("MIGRATION_FORMAT_UNSUPPORTED", f"当前迁移入口不支持 {format_id.value}。")
 
     skipped_conflicts = 0
@@ -112,6 +116,8 @@ def prepare_migration_import(
         imported, skipped_conflicts = _parse_plugin(source, context)
     elif format_id in _JSON_FORMATS:
         imported, skipped_conflicts = _parse_json(path, content, format_id, source, context)
+    elif format_id is FormatId.BINARY_EET:
+        imported = _parse_binary_eet(content)
     else:
         imported = _parse_sst(path, content, format_id)
     if not imported:
@@ -124,6 +130,11 @@ def prepare_migration_import(
         code = "MIGRATION_SST_NO_TRANSLATIONS" if format_id in _SST_FORMATS else "MIGRATION_SOURCE_NO_TRANSLATIONS"
         raise MigrationImportError(code, "迁移源中没有非空译文，未修改当前版本。")
 
+    if format_id in {*_SST_FORMATS, FormatId.BINARY_EET}:
+        occurrences = Counter((item.sst_key, item.original) for item in imported)
+        unique = tuple(item for item in translated if occurrences[(item.sst_key, item.original)] == 1)
+        skipped_conflicts += len(translated) - len(unique)
+        translated = unique
     states, unmatched, unproved = _map_to_target(translated, target)
     skipped_conflicts += unproved
     if not states and not skipped_conflicts:
@@ -275,7 +286,7 @@ def _parse_json(
 
 def _parse_sst(path: Path, content: bytes, format_id: FormatId) -> tuple[_ImportedEntry, ...]:
     try:
-        parsed = SST_Parser.from_file(str(path))
+        parsed = SST_Parser.from_bytes(content, source_name=str(path))
     except Exception as exc:  # noqa: BLE001 - normalize all legacy parser failures at this boundary
         raise MigrationImportError("MIGRATION_SST_INVALID", "SST 文件无法完整解析。") from exc
     actual = FormatId.SST_SSU8 if content.startswith(b"SSU8") else FormatId.SST_SSU9
@@ -284,19 +295,44 @@ def _parse_sst(path: Path, content: bytes, format_id: FormatId) -> tuple[_Import
 
     imported: list[_ImportedEntry] = []
     for entry in parsed.entries:
-        key = (entry.form_id, entry.index)
+        key = (entry.form_id, entry.rec)
         imported.append(
             _ImportedEntry(
                 None,
-                f"{entry.form_id:08X}|{entry.index}",
-                f"{entry.form_id:08X}|{entry.index}",
+                "",
+                "",
                 entry.translated_text,
                 1 if entry.translated_text else 0,
                 sst_key=key,
                 original=entry.text,
+                requires_original_match=True,
             )
         )
     return tuple(imported)
+
+
+def _parse_binary_eet(content: bytes) -> tuple[_ImportedEntry, ...]:
+    from transbridge.converter.eet_entries import document_entries
+    from transbridge.parser.eet_binary_codec import EetDocument
+
+    try:
+        entries = document_entries(EetDocument.from_bytes(content))
+    except (ValueError, TypeError) as exc:
+        raise MigrationImportError("MIGRATION_EET_INVALID", f"EET 文件无法完整解析：{exc}") from exc
+    return tuple(
+        _ImportedEntry(
+            None,
+            "",
+            "",
+            entry.translation,
+            1 if entry.translation else 0,
+            sst_key=target_locator(entry),
+            original=entry.original,
+            requires_original_match=True,
+            editor_id=entry.editor_id,
+        )
+        for entry in entries
+    )
 
 
 def _map_to_target(
@@ -308,14 +344,14 @@ def _map_to_target(
     by_key = {entry.identity: entry for entry in target_entries}
     by_legacy: dict[str, set[EntryKey]] = {}
     by_external: dict[tuple[str, str, str, object], set[EntryKey]] = {}
-    by_sst: dict[tuple[int, int], set[EntryKey]] = {}
+    by_sst: dict[tuple[int, str], set[EntryKey]] = {}
     by_dsd: dict[tuple[str, str], set[EntryKey]] = {}
     for entry in target_entries:
         for legacy in {entry.id, entry.key, entry.identity.local_key}:
             by_legacy.setdefault(legacy, set()).add(entry.identity)
         for reference in entry.external_refs:
             by_external.setdefault(reference.index_key, set()).add(entry.identity)
-        sst_key = _target_sst_key(entry.id)
+        sst_key = target_locator(entry)
         if sst_key is not None:
             by_sst.setdefault(sst_key, set()).add(entry.identity)
         dsd_key = _dsd_quest_key(entry)
@@ -340,6 +376,13 @@ def _map_to_target(
             # QUST CNAM DSD omits editor ID/stage index. Its explicit locator
             # is plugin-qualified FormID + field + exact original text.
             candidates = set(by_dsd.get(source.dsd_key, ()))
+
+        if source.editor_id:
+            candidates = {
+                key
+                for key in candidates
+                if not known_editor_id(by_key[key]) or known_editor_id(by_key[key]) == source.editor_id.casefold()
+            }
 
         original_required = source.requires_original_match or any(
             by_key[key].requires_original_match for key in candidates
@@ -375,18 +418,6 @@ def _dsd_quest_key(entry: TranslationEntry) -> tuple[str, str] | None:
     if entry.dsd_type != "QUST CNAM" or not entry.form_id_with_plugin:
         return None
     return entry.form_id_with_plugin.casefold(), entry.dsd_type
-
-
-def _target_sst_key(legacy_id: str) -> tuple[int, int] | None:
-    after_colon = legacy_id.split(":", 1)[1] if ":" in legacy_id else legacy_id
-    form_id, separator, remainder = after_colon.partition("|")
-    if not separator:
-        return None
-    index = remainder.split("~", 1)[0]
-    try:
-        return int(form_id, 16), int(index)
-    except (TypeError, ValueError):
-        return None
 
 
 __all__ = ["MigrationImportDraft", "MigrationImportError", "prepare_migration_import"]
