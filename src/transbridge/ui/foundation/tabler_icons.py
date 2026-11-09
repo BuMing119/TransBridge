@@ -51,6 +51,10 @@ _ICON_PATHS: dict[str, tuple[str, ...]] = {
         "M16 5.25l-8 4.5",
     ),
     "download": ("M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2", "M7 11l5 5l5 -5", "M12 4v12"),
+    "refresh": (
+        "M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4",
+        "M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4",
+    ),
     "arrow-left": ("M5 12l14 0", "M5 12l6 6", "M5 12l6 -6"),
     "chevron-right": ("M9 6l6 6l-6 6",),
     "alert-triangle": (

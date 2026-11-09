@@ -156,16 +156,23 @@ def test_navigation_update_intent_and_available_state() -> None:
     assert emitted == [IntentId.HELP_CHECK_UPDATE.value]
     assert button.accessibleName() == "检查更新"
     assert button.property("tbUpdateAvailable") is False
+    check_icon = button.icon().pixmap(18, 18).toImage()
+    assert not check_icon.isNull()
 
     shell.navigation.set_update_available(True, "0.2.2")
     assert button.text() == "发现新版本"
     assert button.accessibleName() == "发现新版本"
     assert "0.2.2" in button.accessibleDescription()
     assert button.property("tbUpdateAvailable") is True
+    available_icon = button.icon().pixmap(18, 18).toImage()
+    assert available_icon != check_icon
+    shell.navigation._refresh_icons()
+    assert button.icon().pixmap(18, 18).toImage() == available_icon
 
     shell.navigation.set_update_available(False)
     assert button.text() == "检查更新"
     assert button.accessibleDescription() == "检查更新"
+    assert button.icon().pixmap(18, 18).toImage() == check_icon
     shell.close()
 
 

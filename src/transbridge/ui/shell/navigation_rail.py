@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 
 from transbridge.ui.foundation.tabler_icons import tabler_icon, tabler_pixmap
 from transbridge.ui.shell.action_catalog import IntentId
+from transbridge.ui.shell.update_button import UpdateButton
 
 _AVATAR_SIZE = 32
 _NAV_ICON_SIZE = 18
@@ -119,7 +120,9 @@ class NavigationRail(QFrame):
         self._paratranz_button = self._add_page(layout, "ParaTranz", "language", 1)
         layout.addStretch(1)
 
-        self._update_button = self._add_intent(layout, "检查更新", "download", IntentId.HELP_CHECK_UPDATE)
+        self._update_button = UpdateButton(self)
+        self._update_button.clicked.connect(lambda: self.intent_requested.emit(IntentId.HELP_CHECK_UPDATE.value))
+        layout.addWidget(self._update_button)
         self.set_update_available(False)
         self._add_intent(layout, "设置", "settings", IntentId.SETTINGS_APPEARANCE)
         self._add_intent(layout, "帮助", "help-circle", IntentId.HELP_CONTEXT)
@@ -239,6 +242,7 @@ class NavigationRail(QFrame):
                     button.setIcon(_outlined_asset_icon(button, asset_path))
                     continue
             button.setIcon(tabler_icon(button, icon_id, _NAV_ICON_SIZE))
+        self._update_button.refresh_icons()
 
     def set_current_page(self, index: int) -> None:
         button = self._page_group.button(index)
@@ -246,15 +250,10 @@ class NavigationRail(QFrame):
             button.setChecked(True)
 
     def set_update_available(self, available: bool, version: str | None = None) -> None:
-        button = self._update_button
-        label = "发现新版本" if available else "检查更新"
-        detail = f"TransBridge v{version} 可用，点击查看更新" if available and version else label
-        button.setText(label)
-        button.setAccessibleName(label)
-        button.setAccessibleDescription(detail)
-        button.setToolTip(detail)
-        button.setProperty("tbUpdateAvailable", available)
-        self._refresh_dynamic_style(button)
+        self._update_button.set_available(available, version)
+
+    def set_update_checking(self, checking: bool) -> None:
+        self._update_button.set_checking(checking)
 
     def set_user(self, user: dict | None) -> None:
         if not user:

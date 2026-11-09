@@ -9,13 +9,14 @@ from pathlib import Path
 import sys
 from threading import Event
 
-from PyQt6.QtCore import QObject, Qt, QTimer
-from PyQt6.QtWidgets import QApplication, QMessageBox, QProgressDialog
+from PyQt6.QtCore import QObject, QTimer
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from transbridge import __version__
 from transbridge.application.update_service import ReleaseInfo, check_latest, download_release
 from transbridge.ui.workers import ApiWorker
 
+from .update_dialog import UpdateDialog, UpdateState
 from .update_handoff import launch_after_exit
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,9 @@ class UpdateController(QObject):
         self._navigation = None
         self._worker: ApiWorker | None = None
         self._release: ReleaseInfo | None = None
-        self._progress: QProgressDialog | None = None
+        self._dialog: UpdateDialog | None = None
+        self._download_active = False
+        self._downloaded_installer: Path | None = None
         self._cancel_download = Event()
         self._pending_installer: Path | None = None
         self._installation_scheduled = False
@@ -77,7 +80,14 @@ class UpdateController(QObject):
             self._check(manual=False)
 
     def check_manually(self) -> None:
-        self._check(manual=True)
+        if self._host.close_pending or self._installation_scheduled:
+            return
+        if self._dialog is not None:
+            self._show_update_dialog()
+        elif self._release is not None:
+            self._offer_release(self._release)
+        else:
+            self._check(manual=True)
 
     def _check(self, *, manual: bool) -> None:
         if self._host.close_pending or not self._host.isVisible():
@@ -92,11 +102,14 @@ class UpdateController(QObject):
         worker.result.connect(lambda release: self._on_check_result(release, manual=manual))
         worker.error.connect(lambda message: self._on_check_error(message, manual=manual))
         worker.finished.connect(lambda: self._release_worker(worker))
+        if self._navigation is not None:
+            self._navigation.set_update_checking(True)
         worker.start()
 
     def _on_check_result(self, release: ReleaseInfo | None, *, manual: bool) -> None:
         self._release = release
         if self._navigation is not None:
+            self._navigation.set_update_checking(False)
             self._navigation.set_update_available(release is not None, None if release is None else release.version)
         if manual and not self._host.close_pending:
             if release is None:
@@ -106,38 +119,45 @@ class UpdateController(QObject):
 
     def _on_check_error(self, message: str, *, manual: bool) -> None:
         logger.warning("Update check failed: %s", message)
+        if self._navigation is not None:
+            self._navigation.set_update_checking(False)
         if manual and not self._host.close_pending:
             QMessageBox.warning(self._host, "检查更新失败", message)
 
     def _offer_release(self, release: ReleaseInfo) -> None:
-        box = QMessageBox(self._host)
-        box.setWindowTitle("发现 TransBridge 新版本")
-        box.setIcon(QMessageBox.Icon.Information)
-        box.setTextFormat(Qt.TextFormat.PlainText)
-        notes = release.notes.strip() or "本次发布未提供更新说明。"
-        box.setText(f"当前版本：{__version__}\n最新版本：{release.version}\n\n{notes[:3000]}")
-        download_button = box.addButton("下载并安装", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("稍后", QMessageBox.ButtonRole.RejectRole)
-        box.exec()
-        if box.clickedButton() is download_button:
-            if not getattr(sys, "frozen", False):
-                self._show_info("当前从源码运行。请使用安装版 TransBridge 执行自动安装。")
-                return
-            self._download(release)
+        if self._host.close_pending:
+            return
+        if self._dialog is None or self._dialog.release != release:
+            if self._dialog is not None:
+                self._dialog.close()
+                self._dialog.deleteLater()
+            self._release = release
+            self._downloaded_installer = None
+            self._dialog = UpdateDialog(release, __version__, self._host, can_install=getattr(sys, "frozen", False))
+            self._dialog.download_requested.connect(lambda: self._download(release))
+            self._dialog.cancel_requested.connect(self._cancel_download.set)
+            self._dialog.install_requested.connect(self._install_downloaded)
+        self._show_update_dialog()
+
+    def _show_update_dialog(self) -> None:
+        if self._dialog is not None:
+            self._dialog.show()
+            self._dialog.raise_()
+            self._dialog.activateWindow()
 
     def _download(self, release: ReleaseInfo) -> None:
+        if self._host.close_pending or not getattr(sys, "frozen", False):
+            return
         if self._worker is not None:
             self._show_info("更新检查或下载正在进行，请稍候。")
             return
+        if self._dialog is None:
+            self._offer_release(release)
         self._cancel_download.clear()
-        progress = QProgressDialog("正在下载并验证安装包…", "取消下载", 0, 1000, self._host)
-        progress.setWindowTitle("更新 TransBridge")
-        progress.setWindowModality(Qt.WindowModality.NonModal)
-        progress.setMinimumDuration(0)
-        progress.setAutoClose(False)
-        progress.setAutoReset(False)
-        progress.canceled.connect(self._cancel_download.set)
-        self._progress = progress
+        self._downloaded_installer = None
+        self._download_active = True
+        self._dialog.set_transfer_active(True)
+        self._dialog.show_downloading()
 
         def fetch() -> Path:
             return download_release(
@@ -153,32 +173,29 @@ class UpdateController(QObject):
         worker.result.connect(self._on_download_ready)
         worker.error.connect(self._on_download_error)
         worker.finished.connect(lambda: self._release_worker(worker))
-        progress.show()
         worker.start()
 
     def _on_download_progress(self, done: int, total: int, _message: str) -> None:
-        if self._progress is not None and total > 0:
-            self._progress.setValue(min(1000, done * 1000 // total))
+        if self._dialog is not None:
+            self._dialog.set_download_progress(done, total)
 
     def _on_download_error(self, message: str) -> None:
-        self._close_progress()
-        if self._cancel_download.is_set() or self._host.close_pending:
-            return
-        QMessageBox.warning(self._host, "更新下载失败", message)
+        if self._dialog is not None:
+            if self._cancel_download.is_set():
+                self._dialog.show_cancelled()
+            else:
+                self._dialog.show_error(message)
 
     def _on_download_ready(self, installer: Path) -> None:
         if self._cancel_download.is_set() or self._host.close_pending:
-            self._close_progress()
             return
-        self._close_progress()
-        answer = QMessageBox.question(
-            self._host,
-            "安装更新",
-            "安装包已校验。现在保存工作并退出 TransBridge，随后启动安装程序吗？\nWindows 可能要求管理员权限。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        self._downloaded_installer = installer
+        if self._dialog is not None:
+            self._dialog.show_ready()
+
+    def _install_downloaded(self) -> None:
+        installer = self._downloaded_installer
+        if installer is None or self._worker is not None or self._host.close_pending or self._installation_scheduled:
             return
         app = QApplication.instance()
         if app is None:
@@ -189,11 +206,15 @@ class UpdateController(QObject):
             if widget is not self._host and isinstance(widget, type(self._host)) and widget.isVisible()
         ]
         if other_windows:
-            self._show_info("请先关闭其他 TransBridge 主窗口，再从本窗口启动安装。")
+            if self._dialog is not None:
+                self._dialog.show_ready("请先关闭其他 TransBridge 主窗口，再从本窗口启动安装。")
             return
         self._pending_installer = installer
         app.aboutToQuit.connect(self._launch_pending_installer)
         self._installation_scheduled = True
+        if self._dialog is not None:
+            self._dialog.show_installing()
+            self._dialog.hide()
         self._host.close()
 
     def cancel_installation(self) -> None:
@@ -204,14 +225,19 @@ class UpdateController(QObject):
             if app is not None:
                 app.aboutToQuit.disconnect(self._launch_pending_installer)
             self._installation_scheduled = False
+            if self._dialog is not None and self._downloaded_installer is not None:
+                self._dialog.show_ready("已取消退出，安装包已保留，可稍后安装。")
+                self._show_update_dialog()
         if getattr(sys, "frozen", False) and not self._checked_once:
             self._auto_timer.start(3000)
 
     def prepare_for_close(self) -> None:
         """Stop an in-flight update download before normal close waits for workers."""
         self._auto_timer.stop()
-        if self._progress is not None:
+        if self._download_active:
             self._cancel_download.set()
+        if self._dialog is not None:
+            self._dialog.hide()
 
     def _launch_pending_installer(self) -> None:
         installer = self._pending_installer
@@ -236,16 +262,20 @@ class UpdateController(QObject):
             except OSError:
                 logger.exception("Could not record update launch failure")
 
-    def _close_progress(self) -> None:
-        if self._progress is not None:
-            self._progress.canceled.disconnect(self._cancel_download.set)
-            self._progress.close()
-            self._progress.deleteLater()
-            self._progress = None
-
     def _release_worker(self, worker: ApiWorker) -> None:
         if self._worker is worker:
             self._worker = None
+            if self._download_active:
+                self._download_active = False
+                if self._dialog is not None:
+                    self._dialog.set_transfer_active(False)
+                    if self._cancel_download.is_set():
+                        self._downloaded_installer = None
+                        self._dialog.show_cancelled()
+                    elif self._dialog.state in {UpdateState.DOWNLOADING, UpdateState.CANCELLING}:
+                        self._dialog.show_error("下载未完成，请重试。")
+            if self._navigation is not None:
+                self._navigation.set_update_checking(False)
         worker.deleteLater()
 
     def _show_info(self, message: str) -> None:

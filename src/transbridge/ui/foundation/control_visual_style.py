@@ -87,4 +87,8 @@ def compile_control_visual_styles(snapshot: ThemeSnapshot | ThemeDefinition) -> 
     border-color: palette(mid);
     font-weight: 400;
 }}
+QToolButton#tbCheckUpdateButton {{
+    font-family: "Microsoft YaHei UI";
+    font-weight: 400;
+}}
 """.strip()

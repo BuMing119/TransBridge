@@ -8,9 +8,12 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QProgressDialog
+from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtWidgets import QApplication, QMainWindow
+import pytest
 
 from transbridge.application.update_service import ReleaseInfo
+from transbridge.ui.shell.navigation_rail import NavigationRail
 from transbridge.ui.shell.update_controller import UpdateController
 
 _APP = QApplication.instance() or QApplication([])
@@ -19,6 +22,10 @@ _APP = QApplication.instance() or QApplication([])
 class NavigationStub:
     def __init__(self) -> None:
         self.state = None
+        self.checking = False
+
+    def set_update_checking(self, checking: bool) -> None:
+        self.checking = checking
 
     def set_update_available(self, available: bool, version: str | None = None) -> None:
         self.state = available, version
@@ -51,10 +58,60 @@ def test_new_release_updates_navigation_without_installing() -> None:
     host.close()
 
 
+@pytest.mark.parametrize("manual", [False, True])
+@pytest.mark.parametrize("outcome", ["available", "latest", "error", "finished"])
+def test_check_animation_tracks_worker_lifetime(monkeypatch, manual, outcome) -> None:
+    class ControlledWorker(QObject):
+        result = pyqtSignal(object)
+        error = pyqtSignal(str)
+        finished = pyqtSignal()
+
+        def __init__(self, *_args, **_kwargs):
+            super().__init__()
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr("transbridge.ui.shell.update_controller.ApiWorker", ControlledWorker)
+    monkeypatch.setattr("transbridge.ui.shell.update_controller.QMessageBox.warning", lambda *_args: None)
+    host = QMainWindow()
+    host.close_pending = False
+    navigation = NavigationRail(host)
+    host.setCentralWidget(navigation)
+    host.show()
+    controller = UpdateController(host)
+    controller.bind_navigation(navigation)
+    monkeypatch.setattr(controller, "_show_info", lambda *_args: None)
+    monkeypatch.setattr(controller, "_offer_release", lambda *_args: None)
+    try:
+        controller._check(manual=manual)
+        worker = controller._worker
+        button = navigation._update_button
+        assert button.text() == "正在检查…"
+        assert not button.isEnabled()
+        # A second request cannot replace the worker or restart the animation.
+        controller._check(manual=manual)
+        assert controller._worker is worker
+        if outcome == "available":
+            worker.result.emit(_release(b"installer"))
+        elif outcome == "latest":
+            worker.result.emit(None)
+        elif outcome == "error":
+            worker.error.emit("offline")
+        worker.finished.emit()
+        assert controller._worker is None
+        assert button.isEnabled()
+        assert button.text() == ("发现新版本" if outcome == "available" else "检查更新")
+        assert button._rotation.state() == button._rotation.State.Stopped
+        _APP.processEvents()
+    finally:
+        host.close()
+
+
 def test_closing_window_cancels_active_download() -> None:
     host = QMainWindow()
     controller = UpdateController(host)
-    controller._progress = QProgressDialog(host)
+    controller._download_active = True
 
     controller.prepare_for_close()
 
