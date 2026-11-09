@@ -8,7 +8,7 @@
 #define AppPublisher "BuMing119"
 #define AppExeName "TransBridge.exe"
 #ifndef DistDir
-#define DistDir "..\dist\TransBridge"
+#define DistDir AddBackslash(SourcePath) + "..\dist\TransBridge"
 #endif
 
 [Setup]
@@ -43,7 +43,8 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 
 [Files]
 ; The application links to the centrally installed Microsoft runtime.
-Source: "{#DistDir}\*"; Excludes: "msvcp140.dll,msvcp140_1.dll,msvcp140_2.dll,vcruntime140.dll,vcruntime140_1.dll"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#DistDir}\*"; Excludes: "msvcp140*.dll,vcruntime140*.dll,vcomp140*.dll,vc-runtime-aliases.iss"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#include AddBackslash(DistDir) + "vc-runtime-aliases.iss"
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "..\NOTICE"; DestDir: "{app}"; DestName: "NOTICE.txt"; Flags: ignoreversion
 
@@ -66,11 +67,12 @@ begin
     FileExists(SystemDir + 'msvcp140_1.dll') and
     FileExists(SystemDir + 'msvcp140_2.dll') and
     FileExists(SystemDir + 'vcruntime140.dll') and
-    FileExists(SystemDir + 'vcruntime140_1.dll');
+    FileExists(SystemDir + 'vcruntime140_1.dll') and
+    FileExists(SystemDir + 'vcomp140.dll');
   if not Result then
     SuppressibleMsgBox(
-      'Install the Microsoft Visual C++ Redistributable (x64), then run TransBridge Setup again.' +
-      #13#10 + #13#10 + 'https://aka.ms/vc14/vc_redist.x64.exe', mbError, MB_OK, IDOK);
+      'Install the Microsoft Visual C++ Redistributable (x64), then run TransBridge Setup again.' + #13#10#13#10 +
+      'https://aka.ms/vc14/vc_redist.x64.exe', mbError, MB_OK, IDOK);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

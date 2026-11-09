@@ -32,6 +32,21 @@ def _copy_distribution(distribution: metadata.Distribution, destination: Path) -
         copyfile(distribution.locate_file(path), target)
 
 
+def _write_runtime_aliases(payload: Path) -> None:
+    """Use the system MSVC runtime for names mangled by the locked wheels."""
+    entries = []
+    for dll in sorted(payload.rglob("*.dll")):
+        runtime, separator, _ = dll.stem.lower().partition("-")
+        if not separator or runtime not in {"msvcp140", "vcruntime140", "vcomp140"}:
+            continue
+        directory = dll.parent.relative_to(payload)
+        entries.append(
+            f'Source: "{{sysnative}}\\{runtime}.dll"; DestDir: "{{app}}\\{directory}"; '
+            f'DestName: "{dll.name}"; Flags: external ignoreversion'
+        )
+    (payload / "vc-runtime-aliases.iss").write_text("\n".join(entries) + "\n", encoding="utf-8")
+
+
 def collect_licenses(destination: Path, inno_compiler: Path | None) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     copyfile(LICENSES / "Apache-2.0.txt", destination / "Apache-2.0.txt")
@@ -42,6 +57,7 @@ def collect_licenses(destination: Path, inno_compiler: Path | None) -> None:
     copytree(qt_notices, destination / qt_notices.name, dirs_exist_ok=True)
     if inno_compiler is not None:
         copyfile(inno_compiler.with_name("license.txt"), destination / "Inno-Setup-LICENSE.txt")
+        _write_runtime_aliases(destination.parent)
 
     version = metadata.version("transbridge")
     index = [
