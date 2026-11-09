@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 record type 分类常量（全项目共享）。
 

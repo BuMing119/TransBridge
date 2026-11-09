@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Retain source-text locators while a legacy plugin instance is edited."""
 
 from copy import copy

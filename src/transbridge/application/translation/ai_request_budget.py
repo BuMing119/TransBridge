@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Run-scoped admission control for outbound AI requests.
 
 The budget is deliberately independent from Qt and provider SDKs.  A lease

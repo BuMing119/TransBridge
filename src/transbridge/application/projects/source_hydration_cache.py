@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reuse immutable source parses only while all input content remains identical."""
 
 from collections import OrderedDict

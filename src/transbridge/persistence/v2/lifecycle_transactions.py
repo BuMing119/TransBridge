@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Repository-backed transaction stores for production lifecycle composition."""
 
 from __future__ import annotations

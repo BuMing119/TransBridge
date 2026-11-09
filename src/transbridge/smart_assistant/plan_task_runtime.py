@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Register assistant plans as scoped, cancellable runtime workloads."""
 
 from __future__ import annotations

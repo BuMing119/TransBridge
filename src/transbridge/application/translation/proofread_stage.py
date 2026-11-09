@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Comprehensive advisory proofreading with resumable, bounded model calls."""
 
 from __future__ import annotations

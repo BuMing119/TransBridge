@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared environment-to-runtime binding for headless process adapters."""
 
 from __future__ import annotations

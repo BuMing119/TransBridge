@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Ports for Session persistence, reconciliation, and active-pointer commit."""
 
 from __future__ import annotations

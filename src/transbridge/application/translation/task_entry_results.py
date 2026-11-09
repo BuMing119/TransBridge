@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Per-entry execution, user decisions and publication for one task's attempts."""
 
 from __future__ import annotations

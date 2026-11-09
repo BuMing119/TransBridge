@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Collect immutable workbench assets outside the GUI event loop."""
 
 from dataclasses import dataclass

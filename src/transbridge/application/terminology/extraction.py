@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Deterministic and optional LLM terminology extraction over frozen evidence."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Feature-local presentation adapter for Smart Assistant theme consumers."""
 
 from __future__ import annotations

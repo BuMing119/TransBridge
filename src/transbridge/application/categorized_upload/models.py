@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """File classification contracts and retained ordinary-upload compatibility data."""
 
 from dataclasses import dataclass

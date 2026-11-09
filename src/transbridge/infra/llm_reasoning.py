@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Request-scoped LLM reasoning intent, capability cache, and lazy probing."""
 
 from __future__ import annotations

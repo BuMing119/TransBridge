@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Anthropic Messages protocol adapter for native client-side tool calling."""
 
 from __future__ import annotations

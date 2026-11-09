@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free synchronization review values and plan projections."""
 
 from __future__ import annotations

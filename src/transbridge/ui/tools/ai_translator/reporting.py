@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Canonical AI translation report projection and artifact rendering."""
 
 from __future__ import annotations

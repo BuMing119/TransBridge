@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Serialize one window's draft writes without blocking the Qt event loop."""
 
 from __future__ import annotations

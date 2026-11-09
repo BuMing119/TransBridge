@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Workbench export intent; all formats share the export dialog and publication boundary."""
 
 from dataclasses import dataclass

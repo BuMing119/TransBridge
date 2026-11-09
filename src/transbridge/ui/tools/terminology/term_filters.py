@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit, full-collection filtering controls shared by terminology tables."""
 
 from PyQt6.QtCore import QSignalBlocker, pyqtSignal

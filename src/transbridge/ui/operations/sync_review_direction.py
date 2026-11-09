@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Direction-specific language and decision keys shared by sync review surfaces."""
 
 from dataclasses import dataclass

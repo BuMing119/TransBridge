@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prepare, approve, and run publications against the exact reviewed content."""
 
 from __future__ import annotations

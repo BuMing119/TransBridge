@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read navigable quest, topic and scene records without creating translation entries."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compare-and-save commands with one reload for an externally advanced Session."""
 
 from dataclasses import replace

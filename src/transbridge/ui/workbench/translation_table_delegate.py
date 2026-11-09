@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Theme-aware item painting for the Workbench translation table."""
 
 from __future__ import annotations

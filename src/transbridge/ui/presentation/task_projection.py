@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free TaskRuntime event projection and subscription lifecycle."""
 
 from __future__ import annotations

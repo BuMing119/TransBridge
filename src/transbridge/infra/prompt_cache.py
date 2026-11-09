@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Provider Prompt Cache 的内部标记、验证和适配协议。
 
 业务层只描述稳定前缀和断点；本模块负责验证消息拓扑、判断缓存资格、剥离

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """翻译记忆数据模型：DictionaryEntry 与 Dictionary。
 
 结构：单表权威对象 + 双索引（键索引 + 文本索引）。

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Import old excerpts as historical material, never as coverage or current authority."""
 
 from transbridge.application.assistant_requests.models import digest

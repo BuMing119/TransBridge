@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Strict, portable definitions for named AI workflow profiles.
 
 Profiles deliberately contain only execution policy.  Provider configuration,

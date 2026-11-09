@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Select independent ESP-ESM Translator EET or XML formats from captured bytes."""
 
 from pathlib import Path

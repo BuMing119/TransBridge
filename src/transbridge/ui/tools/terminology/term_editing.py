@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free command boundary for complete, atomic terminology edits."""
 
 from __future__ import annotations

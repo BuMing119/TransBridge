@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """V2 Session repository and active-pointer UnitOfWork adapters."""
 
 from __future__ import annotations

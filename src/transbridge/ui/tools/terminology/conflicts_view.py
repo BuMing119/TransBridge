@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Conflict-review page backed by a bounded application projection model."""
 
 from __future__ import annotations

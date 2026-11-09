@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Run existing translation rounds through bounded, dependency-aware workers."""
 
 from __future__ import annotations

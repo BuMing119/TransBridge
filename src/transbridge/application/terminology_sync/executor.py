@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Safe, per-item executor for authorized terminology backup plans."""
 
 from __future__ import annotations

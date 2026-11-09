@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Conservative SST migration matching without relying on the old index layout."""
 
 from collections import defaultdict

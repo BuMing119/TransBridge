@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 OverviewTab: 项目概览标签页，展示基本信息与翻译进度统计。
 """

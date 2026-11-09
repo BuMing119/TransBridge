@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Review and confirmation flows for publication, draft discard, and history restore."""
 
 from __future__ import annotations

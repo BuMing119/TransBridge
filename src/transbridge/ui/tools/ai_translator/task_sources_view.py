@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Select ordered content sources for any AI task mode."""
 
 from __future__ import annotations

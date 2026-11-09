@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Plugin evidence accepted by the pure dialogue reading-order algorithm.
 
 Identifiers are scoped to one source plugin and quest. These records deliberately

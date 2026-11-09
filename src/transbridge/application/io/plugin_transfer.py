@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Apply a frozen project's proved translations to a separately selected plugin."""
 
 from dataclasses import dataclass, replace

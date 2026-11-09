@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Offline salvage of legacy proofread logs; never publishes or assumes run identity."""
 
 from __future__ import annotations

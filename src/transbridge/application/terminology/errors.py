@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Typed failures for the project terminology domain."""
 
 from __future__ import annotations

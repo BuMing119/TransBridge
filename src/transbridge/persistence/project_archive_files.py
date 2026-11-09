@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Safe ZIP members and portable source/owned-asset capture for project archives."""
 
 from __future__ import annotations

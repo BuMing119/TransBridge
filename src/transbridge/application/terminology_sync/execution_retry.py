@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Retry evidence and freshness checks for interrupted terminology synchronization."""
 
 from __future__ import annotations

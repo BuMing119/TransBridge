@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Small, theme-aware subset of Tabler outline icons used by the desktop shell.
 
 The SVG path data in this module comes from Tabler Icons:

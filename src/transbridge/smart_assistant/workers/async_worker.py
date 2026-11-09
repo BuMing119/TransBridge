@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """AsyncWorker — LLM/Agent 后台任务的 threading.Thread 基类。
 
 Phase 2: 替代 QThread 继承。通过回调属性实现信号功能，

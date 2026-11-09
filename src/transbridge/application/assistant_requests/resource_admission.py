@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared resource exclusion for writes across requests, sessions and views."""
 
 from collections.abc import Iterator

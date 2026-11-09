@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Resolve the optional project terminology binding for translation consumers."""
 
 from __future__ import annotations

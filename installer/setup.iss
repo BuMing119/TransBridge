@@ -18,7 +18,7 @@ AppVersion={#AppVersion}
 VersionInfoVersion={#AppVersion}
 VersionInfoTextVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-LicenseFile=..\LICENSE
+InfoBeforeFile=..\NOTICE
 DefaultDirName={autopf}\{#AppName}
 UsePreviousAppDir=yes
 CloseApplications=yes
@@ -43,6 +43,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 [Files]
 Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+Source: "..\NOTICE"; DestDir: "{app}"; DestName: "NOTICE.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"

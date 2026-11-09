@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """One worker and lifecycle for AI tasks of any source count and mode."""
 
 from __future__ import annotations

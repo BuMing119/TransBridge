@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Single-entry comparison, with actions described in the user's language."""
 
 from __future__ import annotations

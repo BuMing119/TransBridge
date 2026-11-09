@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Detached migration entries that share only known immutable payloads."""
 
 from __future__ import annotations

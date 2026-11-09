@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only classification of dropped files into canonical shell intents.
 
 The router is deliberately a proposal boundary: it may inspect bounded local

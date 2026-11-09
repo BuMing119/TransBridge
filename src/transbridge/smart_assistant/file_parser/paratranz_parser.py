@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """ParaTranz 导出格式解析器。"""
 
 import logging

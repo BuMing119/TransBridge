@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Create mapping editors only for the cell currently being edited."""
 
 from __future__ import annotations

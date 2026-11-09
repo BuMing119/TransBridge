@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Open current or safely migratable Project records for GUI and other entrypoints."""
 
 from __future__ import annotations

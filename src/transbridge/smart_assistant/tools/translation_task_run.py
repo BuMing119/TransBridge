@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Execute detached assistant translation work and settle durable results."""
 
 from __future__ import annotations

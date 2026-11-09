@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Authorize exact local output files before attaching assistant undo evidence."""
 
 import os

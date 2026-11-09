@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only conversation records reconciled with the complete canonical transcript."""
 
 

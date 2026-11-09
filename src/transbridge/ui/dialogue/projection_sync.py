@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Avoid rebuilding unchanged authoritative entry projections during navigation."""
 
 from __future__ import annotations

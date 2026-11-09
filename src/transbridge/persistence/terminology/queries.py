@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Snapshot-bound cursor codec and SQLite keyset pagination helpers."""
 
 from __future__ import annotations

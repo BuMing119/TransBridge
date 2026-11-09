@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Collect fallible review evidence without rejecting translation candidates."""
 
 from __future__ import annotations

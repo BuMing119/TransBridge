@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Injectable filesystem boundary and root-confined path derivation."""
 
 from __future__ import annotations

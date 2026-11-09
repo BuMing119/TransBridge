@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Lazy Workbench table view with stable translation identity and selection."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Card-based terminology and version pages."""
 
 from __future__ import annotations

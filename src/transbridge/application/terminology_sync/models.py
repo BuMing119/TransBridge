@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable application contracts for terminology synchronization state."""
 
 from __future__ import annotations

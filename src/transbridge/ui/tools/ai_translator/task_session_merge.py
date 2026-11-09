@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Small frozen result payloads and publication, independent of session capture."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """FOMOD 流水线编排：解包→diff→逐插件[键对齐→词典兜底→AI翻译→写回]→界面文本翻译→组装→打包。
 
 纯 Python，无 PyQt 依赖（ADR-008）。翻译来源按 ADR-014 优先级：

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt projection and model-round wiring for the application request service."""
 
 from __future__ import annotations

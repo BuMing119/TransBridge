@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compact terminology shell with project context and secondary navigation."""
 
 from __future__ import annotations

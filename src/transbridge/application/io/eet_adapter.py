@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Snapshot-bound binary EET v3 reads and original-format translation writes."""
 
 from __future__ import annotations

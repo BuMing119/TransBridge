@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Background publication review and creation from project terminology."""
 
 from dataclasses import replace

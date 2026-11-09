@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Serialize task records independently of progress views and optional exports."""
 
 from __future__ import annotations

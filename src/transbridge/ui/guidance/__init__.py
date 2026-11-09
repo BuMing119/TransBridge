@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free state-driven guidance foundation for FR26."""
 
 from transbridge.config.ui_preferences import GuidanceMode

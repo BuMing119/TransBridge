@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Stage immutable transcript evidence and merge Session history projections."""
 
 from __future__ import annotations

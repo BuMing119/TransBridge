@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Persist parsed source results and validate saved references without reading live files."""
 
 from dataclasses import replace

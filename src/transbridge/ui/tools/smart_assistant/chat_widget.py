@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Public chat facade and feature composition root."""
 
 from __future__ import annotations

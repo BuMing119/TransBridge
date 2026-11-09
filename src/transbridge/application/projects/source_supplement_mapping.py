@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Lossless correspondence between saved translations and explicitly supplied input."""
 
 from collections import defaultdict

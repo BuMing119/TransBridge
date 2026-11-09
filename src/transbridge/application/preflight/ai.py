@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """AI run prerequisites independent of UI and source-file references."""
 
 from __future__ import annotations

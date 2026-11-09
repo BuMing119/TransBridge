@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 MailsDialog: 私信（Mails）对话框，左侧对话列表 + 右侧消息流。
 """

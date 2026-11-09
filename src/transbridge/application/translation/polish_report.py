@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Canonical report snapshot for standalone proofreading and polish runs."""
 
 from __future__ import annotations

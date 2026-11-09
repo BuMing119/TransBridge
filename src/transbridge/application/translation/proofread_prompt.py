@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build one comprehensive review request and capture its advisory evidence."""
 
 from __future__ import annotations

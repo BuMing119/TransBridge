@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Manual-adjustment page for terminology drafts."""
 
 from __future__ import annotations

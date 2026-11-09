@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt row mapping over matches prepared outside the GUI thread."""
 
 from PyQt6.QtCore import QAbstractProxyModel, QModelIndex, Qt, pyqtSignal

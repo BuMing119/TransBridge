@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """GUI composition object that owns UI-only foundation services."""
 
 from __future__ import annotations

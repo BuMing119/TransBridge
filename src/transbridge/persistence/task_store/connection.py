@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Lazy, bounded, rollback-journal transactions for task storage."""
 
 from __future__ import annotations

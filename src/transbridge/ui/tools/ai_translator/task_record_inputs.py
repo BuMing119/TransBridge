@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Small source descriptors and private ledger snapshots for background reports."""
 
 from __future__ import annotations

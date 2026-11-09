@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reuse unchanged report payloads while publishing small task status updates."""
 
 from datetime import UTC, datetime

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared operation-plan presentation and runtime adapters."""
 
 from .mappers import (

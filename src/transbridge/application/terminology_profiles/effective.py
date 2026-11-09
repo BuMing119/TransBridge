@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Overlay one immutable localization profile on a base terminology snapshot."""
 
 from __future__ import annotations

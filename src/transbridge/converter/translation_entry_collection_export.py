@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Write the shared ParaTranz classification to a local directory."""
 
 from __future__ import annotations

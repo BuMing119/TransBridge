@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build dialogue projections with one cached, read-only catalog of the loaded source."""
 
 from __future__ import annotations

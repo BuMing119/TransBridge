@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Presentation mapping for explicit JSON exports, not native format conversion."""
 
 from dataclasses import replace

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bind a newly selected plugin to one write operation."""
 
 from __future__ import annotations

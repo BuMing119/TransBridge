@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Session aggregate with owner/revision-gated runtime event application."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Editable raw mappings with incremental dirty tracking and deferred validation."""
 
 from __future__ import annotations

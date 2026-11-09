@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Match the viewed conversation to the installed workbench before execution."""
 
 from dataclasses import replace

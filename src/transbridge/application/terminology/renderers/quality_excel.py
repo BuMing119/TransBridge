@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Write-only Excel projection of one frozen terminology quality snapshot."""
 
 from __future__ import annotations

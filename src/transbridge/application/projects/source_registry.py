@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Validated Project source registrations and explicit relationship graphs."""
 
 from __future__ import annotations

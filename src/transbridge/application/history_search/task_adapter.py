@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """TaskRuntime entrypoint for non-blocking history index refreshes."""
 
 from __future__ import annotations

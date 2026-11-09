@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Layout-neutral rows projected directly from a frozen changelog document."""
 
 from __future__ import annotations

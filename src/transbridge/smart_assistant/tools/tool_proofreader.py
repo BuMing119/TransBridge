@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Preset-aware post-processing tools for Smart Assistant."""
 
 from __future__ import annotations

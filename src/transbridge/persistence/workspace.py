@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """workspace.json 全局状态管理。
 
 对应: ADR-006 — workspace.json 结构

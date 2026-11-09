@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project terminology composition and final cross-source review callbacks."""
 
 from __future__ import annotations

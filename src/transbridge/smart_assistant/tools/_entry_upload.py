@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Execute captured uploads and retain receipts before scoped local association."""
 
 from copy import deepcopy

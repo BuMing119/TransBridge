@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Strict JSON and semantic validation for persistence V2."""
 
 from __future__ import annotations

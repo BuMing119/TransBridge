@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """持久化模块：项目、版本、翻译数据的 JSON 文件读写。
 
 对应架构决策: ADR-006

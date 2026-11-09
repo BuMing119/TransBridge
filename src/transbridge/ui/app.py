@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 from datetime import datetime
 import logging
 from pathlib import Path

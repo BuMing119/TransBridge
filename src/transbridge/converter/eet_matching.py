@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Recover known EditorIDs for conservative EET migrations after hydration."""
 
 

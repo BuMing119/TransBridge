@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Selected assistant input facts and an actionable, caller-bound repair receipt."""
 
 from transbridge.application.preflight.inputs import ORIGINAL_KNOWN, SourceInputFacts, missing_source_keys

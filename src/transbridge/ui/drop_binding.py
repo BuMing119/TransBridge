@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Thin Qt binding for safe local-file drops.
 
 No candidate is dispatched automatically.  A host must display the resolution

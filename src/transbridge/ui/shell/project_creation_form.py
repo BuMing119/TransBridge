@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Fixed project creation form with an independently scrolling content area."""
 
 from pathlib import Path

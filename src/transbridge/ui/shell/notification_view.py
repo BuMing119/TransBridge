@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Transient information and persistent, inspectable application failures."""
 
 from __future__ import annotations

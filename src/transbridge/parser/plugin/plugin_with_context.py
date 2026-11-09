@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 SSEPluginWithContext - Extended plugin parser with NPC context extraction.
 

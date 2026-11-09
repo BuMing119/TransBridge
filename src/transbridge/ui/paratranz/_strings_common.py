@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """词条模块共享常量与工具函数。"""
 
 from PyQt6.QtCore import Qt

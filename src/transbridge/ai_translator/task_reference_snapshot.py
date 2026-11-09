@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable task reference inputs, with an optional atomic recovery sidecar."""
 
 from __future__ import annotations

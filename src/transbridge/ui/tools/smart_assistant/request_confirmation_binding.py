@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Persisted, item-scoped approvals and fresh admission for their consumption."""
 
 from copy import deepcopy

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Ports required by the Project lifecycle application service."""
 
 from __future__ import annotations

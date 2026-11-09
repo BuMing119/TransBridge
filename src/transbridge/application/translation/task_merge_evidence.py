@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Durable, selected-entry evidence captured before publishing AI results."""
 
 from __future__ import annotations

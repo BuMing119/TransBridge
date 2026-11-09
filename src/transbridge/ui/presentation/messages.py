@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """User-facing message values without widget or localization ownership."""
 
 from __future__ import annotations

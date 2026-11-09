@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """User-facing completion receipts, separate from technical diagnostics."""
 
 from dataclasses import dataclass

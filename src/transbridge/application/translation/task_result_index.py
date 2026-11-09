@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable counts and source projections computed alongside a task ledger."""
 
 from __future__ import annotations

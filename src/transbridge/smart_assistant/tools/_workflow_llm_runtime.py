@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared budgeted and logged LLM runtime for Smart Assistant workflows."""
 
 from __future__ import annotations

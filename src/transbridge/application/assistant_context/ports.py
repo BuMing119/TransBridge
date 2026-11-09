@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Small model and storage boundaries, independent of Qt and provider SDKs."""
 
 from typing import Protocol

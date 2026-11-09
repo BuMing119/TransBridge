@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Thin Qt view for the Qt-free command palette controller."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Scrollable common archive inputs with optional file-filter configuration."""
 
 from PyQt6.QtCore import Qt

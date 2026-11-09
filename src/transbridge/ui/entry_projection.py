@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Apply one authoritative state index across slots without recreating unchanged entries."""
 
 from dataclasses import dataclass, replace

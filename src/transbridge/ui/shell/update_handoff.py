@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Start the interactive Windows installer only after the old process exits."""
 
 from __future__ import annotations

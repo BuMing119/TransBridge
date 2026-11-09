@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """A height-for-width layout for keyboard-accessible filter buttons."""
 
 from PyQt6.QtCore import QPoint, QRect, QSize, Qt

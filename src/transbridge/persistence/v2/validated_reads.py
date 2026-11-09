@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Operation-local evidence that exact record bytes passed schema validation."""
 
 from collections.abc import Callable, Iterator

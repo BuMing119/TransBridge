@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Rendering helpers for the AI translator scope controls."""
 
 from __future__ import annotations

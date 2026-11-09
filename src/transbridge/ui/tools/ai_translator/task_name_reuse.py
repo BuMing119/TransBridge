@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Write validated existing names to task drafts before starting name model work."""
 
 from __future__ import annotations

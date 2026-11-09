@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """TaskRuntime integration for long-running terminology workloads.
 
 The module owns orchestration only.  Builders, publishers, and renderers are

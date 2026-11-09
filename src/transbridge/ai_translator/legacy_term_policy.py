@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Run-frozen policy for filtering proven ParaTranz project-version echoes."""
 
 from __future__ import annotations

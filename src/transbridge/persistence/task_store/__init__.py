@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Independent task database and its scoped views."""
 
 from base64 import urlsafe_b64encode

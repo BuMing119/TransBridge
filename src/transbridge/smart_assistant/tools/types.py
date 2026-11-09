@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """工具系统类型定义：ToolResult, ExecutionContext, HITL 协议。
 
 从 tools/base.py 分离出的纯类型定义，供 base.py 和其他模块导入使用。

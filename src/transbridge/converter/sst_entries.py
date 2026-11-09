@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Canonical ordinal identities for complete xTranslator SST records."""
 
 from dataclasses import asdict, replace

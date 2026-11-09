@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded GUI capture and detached construction of an AI task session."""
 
 from __future__ import annotations

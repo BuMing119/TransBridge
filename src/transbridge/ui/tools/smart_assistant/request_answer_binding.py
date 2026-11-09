@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Recover one omitted answer declaration without inferring task completion."""
 
 from dataclasses import replace

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded immutable terminal-task history and recording lifecycle."""
 
 from __future__ import annotations

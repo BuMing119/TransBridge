@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Keep billing delivery independent of whether a business response is still admitted."""
 
 

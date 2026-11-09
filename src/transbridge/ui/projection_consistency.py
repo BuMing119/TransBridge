@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reuse delivered authority evidence and reconcile only changed visible entries."""
 
 from contextlib import ExitStack

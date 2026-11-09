@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded, revision-aware compiled terminology views for repeated lookups."""
 
 from __future__ import annotations

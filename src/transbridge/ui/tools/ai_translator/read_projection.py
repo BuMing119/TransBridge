@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Serialize read-only UI projections and discard superseded replies."""
 
 from __future__ import annotations

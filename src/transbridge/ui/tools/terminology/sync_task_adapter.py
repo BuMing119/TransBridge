@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """TaskRuntime subscription for the terminology sync presenter."""
 
 from __future__ import annotations

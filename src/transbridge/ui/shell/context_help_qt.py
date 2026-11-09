@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Embeddable Qt panel for contextual help."""
 
 from __future__ import annotations

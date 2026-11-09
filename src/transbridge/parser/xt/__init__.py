@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 # parser/xt — xTranslator format parsers (XML + SST binary)
 from .sst_codec import SstDocument as SstDocument, SstRecord as SstRecord
 from .sst_parser import SST_Entry as SST_Entry, SST_Parser as SST_Parser, sst_string_hash as sst_string_hash

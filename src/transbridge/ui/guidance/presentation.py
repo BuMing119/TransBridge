@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Presentation-density projection that preserves business capabilities."""
 
 from __future__ import annotations

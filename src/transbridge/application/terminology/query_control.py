@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Cooperative cancellation for read-only terminology queries."""
 
 from __future__ import annotations

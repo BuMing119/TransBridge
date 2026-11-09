@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Invalidate a terminology window before its shared profile context can drift."""
 
 from __future__ import annotations

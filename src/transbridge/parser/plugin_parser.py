@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 from collections.abc import Callable
 from io import BytesIO
 import logging

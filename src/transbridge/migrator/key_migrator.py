@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """词条键对齐迁移：按 entry.key 将旧集合译文对齐到新集合同名键条目。"""
 
 from __future__ import annotations

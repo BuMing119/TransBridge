@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project complete capture results and failed checks without inventing context."""
 
 from __future__ import annotations

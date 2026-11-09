@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """润色结果预览：后台准备数据，虚拟表逐条接受或拒绝。"""
 
 from __future__ import annotations

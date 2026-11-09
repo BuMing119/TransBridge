@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Encode normalized canonical values without one unbounded sequence C call."""
 
 from __future__ import annotations

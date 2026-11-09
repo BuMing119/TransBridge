@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Stable Provider-neutral schemas for structured AI-translation responses.
 
 The schemas deliberately use only the JSON Schema subset shared by the

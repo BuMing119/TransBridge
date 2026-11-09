@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free explanations of the planner's existing synchronization reasons."""
 
 from transbridge.application.sync.models import SyncOperation

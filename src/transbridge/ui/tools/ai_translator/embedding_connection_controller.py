@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Asynchronous connection-test lifecycle for the Embedding API panel."""
 
 from __future__ import annotations

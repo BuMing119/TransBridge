@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """File-scoped ParaTranz publication; the server owns key matching and import policy."""
 
 from collections import Counter

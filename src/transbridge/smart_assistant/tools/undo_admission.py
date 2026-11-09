@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Resolve assistant write provenance without downgrading an admitted command."""
 
 from transbridge.application.assistant_requests.admission import get_effect

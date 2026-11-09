@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 质量关卡检测器：调用LLM判断翻译是否存在明显质量问题。
 

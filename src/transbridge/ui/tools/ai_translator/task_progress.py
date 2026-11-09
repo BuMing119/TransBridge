@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """A reopenable view of an independently owned AI task."""
 
 from __future__ import annotations

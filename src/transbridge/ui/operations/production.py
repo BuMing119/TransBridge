@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Concrete production feature adapters for the operation-plan facade."""
 
 from __future__ import annotations

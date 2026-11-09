@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Versioned, secret-free manifest helpers for persisted term vector indexes."""
 
 from __future__ import annotations

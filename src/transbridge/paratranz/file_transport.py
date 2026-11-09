@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Cancellation and complete file inventory validation for file transfers."""
 
 from collections.abc import Mapping

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """TransBridge public package surface.
 
 Importing the package must stay headless: GUI and MCP dependencies are loaded

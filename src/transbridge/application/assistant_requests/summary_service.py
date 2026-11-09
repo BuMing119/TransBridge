@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read request history and validate legacy summary material without publishing it."""
 
 import logging

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Discrete translation-stage policy shared by application adapters."""
 
 from __future__ import annotations

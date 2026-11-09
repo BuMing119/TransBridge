@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """工具系统基础设施：GuardChain, 装饰器, 执行函数。
 
 装饰器推荐顺序：

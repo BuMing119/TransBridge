@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Present context waiting separately from business failure and task status."""
 
 from transbridge.application.assistant_context.models import PreparationWait

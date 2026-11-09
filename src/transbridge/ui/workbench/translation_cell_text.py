@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Full-text cell presentation, including non-destructive terminology previews."""
 
 from html import escape

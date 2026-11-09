@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """翻译记忆建议接口，依据官方 OpenAPI v0.5.7（2026-11-03 核对）。
 
 文档：https://paratranz.cn/api-docs?format=json。

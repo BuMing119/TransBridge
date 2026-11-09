@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Side-effect-free plan editing followed by one request-bound confirmation."""
 
 from __future__ import annotations

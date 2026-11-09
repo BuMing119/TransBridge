@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build explicit local-file and current-project ParaTranz import requests."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 from __future__ import annotations
 
 from collections.abc import Iterable

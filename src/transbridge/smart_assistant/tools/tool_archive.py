@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """通用文件操作工具 — 归档解包/打包、目录 diff、资源过滤 (archive namespace)。
 
 FR16.1-16.3 的 Agent 工具。纯文件操作，不依赖 collection。

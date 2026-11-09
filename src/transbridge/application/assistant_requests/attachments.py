@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Complete attachment snapshots carried by an immutable user transcript message."""
 
 import json

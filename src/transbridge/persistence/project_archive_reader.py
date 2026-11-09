@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Strict container and document reads for portable project archives."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Skill 执行调度器。
 
 通过 ChatWidget 的公共接口 send_user_message 触发 Skill，

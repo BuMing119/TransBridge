@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Publish staged context references under the existing Session CAS and turn lease."""
 
 from dataclasses import replace

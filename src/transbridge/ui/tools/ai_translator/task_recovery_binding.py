@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bind explicit recovery records to the current project's exact entry identities."""
 
 from __future__ import annotations

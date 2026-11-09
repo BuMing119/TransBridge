@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Deliver scoped application calls back to Qt, dropping superseded or closed reads."""
 
 from __future__ import annotations

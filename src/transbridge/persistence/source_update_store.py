@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Durable all-Variant source replacement with exact preimage recovery."""
 
 from __future__ import annotations

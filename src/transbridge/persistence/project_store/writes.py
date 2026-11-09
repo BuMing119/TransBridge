@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Initial project publication and shared row mutation statements."""
 
 from __future__ import annotations

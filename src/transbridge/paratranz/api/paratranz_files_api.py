@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """ParaTranz file operations (official OpenAPI 0.5.7, checked 2026-10-25).
 
 Source: https://paratranz.cn/api-docs?format=json

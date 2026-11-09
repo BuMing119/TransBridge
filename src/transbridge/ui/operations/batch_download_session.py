@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Adapt the shared project download use case to a Qt window and task runtime."""
 
 from PyQt6.QtWidgets import QMessageBox

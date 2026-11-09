@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 ExportTab: 导出管理标签页，显示最近导出信息、触发新导出、下载压缩包。
 """

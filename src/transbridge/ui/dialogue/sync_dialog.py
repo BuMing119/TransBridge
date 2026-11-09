@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit selection of matching originals, including protected entries and review states."""
 
 from PyQt6.QtCore import Qt

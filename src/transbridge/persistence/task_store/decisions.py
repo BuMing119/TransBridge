@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable result requests and independently acknowledged project receipts."""
 
 from __future__ import annotations

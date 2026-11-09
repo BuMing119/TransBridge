@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """One detached preparation and guarded publication path for translation imports."""
 
 from __future__ import annotations

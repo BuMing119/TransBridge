@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free Workbench save-state projection with stale-completion protection."""
 
 from __future__ import annotations

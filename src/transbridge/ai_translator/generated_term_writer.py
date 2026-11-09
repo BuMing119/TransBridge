@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Persist task-generated terminology and acknowledge it as one operation."""
 
 from __future__ import annotations

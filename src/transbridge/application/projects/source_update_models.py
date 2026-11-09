@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """User-facing source replacement previews, independent of Qt."""
 
 from dataclasses import dataclass

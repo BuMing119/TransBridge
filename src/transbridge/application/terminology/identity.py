@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Versioned normalization, canonical serialization, and stable identities."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt binding for Project/Variant-scoped terminology profile selection."""
 
 from __future__ import annotations

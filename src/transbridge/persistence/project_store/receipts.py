@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Task application evidence stored with the exact project values it confirms."""
 
 from __future__ import annotations

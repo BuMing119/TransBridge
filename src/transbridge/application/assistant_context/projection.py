@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Append new authorized sources once; never reselect a rolling history window."""
 
 from copy import deepcopy

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable, Qt-free contracts for state-driven guidance."""
 
 from __future__ import annotations

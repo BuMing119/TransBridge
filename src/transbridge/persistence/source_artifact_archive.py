@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Portable project bundles carry the exact saved source revision and its closure."""
 
 from pathlib import PurePosixPath, PureWindowsPath

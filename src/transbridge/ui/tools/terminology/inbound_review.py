@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Keep incomplete inbound-review edits across page changes until preview."""
 
 from dataclasses import dataclass, replace

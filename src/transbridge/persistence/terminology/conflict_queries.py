@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """SQLite conflict filtering before keyset pagination and row counting."""
 
 from dataclasses import replace

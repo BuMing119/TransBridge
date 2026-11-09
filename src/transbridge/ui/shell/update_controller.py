@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Desktop update UI and the handoff to the existing installer."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Single-source import dialog; parsing and matching run in the owned worker."""
 
 from dataclasses import dataclass

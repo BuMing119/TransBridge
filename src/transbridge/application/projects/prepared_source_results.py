@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Serializable, already parsed source candidates; recovery never reopens the input."""
 
 from base64 import b64decode, b64encode

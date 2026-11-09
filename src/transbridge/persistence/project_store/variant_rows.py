@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Transactional persistence of version metadata and the affected entry states."""
 
 from __future__ import annotations

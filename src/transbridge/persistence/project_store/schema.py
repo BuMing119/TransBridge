@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Closed schema for the translation project database."""
 
 SCHEMA = (

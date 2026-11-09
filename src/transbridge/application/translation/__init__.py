@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Application translation planning API."""
 
 from .candidate_checkpoint import (

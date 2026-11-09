@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free orchestration and projection for the terminology workbench."""
 
 from __future__ import annotations

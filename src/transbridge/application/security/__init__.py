@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared application security policies."""
 
 from .data_projection import DiagnosticValue, SecretValue, project_business_data

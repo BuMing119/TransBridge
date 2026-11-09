@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compatibility wrapper for the shared Smart Assistant workflow runtime."""
 
 from __future__ import annotations

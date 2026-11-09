@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Describe incremental saves without claiming missing source content was captured."""
 
 from transbridge.application.contracts import (

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Apply an explicit transfer target to the installed project context."""
 
 

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explain profile mappings against the exact base used by effective terminology."""
 
 from __future__ import annotations

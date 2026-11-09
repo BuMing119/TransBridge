@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Collapsible thinking indicator with theme-owned presentation."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Per-batch streaming log widget used by the translation progress window."""
 
 from __future__ import annotations

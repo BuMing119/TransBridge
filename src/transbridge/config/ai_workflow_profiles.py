@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Atomic repository for named, portable AI workflow profiles."""
 
 from __future__ import annotations

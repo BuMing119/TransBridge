@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Workbench-only helpers for readable user colours and widget palettes."""
 
 from __future__ import annotations

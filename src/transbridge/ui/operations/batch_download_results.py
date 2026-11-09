@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compatibility exports for the application download merge operations."""
 
 from transbridge.application.sync.download_merge import (

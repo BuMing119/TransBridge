@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Create and reuse auxiliary windows without owning their business state."""
 
 from __future__ import annotations

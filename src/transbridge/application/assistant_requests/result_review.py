@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only user review of attributed receipts, never reconstructed live state."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Worker-owned preview reads fenced by the original confirmation generation."""
 
 from concurrent.futures import ThreadPoolExecutor

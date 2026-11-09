@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Logical batch steps, bounded attempts and idempotent terminal receipts."""
 
 from dataclasses import dataclass, replace

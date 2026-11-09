@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """OpenAI-compatible Responses transport for native structured text."""
 
 from __future__ import annotations

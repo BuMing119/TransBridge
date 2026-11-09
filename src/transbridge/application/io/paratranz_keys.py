@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Versioned ParaTranz transport keys, independent of local/plugin identities."""
 
 import base64

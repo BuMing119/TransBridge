@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable AI translation workload, candidate and batch contracts."""
 
 from __future__ import annotations

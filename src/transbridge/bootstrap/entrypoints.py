@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Framework-neutral runtime binding used by entrypoint adapters."""
 
 from __future__ import annotations

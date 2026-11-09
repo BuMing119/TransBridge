@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Select one plugin naming generation without mixing old and new files."""
 
 from collections import defaultdict

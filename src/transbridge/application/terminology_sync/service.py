@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Entrypoint-neutral facade for terminology synchronization workflows."""
 
 from __future__ import annotations

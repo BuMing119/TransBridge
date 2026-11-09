@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Lexical validity for terminology admission and runtime use, without judging meaning."""
 
 from functools import lru_cache

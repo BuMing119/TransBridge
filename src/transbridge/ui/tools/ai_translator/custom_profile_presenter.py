@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Presentation orchestration for named custom AI workflow profiles."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 CollectionStatsPanel: 工作台左侧集合统计面板。
 显示总词条数、已翻译数、来源文件名以及按分类的树形统计。

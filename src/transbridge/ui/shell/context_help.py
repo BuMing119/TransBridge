@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Inline user-language help for the current task context."""
 
 from __future__ import annotations

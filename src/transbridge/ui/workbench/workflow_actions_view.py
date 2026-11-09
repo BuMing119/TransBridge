@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Thin Workbench views for summary filters and contextual workflow intents."""
 
 from __future__ import annotations

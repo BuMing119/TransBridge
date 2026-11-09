@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Pure application contracts for translation format I/O."""
 
 from __future__ import annotations

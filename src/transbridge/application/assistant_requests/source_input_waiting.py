@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Recognize the explicit missing-input repair intent in a real tool receipt."""
 
 import json

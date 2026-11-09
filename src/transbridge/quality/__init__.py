@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Quality evidence primitives used by local and CI QA entry points."""
 
 from .evidence import (

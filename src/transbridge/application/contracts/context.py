@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable request identity and authorization context."""
 
 from __future__ import annotations

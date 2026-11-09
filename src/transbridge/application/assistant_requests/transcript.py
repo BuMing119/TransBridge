@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable transcript records and committed attachment references."""
 
 from __future__ import annotations

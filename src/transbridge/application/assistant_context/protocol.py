@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Normalize transcript evidence and enforce complete native tool protocol groups."""
 
 from collections.abc import Mapping, Sequence

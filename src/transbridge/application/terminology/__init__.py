@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project terminology domain and application ports."""
 
 from .errors import (

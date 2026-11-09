@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable post-processing candidate pipeline and canonical reports.
 
 The legacy GUI processor still contains UI-oriented adapters.  This module is

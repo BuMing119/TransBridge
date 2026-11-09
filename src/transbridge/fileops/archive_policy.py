@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Archive member validation shared by every extraction backend.
 
 The policy is deliberately independent from ZIP/7z/RAR libraries.  Backends may

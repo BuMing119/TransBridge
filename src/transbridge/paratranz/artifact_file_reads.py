@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Own temporary export files and expose selected raw JSON to the snapshot reader."""
 
 import json

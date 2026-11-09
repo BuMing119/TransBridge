@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prepare a complete source set before publishing a new Project."""
 
 from __future__ import annotations

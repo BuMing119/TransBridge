@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Thread-safe task state authority with owner-scoped controls."""
 
 from __future__ import annotations

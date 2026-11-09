@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit format catalog with evidence-based content probing."""
 
 from __future__ import annotations

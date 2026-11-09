@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Own the entry editor window, optional task context, and draft lifetime."""
 
 from __future__ import annotations

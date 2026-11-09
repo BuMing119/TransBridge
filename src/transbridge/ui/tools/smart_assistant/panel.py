@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 # TODO: i18n — 窗口标题"TransBridge AI 助手"为硬编码中文，待国际化改造
 """
 SmartAssistantPanel 颜色面板:

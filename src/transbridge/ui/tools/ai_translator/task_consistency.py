@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Keep execution settings stable and protect generated-term writes separately."""
 
 from __future__ import annotations

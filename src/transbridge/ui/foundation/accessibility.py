@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free accessibility and WCAG contrast helpers for UI Foundation."""
 
 from __future__ import annotations

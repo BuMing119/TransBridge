@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 ProjectPromptOverlay: 当集合已加载但未选中 ParaTranz 项目时，
 覆盖在 Step3 操作区上方的引导层。

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Authoritative source add/remove commands for an active Project/Variant."""
 
 from __future__ import annotations

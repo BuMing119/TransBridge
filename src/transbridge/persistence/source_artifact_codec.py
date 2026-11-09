@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit JSON contracts for complete, parsed project sources.
 
 Only the types listed here may be constructed. Binary values are delegated to

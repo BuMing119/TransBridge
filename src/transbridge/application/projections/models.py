@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable read-model contracts for GUI and other entrypoint projections."""
 
 from __future__ import annotations

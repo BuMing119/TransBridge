@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable user-goal state; independent of Qt, model providers and storage."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """ConversationOrchestrator — LLM 轮次编排与流式管理。
 
 从 ChatWidget 提取，遵循 ADR-008 代码分层。

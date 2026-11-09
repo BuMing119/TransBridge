@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Locale-aware dictionary candidates committed through the project boundary."""
 
 from dataclasses import replace

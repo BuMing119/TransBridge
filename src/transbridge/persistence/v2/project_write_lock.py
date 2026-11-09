@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared reentrant Project publication boundary, fenced across OS processes."""
 
 from contextlib import contextmanager

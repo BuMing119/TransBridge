@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project-isolated SQLite persistence for terminology facts."""
 
 from .artifacts import ArtifactLedger

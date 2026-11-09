@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Open and retain a terminology window for the active workspace context."""
 
 from __future__ import annotations

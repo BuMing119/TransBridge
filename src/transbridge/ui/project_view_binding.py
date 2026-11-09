@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Own the Qt-thread projection binding and atomic project-open handoff."""
 
 from __future__ import annotations

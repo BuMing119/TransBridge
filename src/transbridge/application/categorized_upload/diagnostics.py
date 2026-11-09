@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Correlated diagnostics for classification, comparison and publication."""
 
 from contextlib import contextmanager

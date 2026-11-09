@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Thread-safe persisted logs for AI workflow progress windows."""
 
 from __future__ import annotations

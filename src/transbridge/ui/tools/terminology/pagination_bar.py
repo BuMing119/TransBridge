@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit pagination controls and local query feedback for terminology tables."""
 
 from PyQt6.QtCore import Qt

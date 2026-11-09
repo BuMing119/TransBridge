@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit per-entry choices for durable AI candidates and overwritten text."""
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt

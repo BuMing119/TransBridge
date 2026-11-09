@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prepare an isolated lifecycle candidate and own its provisional leases.
 
 The lifecycle invokes this slice while holding its state lock. No active state,

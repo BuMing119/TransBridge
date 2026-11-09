@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Release dependency capability probes.
 
 Imports are intentionally delayed until the feature is used.  A missing

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """翻译词典管理面板：存为词典 + 词典库查看 + 分享导入 + 冲突仲裁。
 
 用法：

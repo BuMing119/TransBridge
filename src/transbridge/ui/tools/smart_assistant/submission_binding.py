@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Generation-scoped user submissions shared by typed and programmatic input."""
 
 from __future__ import annotations

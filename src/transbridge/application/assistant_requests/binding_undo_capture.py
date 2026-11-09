@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Record a local ParaTranz binding command without touching the remote project."""
 
 from copy import deepcopy

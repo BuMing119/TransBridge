@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Capture only the local binding command after ParaTranz target validation."""
 
 from transbridge.application.assistant_requests.binding_undo_capture import capture_binding_commit

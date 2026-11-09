@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Draft lifecycle and optimistic transaction contracts for terminology."""
 
 from __future__ import annotations

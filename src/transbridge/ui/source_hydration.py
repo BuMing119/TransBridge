@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build legacy workbench projections from authoritative source hydration."""
 
 from __future__ import annotations

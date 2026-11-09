@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Complete Variant snapshots and replace materialization.
 
 The aggregate in this module is the persistence authority.  Application entry

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Durable publication of a Project's Variant catalog and active pointer.
 
 Prepared manifests recover to exact preimages; committed manifests recover to

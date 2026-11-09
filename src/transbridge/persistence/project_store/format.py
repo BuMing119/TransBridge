@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Identity and diagnostics for the current on-disk format."""
 
 PROJECT_APPLICATION_ID = 0x54425031  # TBP1

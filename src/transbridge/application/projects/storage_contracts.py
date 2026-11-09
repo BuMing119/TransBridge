@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read and write contracts for the translation-only project store."""
 
 from __future__ import annotations

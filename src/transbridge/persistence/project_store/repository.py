@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Operations on one project database."""
 
 from __future__ import annotations

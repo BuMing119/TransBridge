@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Retained operation results and asynchronous execution controls."""
 
 from PyQt6.QtCore import Qt, pyqtSignal

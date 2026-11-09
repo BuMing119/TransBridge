@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Stable scope resolution for Workbench entry context-menu actions."""
 
 from __future__ import annotations

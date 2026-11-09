@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Validate plugin text at source-bound physical positions, before conflict filtering."""
 
 from __future__ import annotations

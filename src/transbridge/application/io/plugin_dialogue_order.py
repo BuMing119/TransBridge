@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Derive dialogue topology only from immutable, captured plugin authority."""
 
 from __future__ import annotations

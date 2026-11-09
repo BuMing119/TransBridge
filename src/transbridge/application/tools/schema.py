@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Canonical JSON Schema conversion and argument validation."""
 
 from __future__ import annotations

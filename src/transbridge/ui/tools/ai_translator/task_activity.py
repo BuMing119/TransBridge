@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Normalize old text callbacks at the boundary and preserve typed activity batches."""
 
 from __future__ import annotations

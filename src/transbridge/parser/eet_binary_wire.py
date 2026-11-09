@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounds-checked primitive wire fields shared by EET records and numeric caches."""
 
 import struct

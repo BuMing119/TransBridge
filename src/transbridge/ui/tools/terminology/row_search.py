@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable search documents and cancellable matching, independent of Qt models."""
 
 from collections.abc import Callable, Mapping

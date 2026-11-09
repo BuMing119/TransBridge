@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """文件解析器子包 — 多格式文件解析为结构化文档。
 
 注册模式:

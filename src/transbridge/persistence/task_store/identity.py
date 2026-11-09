@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Share task identity across execution summaries, recovery, and reports."""
 
 from dataclasses import dataclass

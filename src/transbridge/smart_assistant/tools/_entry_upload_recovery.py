@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Local-only recovery of independently retained entry-upload receipts."""
 
 from transbridge.application.sync.entry_upload_results import EntryUploadResultStore

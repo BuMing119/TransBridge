@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Pure legacy import matching; publication belongs to the collection."""
 
 from collections import defaultdict

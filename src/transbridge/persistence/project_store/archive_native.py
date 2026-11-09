@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Admit only format-specific translation records in a portable database."""
 
 from __future__ import annotations

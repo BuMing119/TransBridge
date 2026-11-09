@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project history listing with explicit access to live and persisted tasks."""
 
 from __future__ import annotations

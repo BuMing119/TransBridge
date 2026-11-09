@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Typed application contracts for FOMOD workloads."""
 
 from .candidate_planner import AiFallbackPort, FomodCandidatePlanner

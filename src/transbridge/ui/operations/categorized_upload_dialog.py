@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Select local categories and upload with background cloud verification."""
 
 from __future__ import annotations

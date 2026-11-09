@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """ParaTranz API configuration without plaintext credential persistence."""
 
 from __future__ import annotations

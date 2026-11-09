@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """User-facing summaries and inspectable arguments for proposed operations."""
 
 from __future__ import annotations

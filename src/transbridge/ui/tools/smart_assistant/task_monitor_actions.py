@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Apply monitor commands only to visible jobs still owned by this session."""
 
 from transbridge.smart_assistant.tools.task_control import task_scope_matches

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prepare and activate current project records without reading original input files."""
 
 from __future__ import annotations

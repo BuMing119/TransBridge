@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only access to saved translations when source hydration is unavailable.
 
 Recovery never manufactures a source baseline or activates an editable Variant.

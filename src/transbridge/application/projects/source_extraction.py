@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Extract durable translation facts from one ephemeral parser result."""
 
 from __future__ import annotations

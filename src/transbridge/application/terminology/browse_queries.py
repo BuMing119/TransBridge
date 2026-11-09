@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Full-collection terminology filtering over exact draft and effective snapshots."""
 
 from __future__ import annotations

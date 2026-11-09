@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free detached settings draft and guarded persistence coordination."""
 
 from __future__ import annotations

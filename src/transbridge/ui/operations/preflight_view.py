@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable operation preflight and result projection contracts."""
 
 from __future__ import annotations

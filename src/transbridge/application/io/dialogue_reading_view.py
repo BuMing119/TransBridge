@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable display positions shared by internal entry and dialogue views."""
 
 from collections import defaultdict

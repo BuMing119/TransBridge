@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Short guarded draft edits and evidence-bound conflict review commands."""
 
 from __future__ import annotations

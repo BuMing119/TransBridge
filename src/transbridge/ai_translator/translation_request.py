@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prepare translation retrieval separately from final request admission."""
 
 from __future__ import annotations

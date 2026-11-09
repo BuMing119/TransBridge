@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """User-visible limits, separate from evidence for any particular execution."""
 
 _SUPPORTED = frozenset({

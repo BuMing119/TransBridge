@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 StringDetailDialog：词条详情/编辑对话框。
 左侧可折叠筛选 + 可分页词条导航列表，右侧编辑区。

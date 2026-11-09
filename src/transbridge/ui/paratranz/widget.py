@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 ParaTranzWidget: ParaTranz 管理模式整体布局。
 左侧项目列表 + 右侧按概览、翻译、协作与记录分组的页面。

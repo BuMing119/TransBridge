@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Public control namespace owned by the translator view."""
 
 from __future__ import annotations

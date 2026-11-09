@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt interaction boundary for authoritative Project management."""
 
 from __future__ import annotations

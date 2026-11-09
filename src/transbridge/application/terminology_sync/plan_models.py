@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable planning contracts for project terminology synchronization."""
 
 from __future__ import annotations

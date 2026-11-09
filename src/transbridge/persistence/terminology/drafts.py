@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Revisioned draft storage kept separate from immutable repository facts."""
 
 from __future__ import annotations

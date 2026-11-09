@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Application port protocols.
 
 These interfaces describe dependencies consumed by use cases. Concrete parser,

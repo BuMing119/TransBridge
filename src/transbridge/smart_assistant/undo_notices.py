@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """User-facing undo limits for registered write steps before execution."""
 
 from transbridge.application.assistant_requests.undo_capabilities import undo_limitation

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project terminology summary displayed above legacy term-source settings."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Review new shared-reference differences after all source workflows finish."""
 
 from __future__ import annotations

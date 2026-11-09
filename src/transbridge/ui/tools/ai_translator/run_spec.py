@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable AI run identity, preflight, and capability contracts.
 
 The saved :class:`LLMConfig` is a long-lived preference object.  A run only

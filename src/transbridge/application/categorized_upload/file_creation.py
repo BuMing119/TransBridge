@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Verify file imports before adopting their newly allocated entry identities."""
 
 from transbridge.converter.translation_entry import TranslationEntry

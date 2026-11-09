@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """存为词典对话框：选择目标词典（mod 名 + scope）、粒度、词典标签。
 
 支持根据当前上下文预填默认值：

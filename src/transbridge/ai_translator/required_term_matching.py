@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Match mandatory terminology without substring or reverse-recall noise."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Interpret semantic review outcomes without treating glossary differences as failures."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Paths owned by current projects."""
 
 from pathlib import Path

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 格式验证器：验证格式标记、占位符、引号等的完整性。
 """

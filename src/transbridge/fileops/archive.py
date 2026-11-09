@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Safe ZIP/7z/RAR inspection and extraction behind one policy boundary."""
 
 from __future__ import annotations

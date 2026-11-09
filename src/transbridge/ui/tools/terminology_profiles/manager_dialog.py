@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Focused manager for one Project's terminology localization profiles."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Application use case for profile lifecycle and atomic selection."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Stage, validate and commit a plugin together with all localized companions.
 
 The OS cannot atomically rename several files. A single runtime commit permit

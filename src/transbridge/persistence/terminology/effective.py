@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only effective terminology projection backed by project SQLite."""
 
 from __future__ import annotations

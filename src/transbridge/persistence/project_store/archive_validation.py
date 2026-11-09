@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Validate portable project content before any live directory is published."""
 
 from __future__ import annotations

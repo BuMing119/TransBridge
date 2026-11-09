@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """A bounded progress handoff from a categorized worker to the GUI timer."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Keep one operation's missing-input list open while explicit files are supplied."""
 
 from collections import Counter, deque

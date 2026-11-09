@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Staged, collision-aware publication of derived artifacts."""
 
 from __future__ import annotations

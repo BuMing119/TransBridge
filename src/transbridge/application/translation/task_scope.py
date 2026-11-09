@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable source inputs shared by translation task entry points."""
 
 from __future__ import annotations

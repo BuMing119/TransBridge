@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """General UI settings dialog with isolated theme preview and safe recovery UX."""
 
 from __future__ import annotations

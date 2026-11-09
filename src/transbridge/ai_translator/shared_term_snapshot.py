@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable generated-term records and bounded views of one publication."""
 
 from __future__ import annotations

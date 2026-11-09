@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only JobSnapshot projection for GUI, Agent and MCP entrypoints.
 
 The monitor widget, agent tools and MCP handlers all render the same public

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded, source-fair execution of dependency-ordered translation batches."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Request admission adapter at the existing common tool/commit boundary."""
 
 from __future__ import annotations

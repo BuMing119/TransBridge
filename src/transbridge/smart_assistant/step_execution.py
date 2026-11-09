@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Adapt logical request steps to guarded tool calls and the shared retry loop."""
 
 from copy import copy

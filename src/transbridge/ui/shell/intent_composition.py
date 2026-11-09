@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt shell wiring for the canonical intent router and command discovery."""
 
 from __future__ import annotations

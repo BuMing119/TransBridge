@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compatibility facade over the versioned application checkpoint port."""
 
 from __future__ import annotations

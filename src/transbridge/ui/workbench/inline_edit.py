@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Inline translation commits and recoverable drafts, independent of table rendering."""
 
 from __future__ import annotations

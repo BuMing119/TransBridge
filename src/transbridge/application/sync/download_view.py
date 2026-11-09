@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable presentation values for a multi-source download review."""
 
 from __future__ import annotations

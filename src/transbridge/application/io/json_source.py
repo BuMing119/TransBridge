@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Select JSON contracts explicitly without converting remote IDs into local IDs."""
 
 from __future__ import annotations

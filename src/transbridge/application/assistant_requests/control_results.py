@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Durable terminal receipts for admitted read and answer control calls.
 
 These use cases run on a worker. Qt owns presentation, never receipt arbitration.

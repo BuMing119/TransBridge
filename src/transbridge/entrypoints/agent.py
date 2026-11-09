@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Agent adapter over an explicitly injected application runtime binding."""
 
 from __future__ import annotations

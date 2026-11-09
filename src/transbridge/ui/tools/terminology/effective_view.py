@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only view of the exact effective snapshot used by translation."""
 
 from PyQt6.QtCore import Qt, pyqtSignal

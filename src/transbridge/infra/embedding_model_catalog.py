@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Load and validate the editable local Embedding model catalog."""
 
 from __future__ import annotations

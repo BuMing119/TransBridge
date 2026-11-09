@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit plugin dialogue relations, independent of strings and output rows."""
 
 from __future__ import annotations

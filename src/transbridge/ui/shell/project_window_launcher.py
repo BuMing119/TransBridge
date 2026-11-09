@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Launch an explicitly selected Project in an isolated GUI process."""
 
 from __future__ import annotations

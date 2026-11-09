@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Desktop task navigation backed by feature-owned records and fresh preparation."""
 
 from __future__ import annotations

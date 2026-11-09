@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compatibility import for the source-to-scheme flow's former AI location."""
 
 from transbridge.ui.tools.terminology_profiles.source_import_controller import (

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable inbound facts produced by bidirectional terminology plans."""
 
 from __future__ import annotations

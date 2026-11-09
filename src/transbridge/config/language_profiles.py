@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Strict loading and discovery for prompt language profiles."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """GUI process adapter with lazy PyQt import."""
 
 from __future__ import annotations

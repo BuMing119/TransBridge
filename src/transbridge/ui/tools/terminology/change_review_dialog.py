@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Complete, searchable semantic changes shared by publication review and history."""
 
 from __future__ import annotations

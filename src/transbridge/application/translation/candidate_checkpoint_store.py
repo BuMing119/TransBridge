@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Incremental candidate state, schema migration, and journal compaction."""
 
 from __future__ import annotations

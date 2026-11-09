@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free DTOs shared by legacy UI projection adapters."""
 
 from __future__ import annotations

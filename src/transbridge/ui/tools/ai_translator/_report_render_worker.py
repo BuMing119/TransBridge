@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Background rendering for canonical AI report snapshots."""
 
 from __future__ import annotations

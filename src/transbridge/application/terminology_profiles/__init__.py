@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Base-game localization terminology profiles."""
 
 from .effective import (

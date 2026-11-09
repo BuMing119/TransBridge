@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Map captured SST translations onto proven current-project identities."""
 
 from transbridge.application.io.identity import SourceNamespace

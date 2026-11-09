@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Persistent request commands shared by foreground and background consumers."""
 
 from __future__ import annotations

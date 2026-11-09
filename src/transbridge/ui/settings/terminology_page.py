@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Global terminology and dictionary defaults page."""
 
 from __future__ import annotations

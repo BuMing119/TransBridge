@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Side-effect-free synchronization planning and review contracts."""
 
 from .artifact import (

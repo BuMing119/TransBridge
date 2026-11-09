@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free helpers shared by write and FOMOD operation composition."""
 
 from collections.abc import Callable

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable task activity contracts shared by presentation entrypoints.
 
 This module deliberately derives display actions from authoritative snapshots

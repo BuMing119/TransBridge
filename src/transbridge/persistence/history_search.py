@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """SQLite-backed, atomically replaceable history-search projection."""
 
 from __future__ import annotations

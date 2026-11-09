@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared Qt presentation for write and FOMOD plans."""
 
 from __future__ import annotations

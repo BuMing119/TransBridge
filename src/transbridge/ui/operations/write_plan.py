@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Editable write plans for current sources and selected target plugins."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bound Qt text layout while retaining complete data in the original source."""
 
 from __future__ import annotations

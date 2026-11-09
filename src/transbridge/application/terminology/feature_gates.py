@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Fail-closed release-candidate evidence evaluation for CI and release tooling."""
 
 from __future__ import annotations

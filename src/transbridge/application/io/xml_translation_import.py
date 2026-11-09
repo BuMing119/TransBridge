@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Conservative XML proposals independent of the target's physical entry IDs."""
 
 from collections import defaultdict

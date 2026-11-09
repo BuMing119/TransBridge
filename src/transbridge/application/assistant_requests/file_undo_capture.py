@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """File-domain capture with durable Session intents and application-owned backups.
 
 Lock order is Session then FILE_UNDO_LOCK. Callers run this off the UI thread.

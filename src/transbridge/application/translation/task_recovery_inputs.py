@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reconstruct original task inputs without treating current edits as task validity."""
 
 from transbridge.application.io.identity import EntryKey, EntryRevision

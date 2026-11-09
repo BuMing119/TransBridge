@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Fault-injectable filesystem boundary for atomic publication."""
 
 from __future__ import annotations

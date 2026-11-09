@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Smart Assistant — AI 驱动的翻译智能助手（多 Agent + 工具系统 + 护栏 + 可观测）。
 
 为避免 Windows 1MB C 栈溢出 (0xC00000FD)，本 __init__.py 不进行任何模块级

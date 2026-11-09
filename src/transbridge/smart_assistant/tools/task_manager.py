@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """TaskManager — 长运行任务生命周期管理器（单例 + 回调通知）。
 
 跨线程安全: notify_completed / notify_failed 通过可注入的主线程调度器

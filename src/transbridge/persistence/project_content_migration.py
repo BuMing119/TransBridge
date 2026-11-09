@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Close missing source content at the existing Project migration boundary."""
 
 from __future__ import annotations

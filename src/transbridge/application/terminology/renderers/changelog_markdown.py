@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Deterministic Markdown layout for a frozen ChangeLogDocumentRef."""
 
 from __future__ import annotations

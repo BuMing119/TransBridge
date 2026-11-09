@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """LLM translation configuration facade over the unified repository."""
 
 from __future__ import annotations

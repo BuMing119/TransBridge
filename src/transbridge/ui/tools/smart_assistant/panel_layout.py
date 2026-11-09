@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Responsive conversation/sidebar split without touching execution state."""
 
 from PyQt6.QtCore import Qt

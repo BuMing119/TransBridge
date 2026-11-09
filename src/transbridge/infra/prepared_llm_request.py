@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Two-phase request preparation shared by LLM decorators and callers."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """TaskRuntime-owned execution for confirmed operation plans."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Exact dictionary lookup for entries whose source locator is ambiguous."""
 
 from collections.abc import Iterable

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Deterministic V1 to V2 document migrators."""
 
 from __future__ import annotations

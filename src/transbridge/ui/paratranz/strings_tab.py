@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 StringsTab: 词条管理标签页，支持筛选、浏览及批量操作。
 双击词条后弹出 StringDetailDialog 进行查看和编辑。

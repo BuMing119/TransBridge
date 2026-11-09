@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Snapshot-bound Qt table adapter with explicit or legacy automatic paging."""
 
 from __future__ import annotations

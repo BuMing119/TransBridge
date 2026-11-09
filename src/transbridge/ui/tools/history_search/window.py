@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only Qt search surface for the persisted-history projection."""
 
 from __future__ import annotations

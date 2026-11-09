@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """智能助手 System Prompt 模板。"""
 
 from .tool_registry import ToolRegistry

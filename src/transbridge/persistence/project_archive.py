@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Import/export V2 project bundles without writing through legacy UI state."""
 
 from __future__ import annotations

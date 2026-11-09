@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Present task-wide request counters without refreshing per-source results."""
 
 from __future__ import annotations

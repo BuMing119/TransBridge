@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded latest-state feedback with GUI polling and legacy signal delivery."""
 
 from __future__ import annotations

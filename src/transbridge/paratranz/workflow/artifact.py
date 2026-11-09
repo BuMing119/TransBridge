@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 ArtifactWorkflow：触发 ParaTranz 导出，轮询完成状态，下载并解压压缩包。
 

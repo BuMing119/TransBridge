@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Snapshot-bound upload review choices, excluded from public plan projections."""
 
 from dataclasses import dataclass

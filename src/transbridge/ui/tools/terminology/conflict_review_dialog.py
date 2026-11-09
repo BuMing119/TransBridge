@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Review the actual alternatives and evidence before recording a draft decision."""
 
 from __future__ import annotations

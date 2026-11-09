@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Retain non-model candidates in the shared task store and merge command."""
 
 from collections import defaultdict

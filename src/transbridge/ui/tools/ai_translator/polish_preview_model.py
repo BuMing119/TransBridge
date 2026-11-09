@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Pure preview projection and a virtual, incrementally counted choice model."""
 
 from __future__ import annotations

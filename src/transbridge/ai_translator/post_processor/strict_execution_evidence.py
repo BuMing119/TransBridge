@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Track completed strict-stage work before accepting a final decision."""
 
 from __future__ import annotations

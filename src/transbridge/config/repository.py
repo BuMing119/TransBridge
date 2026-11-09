@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Versioned, atomic owner of the single TransBridge INI file."""
 
 from __future__ import annotations

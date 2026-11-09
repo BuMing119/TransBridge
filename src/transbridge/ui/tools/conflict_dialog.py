@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """译文冲突仲裁对话框：逐条展示多词典命中的冲突候选，用户采纳/拒绝。"""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Application-wide guards against accidental value changes from wheel input."""
 
 from __future__ import annotations

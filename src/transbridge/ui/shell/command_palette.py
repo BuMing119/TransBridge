@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Search-only projection over the shell action catalog.
 
 The palette never decides whether an application action is enabled and never

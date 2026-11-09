@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit, owner-bound source updates across every saved translation variant."""
 
 from __future__ import annotations

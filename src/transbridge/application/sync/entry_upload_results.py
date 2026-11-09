@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Retain entry-upload inputs and remote receipts independently of local association."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Feature-local Qt composition for the guided start-center workflow."""
 
 from __future__ import annotations

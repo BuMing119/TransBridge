@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Capture assistant task ownership and reconcile lifecycle snapshots with live work."""
 
 from __future__ import annotations

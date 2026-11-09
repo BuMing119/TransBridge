@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """SQLite persistence for immutable inbound facts and append-only review snapshots."""
 
 from __future__ import annotations

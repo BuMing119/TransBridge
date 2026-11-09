@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Headless Project/Variant lifecycle application surface."""
 
 from .catalog import (

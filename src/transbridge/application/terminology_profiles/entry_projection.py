@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """One complete terminology projection policy shared by preview and write paths."""
 
 from __future__ import annotations

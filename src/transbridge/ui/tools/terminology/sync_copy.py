@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """User-facing terminology synchronization labels and content comparisons."""
 
 from __future__ import annotations

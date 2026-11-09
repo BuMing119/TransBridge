@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit recovery of one unresolved routing directive, retaining accepted siblings."""
 
 from copy import deepcopy

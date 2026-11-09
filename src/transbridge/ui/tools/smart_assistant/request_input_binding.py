@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Admission callbacks and unsent text belong to the originating chat view."""
 
 from copy import deepcopy

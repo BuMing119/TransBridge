@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Column projections and model construction for workbench tables."""
 
 from transbridge.application.terminology.models import DecisionStatus

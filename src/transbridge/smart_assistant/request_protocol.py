@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Stage-specific request control tools, separate from executable business steps."""
 
 from __future__ import annotations

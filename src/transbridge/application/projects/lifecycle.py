@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Two-phase Project/Variant lifecycle service.
 
 No projection changes until ``commit_transition`` succeeds.  Prepared tokens

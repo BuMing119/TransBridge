@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build atomic local candidates without losing duplicate or deferred entries."""
 
 from __future__ import annotations

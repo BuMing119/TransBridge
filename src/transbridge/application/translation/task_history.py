@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project-local result history. Records are reports, never resumable jobs."""
 
 from __future__ import annotations

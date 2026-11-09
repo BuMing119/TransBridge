@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Download and save selected sources, asking only about unresolved translations."""
 
 from __future__ import annotations

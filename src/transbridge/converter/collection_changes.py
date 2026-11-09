@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded collection invalidation, including deprecated mutable entry edits.
 
 Subscriptions are external to entries so shallow/deep copies and snapshots stay

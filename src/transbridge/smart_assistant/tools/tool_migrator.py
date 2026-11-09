@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """词条键对齐迁移 + 词典套用/存词典 Agent 工具。
 
 FR16.4 migrate_entries（editor namespace）；

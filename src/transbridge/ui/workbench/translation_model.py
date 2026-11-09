@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Lazy cell data over the Workbench's single translation render snapshot."""
 
 from __future__ import annotations

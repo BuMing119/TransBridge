@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Authorize explicit entry or template-source selections without rewriting accepted ingress."""
 
 from dataclasses import replace

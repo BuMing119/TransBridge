@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """GUI-thread delivery after a detached operation has fully finished."""
 
 from __future__ import annotations

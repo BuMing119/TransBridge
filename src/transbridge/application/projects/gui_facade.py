@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """GUI command facade over the authoritative Project lifecycle service."""
 
 from __future__ import annotations

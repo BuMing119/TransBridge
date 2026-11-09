@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """P2 文件解析工具 — 将翻译文件加载到 AppContext (parser namespace)。
 
 Story 12 v2: 权限 write→read(H6), 文件扩展名白名单(E1)。

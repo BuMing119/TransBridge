@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """FOMOD archive root discovery without implicit first-directory selection."""
 
 from __future__ import annotations

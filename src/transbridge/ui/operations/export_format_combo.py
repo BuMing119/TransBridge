@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Export format choice with a theme-aware, font-independent dropdown indicator."""
 
 from PyQt6.QtCore import QPointF, Qt

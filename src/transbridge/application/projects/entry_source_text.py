@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project text read models that use only original text retained in saved identities."""
 
 from transbridge.application.contracts import DomainError

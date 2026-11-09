@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable build storage usable inside a guarded draft transaction."""
 
 from __future__ import annotations

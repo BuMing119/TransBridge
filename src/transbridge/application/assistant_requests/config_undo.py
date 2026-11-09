@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Inverse commands for the assistant's explicit non-secret configuration fields."""
 
 from transbridge.config.repository import ConfigRepositoryError

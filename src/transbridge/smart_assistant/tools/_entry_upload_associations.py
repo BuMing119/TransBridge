@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Associate confirmed remote receipts without replacing newer local content."""
 
 from dataclasses import replace

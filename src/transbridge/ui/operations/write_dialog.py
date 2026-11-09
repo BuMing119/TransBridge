@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Write-plan execution feedback, retained until the user closes the result."""
 
 from __future__ import annotations

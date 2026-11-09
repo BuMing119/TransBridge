@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt composition for the shared operation-plan presenter and dialog."""
 
 from __future__ import annotations

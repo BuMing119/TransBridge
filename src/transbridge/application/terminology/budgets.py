@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Machine-readable FR5.16.33--FR5.16.40 release budgets.
 
 The values in this module are product requirements, not benchmark baselines.

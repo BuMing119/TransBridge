@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Application lifetime ownership and project-scoped access to AI runs."""
 
 from __future__ import annotations

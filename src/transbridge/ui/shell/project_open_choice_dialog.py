@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Dedicated project-opening choice surface for the start center."""
 
 from __future__ import annotations

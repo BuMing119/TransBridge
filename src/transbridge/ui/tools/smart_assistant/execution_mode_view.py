@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """An always-visible execution mode with the existing confirmation policy."""
 
 from PyQt6.QtGui import QAction, QActionGroup

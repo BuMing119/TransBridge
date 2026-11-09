@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free operation preflight contracts and existing shared policy checks."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """In-memory review contracts for snapshot-bound download decisions.
 
 Review text is deliberately excluded from public plan projections and hashes.

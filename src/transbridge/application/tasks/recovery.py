@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Checkpoint discovery and identity-validated recovery availability."""
 
 from __future__ import annotations

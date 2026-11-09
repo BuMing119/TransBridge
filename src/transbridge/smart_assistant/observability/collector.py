@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 import atexit
 from collections.abc import Callable
 from datetime import datetime, timedelta

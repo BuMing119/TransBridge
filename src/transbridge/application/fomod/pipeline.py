@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Framework-neutral FOMOD stage DAG and publication gate."""
 
 from __future__ import annotations

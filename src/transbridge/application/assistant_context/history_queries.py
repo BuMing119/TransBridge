@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded reads of authoritative request history; retrieved text is material only."""
 
 from __future__ import annotations

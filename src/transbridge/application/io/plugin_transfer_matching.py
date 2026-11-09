@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prove translation transfers against two plugin snapshots without editing a project."""
 
 from collections import defaultdict

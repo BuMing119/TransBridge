@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 IssuesTab: 讨论（Issues）标签页，左侧列表 + 右侧详情。
 """

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Deterministic full-build coordinator for project terminology."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Sparse editable state with explicit capture and acknowledgement."""
 
 from __future__ import annotations

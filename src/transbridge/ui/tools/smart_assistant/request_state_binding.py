@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Dispatch a state query through application-owned terminal receipts."""
 
 

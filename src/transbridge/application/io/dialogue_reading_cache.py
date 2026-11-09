@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded reuse of completed reading positions for immutable source structures."""
 
 from collections import OrderedDict

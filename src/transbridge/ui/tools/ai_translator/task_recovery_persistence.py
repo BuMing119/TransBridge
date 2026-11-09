@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Detached recovery initialization and updates shared by sync and async callers."""
 
 from __future__ import annotations

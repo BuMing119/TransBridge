@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """LLM response and workflow diagnostic log viewer."""
 
 from __future__ import annotations

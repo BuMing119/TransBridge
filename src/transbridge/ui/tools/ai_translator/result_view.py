@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Open historical AI reports through the report browser."""
 
 from __future__ import annotations

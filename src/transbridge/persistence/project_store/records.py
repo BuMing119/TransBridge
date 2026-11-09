@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read current SQLite project facts through the application lifecycle types."""
 
 from __future__ import annotations

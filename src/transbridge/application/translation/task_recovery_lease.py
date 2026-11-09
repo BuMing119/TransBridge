@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Nonblocking process ownership of one logical recovery chain."""
 
 from __future__ import annotations

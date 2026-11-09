@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Atomic, versioned checkpoints for the post-process candidate chain.
 
 A checkpoint records the run identity, the stable EntryKey scope, the last

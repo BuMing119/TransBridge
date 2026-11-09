@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Merge a new build into review state without replacing human decisions."""
 
 from __future__ import annotations

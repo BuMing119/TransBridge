@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Per-entry execution evidence for selective translation application and retry."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Typed ParaTranz terminology facade over the legacy endpoint adapter."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Confirmed, atomic translation clearing for a captured Workbench selection."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Detached, read-only recovery view for saved Project translations."""
 
 from __future__ import annotations

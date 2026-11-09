@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Secret-free execution drafts, restored without writing global preferences."""
 
 from collections.abc import Mapping

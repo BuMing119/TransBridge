@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Public shell API with lazy imports at the composition boundary."""
 
 from __future__ import annotations

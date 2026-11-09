@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Own one AI execution independently of its progress window."""
 
 from __future__ import annotations

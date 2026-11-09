@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project-owned selection references to immutable terminology revisions."""
 
 from __future__ import annotations

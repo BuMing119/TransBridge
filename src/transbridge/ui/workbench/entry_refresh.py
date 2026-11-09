@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Apply small editor changes without discarding the Workbench table's view state."""
 
 from dataclasses import fields

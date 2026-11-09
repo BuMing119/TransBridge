@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """GUI-thread-only, cost-aware icon and pixmap cache."""
 
 from __future__ import annotations

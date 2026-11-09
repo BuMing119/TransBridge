@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 专有名词抽取器：对翻译完成的配对调用 LLM 进行术语提取。
 """

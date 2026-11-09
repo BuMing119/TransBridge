@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Decode ownerless local histories without changing their saved workspace scope."""
 
 from dataclasses import replace

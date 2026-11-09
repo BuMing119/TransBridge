@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """FOMOD 安装界面文本（ModuleConfig.xml / info.xml）解析与翻译。
 
 处理 UTF-16LE 编码与 BOM（fomod 元数据约定 UTF-16），

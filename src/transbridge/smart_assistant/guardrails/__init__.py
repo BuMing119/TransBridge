@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 from .base import GuardMiddleware, GuardResult
 from .input_validator import InputValidationGuard
 from .output_validator import OutputValidationGuard, sanitize_for_storage

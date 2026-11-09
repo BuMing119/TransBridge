@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only validation of the legacy deterministic request-summary format.
 
 No model is called and no instruction, approval or execution state is inferred.

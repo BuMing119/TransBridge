@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Asynchronous close ownership for StringDetailDialog."""
 
 from __future__ import annotations

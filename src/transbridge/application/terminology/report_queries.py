@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Snapshot-bound quality-report queries shared by UI preview and renderers."""
 
 from __future__ import annotations

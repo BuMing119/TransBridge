@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only task events and disposable subscriptions."""
 
 from __future__ import annotations

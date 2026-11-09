@@ -47,6 +47,7 @@ def _compile(tmp_path: Path, app_id: str, target: Path, *, legacy: bool) -> Path
     script_dir = tmp_path / "installer"
     script_dir.mkdir(exist_ok=True)
     (tmp_path / "LICENSE").write_text("Installer test fixture", encoding="utf-8")
+    (tmp_path / "NOTICE").write_text("Installer notice fixture", encoding="utf-8")
     script = (ROOT / "installer/setup.iss").read_text(encoding="utf-8")
     assert script.count(APP_ID) == 1
     script = script.replace(APP_ID, app_id)
@@ -115,6 +116,8 @@ def test_install_upgrade_and_uninstall_preserve_data(tmp_path: Path, upgrade: bo
         # No /DIR override: verify that the registered previous directory is reused.
         _run([str(current), *switches, f"/LOG={tmp_path / 'install.log'}"])
         assert (target / "TransBridge.exe").read_bytes() == b"current"
+        assert (target / "LICENSE.txt").read_text(encoding="utf-8") == "Installer test fixture"
+        assert (target / "NOTICE.txt").read_text(encoding="utf-8") == "Installer notice fixture"
         assert (target / "_internal/current.dll").read_bytes() == b"current"
         assert not (target / "_internal/legacy.dll").exists()
         assert not (target / "_internal/obsolete.dll").exists()

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Framework-neutral protocols used by the application layer."""
 
 from __future__ import annotations

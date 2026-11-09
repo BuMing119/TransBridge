@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """HTTP adapter with typed errors, bounded retry and cooperative cancellation."""
 
 from __future__ import annotations

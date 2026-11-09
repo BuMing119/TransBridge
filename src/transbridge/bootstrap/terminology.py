@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Production composition for the project terminology workbench."""
 
 from __future__ import annotations

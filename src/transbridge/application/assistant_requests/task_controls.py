@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Persist request intent when a user controls jobs from another application entrypoint."""
 
 from dataclasses import replace

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prepare detached AI results away from the Qt event loop."""
 
 from __future__ import annotations

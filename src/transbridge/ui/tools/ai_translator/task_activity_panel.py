@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compact task activity, bounded history and a visible last warning."""
 
 from __future__ import annotations

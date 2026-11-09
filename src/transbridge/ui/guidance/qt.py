@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Thin Qt banner and event-driven adapter for state guidance."""
 
 from __future__ import annotations

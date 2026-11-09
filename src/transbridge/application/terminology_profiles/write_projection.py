@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Frozen write projection that never mutates the common entry collection."""
 
 from __future__ import annotations

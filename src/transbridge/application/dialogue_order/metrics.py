@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Frozen plugin-only selection metrics without an all-pairs reachability table."""
 
 from .graph import Graph

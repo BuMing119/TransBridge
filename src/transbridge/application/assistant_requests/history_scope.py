@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Derive message ownership from authoritative request and result references."""
 
 

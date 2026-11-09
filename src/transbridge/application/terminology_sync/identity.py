@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Canonical identities for project terminology synchronization facts."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Transactional generated terminology shared by one Project/Variant/language."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Atomic routing decisions and terminal model receipts, independent of Qt."""
 
 from copy import deepcopy

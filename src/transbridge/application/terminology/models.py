@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable domain contracts for project terminology.
 
 These types deliberately contain no UI, storage, spreadsheet, or matcher model.

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable, Qt-free synchronization display indexes with bounded row formatting."""
 
 from collections import Counter

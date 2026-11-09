@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only, admission-scoped pages of execution details omitted from model input."""
 
 from dataclasses import asdict

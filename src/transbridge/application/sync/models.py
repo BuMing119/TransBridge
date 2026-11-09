@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable DTOs for ParaTranz synchronization planning."""
 
 from __future__ import annotations

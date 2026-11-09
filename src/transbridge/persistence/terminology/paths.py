@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Root-confined locations for one Project's terminology assets."""
 
 from __future__ import annotations

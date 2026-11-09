@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compose the task-scoped reference store from detached recovery identities."""
 
 from __future__ import annotations

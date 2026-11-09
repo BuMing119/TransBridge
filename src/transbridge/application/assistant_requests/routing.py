@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Validated routing proposals with durable per-directive replay identities."""
 
 from __future__ import annotations

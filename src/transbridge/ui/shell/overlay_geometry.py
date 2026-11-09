@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared geometry policy for workspace overlay windows."""
 
 from __future__ import annotations

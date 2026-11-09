@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Receive worker feedback on the GUI thread and isolate each execution attempt."""
 
 from __future__ import annotations

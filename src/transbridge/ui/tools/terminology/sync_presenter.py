@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free presentation state for terminology synchronization."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Production task entrypoint bridge: submit -> JobRef -> terminal outcome.
 
 This is the AWAITING_TASK production path: a translator/post-process/Graph

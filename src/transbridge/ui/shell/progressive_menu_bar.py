@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """A compact menu bar that reveals the existing application menus in place."""
 
 from __future__ import annotations

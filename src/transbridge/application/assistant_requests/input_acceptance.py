@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Admit user text and its immutable material snapshot in one Session transaction."""
 
 from copy import deepcopy

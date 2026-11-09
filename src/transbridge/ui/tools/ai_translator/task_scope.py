@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Source-aware targeting shared by task estimates, preflight and execution."""
 
 from __future__ import annotations

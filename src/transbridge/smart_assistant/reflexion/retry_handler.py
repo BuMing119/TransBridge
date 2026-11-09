@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reflexion failure analysis for bounded tool retries."""
 
 from collections.abc import Callable, Mapping

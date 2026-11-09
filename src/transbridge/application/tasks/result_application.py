@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reconcile task decisions against project commits without replaying writes."""
 
 from __future__ import annotations

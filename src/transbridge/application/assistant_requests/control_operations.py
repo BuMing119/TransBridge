@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Local control-query/answer use cases, including interrupted-call recovery."""
 
 from types import SimpleNamespace

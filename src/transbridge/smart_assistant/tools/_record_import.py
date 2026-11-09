@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Map bilingual record translations onto unique physical target identities."""
 
 from collections import defaultdict

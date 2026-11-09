@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Candidate-buffer bridge for legacy AutoTranslator entry adapters."""
 
 from __future__ import annotations

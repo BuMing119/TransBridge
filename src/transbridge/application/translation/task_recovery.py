@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project-local task identities and explicit continuation metadata, without credentials."""
 
 from __future__ import annotations

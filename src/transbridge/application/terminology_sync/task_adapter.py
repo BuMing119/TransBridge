@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """TaskRuntime lifecycle adapter for authorized terminology backup plans."""
 
 from __future__ import annotations

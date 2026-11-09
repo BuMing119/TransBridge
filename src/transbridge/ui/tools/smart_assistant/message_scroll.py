@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Scroll following is independent from message ownership and history paging."""
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSlot

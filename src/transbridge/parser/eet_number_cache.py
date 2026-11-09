@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """EET4 4.35 numeric-cache generation, including its exact Roman-number rules.
 
 Ported from reflection-only IL of TextWitoutNumber.Create and the normal record

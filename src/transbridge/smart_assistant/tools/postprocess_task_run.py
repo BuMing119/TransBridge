@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Detached post-processing execution and durable result publication."""
 
 from __future__ import annotations

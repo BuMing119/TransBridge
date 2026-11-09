@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Small OpenAI-compatible HTTP adapter for TranslationLlmPort."""
 
 from __future__ import annotations

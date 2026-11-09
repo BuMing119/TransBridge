@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Conservative project-name grouping without mutating source entries."""
 
 from __future__ import annotations

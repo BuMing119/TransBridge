@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """文件解析器抽象基类与数据结构。"""
 
 from abc import ABC, abstractmethod

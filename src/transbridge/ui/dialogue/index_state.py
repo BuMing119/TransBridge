@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Identify changes that actually invalidate the task relationship index."""
 
 from __future__ import annotations

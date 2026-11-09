@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Page navigation for cloud history endpoints that do not expose a total."""
 
 from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal

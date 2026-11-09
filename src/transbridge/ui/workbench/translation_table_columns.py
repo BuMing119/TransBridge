@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Stable column contract for the Workbench translation table."""
 
 COL_CHECK = 0

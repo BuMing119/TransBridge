@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable report manifests and snapshot-bound paged section storage."""
 
 from __future__ import annotations

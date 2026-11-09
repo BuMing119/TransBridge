@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Existing original-text and file-template prerequisites for an operation scope."""
 
 from dataclasses import dataclass

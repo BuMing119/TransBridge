@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Pure, non-destructive projection of one common translation through a profile."""
 
 from __future__ import annotations

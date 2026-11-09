@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Canonical routing state reduction and direct-reply projection for result commits."""
 
 from .models import RequestError

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Complete, immutable evidence for a conflict review and its guarded decision."""
 
 from dataclasses import dataclass

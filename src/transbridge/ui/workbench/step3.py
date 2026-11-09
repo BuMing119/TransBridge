@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 步骤3：操作面板。
 三个独立操作卡片：上传 ParaTranz、从paratranz上同步、写回 ESP。

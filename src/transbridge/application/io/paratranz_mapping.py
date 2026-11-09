@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Pure ParaTranz JSON record mapping with explicit local and remote identity."""
 
 from __future__ import annotations

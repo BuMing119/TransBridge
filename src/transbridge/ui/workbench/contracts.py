@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Public, narrow ports exposed by Workbench facades."""
 
 from __future__ import annotations

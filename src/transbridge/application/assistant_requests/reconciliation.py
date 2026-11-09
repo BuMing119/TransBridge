@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit outcome reconciliation; a resolution never dispatches or replays work."""
 
 from __future__ import annotations

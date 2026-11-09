@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Transport-neutral headless CLI operations."""
 
 from __future__ import annotations

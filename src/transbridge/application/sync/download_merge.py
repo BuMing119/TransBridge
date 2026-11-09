@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Publish a frozen download result and present its local merge decisions."""
 
 from __future__ import annotations

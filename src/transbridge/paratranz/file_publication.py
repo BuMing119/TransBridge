@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded, rate-budgeted file API gateway for ordinary and categorized uploads."""
 
 from collections.abc import Mapping

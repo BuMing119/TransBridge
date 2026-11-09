@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Fail-closed typed JSON codec for terminology synchronization records."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 from .paratranz_announcements_api import ParatranzAnnouncementsAPI
 from .paratranz_contribution_api import ParatranzScoresAPI
 from .paratranz_export_api import ParatranzExportAPI

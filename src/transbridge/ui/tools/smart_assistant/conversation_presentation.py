@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Conversation chrome and composer state, separate from chat execution and persistence."""
 
 from pathlib import Path

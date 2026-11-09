@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Restore validated results and decisions on detached task snapshots."""
 
 from __future__ import annotations

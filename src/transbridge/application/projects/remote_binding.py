@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project-owned remote-service bindings and ParaTranz target resolution."""
 
 from __future__ import annotations

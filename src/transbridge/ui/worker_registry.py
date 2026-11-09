@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Application ownership of API threads through GUI delivery and native completion."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 from PyQt6.QtWidgets import QMessageBox
 
 

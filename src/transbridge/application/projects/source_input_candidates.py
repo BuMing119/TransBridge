@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Filename-only hints for user-selected replacement source inputs."""
 
 from __future__ import annotations

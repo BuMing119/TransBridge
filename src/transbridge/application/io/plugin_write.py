@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Render SSE plugins and their localized strings from confirmed source snapshots."""
 
 from __future__ import annotations

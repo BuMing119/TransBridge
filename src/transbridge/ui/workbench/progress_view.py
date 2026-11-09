@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Operation progress view shared by Workbench operations."""
 
 from PyQt6.QtWidgets import QProgressBar, QSizePolicy, QVBoxLayout, QWidget

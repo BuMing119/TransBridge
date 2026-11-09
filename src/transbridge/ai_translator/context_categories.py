@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 # 分类常量已迁移到 converter 层，此处保留以兼容旧 import 路径。
 from transbridge.converter.context_categories import (  # noqa: F401
     AUTO_TERM_CONTEXTS,

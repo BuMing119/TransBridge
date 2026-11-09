@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Durable assistant task inputs and results over the shared AI task recovery store."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Download identity matching and explicit, snapshot-bound conflict decisions."""
 
 from __future__ import annotations

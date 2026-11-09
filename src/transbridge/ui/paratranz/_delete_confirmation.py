@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Safe confirmation buttons for destructive ParaTranz cloud operations."""
 
 from PyQt6.QtCore import Qt

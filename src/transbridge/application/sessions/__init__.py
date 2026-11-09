@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Headless Session aggregate, recovery, and lifecycle contracts."""
 
 from .aggregate import EventApplication, SessionAggregate, SessionEventKind, SessionRuntimeEvent

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Create an independent naming draft from the published project terminology."""
 
 from transbridge.application.terminology.effective import EffectiveSnapshotStatus

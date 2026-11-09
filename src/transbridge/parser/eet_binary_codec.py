@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Strict EET v3 wire codec, verified against samples and EET4 reflection-only IL.
 
 Shared by the experimental binary EET application adapter and diagnostic CLI.

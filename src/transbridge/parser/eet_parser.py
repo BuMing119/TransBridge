@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path

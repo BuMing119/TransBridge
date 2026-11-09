@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Small composable Qt primitives for the UI Foundation.
 
 Standard widgets receive their appearance from the application stylesheet.

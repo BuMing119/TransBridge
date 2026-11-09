@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Coalesce asset reads while preserving the latest completion of each workload."""
 
 from dataclasses import dataclass

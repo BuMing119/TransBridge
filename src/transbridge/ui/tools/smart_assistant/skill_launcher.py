@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Skill selection previews an editable request; only explicit launch submits it."""
 
 from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSlot

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read session-directory metadata off Qt and publish only the latest complete snapshot."""
 
 from concurrent.futures import ThreadPoolExecutor

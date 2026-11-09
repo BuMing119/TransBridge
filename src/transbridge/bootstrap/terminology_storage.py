@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Storage, capture, and commit guards for terminology composition."""
 
 from __future__ import annotations

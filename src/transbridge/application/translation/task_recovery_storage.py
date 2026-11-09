@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable recovery inputs and small, independently replaceable manifests."""
 
 from __future__ import annotations

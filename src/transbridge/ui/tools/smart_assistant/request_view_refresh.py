@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Coalesced request-list reads must not wait on Session I/O in the Qt thread."""
 
 import logging

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Keep project phase totals separate from concurrent source progress."""
 
 from __future__ import annotations

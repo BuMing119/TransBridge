@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Editable row mapping backed by immutable, asynchronously searched snapshots."""
 
 from PyQt6.QtCore import Qt, pyqtSignal

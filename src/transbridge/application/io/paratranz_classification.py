@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """One source-scoped classification and filename policy for ParaTranz artifacts."""
 
 from collections import Counter, defaultdict

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Single GUI-process owner for resolving and applying theme snapshots."""
 
 from __future__ import annotations

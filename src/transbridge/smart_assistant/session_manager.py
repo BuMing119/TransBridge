@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """SessionManager — 多会话持久化管理。
 
 ADR-008 (D13-D14): 后端纯 Python，零 PyQt6 依赖。

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Lossless native translation fields for binary EET and SST sources."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only effective terminology contracts and scope resolution."""
 
 from __future__ import annotations

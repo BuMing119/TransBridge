@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Lossless SSU8/SSU9 binary codec shared by product I/O and SST diagnostics.
 
 Independently implemented from the binary layout read/written by xTranslator:

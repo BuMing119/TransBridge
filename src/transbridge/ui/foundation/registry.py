@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Validation and copy-on-write registration for Qt-free themes."""
 
 from __future__ import annotations

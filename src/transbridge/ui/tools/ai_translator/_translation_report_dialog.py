@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """AI翻译/润色结果报告对话框。
 
 多Tab结构：汇总（统计卡片）+ 条目详情（可筛选排序表格）+ 问题明细（仅翻译模式）。

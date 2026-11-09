@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared execution boundary for chat, request and confirmation entry points."""
 
 from collections.abc import Callable

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable task identities, state and authorization scope."""
 
 from __future__ import annotations

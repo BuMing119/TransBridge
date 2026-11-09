@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Event-driven foreground turn leasing and evidence-backed answer completion."""
 
 from contextlib import contextmanager

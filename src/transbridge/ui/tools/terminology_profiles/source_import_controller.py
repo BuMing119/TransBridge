@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Background source read and naming-scheme creation flow."""
 
 from __future__ import annotations

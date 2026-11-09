@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """项目工具栏：项目名/版本切换/保存/管理按钮。"""
 
 from __future__ import annotations

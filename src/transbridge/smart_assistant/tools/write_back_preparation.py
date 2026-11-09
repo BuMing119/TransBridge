@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Freeze explicitly selected assistant sources and authorize their exact outputs."""
 
 from dataclasses import dataclass

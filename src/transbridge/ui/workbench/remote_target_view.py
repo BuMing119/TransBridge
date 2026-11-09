@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Workbench ParaTranz binding view and asynchronous project picker."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bind durable phase identity to one fresh execution without changing its commit owner."""
 
 from dataclasses import replace

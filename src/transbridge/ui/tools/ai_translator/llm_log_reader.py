@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Filesystem-only snapshots for the live LLM log viewer."""
 
 from __future__ import annotations

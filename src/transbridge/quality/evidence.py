@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Versioned, replayable QA evidence manifests.
 
 The command exit code is the source of truth.  A manifest cannot turn a

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Exact local-Project navigation and display metadata for assistant sessions."""
 
 from __future__ import annotations

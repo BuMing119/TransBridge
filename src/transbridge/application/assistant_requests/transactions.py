@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Publish a request command and its lifecycle evidence in one Session revision."""
 
 from dataclasses import replace

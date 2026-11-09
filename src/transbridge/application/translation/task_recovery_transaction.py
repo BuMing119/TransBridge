@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Short-lived cross-process transactions, independent of execution ownership."""
 
 from contextlib import contextmanager

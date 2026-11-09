@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read the immutable snapshots written by the V2 lifecycle transaction store."""
 
 from __future__ import annotations

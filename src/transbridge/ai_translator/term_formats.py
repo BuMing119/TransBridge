@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Canonical terminology model and local/ParaTranz format adapters."""
 
 from __future__ import annotations

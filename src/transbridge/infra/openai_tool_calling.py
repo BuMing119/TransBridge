@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """OpenAI Chat Completions adapter for provider-neutral native tool calls."""
 
 from __future__ import annotations

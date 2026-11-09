@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Storage boundary for full histories; persistence never schedules work."""
 
 from __future__ import annotations

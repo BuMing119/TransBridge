@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Lightweight request-time lookup of committed shared terminology."""
 
 from __future__ import annotations

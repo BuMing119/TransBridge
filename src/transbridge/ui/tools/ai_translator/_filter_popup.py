@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded, keyboard-accessible option lists for AI multi-select filters."""
 
 from __future__ import annotations

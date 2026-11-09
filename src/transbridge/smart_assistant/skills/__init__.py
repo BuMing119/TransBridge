@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Skill 子包 — 用户自定义 Skill 的加载、注册与执行。
 
 注册模式:

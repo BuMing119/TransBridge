@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Fold optional translations into a parsed source before project publication."""
 
 from dataclasses import replace

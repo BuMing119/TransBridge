@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """SessionController — 会话级状态机，统一管理 LLM 对话主循环控制流。
 
 ADR-008 (D8-D12): 后端纯 Python，零 PyQt6 依赖。通过回调注入与 UI 通信。

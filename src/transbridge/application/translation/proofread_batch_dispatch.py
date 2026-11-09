@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded first-pass proofreading dispatch and progress accounting."""
 
 from __future__ import annotations

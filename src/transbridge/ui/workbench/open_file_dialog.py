@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Stable file-opening form; content detection and parsing belong to the worker."""
 
 from PyQt6.QtCore import Qt

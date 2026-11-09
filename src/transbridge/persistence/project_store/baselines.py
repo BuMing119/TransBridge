@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Provide complete baselines only to operations that explicitly need them."""
 
 from transbridge.application.contracts import DomainError

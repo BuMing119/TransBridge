@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Restore mutable task references after a rejected local term publication."""
 
 from __future__ import annotations

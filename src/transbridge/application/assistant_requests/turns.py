@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Durable admission and failure evidence for an already selected model turn."""
 
 from dataclasses import replace

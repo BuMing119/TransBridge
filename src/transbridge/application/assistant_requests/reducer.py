@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Pure command reduction. Callers persist returned state before acknowledging it."""
 
 from dataclasses import dataclass, field, replace

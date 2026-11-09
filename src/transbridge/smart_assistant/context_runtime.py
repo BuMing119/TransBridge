@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Background context lifecycle connecting request authority, artifacts and semantic summaries."""
 
 from dataclasses import replace

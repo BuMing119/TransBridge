@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Frozen changelog manifests and document-bound streaming queries."""
 
 from __future__ import annotations

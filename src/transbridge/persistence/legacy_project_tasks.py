@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Validate and retain historical project-local AI outcomes as read-only assets."""
 
 from __future__ import annotations

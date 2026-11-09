@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Persistable build-input proof independent of later draft edits."""
 
 from __future__ import annotations

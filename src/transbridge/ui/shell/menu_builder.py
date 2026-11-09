@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build top-level actions without owning their application behavior."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Append an authoritative source and install the complete workbench together."""
 
 from __future__ import annotations

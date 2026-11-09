@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prepare expensive run identity from detached inputs before GUI admission."""
 
 from __future__ import annotations

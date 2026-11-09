@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Locale/source-aware read-only translation-memory planner."""
 
 from __future__ import annotations

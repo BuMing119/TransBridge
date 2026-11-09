@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compact, theme-aware notice for a conversation outside the active workbench."""
 
 from PyQt6.QtCore import Qt

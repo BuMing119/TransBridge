@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 WorkbenchWidget: 工作台布局（集合工具栏 + 词条预览全宽）。
 Story-18: Step1/Step3 面板已移除。

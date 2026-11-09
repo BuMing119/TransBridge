@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free configuration orchestration for the AI translator."""
 
 from __future__ import annotations

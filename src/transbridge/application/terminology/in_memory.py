@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Thread-safe in-memory baseline for terminology repository contracts."""
 
 from __future__ import annotations

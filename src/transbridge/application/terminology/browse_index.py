@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded, immutable term search projections with keyset pagination."""
 
 from __future__ import annotations

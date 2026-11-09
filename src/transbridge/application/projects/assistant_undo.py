@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Conflict-checked inverse commands for an assistant's Variant-owned edits.
 
 Receipts contain only touched entries and label definitions. Applying an inverse

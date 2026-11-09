@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only application use case for synchronization plans."""
 
 from __future__ import annotations

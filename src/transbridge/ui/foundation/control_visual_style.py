@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """One palette-based button treatment for ordinary, task and terminology surfaces."""
 
 from __future__ import annotations

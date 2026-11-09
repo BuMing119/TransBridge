@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free immutable contracts for TransBridge themes."""
 
 from __future__ import annotations

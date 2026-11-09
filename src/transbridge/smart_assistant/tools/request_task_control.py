@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Apply one user-request control to its scoped, exact background task runs."""
 
 from transbridge.application.assistant_requests.task_controls import request_task_control

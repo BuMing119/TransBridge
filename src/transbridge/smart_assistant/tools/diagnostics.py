@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project caught technical exceptions, separately from business tool results."""
 
 from transbridge.application.security import diagnostic_exception_text

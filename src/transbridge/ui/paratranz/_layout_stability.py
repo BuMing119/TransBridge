@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Stable geometry helpers for ParaTranz data tables."""
 
 from collections.abc import Mapping, Sequence

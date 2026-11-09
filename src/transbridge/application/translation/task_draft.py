@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Detached source drafts and immutable task inputs for selective retries."""
 
 from __future__ import annotations

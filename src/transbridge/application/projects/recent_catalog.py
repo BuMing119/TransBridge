@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only Project catalog contract for start-center projections."""
 
 from __future__ import annotations

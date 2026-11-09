@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """An external terminology edit prevents publication, not translation use."""
 
 from __future__ import annotations

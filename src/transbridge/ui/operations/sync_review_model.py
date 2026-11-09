@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Scalable table and filtering models for explicit synchronization decisions."""
 
 from __future__ import annotations

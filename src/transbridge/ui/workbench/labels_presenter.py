@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Label mutation coordinator for the Workbench preview."""
 
 from __future__ import annotations

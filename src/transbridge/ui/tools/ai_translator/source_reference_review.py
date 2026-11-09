@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Background comprehensive review of newly discovered project reference differences."""
 
 from __future__ import annotations

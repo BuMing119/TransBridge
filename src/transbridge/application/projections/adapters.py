@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Projection adapters for Project/Variant and Session aggregates."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Offline-safe token counting for AI workflow business content."""
 
 from __future__ import annotations

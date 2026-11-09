@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Current-format portable projects with verified SQLite backup and admission."""
 
 from __future__ import annotations

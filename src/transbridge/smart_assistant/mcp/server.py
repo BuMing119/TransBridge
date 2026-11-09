@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """MCP JSON-RPC stdio server with an explicit lifecycle state machine."""
 
 from __future__ import annotations

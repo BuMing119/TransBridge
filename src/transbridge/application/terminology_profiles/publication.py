@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reviewable profile publication, with storage-enforced review preconditions."""
 
 from __future__ import annotations

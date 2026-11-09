@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Parent plan completion is separate from leaf effect identities and receipts."""
 
 from dataclasses import replace

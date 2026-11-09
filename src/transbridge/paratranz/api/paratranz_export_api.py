@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """导出压缩包接口，依据 https://paratranz.cn/api-docs?format=json v0.5.7。
 
 列表仅管理员可读；最近结果与下载权限由项目配置决定，两者不能混用。

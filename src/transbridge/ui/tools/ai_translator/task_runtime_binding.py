@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Deliver runtime cancellation on the owning Qt thread for an entire AI run."""
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot

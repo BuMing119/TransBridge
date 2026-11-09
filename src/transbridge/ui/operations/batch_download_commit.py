@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Run one multi-source local publication under task cancellation arbitration."""
 
 from __future__ import annotations

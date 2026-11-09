@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Header sort intent and source-index ordering, confined to the table view."""
 
 from __future__ import annotations

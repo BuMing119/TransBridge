@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Persistence adapter for version-scoped UI workflows."""
 
 from __future__ import annotations

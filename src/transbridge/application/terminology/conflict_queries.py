@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Structured conflict filters shared by GUI and repository query adapters."""
 
 from __future__ import annotations

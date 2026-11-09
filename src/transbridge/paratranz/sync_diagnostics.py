@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Single-line diagnostic logging of a completed ParaTranz preflight.
 
 Only planner evidence is projected. This module never performs matching, changes

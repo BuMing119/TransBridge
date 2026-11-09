@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Mapping table and raw edit state, including incomplete rows that cannot be saved."""
 
 from __future__ import annotations

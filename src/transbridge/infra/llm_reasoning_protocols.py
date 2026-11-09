@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Protocol-specific probing and request mapping for LLM reasoning controls."""
 
 from __future__ import annotations

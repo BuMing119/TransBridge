@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Durable task diagnostics are audit evidence, never proof of a committed write."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Conversation navigation, persistence and read-only previews for the assistant panel."""
 
 from concurrent.futures import ThreadPoolExecutor

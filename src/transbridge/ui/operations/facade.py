@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Production composition facade for all destructive operation plans.
 
 The facade is the one public UI port wired into ``MainWindow``.  Feature

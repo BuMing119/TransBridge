@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Optional source references, separate from captured project content."""
 
 from pathlib import Path, PureWindowsPath

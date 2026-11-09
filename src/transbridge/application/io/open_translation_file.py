@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prepare one editable source and its optional translations without publishing it."""
 
 from dataclasses import dataclass

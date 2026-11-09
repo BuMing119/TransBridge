@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Refresh the assistant's public model summary on window activation."""
 
 import logging

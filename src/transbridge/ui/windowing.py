@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Safe presentation helpers for top-level, non-modal Qt windows."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Failure-isolated artifact delivery around immutable terminology facts."""
 
 from __future__ import annotations

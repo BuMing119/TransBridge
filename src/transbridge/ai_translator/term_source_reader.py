@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Strict, side-effect-free reads for one configured AI terminology source."""
 
 from __future__ import annotations

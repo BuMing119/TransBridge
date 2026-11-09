@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Inspect configured term sources before starting a unified AI task."""
 
 from __future__ import annotations

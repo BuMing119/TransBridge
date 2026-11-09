@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Recover plugin-qualified DSD fields omitted by hydrated entry snapshots."""
 
 from dataclasses import replace

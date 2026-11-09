@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Content-aware EET inputs used by the existing background GUI workers."""
 
 from dataclasses import replace

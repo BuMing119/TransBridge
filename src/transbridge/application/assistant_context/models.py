@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable context values; wire dictionaries are detached on every read."""
 
 from dataclasses import asdict, dataclass

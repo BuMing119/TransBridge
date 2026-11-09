@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Verify every SST field, including unselected records and header metadata."""
 
 import hashlib

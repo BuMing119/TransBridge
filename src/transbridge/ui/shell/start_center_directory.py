@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Load start-center project and task directories outside the Qt event loop."""
 
 from __future__ import annotations

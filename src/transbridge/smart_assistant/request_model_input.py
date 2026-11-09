@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Detached model-input snapshots assembled without UI or persistence access."""
 
 from __future__ import annotations

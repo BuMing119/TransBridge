@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only source-update preimages and their saved source dependency closure."""
 
 from __future__ import annotations

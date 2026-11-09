@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Adapter from immutable project terminology snapshots to ADR-027 TermEntry."""
 
 from __future__ import annotations

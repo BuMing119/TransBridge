@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """End the visible conversation round and commit its history boundary off the GUI thread."""
 
 from transbridge.application.assistant_requests.conversation_visibility import clear_conversation

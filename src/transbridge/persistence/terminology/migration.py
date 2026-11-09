@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Backup-first migration and integrity verification for terminology SQLite."""
 
 from __future__ import annotations

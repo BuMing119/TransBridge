@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Plain-text labels that can break long filenames without hiding their suffix."""
 
 from math import ceil

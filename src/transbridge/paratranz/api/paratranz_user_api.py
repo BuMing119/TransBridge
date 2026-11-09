@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """用户接口；依据 https://paratranz.cn/api-docs?format=json（OpenAPI 0.5.7）。"""
 
 from urllib.parse import urljoin, urlsplit, urlunsplit

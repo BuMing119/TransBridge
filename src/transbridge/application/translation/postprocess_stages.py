@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Candidate-only post-process stage adapters.
 
 Each stage consumes and returns :class:`PostProcessCandidate` values with an

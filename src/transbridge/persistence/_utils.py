@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """持久化工具：原子写入 + 名称校验。"""
 
 import json

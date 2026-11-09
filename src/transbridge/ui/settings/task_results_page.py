@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Conflict defaults with a detached draft and explicit persistence errors."""
 
 from __future__ import annotations

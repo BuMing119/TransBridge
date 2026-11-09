@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Fields that may cross the parser-to-project boundary."""
 
 from __future__ import annotations

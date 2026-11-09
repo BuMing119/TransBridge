@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Restore captured selection without treating later content edits as a new target."""
 
 from copy import deepcopy

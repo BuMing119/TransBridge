@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """V2 adapters over the existing SSE plugin, EET XML, and XT XML implementations."""
 
 from __future__ import annotations

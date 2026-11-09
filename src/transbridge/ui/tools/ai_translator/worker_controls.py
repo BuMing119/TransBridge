@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Order runtime snapshots and worker lifetime without holding a runtime lock."""
 
 from collections.abc import Callable

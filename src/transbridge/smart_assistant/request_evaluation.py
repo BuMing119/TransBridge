@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Replay routing captures through production validation without business execution.
 
 Synthetic controls test the harness and safety boundaries, never model accuracy.

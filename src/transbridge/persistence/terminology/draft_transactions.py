@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Guarded SQLite transactions for mutable terminology drafts."""
 
 from __future__ import annotations

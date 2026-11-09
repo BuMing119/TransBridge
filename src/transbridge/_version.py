@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Resolve the package version from the project metadata authority."""
 
 from importlib.metadata import PackageNotFoundError, version

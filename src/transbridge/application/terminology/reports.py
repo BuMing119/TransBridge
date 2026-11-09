@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Freeze quality-report facts independently from rendering and UI layout."""
 
 from __future__ import annotations

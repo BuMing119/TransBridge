@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Apply shared workbench assets once, then each retained task completion."""
 
 from dataclasses import replace

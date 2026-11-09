@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build reusable report search and diagnostic indexes away from the GUI."""
 
 from __future__ import annotations

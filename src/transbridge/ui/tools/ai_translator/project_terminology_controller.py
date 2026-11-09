@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read the same effective terminology as AI runs without blocking the Qt event loop."""
 
 from __future__ import annotations

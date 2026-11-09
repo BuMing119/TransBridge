@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only extracted-text preview and explicit removal of composer attachments."""
 
 from PyQt6.QtCore import Qt

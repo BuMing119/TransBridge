@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Resolve plugin import records that share one materialized content source."""
 
 from __future__ import annotations

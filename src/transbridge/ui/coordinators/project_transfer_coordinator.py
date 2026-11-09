@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt interactions for authoritative project snapshots and portable archives."""
 
 from __future__ import annotations

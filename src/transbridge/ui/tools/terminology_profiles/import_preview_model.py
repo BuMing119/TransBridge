@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Virtual import preview with presentation-only search and diagnostic filtering."""
 
 from __future__ import annotations

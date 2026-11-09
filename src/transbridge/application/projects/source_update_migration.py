@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Match one source revision and migrate complete translation variants."""
 
 from dataclasses import dataclass, replace

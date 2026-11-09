@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded independent file pipelines with owner-thread checks and ordered receipts."""
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait

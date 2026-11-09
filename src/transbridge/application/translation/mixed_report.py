@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Canonical report composition for mixed translation and polish runs."""
 
 from __future__ import annotations

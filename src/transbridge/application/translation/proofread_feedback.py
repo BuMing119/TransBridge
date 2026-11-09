@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Convert local validation evidence into bounded, entry-scoped recovery guidance."""
 
 from collections.abc import Iterable

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Choose the destination of a plugin dropped into an existing project."""
 
 from __future__ import annotations

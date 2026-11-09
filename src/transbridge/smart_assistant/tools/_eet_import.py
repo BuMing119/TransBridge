@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Validate captured EET evidence before mapping translations to project records."""
 
 from transbridge.application.io.identity import SourceNamespace

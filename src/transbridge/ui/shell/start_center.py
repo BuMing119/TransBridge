@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Start-center state and the thin Qt view that renders it.
 
 The immutable state is intentionally independent from repository and task

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Capture immutable entry batches and compute one isolated terminology preview."""
 
 from __future__ import annotations

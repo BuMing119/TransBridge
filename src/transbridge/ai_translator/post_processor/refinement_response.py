@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Validated local result models and parsers for LLM refinement responses."""
 
 from __future__ import annotations

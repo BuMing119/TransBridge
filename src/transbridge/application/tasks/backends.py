@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Framework-neutral execution backends.
 
 Backends schedule and wait for callables. They never decide application task state.

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build the canonical report snapshot at the AI translation completion boundary."""
 
 from __future__ import annotations

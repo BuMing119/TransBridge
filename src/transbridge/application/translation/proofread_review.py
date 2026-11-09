@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Retain ambiguous syntax results as successful entries requiring review."""
 
 from dataclasses import replace

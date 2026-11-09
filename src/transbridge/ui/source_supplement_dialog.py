@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Choose exact entry correspondences without creating an editor for every row."""
 
 from PyQt6.QtCore import QAbstractListModel, QAbstractTableModel, QModelIndex, Qt

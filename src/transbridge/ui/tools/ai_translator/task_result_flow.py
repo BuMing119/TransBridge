@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Coordinate private result preparation and guarded GUI publication."""
 
 from __future__ import annotations

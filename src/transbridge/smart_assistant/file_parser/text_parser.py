@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """文本类文件解析器：Excel / CSV / Markdown / TXT / JSON。"""
 
 import csv

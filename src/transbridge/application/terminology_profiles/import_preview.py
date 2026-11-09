@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only rows for inspecting every result of an authoritative source import preview."""
 
 from __future__ import annotations

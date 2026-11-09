@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bind the AI task's naming-scheme controls to the Workbench coordinator."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Complete term edits with stable identity and auditable replacements."""
 
 from __future__ import annotations

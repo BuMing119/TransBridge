@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """One compact explanation of the current stage and its next action."""
 
 from PyQt6.QtCore import pyqtSignal

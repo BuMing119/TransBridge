@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Debounced pure-data search with dataset, query and widget-lifetime isolation."""
 
 from threading import Event

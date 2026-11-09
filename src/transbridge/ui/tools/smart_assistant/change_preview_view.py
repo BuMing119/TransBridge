@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded-widget, selectable full-text review of translation before/after rows."""
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt

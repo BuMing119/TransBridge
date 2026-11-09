@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Content-first, fixed-height review list without one widget per entry."""
 
 from PyQt6.QtCore import QEvent, QSize, Qt

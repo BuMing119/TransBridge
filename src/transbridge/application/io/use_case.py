@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared parse/write use case used by GUI and Agent process adapters."""
 
 from __future__ import annotations

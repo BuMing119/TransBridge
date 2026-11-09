@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Dialogs for guiding and managing local embedding models.
 
 The manager intentionally depends on a small duck-typed store instead of a

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Adapt Assistant calls to the same project download used by the GUI."""
 
 from dataclasses import replace

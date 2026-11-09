@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Per-entry task counts and actionable failure summaries."""
 
 from __future__ import annotations

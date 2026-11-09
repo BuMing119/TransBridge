@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared conflict-review constraints for manual edits and version membership."""
 
 from __future__ import annotations

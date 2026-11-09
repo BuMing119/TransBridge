@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Framework-neutral task runtime contracts and state machine."""
 
 from .actions import (

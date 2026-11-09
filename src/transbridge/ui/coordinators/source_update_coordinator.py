@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Choose, preview and confirm source replacement without blocking the Qt loop."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Markdown → QWidget renderer. Zero PyQt-external dependencies, pure regex parser."""
 
 from __future__ import annotations

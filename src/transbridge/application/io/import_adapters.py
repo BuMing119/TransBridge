@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only source adapters for existing JSON translation readers."""
 
 from __future__ import annotations

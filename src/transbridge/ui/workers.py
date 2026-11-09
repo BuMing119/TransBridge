@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 ApiWorker: 通用后台工作线程。
 所有 API 请求必须通过此类在后台线程执行，严禁在主线程直接调用 API。

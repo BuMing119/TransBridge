@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit user choices for leaving edits and reviewing archive impact."""
 
 from __future__ import annotations

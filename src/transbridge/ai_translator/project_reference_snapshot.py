@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Credential-free serialization of a task's published terminology binding."""
 
 from __future__ import annotations

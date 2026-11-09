@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Keep a workbench open until accepted draft writes are handled explicitly."""
 
 from PyQt6.QtCore import QObject, QTimer

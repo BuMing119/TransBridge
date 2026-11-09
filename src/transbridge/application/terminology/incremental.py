@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Content-keyed incremental terminology builds with full-result equivalence."""
 
 from __future__ import annotations

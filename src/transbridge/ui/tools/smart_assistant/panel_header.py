@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compact session header for the floating Smart Assistant workspace."""
 
 from __future__ import annotations

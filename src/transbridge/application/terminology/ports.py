@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Storage, query, pagination, and time ports for project terminology."""
 
 from __future__ import annotations

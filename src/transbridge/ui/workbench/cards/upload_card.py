@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 from PyQt6.QtWidgets import QDialog, QMessageBox
 
 from transbridge.ui.foundation.adapters import ThemeView

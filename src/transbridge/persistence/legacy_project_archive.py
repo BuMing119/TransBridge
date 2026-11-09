@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prepare legacy project bundles without publishing or mutating source files."""
 
 from __future__ import annotations

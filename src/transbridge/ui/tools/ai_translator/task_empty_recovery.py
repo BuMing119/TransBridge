@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Detached completion of a validated recovery that has no remaining entries."""
 
 from dataclasses import dataclass

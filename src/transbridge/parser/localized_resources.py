@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Discover and capture localized plugin templates without retaining whole archives."""
 
 from contextlib import ExitStack

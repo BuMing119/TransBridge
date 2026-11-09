@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Idempotent ownership helpers for callbacks, signals and event listeners."""
 
 from __future__ import annotations

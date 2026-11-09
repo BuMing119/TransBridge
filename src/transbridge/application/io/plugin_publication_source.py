@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reuse a confirmed plugin's parsed source only within one publication."""
 
 from contextlib import contextmanager

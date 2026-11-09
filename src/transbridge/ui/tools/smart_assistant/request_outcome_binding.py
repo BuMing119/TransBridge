@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit, evidenced user reconciliation for interrupted operation results."""
 
 from uuid import uuid4

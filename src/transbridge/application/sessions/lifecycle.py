@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Two-phase Session switching and late-event owner isolation."""
 
 from __future__ import annotations

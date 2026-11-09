@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Readiness-specific empty state using real navigation callbacks supplied by the shell."""
 
 from PyQt6.QtCore import Qt

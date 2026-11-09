@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Strategy adapter for Smart Assistant polish tasks."""
 
 from __future__ import annotations

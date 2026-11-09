@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Strict schema-1 Project catalog document helpers."""
 
 from __future__ import annotations

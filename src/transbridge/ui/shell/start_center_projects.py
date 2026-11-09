@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Local-project panel for the task-oriented start center."""
 
 from __future__ import annotations

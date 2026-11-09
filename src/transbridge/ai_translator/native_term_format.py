@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read the exact JSON records written by the canonical terminology serializer."""
 
 from __future__ import annotations

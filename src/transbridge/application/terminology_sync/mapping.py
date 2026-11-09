@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Canonical, loss-aware mappings used by terminology synchronization."""
 
 from __future__ import annotations

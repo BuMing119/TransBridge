@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Typed contracts for long-running terminology workloads."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Semantic-fidelity XML translation for FOMOD metadata files."""
 
 from __future__ import annotations

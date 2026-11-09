@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Keep project storage references valid when deletion releases a SQLite handle."""
 
 from __future__ import annotations

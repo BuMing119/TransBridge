@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free terminology task projection for tool views."""
 
 from __future__ import annotations

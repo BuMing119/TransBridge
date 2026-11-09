@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """The two frozen plugin-only reading candidates, with soft ready preferences."""
 
 from collections import defaultdict

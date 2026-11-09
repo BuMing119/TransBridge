@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable Session persistence and recovery contracts."""
 
 from __future__ import annotations

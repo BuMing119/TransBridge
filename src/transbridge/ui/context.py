@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 AppContext: 全局应用上下文，持有配置、当前用户、当前项目和本地翻译集合。
 所有组件通过持有同一个 AppContext 实例来共享状态，状态变化通过 Qt 信号广播。

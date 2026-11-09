@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prepare XML/Strings migration on a detached collection using legacy matching."""
 
 from __future__ import annotations

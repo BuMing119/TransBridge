@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Versioned SQLite schema for project terminology facts."""
 
 from __future__ import annotations

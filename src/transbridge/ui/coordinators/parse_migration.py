@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prepare optional parse-time migrations independently of Qt and publication."""
 
 from __future__ import annotations

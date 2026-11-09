@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Nonblocking Session deletion preflight; tombstones keep late events from reopening work."""
 
 from copy import deepcopy

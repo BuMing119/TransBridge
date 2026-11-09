@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Typed task-center actions over immutable history and recovery catalogs."""
 
 from __future__ import annotations

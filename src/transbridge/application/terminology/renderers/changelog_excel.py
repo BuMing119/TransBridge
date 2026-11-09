@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Write-only Excel layout for a frozen ChangeLogDocumentRef."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project FOMOD reports into the operation result presentation contract."""
 
 from transbridge.application.contracts import OperationCounts, OperationOutcome, OperationResult

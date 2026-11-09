@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Offline, explicit joint budgets for assistant context projections."""
 
 from __future__ import annotations

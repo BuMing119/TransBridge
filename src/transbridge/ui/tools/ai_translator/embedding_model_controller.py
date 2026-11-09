@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Coordinate local embedding-model UI state without expanding the main window."""
 
 from __future__ import annotations

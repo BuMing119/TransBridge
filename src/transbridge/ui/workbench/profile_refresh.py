@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read applied and preview scheme revisions away from the Qt thread."""
 
 from __future__ import annotations

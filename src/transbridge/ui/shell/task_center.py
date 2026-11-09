@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Unified, event-driven task activity surface for the desktop shell."""
 
 from __future__ import annotations

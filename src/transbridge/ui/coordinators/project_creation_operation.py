@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Install a newly created project's complete workbench as one GUI transition."""
 
 from __future__ import annotations

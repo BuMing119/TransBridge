@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Workbench pages over a full-scope, revision-bound source collection."""
 
 from __future__ import annotations

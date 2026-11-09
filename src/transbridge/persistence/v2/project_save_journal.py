@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Durable Project/Variant save journal and recovery protocol."""
 
 from __future__ import annotations

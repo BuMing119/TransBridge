@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Safe, loss-aware conversion of untrusted values to Excel cells."""
 
 from __future__ import annotations

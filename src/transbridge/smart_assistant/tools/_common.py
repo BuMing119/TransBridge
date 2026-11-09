@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """工具模块共享函数 — LLM 配置加载。"""
 
 

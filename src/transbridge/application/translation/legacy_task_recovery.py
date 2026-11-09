@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Conservative, read-only recovery discovery for reports predating manifests."""
 
 from __future__ import annotations

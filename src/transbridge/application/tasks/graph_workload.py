@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Framework-neutral Graph workload adapter for ``TaskRuntime`` backends."""
 
 from __future__ import annotations

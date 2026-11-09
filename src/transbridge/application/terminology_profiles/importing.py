@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Snapshot a terminology source into a complete naming-scheme profile."""
 
 from __future__ import annotations

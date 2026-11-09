@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Lightweight profile selection reads and bounded, verified revision reuse."""
 
 from __future__ import annotations

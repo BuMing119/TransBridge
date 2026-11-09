@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Task-oriented landing page for the start center.
 
 This module deliberately consumes the start-center projection through a small

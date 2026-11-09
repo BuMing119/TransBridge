@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Lifecycle-safe controller for guidance projections and user intents."""
 
 from __future__ import annotations

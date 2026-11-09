@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read source-owned input fields for only the asynchronous result targets."""
 
 from __future__ import annotations

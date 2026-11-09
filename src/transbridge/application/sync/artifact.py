@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Validated same-volume download and atomic publication for ParaTranz artifacts."""
 
 from __future__ import annotations

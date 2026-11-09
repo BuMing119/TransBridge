@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """词条相关小对话框：创建词条、批量设置状态、同步译文确认。"""
 
 from PyQt6.QtCore import Qt

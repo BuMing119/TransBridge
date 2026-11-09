@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Known, bounded source evidence used only while upgrading incomplete Projects."""
 
 from __future__ import annotations

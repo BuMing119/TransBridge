@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit JSON exports from immutable sources, separate from native writeback."""
 
 from __future__ import annotations

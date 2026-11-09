@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Typed application contracts for ParaTranz terminology operations."""
 
 from __future__ import annotations

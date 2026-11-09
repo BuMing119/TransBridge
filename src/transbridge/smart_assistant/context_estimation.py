@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Offline estimates for admission, never provider usage or a guaranteed upper bound."""
 
 import math

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Process-scoped application runtime and lifecycle."""
 
 from __future__ import annotations

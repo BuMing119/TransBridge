@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Pure three-way merge of asynchronous results into current entry content."""
 
 from __future__ import annotations

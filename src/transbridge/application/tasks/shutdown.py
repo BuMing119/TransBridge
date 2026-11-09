@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reversible admission suspension and backend draining before final shutdown."""
 
 from __future__ import annotations

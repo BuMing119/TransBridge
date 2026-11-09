@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit source/output format compatibility and artifact routing."""
 
 from .contracts import FormatId, SourceSnapshot

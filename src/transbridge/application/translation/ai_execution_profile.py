@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Effective AI workflow profiles shared by UI and execution adapters."""
 
 from __future__ import annotations

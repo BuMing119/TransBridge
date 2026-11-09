@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reuse verified Session scope metadata only while its source record is unchanged."""
 
 from collections.abc import Callable

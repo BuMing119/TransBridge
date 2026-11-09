@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reconstruct derived Session catalog rows without changing conversation records."""
 
 from __future__ import annotations

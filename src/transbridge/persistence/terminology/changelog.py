@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable changelog manifest and document-bound paged section storage."""
 
 from __future__ import annotations

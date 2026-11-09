@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reconstruct XML and localized text templates from approved translation fields."""
 
 from __future__ import annotations

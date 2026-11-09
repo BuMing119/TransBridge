@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Context-scoped durable facade for inbound terminology review and draft import."""
 
 from __future__ import annotations

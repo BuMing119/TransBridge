@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Batch DSD parsing preserves records with the same public locator."""
 
 from collections.abc import Iterable, Mapping

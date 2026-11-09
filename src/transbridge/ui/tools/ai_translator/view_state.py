@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Semantic facade over the translator configuration widgets.
 
 Only this module knows the concrete controls owned by :class:`AITranslatorView`.

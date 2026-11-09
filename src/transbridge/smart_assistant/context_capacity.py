@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Resolve assistant capacity without inferring capabilities of proxy endpoints."""
 
 from dataclasses import dataclass

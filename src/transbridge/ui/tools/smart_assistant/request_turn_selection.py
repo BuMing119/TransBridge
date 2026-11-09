@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Select and persist a foreground turn without waiting on storage in Qt."""
 
 from transbridge.application.assistant_context.admission import available_requests

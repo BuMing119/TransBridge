@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Snapshot and report projections for source workflow results."""
 
 from __future__ import annotations

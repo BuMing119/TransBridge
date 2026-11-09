@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Materialize immutable terminology version state from a reviewed draft."""
 
 from __future__ import annotations

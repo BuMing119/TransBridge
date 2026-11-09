@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Navigation rendering primitives for the ParaTranz string dialog."""
 
 from __future__ import annotations

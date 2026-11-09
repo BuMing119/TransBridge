@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Proofread stage with bounded recovery for model and response failures."""
 
 from __future__ import annotations

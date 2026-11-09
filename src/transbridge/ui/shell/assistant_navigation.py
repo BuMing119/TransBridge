@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Navigate from an assistant result to the same authoritative workbench version."""
 
 from transbridge.ui.project_labels import entry_label_key

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared semantic styling hooks for current-content and multi-plugin AI tasks."""
 
 from __future__ import annotations

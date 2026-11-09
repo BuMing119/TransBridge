@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Validated, read-only preparation of plugin, JSON and SST translation migrations.
 
 This module deliberately stops before mutating a Project or collection.  It

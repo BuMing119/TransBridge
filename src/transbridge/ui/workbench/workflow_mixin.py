@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Small composition mixin for Story-07 Workbench workflow presentation."""
 
 from __future__ import annotations

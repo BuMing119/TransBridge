@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable candidate generations with independently mutable decision heads."""
 
 from __future__ import annotations

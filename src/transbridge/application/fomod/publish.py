@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """FOMOD staging build, reopen-validation and atomic publication.
 
 Every pack output goes to a same-volume sibling staging path first; the

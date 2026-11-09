@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Provider usage snapshots, independent of model output and business admission."""
 
 from __future__ import annotations

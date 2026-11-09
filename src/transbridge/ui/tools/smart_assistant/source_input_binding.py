@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Repair one captured assistant operation and present a freshly admitted decision."""
 
 from copy import deepcopy

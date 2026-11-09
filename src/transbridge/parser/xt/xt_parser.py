@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 # parser/xt_parser.py
 from collections.abc import Callable, Iterator
 import csv

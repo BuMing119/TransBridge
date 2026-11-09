@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Carry one opening's verified input through the normal candidate loader."""
 
 from contextlib import contextmanager

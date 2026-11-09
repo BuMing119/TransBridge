@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Durable conversation visibility without deleting request execution evidence."""
 
 from transbridge.persistence.v2.ids import SessionId, SessionRef

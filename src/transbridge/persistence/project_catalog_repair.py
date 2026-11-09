@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Startup repair for a missing derived Project catalog."""
 
 from __future__ import annotations

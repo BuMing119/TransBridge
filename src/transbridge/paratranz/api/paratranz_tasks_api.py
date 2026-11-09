@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """项目任务接口，依据 ParaTranz OpenAPI 0.5.7（2026-11-03 核对）。
 
 官方文档：https://paratranz.cn/api-docs?format=json

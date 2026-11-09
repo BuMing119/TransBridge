@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Deterministic semantic diff for immutable terminology versions."""
 
 from __future__ import annotations

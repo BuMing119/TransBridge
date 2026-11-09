@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Context checkpoints and append segments in the existing immutable artifact store."""
 
 from dataclasses import dataclass, replace

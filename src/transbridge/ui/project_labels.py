@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read label membership without rebuilding unchanged sets or serializing identities."""
 
 from transbridge.application.io.identity import EntryKey

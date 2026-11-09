@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared atomic publication of explicitly selected source inputs."""
 
 from dataclasses import dataclass

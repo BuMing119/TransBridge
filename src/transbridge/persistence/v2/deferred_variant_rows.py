@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """A revision-bound entry range with a sparse in-process edit overlay."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Stable translation entry identity and provenance contracts."""
 
 from __future__ import annotations

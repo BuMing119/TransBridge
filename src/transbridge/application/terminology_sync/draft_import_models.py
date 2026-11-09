@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable contracts for the inbound draft-import workflow."""
 
 from __future__ import annotations

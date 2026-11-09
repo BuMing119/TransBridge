@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Publish the normal application lifecycle in current project transactions."""
 
 from __future__ import annotations

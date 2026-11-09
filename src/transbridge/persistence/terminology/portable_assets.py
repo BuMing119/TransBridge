@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Portable, validated copies of immutable project-selected profile revisions."""
 
 from __future__ import annotations

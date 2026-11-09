@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Apply saved assistant results through the authoritative three-way merge command."""
 
 from __future__ import annotations

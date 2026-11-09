@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Complete frontend rows for the active Workbench source and its display order."""
 
 from __future__ import annotations

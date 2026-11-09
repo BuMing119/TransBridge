@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Lightweight presentation contracts used by feature-local UI slices.
 
 The package deliberately has no PyQt dependency.  Concrete widgets belong to

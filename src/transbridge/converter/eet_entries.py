@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Versioned physical identities for complete binary EET records."""
 
 from collections.abc import Callable

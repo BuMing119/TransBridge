@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Checksummed atomic final results, separate from raw translation candidates."""
 
 from __future__ import annotations

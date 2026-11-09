@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Value-free, complete JSON Schema diagnostics ordered by actionable cause."""
 
 from collections.abc import Iterable

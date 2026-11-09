@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Pure plugin-evidence DIAL reading order, independent of UI and file formats."""
 
 from .layout import plugin_only_layout

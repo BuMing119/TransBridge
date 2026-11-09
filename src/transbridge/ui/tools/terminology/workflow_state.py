@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Task-oriented copy derived from the existing authoritative asset snapshot."""
 
 from dataclasses import dataclass

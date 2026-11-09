@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit source-baseline and legacy identity migration registries."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Main-window persistence, autosave and asynchronous close ownership."""
 
 from __future__ import annotations

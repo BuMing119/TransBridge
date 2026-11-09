@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Start a source-aware task without blocking the configuration window."""
 
 from PyQt6.QtWidgets import QMessageBox

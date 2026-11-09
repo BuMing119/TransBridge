@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Preview and publish explicitly supplied content without deleting saved translations."""
 
 from copy import deepcopy

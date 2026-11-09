@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Versioned, owner-scoped checkpoint contracts."""
 
 from __future__ import annotations

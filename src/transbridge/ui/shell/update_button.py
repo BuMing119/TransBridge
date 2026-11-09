@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Animated update action; network work remains owned by UpdateController."""
 
 from PyQt6.QtCore import QEasingCurve, QEvent, QRectF, QSize, Qt, QVariantAnimation

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """FOMOD translation candidates and the single collection commit boundary."""
 
 from __future__ import annotations

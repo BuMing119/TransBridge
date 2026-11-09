@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Single guarded ChangeSet commit for accepted translation candidates."""
 
 from __future__ import annotations

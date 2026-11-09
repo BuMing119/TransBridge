@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable contracts for two-phase Project/Variant lifecycle changes."""
 
 from __future__ import annotations

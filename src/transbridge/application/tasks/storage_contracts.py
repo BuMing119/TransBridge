@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Task-owned result selection and project-commit evidence contracts."""
 
 from dataclasses import dataclass

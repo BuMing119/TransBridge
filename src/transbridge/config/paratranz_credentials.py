@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """ParaTranz credential capabilities and Windows secure-store adapter.
 
 The configuration file stores only :class:`CredentialRef`; secret material is

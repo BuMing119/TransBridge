@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Authoritative two-phase Project provisioning application service.
 
 Source parsing happens during ``prepare`` and produces an isolated immutable

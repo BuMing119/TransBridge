@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Quality report and version-log export page."""
 
 from __future__ import annotations

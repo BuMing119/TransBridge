@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Managed storage for downloadable local embedding models."""
 
 from __future__ import annotations

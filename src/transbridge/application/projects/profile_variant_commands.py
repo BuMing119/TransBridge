@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Persist converted text and its exact terminology association in one activation."""
 
 from __future__ import annotations

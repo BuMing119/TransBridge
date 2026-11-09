@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only workspace discovery and the new active-project preference."""
 
 from __future__ import annotations

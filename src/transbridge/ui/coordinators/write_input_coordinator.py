@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Collect a write plan's plugin files without changing the project view."""
 
 from dataclasses import replace

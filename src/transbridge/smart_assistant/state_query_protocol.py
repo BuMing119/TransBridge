@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Native tool contract for bounded, current-request execution-detail queries."""
 
 from transbridge.application.assistant_context.state_queries import STATE_RETRIEVAL_TOOL, STATE_SECTIONS

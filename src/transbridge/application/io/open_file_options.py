@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable user choices for opening sources and optional translation import."""
 
 from dataclasses import dataclass

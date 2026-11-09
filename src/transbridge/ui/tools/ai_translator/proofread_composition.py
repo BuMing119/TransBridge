@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compose the shared proofreading pipeline for any task source."""
 
 from __future__ import annotations

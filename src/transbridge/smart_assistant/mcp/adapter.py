@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """MCP transport adapter over application entrypoint operations."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Narrow adapters for custom-painted and rich-text theme consumers."""
 
 from __future__ import annotations

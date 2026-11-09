@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Adapters from existing FOMOD/fileops assets to the typed stage contracts."""
 
 from __future__ import annotations

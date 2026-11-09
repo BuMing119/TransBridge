@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable, user-selected workflow instructions scoped to their accepted request."""
 
 from collections.abc import Mapping

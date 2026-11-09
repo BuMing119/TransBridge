@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Atomic filesystem implementation of the checkpoint port."""
 
 from __future__ import annotations

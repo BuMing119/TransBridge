@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Concurrency-limited transparent decorator for :class:`LLMClient`."""
 
 from __future__ import annotations

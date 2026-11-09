@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """TaskRuntime adapters for typed FOMOD workloads."""
 
 from __future__ import annotations

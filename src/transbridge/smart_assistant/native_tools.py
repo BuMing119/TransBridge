@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build the native tool surface exposed to an LLM conversation round."""
 
 from __future__ import annotations

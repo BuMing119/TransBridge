@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Recoverable SQLite row participant for Project activation journals."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4

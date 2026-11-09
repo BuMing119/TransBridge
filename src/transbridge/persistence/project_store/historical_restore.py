@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Restore a named snapshot whose source revisions differ from the current project."""
 
 from __future__ import annotations

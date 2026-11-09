@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Small Qt dialogs and one-shot rendering for translator configuration."""
 
 from __future__ import annotations

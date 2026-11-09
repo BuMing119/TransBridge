@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Provider-independent business-content token batching contracts."""
 
 from __future__ import annotations

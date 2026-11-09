@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Preserve business payloads while explicitly protecting diagnostic and secret values."""
 
 from __future__ import annotations

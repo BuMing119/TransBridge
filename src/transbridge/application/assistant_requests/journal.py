@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Committed lifecycle evidence, independent of scheduling and command replay."""
 
 from __future__ import annotations

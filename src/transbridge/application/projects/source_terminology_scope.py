@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Retain registered plugin terminology scope across immutable source hydration."""
 
 from dataclasses import replace

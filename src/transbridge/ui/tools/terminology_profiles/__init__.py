@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Terminology localization profile management UI."""
 
 from .import_dialog import TerminologySourceImportDialog

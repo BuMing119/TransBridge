@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit-file undo receipts for trusted publication adapters.
 
 Construct with application-authorized absolute targets, never model-supplied

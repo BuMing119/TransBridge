@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compare-and-swap edits and their durable, retryable receipts."""
 
 from __future__ import annotations

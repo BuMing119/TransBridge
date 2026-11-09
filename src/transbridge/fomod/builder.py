@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """FOMOD 输出组装：复用 fileops/filter_rules.py 过滤侵权资源，复制保留文件。"""
 
 from __future__ import annotations

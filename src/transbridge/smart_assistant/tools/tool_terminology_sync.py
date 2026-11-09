@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Smart Assistant projection of the shared terminology sync application facade."""
 
 from __future__ import annotations

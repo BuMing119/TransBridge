@@ -10,6 +10,8 @@
 /.venv/
 /installer/*
 !/installer/setup.iss
+!/installer/collect_licenses.py
+!/installer/collect_licenses.py
 
 # 构建产物 & IDE
 __pycache__/

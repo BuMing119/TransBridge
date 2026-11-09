@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Public UI entrypoints without importing the application graph eagerly."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Canonical synchronous application operation result."""
 
 from __future__ import annotations

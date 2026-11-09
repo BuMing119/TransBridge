@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Supply one missing operation input, then rebuild the requested operation."""
 
 from dataclasses import replace

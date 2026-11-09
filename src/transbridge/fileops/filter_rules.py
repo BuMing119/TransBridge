@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Policy-driven FOMOD resource classification and filtering."""
 
 from __future__ import annotations

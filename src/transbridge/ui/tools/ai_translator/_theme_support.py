@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Narrow palette/domain helpers for AI Translator top-level views."""
 
 from __future__ import annotations

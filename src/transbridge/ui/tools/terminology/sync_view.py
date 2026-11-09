@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Synchronization workbench composed from bounded review and result views."""
 
 from __future__ import annotations

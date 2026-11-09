@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Durable evidence and explicit inverse commands for one accepted user input.
 
 Project working-copy commits and Session persistence are separate boundaries.

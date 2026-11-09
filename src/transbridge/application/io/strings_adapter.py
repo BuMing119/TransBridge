@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Fidelity-first adapters for Skyrim STRINGS, DLSTRINGS, and ILSTRINGS."""
 
 from __future__ import annotations

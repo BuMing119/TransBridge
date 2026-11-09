@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable publication requests, evidence, and results."""
 
 from __future__ import annotations

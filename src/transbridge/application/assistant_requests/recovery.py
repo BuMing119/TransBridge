@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Conservative restart reconciliation; unknown effects are never replayed."""
 
 from dataclasses import replace

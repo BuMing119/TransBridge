@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """历史报告查看对话框。
 
 扫描 data/ai_translator/*/reports/ 目录下的所有 .xlsx 报告文件，支持查看、打开、删除。

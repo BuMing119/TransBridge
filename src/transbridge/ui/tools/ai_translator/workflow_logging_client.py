@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Transparent LLM client wrapper that persists request and response details."""
 
 from __future__ import annotations

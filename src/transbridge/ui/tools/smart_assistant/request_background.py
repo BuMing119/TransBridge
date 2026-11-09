@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Deliver short Qt notifications after serialized local application work."""
 
 import logging

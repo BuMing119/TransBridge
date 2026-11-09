@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Deterministic, user-facing projection of the canonical terminology diff."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Worker-side progress stages and compact categorized-upload receipts."""
 
 

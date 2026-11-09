@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared categorized file classification and compatibility data contracts."""
 
 from .classification import categorize_sources

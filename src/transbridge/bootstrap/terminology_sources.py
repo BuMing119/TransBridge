@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Terminology leases over the project's stored translation entries."""
 
 from contextlib import closing

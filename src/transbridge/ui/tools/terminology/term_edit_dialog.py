@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Complete term form that stays open until the draft write has succeeded."""
 
 from __future__ import annotations

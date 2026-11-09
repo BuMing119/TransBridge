@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Adapt legacy worker signals and commits to the single task runtime authority."""
 
 from __future__ import annotations

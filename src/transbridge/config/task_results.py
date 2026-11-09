@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Persist conflict defaults independently from model and service settings."""
 
 from __future__ import annotations

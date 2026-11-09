@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 from importlib import metadata
 from pathlib import Path
+import subprocess
+import sys
 import tomllib
 
 import pytest
@@ -20,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 #: Core runtime distributions that must carry licensing metadata so the
 #: release can produce a verifiable license inventory.
-_CORE_DISTRIBUTIONS = ("PyQt6", "openpyxl")
+_CORE_DISTRIBUTIONS = ("PyQt6", "PyQt6-Qt6", "openpyxl")
 
 
 def _load_toml(path: Path) -> dict:
@@ -41,6 +43,30 @@ def test_installed_core_packages_expose_license_metadata() -> None:
         if not (has_field or has_file):
             missing.append(distribution)
     assert missing == [], f"distributions without any license evidence: {missing}"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows installer licensing")
+def test_release_license_collection_preserves_wheel_notices(tmp_path: Path) -> None:
+    subprocess.run(
+        [sys.executable, str(ROOT / "installer" / "collect_licenses.py"), str(tmp_path), ""],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert _load_toml(ROOT / "pyproject.toml")["project"]["license"] == "GPL-3.0-only"
+    notice = (ROOT / "NOTICE").read_text(encoding="utf-8")
+    assert "GPLv3 sections 7(b) and 7(c)" in notice
+    assert "Original project author: BuMing119" in notice
+    for name in _CORE_DISTRIBUTIONS:
+        package = metadata.distribution(name)
+        for path in package.files or ():
+            if path.name.lower().startswith(("license", "licence")):
+                installed_text = tmp_path / f"{package.name}-{package.version}" / path
+                assert installed_text.read_bytes() == package.locate_file(path).read_bytes()
+    assert (tmp_path / "LGPL-3.0.txt").is_file()
+    assert (tmp_path / "Apache-2.0.txt").is_file()
+    qt_version = metadata.version("PyQt6-Qt6")
+    assert (tmp_path / f"qt-{qt_version}" / "Qt-Third-Party-Notices.txt").is_file()
 
 
 def test_artifact_checksums_are_recorded_when_present() -> None:

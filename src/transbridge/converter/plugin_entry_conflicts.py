@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Disambiguate plugin locators using their exact source text."""
 
 from collections import defaultdict

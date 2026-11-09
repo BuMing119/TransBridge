@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Fail-closed aggregation of FR5.16 formal benchmark evidence."""
 
 from __future__ import annotations

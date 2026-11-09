@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit saved-row to selected-input correspondence shown before supplementation."""
 
 from dataclasses import dataclass

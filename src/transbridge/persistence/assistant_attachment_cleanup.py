@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit offline reclamation of verified, unreferenced assistant attachments."""
 
 from __future__ import annotations

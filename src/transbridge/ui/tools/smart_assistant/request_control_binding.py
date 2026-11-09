@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt receipt projection for application-owned control operations."""
 
 from dataclasses import dataclass, field

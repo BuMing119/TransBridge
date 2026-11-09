@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 # TransBridge local Embedding model catalog.
 #
 # Add new models by appending another [[models]] table. The list order is the

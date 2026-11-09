@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Built-in AI workflow defaults editor."""
 
 from __future__ import annotations

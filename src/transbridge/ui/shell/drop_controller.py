@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Own contextual file-drop choices without mixing them into intent discovery."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Encode typed source columns and one authoritative Variant entry state."""
 
 from __future__ import annotations

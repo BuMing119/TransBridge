@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Canonical application contracts for tool discovery and invocation."""
 
 from .contracts import StructuredObservation, ToolInvocation

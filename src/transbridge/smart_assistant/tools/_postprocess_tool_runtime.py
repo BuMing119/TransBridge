@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Preset-aware request resolution and execution for ``run_postprocess``."""
 
 from __future__ import annotations

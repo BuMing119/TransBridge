@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Public xTranslator SST reader backed by the complete sequential codec."""
 
 from __future__ import annotations

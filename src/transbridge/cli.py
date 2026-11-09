@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Headless-safe TransBridge command-line entry point."""
 
 from __future__ import annotations

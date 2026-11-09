@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Pure FOMOD candidate planning across migration, TM and AI fallback."""
 
 from __future__ import annotations

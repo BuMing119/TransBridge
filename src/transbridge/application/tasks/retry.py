@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit retry intents that always create a distinct TaskRuntime run."""
 
 from __future__ import annotations

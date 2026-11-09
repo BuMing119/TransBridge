@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Single-transaction persistence for immutable terminology publication."""
 
 from __future__ import annotations

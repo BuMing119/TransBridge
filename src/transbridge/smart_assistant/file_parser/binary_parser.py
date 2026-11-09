@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """二进制文件解析器：PDF / Word。
 
 注意：底层第三方库（pdfplumber、python-docx）可能包含已知安全漏洞（CVE）。

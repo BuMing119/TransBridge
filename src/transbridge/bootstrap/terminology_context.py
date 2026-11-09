@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project/Variant and task ownership checks shared by terminology commands."""
 
 from transbridge.application.contracts import RequestContext

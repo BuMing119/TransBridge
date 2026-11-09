@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded ParaTranz project catalog cache with configuration isolation."""
 
 from __future__ import annotations

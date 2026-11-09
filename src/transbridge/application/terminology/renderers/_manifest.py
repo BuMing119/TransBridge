@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Stable renderer results and changelog semantic parity manifest."""
 
 from __future__ import annotations

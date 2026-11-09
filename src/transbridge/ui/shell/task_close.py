@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Nonblocking close attempt for runtime jobs and their rollback evidence."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Deterministic mapping from business projections to user guidance."""
 
 from __future__ import annotations

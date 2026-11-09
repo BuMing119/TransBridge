@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Stable user-intent metadata shared by shell action surfaces.
 
 The catalog describes discoverability and presentation only.  It deliberately

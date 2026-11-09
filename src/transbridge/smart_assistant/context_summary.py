@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Isolated semantic summary adapter using the configured client and reported usage."""
 
 from copy import deepcopy

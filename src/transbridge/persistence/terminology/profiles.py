@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """SQLite persistence for base-game localization terminology profiles."""
 
 from __future__ import annotations

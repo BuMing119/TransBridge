@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compose ordinary/category file uploads from authoritative project sources."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """混合模式规则映射表编辑器。
 
 QTableWidget 展示规则列表，支持添加/删除/上移/下移/重置默认。

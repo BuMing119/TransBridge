@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Present exactly the immutable scheme changes that publication will commit."""
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt

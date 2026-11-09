@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable publication review shared by GUI and production commands."""
 
 from __future__ import annotations

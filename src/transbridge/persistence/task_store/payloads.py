@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Translation-only task payloads accepted at the SQLite boundary."""
 
 from __future__ import annotations

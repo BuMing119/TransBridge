@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """动态术语库查看对话框。"""
 
 from __future__ import annotations

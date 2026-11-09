@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Source commands and projection publication for Assistant imports."""
 
 from __future__ import annotations

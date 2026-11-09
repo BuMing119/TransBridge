@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read complete current files once and isolate failures by registered source."""
 
 from __future__ import annotations

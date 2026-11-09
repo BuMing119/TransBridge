@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Freeze source resource names before detached assistant execution starts."""
 
 from dataclasses import dataclass

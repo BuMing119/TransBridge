@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Persist a candidate Project/Variant before publishing its working-copy state."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Resolve and control background tasks within the captured caller lifecycle."""
 
 from __future__ import annotations

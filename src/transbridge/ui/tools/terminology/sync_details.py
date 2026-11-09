@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only, fully pageable comparisons for synchronization review and results."""
 
 from __future__ import annotations

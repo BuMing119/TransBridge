@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared per-source batch write execution and output-conflict checks."""
 
 from __future__ import annotations

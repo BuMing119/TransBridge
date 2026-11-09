@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Task reports refer to durable result generations for shared values."""
 
 from __future__ import annotations

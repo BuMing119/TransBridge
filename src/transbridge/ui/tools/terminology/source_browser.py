@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only browsing of the exact terminology profile selected for this project."""
 
 from __future__ import annotations

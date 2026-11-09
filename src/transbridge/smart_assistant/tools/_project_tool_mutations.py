@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Commit copied tool results before changing the captured workbench projection."""
 
 from __future__ import annotations

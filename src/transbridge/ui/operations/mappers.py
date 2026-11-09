@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Small per-domain mappers for the shared operation-plan presentation."""
 
 from __future__ import annotations

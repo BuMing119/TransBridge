@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Provider-neutral contracts for native LLM tool calling."""
 
 from __future__ import annotations

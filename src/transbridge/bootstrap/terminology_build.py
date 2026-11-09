@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Production build execution and guarded handoff into terminology review."""
 
 from __future__ import annotations

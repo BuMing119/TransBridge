@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Owner-aware AI result references and failed-subset retry intent factory."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 msgid ""
 msgstr ""
 "Project-Id-Version: TransBridge UI 1\n"

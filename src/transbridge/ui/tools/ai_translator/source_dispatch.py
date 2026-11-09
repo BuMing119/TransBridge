@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded parallel source lifecycles with stable result ownership."""
 
 from __future__ import annotations

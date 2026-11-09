@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Freeze the effective and existing-source constraints used to group names."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Plain-language execution events and source labels for task views."""
 
 from __future__ import annotations

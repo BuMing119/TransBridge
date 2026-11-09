@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Single-owner dispatch for catalog intents across shell entry surfaces."""
 
 from __future__ import annotations

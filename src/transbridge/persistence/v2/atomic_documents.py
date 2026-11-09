@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Root-confined atomic documents shared by lifecycle and repair services."""
 
 from __future__ import annotations

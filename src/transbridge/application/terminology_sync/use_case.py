@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Planning use case with deterministic freshness checks and one-use confirmation."""
 
 from __future__ import annotations

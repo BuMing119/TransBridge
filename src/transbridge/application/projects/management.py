@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Authoritative Project rename/delete commands."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable terminology publication with business-state guards."""
 
 from __future__ import annotations

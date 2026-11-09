@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Resolve the same dynamic-cache source used by AI tasks and source pickers."""
 
 from dataclasses import dataclass

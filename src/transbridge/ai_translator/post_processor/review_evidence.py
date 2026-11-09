@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Capture legacy review inputs once and bind judgments to the text actually reviewed."""
 
 from __future__ import annotations

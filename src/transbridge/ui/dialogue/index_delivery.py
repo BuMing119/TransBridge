@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Deliver progressive task indexes without retaining a closed editor."""
 
 from threading import Event

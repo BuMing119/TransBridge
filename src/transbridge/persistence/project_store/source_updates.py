@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Commit source revisions and their recovery points across all versions."""
 
 from __future__ import annotations

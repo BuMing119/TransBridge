@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Capture Python stacks when the GUI stops acknowledging a native watchdog.
 
 The GUI entrypoint owns faulthandler's process-wide delayed-dump timer. Its C

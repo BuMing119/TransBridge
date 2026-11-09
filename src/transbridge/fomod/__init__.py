@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """FOMOD 安装包翻译流水线 — FOMOD 特有逻辑。
 
 通用能力（归档/diff/过滤/键对齐）已独立到 FR16 的 fileops/migrator，

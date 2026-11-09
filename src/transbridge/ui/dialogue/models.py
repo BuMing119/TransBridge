@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Virtual Qt views over the task/topic projection and current topic entries."""
 
 from __future__ import annotations

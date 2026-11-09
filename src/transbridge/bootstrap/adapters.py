@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Minimal headless adapters used by the default composition root."""
 
 from __future__ import annotations

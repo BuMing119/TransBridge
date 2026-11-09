@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """A bounded file lookahead; source validation and publication stay with the owner."""
 
 from concurrent.futures import ThreadPoolExecutor, wait

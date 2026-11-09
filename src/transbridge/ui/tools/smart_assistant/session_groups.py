@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Collapsible project sections for browsing assistant conversations."""
 
 from __future__ import annotations

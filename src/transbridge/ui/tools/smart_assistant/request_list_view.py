@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Small request progress projection with explicit user control intents."""
 
 from PyQt6.QtCore import pyqtSignal

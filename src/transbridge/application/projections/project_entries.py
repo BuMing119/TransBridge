@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reuse the preceding Variant's immutable entry rows while rebuilding its read model."""
 
 from threading import RLock

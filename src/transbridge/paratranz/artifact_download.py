@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Generate and download a fresh project export for one batch read."""
 
 from datetime import datetime

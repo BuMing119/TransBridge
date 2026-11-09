@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Technical diagnostic redaction; business payloads use project_business_data."""
 
 from __future__ import annotations

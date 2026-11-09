@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build validated candidates without publishing a head or changing business state."""
 
 from dataclasses import replace

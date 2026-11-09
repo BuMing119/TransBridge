@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """User result review and navigation backed by persisted request evidence."""
 
 from dataclasses import replace

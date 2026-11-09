@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Own background activation and the single Qt project-view installation."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable translation-memory query and arbitration contracts."""
 
 from __future__ import annotations

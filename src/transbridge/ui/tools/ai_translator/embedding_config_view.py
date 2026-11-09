@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Embedding configuration section for the AI translator advanced settings."""
 
 from __future__ import annotations

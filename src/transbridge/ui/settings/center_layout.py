@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt composition for the settings center, separated from dialog behavior."""
 
 from __future__ import annotations

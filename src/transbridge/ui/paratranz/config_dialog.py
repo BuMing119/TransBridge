@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 ConfigDialog: API Token 配置对话框。
 启动时若无有效 Token 则自动弹出，也可通过「设置 / API 配置」手动打开。

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Small, bounds-checked record reader shared by both dialogue evidence inputs."""
 
 from __future__ import annotations

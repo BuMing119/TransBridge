@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Typed process messages that remain compatible with existing string log callbacks.
 
 Callbacks used by CLI and extensions still receive a string. The task UI also

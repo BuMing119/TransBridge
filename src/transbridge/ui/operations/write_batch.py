@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Batch write destination editing and UI plans over shared application execution."""
 
 from __future__ import annotations

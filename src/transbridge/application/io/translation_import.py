@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prepare one translation-file import with an explicit existing-text policy.
 
 The GUI selects a file, not a parser. Detection retains separate XML/EET/SST

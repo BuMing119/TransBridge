@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build scoped source-to-target mappings for text already saved in a scheme."""
 
 from __future__ import annotations

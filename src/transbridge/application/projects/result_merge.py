@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Apply three-way result decisions against the latest authoritative Variant."""
 
 from __future__ import annotations

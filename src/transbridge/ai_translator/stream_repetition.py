@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Incremental equivalent of the stream's adaptive repetition checks."""
 
 from __future__ import annotations

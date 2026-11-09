@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """ParaTranz connection settings without exposing an existing token."""
 
 from __future__ import annotations

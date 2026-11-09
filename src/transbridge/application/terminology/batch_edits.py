@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit batch decisions without choosing unresolved translations for the user."""
 
 from __future__ import annotations

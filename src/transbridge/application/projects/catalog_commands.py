@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Detached Variant catalog preparation; all writes use lifecycle activation."""
 
 from dataclasses import replace

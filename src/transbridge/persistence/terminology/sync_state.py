@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """SQLite terminology synchronization state with transactional CAS commits."""
 
 from __future__ import annotations

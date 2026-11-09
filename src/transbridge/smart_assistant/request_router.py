@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build model input for routing; only captured user ingress is authoritative."""
 
 import json

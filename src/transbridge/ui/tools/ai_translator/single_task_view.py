@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared task composition for one or more AI translation content sources."""
 
 from __future__ import annotations

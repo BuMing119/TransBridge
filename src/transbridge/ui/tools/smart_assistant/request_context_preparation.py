@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Background preparation of derived request material, fenced by the current turn."""
 
 from concurrent.futures import ThreadPoolExecutor

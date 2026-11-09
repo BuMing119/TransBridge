@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Durable early draft commits and evidence for continuing the same translation task."""
 
 from __future__ import annotations

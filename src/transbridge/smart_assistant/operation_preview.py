@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only proposed change projection using the same admitted request scope."""
 
 from __future__ import annotations

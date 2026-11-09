@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """A retained, non-modal entry editor with one close guard for X, Escape and the button."""
 
 from collections.abc import Callable

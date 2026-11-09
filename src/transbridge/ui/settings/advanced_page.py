@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Guardrail and MCP settings kept outside the common task path."""
 
 from __future__ import annotations

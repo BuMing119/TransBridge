@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Optional localized BSA output, with loose files as the default."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """ParaTranz public API without loading every remote workflow eagerly."""
 
 from __future__ import annotations

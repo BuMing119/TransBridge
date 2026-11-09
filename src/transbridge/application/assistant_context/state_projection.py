@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Decision material for the assistant, never a serialization of execution recovery state."""
 
 from collections import Counter

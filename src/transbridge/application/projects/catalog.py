@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Display-safe Variant catalog helpers for V2 Projects."""
 
 from __future__ import annotations

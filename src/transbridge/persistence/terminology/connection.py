@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Connection policy and safe storage-state detection."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Snapshot-bound SSU8/SSU9 imports and original-format translation writes."""
 
 from __future__ import annotations

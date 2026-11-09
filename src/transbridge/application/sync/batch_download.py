@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Plan source-isolated downloads from fixed local and remote input."""
 
 from __future__ import annotations

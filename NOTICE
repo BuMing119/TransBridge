@@ -1,0 +1,29 @@
+TransBridge
+Copyright (c) 2026 BuMing119 and contributors
+Original project author: BuMing119
+Historical contributions include plugin and XML parsing code by Vloup.
+Original project: https://github.com/BuMing119/TransBridge
+
+TransBridge is distributed under the GNU General Public License, version 3
+(GPL-3.0-only). The full license is in LICENSE.
+
+Under GPLv3 sections 7(b) and 7(c), the following terms apply to TransBridge
+material whose copyright holders have authorized these terms:
+
+1. When distributing that material, preserve its existing copyright notices
+   and reasonable author attributions, including the project attribution above.
+2. Do not misrepresent the origin of that material. In particular, do not claim
+   authorship of material you did not author.
+3. Mark modified versions prominently and reasonably distinguish them from
+   the original version. State that you modified the work and give a relevant
+   date, as required by GPLv3 section 5(a).
+
+Historical material originally contributed under the Apache License, Version
+2.0 retains its original terms and attributions. See LICENSES/Apache-2.0.txt
+in the source tree or licenses/Apache-2.0.txt in the installed application.
+Other separately licensed material, such as Tabler icon data, retains its
+accompanying notices. The additional terms above do not extend to that material.
+
+Windows distributions use PyQt6 under GPLv3 and Qt under LGPLv3. The installed
+licenses directory contains third-party terms and corresponding source
+information for the libraries shipped with the application.

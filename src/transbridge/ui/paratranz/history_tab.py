@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 HistoryTab: 历史记录标签页，含词条变更历史和文件上传历史两个子标签。
 """

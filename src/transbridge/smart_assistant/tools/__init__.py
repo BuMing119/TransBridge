@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Agent 工具系统子包 — 工具定义、执行、管理。
 
 NOTE (QA-007): 注册模式不一致 — 当前 tools/skills/file_parser 三个子包使用了

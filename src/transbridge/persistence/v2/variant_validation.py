@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reuse proven Variant rows while retaining document and cross-row checks."""
 
 from collections.abc import Iterator, Sequence

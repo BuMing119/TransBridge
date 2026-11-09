@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Preflight and settings actions kept outside the window composition root."""
 
 from __future__ import annotations

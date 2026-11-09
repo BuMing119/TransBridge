@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Validate tool results without rewriting their business content."""
 
 from __future__ import annotations

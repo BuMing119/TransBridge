@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """List authoritative source identities and counts without opening source files."""
 
 from collections import Counter, defaultdict

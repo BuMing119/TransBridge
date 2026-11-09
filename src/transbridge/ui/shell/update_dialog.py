@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Release details and download presentation, without network or installer ownership."""
 
 from enum import StrEnum

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared Smart Assistant boundary for one-time terminology run capture."""
 
 from __future__ import annotations

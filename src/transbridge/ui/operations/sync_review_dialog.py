@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Content-first review for staged choices or downloads submitted on acceptance."""
 
 from __future__ import annotations

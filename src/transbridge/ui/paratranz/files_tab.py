@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 FilesTab: 文件管理标签页，列表 + 文件详情 + 上传/更新/下载操作。
 """

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Post-process form construction for the AI translator."""
 
 from __future__ import annotations

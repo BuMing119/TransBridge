@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Inverse commands for the local Project's ParaTranz target, never remote data."""
 
 from copy import deepcopy

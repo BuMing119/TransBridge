@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Owned open-file dialog and worker, with immutable source publication."""
 
 from dataclasses import dataclass, replace

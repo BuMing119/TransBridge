@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """EET binary query facade backed by the strict current-format codec.
 
 EET v3 Classique and BDD files are supported by this parser. Product I/O remains

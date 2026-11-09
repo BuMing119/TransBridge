@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Pure three-way planner for project terminology and ParaTranz terms."""
 
 from __future__ import annotations

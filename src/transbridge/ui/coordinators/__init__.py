@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Feature coordinators composed by MainWindow."""
 
 from .guided_project_coordinator import (

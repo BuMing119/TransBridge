@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Safe Project/Variant/Session persistence V2 kernel."""
 
 from .filesystem import (

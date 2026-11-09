@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Content-addressed, root-confined transcript storage with explicit commit refs."""
 
 from __future__ import annotations

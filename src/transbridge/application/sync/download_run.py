@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Run the user's download request through comparison and durable publication."""
 
 from collections.abc import Callable

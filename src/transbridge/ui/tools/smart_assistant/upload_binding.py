@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Session-local composer materials, asynchronous parsing and submission snapshots."""
 
 from concurrent.futures import ThreadPoolExecutor

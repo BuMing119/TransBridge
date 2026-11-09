@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable terminal-request details with a small, ordered Session index."""
 
 from copy import deepcopy

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compatibility mapping for legacy entrypoint DTOs.
 
 The mapper is structural on purpose: the application contract must not import

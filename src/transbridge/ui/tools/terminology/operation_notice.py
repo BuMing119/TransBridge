@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Persistent, selectable operation feedback shared by every workbench page."""
 
 from PyQt6.QtCore import Qt

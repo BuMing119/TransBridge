@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Immutable project-name progress with one coordinator and concurrent source updates."""
 
 from __future__ import annotations

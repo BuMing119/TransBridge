@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Lossless SST creation and updates with explicit record identity."""
 
 from __future__ import annotations

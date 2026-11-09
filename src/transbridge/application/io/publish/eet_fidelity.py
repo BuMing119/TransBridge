@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Validate every EET field, including caches and records outside the edit set."""
 
 import hashlib

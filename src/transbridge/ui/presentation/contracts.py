@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt-free contracts shared by presentation slices."""
 
 from __future__ import annotations

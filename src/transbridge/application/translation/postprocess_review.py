@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Evidence and semantic-review annotations for candidate-only post-processing."""
 
 from __future__ import annotations

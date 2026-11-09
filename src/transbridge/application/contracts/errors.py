@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Stable application error categories and exception mapping."""
 
 from __future__ import annotations

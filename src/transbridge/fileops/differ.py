@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """目录与文件差异分析：按相对路径对齐 + 内容哈希。"""
 
 from __future__ import annotations

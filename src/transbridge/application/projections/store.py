@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Revision-gated projection store with rebuildable, disposable subscriptions."""
 
 from __future__ import annotations

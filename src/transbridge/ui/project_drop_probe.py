@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded format identification before the project owner admits a dropped file."""
 
 from __future__ import annotations

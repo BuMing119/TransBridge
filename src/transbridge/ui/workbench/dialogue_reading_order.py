@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prepare immutable full-source reading ranks outside the Qt event loop."""
 
 from __future__ import annotations

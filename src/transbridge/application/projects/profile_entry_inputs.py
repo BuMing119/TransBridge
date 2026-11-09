@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read naming-scheme inputs from the project's stored translation rows."""
 
 from __future__ import annotations

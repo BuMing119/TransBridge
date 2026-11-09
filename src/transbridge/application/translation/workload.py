@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Side-effect-free AI translation workload producing checkpointed candidates."""
 
 from __future__ import annotations

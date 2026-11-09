@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """One-use, request-bound human confirmation authority."""
 
 from __future__ import annotations

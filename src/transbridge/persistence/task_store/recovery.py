@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """SQLite-backed task execution inputs, state, and candidate access."""
 
 from __future__ import annotations

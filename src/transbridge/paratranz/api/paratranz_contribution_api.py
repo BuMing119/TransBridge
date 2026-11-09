@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """贡献查询接口；依据 https://paratranz.cn/api-docs?format=json（OpenAPI 0.5.7）。"""
 
 from transbridge.paratranz.paratranz_client import ParatranzClient

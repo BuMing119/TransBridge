@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build a bounded initial view and defer complete Variant materialization."""
 
 from __future__ import annotations

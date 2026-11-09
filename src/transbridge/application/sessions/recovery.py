@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Session reference, approval, task, and controller recovery reconciliation."""
 
 from __future__ import annotations

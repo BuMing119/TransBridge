@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Parse and validate one Proofread model response without scheduling retries."""
 
 from __future__ import annotations

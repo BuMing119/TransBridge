@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Content-addressed parsed sources with atomic, dependency-first publication."""
 
 from __future__ import annotations

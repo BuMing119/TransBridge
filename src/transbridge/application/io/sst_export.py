@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build SSU9 dictionaries from confirmed Skyrim plugin snapshots.
 
 The binary layout belongs to ``parser.xt.sst_codec``. This module only maps

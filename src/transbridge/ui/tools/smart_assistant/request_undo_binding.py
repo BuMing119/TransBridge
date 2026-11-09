@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Offer explicit, optional round undo after background work has settled."""
 
 from threading import Event

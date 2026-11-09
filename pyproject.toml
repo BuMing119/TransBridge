@@ -3,6 +3,8 @@ name = "transbridge"
 version = "0.2.1.10"
 description = "TransBridge is a translation file conversion tool designed to seamlessly transfer translation files between Xtranslator, ESP-ESM Translator, and ParaTranz."
 readme = "README.md"
+license = "GPL-3.0-only"
+license-files = ["LICENSE", "NOTICE", "LICENSES/Apache-2.0.txt"]
 authors = [
     { name = "BuMing119", email = "bumingjueli119@gmail.com" }
 ]

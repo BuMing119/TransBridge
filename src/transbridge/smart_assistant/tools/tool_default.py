@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """P0 状态查询工具 — 集合/项目/统计查询 (default namespace)。
 
 Story 07: get_collection_summary deprecated(O8)，功能合并到 get_statistics。

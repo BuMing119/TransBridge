@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Validate a scoped dialogue graph and condense its true TCLT constraints."""
 
 from collections import defaultdict

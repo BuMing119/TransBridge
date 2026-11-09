@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Application lifetime subscriptions persist outcomes into the original Session."""
 
 from __future__ import annotations

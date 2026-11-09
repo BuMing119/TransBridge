@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Effect preparation and result reconciliation; persistence remains the caller's boundary."""
 
 from dataclasses import replace

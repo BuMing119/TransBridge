@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Conversation-local request projections; controls retain authoritative request identities."""
 
 from PyQt6.QtCore import Qt

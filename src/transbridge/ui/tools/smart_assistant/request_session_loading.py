@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Separate read-only request previews from activation and recovery side effects."""
 
 from copy import deepcopy

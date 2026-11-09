@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Fetch and verify public TransBridge Windows releases without UI dependencies."""
 
 from __future__ import annotations

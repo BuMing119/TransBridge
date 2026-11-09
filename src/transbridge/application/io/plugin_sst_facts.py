@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Extract minimal SSU9 facts while the user-supplied plugin is in memory."""
 
 from dataclasses import replace

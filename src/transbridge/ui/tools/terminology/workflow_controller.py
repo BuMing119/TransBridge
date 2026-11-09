@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Connect user tasks across browsing, editing, scheme management and publication."""
 
 from transbridge.application.terminology.models import TermScope

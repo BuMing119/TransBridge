@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Persist intent around one revision-checked, non-secret configuration write."""
 
 from transbridge.config.repository import ConfigRepositoryError

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Attach undo evidence only around an actual local Variant command."""
 
 from .undo_admission import assistant_undo_target

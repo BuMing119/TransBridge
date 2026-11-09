@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Download card dispatches exclusively through the shared operation plan."""
 
 from PyQt6.QtWidgets import QMessageBox

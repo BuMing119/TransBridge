@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 步骤1：源文件选择与解析。
 支持多集合管理：可同时打开多个插件/EET集合，通过顶部选择栏切换。

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Verify an ambiguous durable save against one read transaction."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Independent task format and ownership indexes."""
 
 APPLICATION_ID = 0x5442544B  # TBTK

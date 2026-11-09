@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Typed UI preferences stored by the unified :mod:`ConfigRepository`.
 
 The repository remains the only INI owner.  This module only validates the

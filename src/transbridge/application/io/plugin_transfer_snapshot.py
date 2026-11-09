@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Freeze transfer template files and enforce their lease through final commit."""
 
 from dataclasses import dataclass, replace

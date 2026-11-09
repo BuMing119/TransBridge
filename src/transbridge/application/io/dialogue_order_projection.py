@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project complete-source dialogue blocks without changing local matching data."""
 
 from collections import Counter, defaultdict

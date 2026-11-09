@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit confirmation of a prepared source update across every Variant."""
 
 from PyQt6.QtCore import Qt

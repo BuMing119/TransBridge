@@ -50,6 +50,12 @@ set ISCC=
 if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if exist "C:\Program Files\Inno Setup 6\ISCC.exe"       set "ISCC=C:\Program Files\Inno Setup 6\ISCC.exe"
 
+"%UV_EXE%" run --frozen --no-sync python installer\collect_licenses.py "dist\TransBridge\licenses" "%ISCC%"
+if errorlevel 1 (
+    echo [错误] 许可证材料收集失败，请查看上方日志。
+    pause & exit /b 1
+)
+
 if "%ISCC%"=="" (
     echo [警告] 未找到 Inno Setup 6，跳过安装包生成。
     echo 请先安装 Inno Setup 6：https://jrsoftware.org/isdl.php

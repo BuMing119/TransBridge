@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Isolated theme preview widgets that never mutate application state."""
 
 from __future__ import annotations

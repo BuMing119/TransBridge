@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """SQLite implementation of the S02 terminology repository/query ports."""
 
 from __future__ import annotations

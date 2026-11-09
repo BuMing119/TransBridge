@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Context-menu view for Workbench translation entries."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Pure builders for authoritative active-Variant commands.
 
 The helpers in this module never mutate a projection or aggregate. They build

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """File-level download progress, published only by the owning worker."""
 
 

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read task-owned translation candidates using durable before-input evidence."""
 
 from __future__ import annotations

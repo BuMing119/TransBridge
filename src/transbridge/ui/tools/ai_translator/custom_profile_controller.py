@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Qt dialog and signal adapter for custom workflow profile intents."""
 
 from __future__ import annotations

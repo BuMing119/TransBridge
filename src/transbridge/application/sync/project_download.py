@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Run one project download through injected transport and publication ports."""
 
 from __future__ import annotations

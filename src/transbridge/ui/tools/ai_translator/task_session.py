@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Version transactions for explicitly selected, detached AI task results."""
 
 from __future__ import annotations

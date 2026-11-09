@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Candidate-only proofreading pipeline for standalone and mixed polish runs."""
 
 from __future__ import annotations

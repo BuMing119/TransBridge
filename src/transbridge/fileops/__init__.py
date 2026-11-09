@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """通用文件操作工具包：归档解包/打包、目录差异分析、资源过滤规则。
 
 与 infra/（LLM 基础设施）语义分离——本包聚焦纯文件操作，供 FOMOD 翻译、

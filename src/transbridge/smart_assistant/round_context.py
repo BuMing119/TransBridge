@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Keep static rules stable while capturing the current workspace for each round."""
 
 from .context_builder import ContextBuilder

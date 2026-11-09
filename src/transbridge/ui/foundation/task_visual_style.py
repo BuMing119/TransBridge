@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Theme-aware styles for task-oriented dialogs and configuration surfaces."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Load available saved source inputs without changing a Variant's saved state."""
 
 from dataclasses import dataclass, replace

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Worker-owned delivery lifetime for terminology synchronization views."""
 
 from __future__ import annotations

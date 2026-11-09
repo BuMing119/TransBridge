@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Crash-safe, checksummed records and a small atomic checkpoint commit head."""
 
 from __future__ import annotations

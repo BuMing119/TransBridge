@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Wait for assistant tool jobs without mistaking admission for completion."""
 
 from __future__ import annotations

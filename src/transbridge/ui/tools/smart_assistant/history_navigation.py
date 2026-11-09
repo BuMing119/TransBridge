@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """In-conversation paging and full-history search, without restoring old execution controls."""
 
 from contextlib import contextmanager

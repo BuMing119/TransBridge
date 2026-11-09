@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Entrypoint-neutral rebuildable projections."""
 
 from .adapters import (

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Public local service availability, without exposing credentials to UI code."""
 
 from dataclasses import dataclass

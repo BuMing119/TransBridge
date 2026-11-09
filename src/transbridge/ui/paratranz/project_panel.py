@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 ProjectListPanel: ParaTranz 管理模式左侧项目列表面板。
 支持「全部项目」/ 「我参与的」视图切换、关键词搜索、新建项目。

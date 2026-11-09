@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Refresh QSS palette roles without replacing the application stylesheet."""
 
 from PyQt6 import sip

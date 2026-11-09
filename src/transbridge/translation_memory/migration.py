@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit, recoverable migration from legacy TM JSON to schema v2."""
 
 from __future__ import annotations

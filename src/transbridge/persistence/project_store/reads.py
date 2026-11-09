@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project reads ordered by source and physical entry position."""
 
 from __future__ import annotations

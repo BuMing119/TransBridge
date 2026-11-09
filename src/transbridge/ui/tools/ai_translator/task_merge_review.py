@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Review durable AI candidates and restore overwritten current values without AI calls."""
 
 from __future__ import annotations

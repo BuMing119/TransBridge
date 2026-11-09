@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Render-session ownership for the Workbench translation table."""
 
 from __future__ import annotations

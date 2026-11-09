@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Production readers and composition for the persisted-history search index."""
 
 from __future__ import annotations

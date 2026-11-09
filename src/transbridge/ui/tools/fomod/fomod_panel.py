@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """FOMOD 翻译向导面板（QDialog）。
 
 面向产出的使用端配置（过滤规则预设 + 自定义扩展名 / 打包格式 / 目标语言 / AI 开关 / 输出），

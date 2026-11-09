@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Build XT-style record navigation from explicit plugin relationships, without Qt."""
 
 from __future__ import annotations

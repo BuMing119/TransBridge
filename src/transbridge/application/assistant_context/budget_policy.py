@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Pure watermarks and complete-source boundaries for immutable compaction."""
 
 from dataclasses import dataclass, replace

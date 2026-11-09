@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Offline ParaTranz JSON FormatAdapter with no client or credential dependency."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Atomic, versioned checkpoints for accepted translation candidates."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Skill 注册表：注册、查询、匹配。"""
 
 from .skill_loader import SkillSpec

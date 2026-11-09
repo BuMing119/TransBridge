@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """An independently usable return action while the other windows drain."""
 
 from __future__ import annotations

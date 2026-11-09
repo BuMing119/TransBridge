@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Asynchronous startup with a bounded GUI capture and guarded publication."""
 
 from __future__ import annotations

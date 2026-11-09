@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Production orchestration for candidate-only post-processing and one commit."""
 
 from __future__ import annotations

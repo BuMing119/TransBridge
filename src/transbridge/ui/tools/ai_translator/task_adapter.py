@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project real TaskRuntime jobs onto AI worker controls and progress."""
 
 from __future__ import annotations

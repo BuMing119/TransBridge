@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Skill 定义加载器：TOML 文件 → SkillSpec。"""
 
 from dataclasses import dataclass, field

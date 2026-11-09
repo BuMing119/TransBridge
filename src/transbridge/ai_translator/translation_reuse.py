@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Admit local translations before scheduling model batches, preserving commit boundaries."""
 
 from __future__ import annotations

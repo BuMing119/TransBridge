@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Per-request extraction of completed results without re-decoding history."""
 
 from __future__ import annotations

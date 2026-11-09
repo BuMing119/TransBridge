@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Capture scope intent on the GUI, then select from detached source snapshots."""
 
 from __future__ import annotations

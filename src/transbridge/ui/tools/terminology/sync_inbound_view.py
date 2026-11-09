@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Inbound review editing, preview comparisons, and guarded draft submission."""
 
 from __future__ import annotations

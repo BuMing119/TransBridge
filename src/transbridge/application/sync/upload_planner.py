@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Match upload targets by proven identity and preserve remote source fields."""
 
 from collections import Counter, defaultdict

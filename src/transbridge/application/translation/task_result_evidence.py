@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Detach canonical report evidence once per source before ledger ingestion."""
 
 from __future__ import annotations

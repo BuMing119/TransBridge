@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Pure plugin-only DIAL block ordering with explicit evidence fallback."""
 
 from collections import defaultdict

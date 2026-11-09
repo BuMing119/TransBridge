@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only Project catalog projection.
 
 The projection deliberately does not call ``ProjectRepository.load`` because a

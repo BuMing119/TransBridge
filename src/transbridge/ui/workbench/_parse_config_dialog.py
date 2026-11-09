@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 旧解析配置的兼容表单与 ParseConfig 数据契约。
 主工作台已分别使用 OpenFileDialog（打开翻译文件）和 TranslationImportDialog（导入译文）。

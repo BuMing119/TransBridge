@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read unchanged output values from the captured source for fidelity checks."""
 
 from __future__ import annotations

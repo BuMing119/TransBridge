@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 def formid_bytes_to_hex(data: bytes) -> str:
     """
     Convert 4-byte FormID bytes to hex string (e.g., '00010000').

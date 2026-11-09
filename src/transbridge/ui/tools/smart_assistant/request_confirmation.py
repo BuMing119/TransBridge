@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """New protocol identities for confirmations presented again after interruption."""
 
 from copy import deepcopy

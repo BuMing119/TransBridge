@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Hydration-safe write planning and TaskRuntime guarded publication."""
 
 from __future__ import annotations

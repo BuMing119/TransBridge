@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Validate project-prepared name results before normal candidate admission."""
 
 from __future__ import annotations

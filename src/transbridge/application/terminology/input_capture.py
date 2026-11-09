@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Authoritative, immutable input capture for Project terminology builds."""
 
 from __future__ import annotations

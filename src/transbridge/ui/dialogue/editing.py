@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Captured drafts and revision-checked commits through existing mutation ports."""
 
 from __future__ import annotations

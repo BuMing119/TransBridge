@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Persist source content explicitly supplied by older portable project bundles."""
 
 import hashlib

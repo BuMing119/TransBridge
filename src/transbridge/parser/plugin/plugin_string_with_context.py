@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 from dataclasses import dataclass
 
 from sse_plugin_interface.plugin_string import PluginString

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Present advisory AI review evidence without treating it as a commit decision."""
 
 from __future__ import annotations

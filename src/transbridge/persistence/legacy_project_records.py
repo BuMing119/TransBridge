@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only record boundaries for historical project packages."""
 
 from __future__ import annotations

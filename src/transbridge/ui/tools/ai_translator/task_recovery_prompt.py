@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Discover interrupted task manifests and offer explicit, nonblocking recovery."""
 
 from __future__ import annotations

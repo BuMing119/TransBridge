@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Static gettext resource location and source-locale metadata."""
 
 from __future__ import annotations

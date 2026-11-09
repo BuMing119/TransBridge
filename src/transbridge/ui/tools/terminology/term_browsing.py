@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bind application browse queries to independent effective and draft tables."""
 
 from transbridge.application.terminology.browse_queries import TermBrowseQuery, TermFilter

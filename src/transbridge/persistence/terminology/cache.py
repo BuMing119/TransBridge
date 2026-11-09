@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Three independently disposable terminology cache layers."""
 
 from __future__ import annotations

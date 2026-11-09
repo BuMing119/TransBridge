@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 步骤2：解析结果预览。
 显示解析进度、四格统计卡以及全部词条预览表格。

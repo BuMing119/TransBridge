@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """P0 编辑器工具 — 筛选 + 搜索 + 编辑 + 选择 + 批量标记 (editor namespace)。
 
 Story 04 v2: 合并原 Story 04（筛选搜索）和 Story 05（编辑选择），

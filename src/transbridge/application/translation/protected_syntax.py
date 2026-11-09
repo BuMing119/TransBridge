@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Minimal, deterministic protection for translation program syntax.
 
 This module deliberately does not attempt to validate natural language.  It

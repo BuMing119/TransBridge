@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Reuse local schema executors within one validation, never input results."""
 
 from collections.abc import Iterator

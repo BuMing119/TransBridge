@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Small shared helpers for settings-center pages."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Exact record preconditions shared by Project save and activation protocols."""
 
 from dataclasses import dataclass

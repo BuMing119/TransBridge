@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """翻译记忆管理器：多词典定位、组合查询、写入与持久化。
 
 一文件一 mod（见 ADR-014 更新节 2026-08-14）：词典以 mod 文件为粒度，

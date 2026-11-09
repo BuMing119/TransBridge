@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compile one application-wide Qt stylesheet from a validated theme snapshot."""
 
 from __future__ import annotations

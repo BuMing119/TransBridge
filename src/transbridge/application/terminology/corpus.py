@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Project-level bilingual corpus assembly from registered source fragments."""
 
 from __future__ import annotations

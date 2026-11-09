@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read-only, paged view of durable request lifecycle events."""
 
 from __future__ import annotations

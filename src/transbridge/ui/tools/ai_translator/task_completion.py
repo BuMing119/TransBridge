@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Coordinate durable completion and user notifications after result publication."""
 
 from PyQt6.QtCore import QObject, QTimer

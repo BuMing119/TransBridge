@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Translate post-process counters into safe, visible workflow progress."""
 
 from collections.abc import Callable

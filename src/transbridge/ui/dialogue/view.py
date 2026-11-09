@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Task context browsing and a full-text translation editor."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Editable saved Variant rows for which no source hydration is available."""
 
 from collections import defaultdict

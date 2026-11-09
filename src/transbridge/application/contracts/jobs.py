@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Minimal deferred-operation identity contracts.
 
 The task runtime adds snapshots and controls later; S02 only freezes the value

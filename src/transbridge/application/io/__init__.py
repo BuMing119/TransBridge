@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Transport-neutral translation I/O contracts and format catalog.
 
 Concrete adapters stay lazy so importing a leaf identity contract from the

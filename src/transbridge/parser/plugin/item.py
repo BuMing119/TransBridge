@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 from enum import Enum, StrEnum, auto
 from typing import Any, Literal
 

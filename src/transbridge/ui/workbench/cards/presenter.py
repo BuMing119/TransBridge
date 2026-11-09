@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared presentation state for Workbench operation cards."""
 
 from __future__ import annotations

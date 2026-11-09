@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Run-scoped commit arbitration for the final atomic replace."""
 
 from __future__ import annotations

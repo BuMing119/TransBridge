@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """GUI command facade over the authoritative Session aggregate/lifecycle."""
 
 from __future__ import annotations

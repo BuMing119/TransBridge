@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Top-level terminology workbench and its narrow shell launcher."""
 
 from __future__ import annotations

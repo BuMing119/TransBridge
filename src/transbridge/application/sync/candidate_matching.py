@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Bounded source matching and download content consensus, without invented IDs."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Terminology quality-report and changelog renderer adapters."""
 
 from ._artifact import ArtifactPublishPolicy, ArtifactTargetExistsError, PublishedFile

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Response IDs for AI protocols without changing source entry key/id facades."""
 
 from __future__ import annotations

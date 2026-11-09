@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 UserInfoDialog: 当前用户信息查看与编辑对话框。
 """

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Root-confined JSON repositories with safe migration and quarantine."""
 
 from __future__ import annotations

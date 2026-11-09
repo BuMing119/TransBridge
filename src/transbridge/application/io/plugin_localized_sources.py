@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Capture complete localized plugin inputs, including raw BSA member bytes."""
 
 from dataclasses import replace

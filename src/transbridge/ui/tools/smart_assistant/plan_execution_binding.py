@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Own plan engines and their runtime identities independently of presentation."""
 
 from __future__ import annotations

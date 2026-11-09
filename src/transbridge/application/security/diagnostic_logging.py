@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Credential-scoped protection of complete technical log messages and tracebacks."""
 
 from __future__ import annotations

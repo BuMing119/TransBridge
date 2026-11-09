@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """通用翻译记忆（Translation Memory / 词典）系统。
 
 提供「一文件一 mod」+ 单表权威对象 + 双索引的翻译记忆能力，

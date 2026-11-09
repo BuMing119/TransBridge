@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Wrap shared classification with stable upload source directories."""
 
 from collections import Counter

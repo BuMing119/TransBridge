@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Present unresolved input choices without confusing schema errors with target ambiguity."""
 
 from PyQt6.QtWidgets import QInputDialog, QMessageBox

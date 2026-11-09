@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read task history and project availability through independent ports."""
 
 from __future__ import annotations

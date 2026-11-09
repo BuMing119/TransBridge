@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Independent, headless MCP stdio process entry point."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit request management intents from the request list."""
 
 from uuid import uuid4

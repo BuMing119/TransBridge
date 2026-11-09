@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Keep a string editor bound to its visible record until edits are saved or discarded."""
 
 from __future__ import annotations

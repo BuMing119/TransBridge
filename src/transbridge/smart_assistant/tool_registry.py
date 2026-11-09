@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """工具注册表：规范 ToolSpec、启动校验与 namespace 查询。"""
 
 from collections.abc import Callable

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 import logging
 
 from PyQt6.QtCore import QTimer, pyqtSignal

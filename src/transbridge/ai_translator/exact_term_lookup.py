@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Exact terminology lookup preserving canonical terms and alias precedence."""
 
 from __future__ import annotations

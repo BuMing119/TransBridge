@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Save only the settings actually changed by an admitted assistant command."""
 
 from transbridge.application.assistant_requests.config_undo_capture import capture_config_commit

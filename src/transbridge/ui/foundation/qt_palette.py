@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compile validated semantic theme tokens into a Qt application palette."""
 
 from __future__ import annotations

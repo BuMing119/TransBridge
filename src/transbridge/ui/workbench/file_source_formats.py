@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Shared display choices for opening sources and creating projects."""
 
 FILE_SOURCE_FORMATS = (

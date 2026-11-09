@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Explicit source availability on saved translation rows used by the workbench."""
 
 from dataclasses import dataclass, field, replace

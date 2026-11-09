@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Compact run logs while retaining entry-specific proofreading diagnostics."""
 
 from collections import defaultdict

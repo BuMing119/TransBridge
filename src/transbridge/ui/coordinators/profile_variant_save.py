@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Save a temporary naming-scheme preview as an independently editable Variant."""
 
 from PyQt6.QtWidgets import QInputDialog, QMessageBox

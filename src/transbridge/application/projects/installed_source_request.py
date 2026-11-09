@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Read an installed source by identity without requiring an import filename."""
 
 from dataclasses import dataclass

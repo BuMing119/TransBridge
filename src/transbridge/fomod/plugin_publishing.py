@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Strict, atomic publication of one plugin inside a disposable FOMOD workspace."""
 
 from dataclasses import dataclass, replace
