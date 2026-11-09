@@ -19,6 +19,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 文档 | 说明 | 状态 |
 |------|------|------|
 | [requirements.md](requirements.md) | 项目需求概述及历史 FR1～FR16；2026-08-18 已确认综合整改需求 FR17～FR23 与 NFR 增量，覆盖入口一致性、I/O 身份、持久化、任务、翻译工作流、ParaTranz、FOMOD 和发行质量合同；新增 [FR31 自动长期记忆](requirements.md#fr31-assistant-memory) | ⚠️ 历史实现部分核验；整改需求已确认；FR31 为草稿 |
+| [FR32：项目存储重做与任务历史独立](requirements/project-storage-redesign.md) | 翻译内容存储、任务独立、禁止保存来源插件与历史路径、新项目格式拒绝旧格式；相关现行条目已同步修订 | 需求已确认；[架构](adr/054-project-storage-and-independent-tasks.md)已采用，[本地实现与验证](changelogs/project-storage-redesign/story-01-to-10/2026-11-09-001-translation-project-store.md)完成，限制见记录；[工作台完整滚动及当前来源驻留](changelogs/project-storage-redesign/story-04/2026-11-09-002-resident-workbench-source.md)通过 |
 
 2026-10-01 补齐：[FR19.14 更新源文件与全部翻译版本迁移](requirements.md#fr19-source-update)、[FR22.9～FR22.11 八位上下文序号与远端刷新](requirements.md#fr22-context-order)，并修正 FR8 的来源恢复与持久化边界。实现及本地验证已有记录；真实 ParaTranz 写入、网页排序和用户桌面验收不在完成声明内。
 
@@ -26,17 +27,20 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 ## 架构决策记录 (ADR)
 
+2026-11-09：[ADR-054：翻译数据项目库与独立任务存储](adr/054-project-storage-and-independent-tasks.md)已采用；S01～S10 本地实现与相关验证完成，[证据和性能边界](changelogs/project-storage-redesign/story-01-to-10/2026-11-09-001-translation-project-store.md)。旧数据原样保留，不迁移或自动清理。
+
 2026-10-29：[ADR-050：应用层预检与可选来源参考路径](adr/050-application-preflight-and-optional-source-reference.md)，对应 [application-preflight 计划](../plans/application-preflight/plan.md)。S01～S10 本地实现、相关验证与清理完成；写回缺输入清单、多文件/目录补充、明确部分范围及验证限制见[S10 增量](changelogs/application-preflight/story-10/2026-10-29-001-batch-source-inputs.md)。助手原请求范围、新许可/确认与保存原文成果合入见[增量 003](changelogs/application-preflight/story-09/2026-10-29-003-assistant-source-inputs.md)，无损物化、桌面闭环及两项既有合同失败保留于[增量 002](changelogs/application-preflight/story-05-to-08/2026-10-28-002-on-demand-source-inputs.md)。
 
-2026-10-27：[ADR-049：固定任务输入、独立成果与局部合入](adr/049-task-result-lifecycle.md)，对应[计划](../plans/task-result-lifecycle/plan.md)及[第九轮持久来源与统一恢复记录](changelogs/task-result-lifecycle/story-01-to-05/2026-10-26-010-durable-source-restoration.md)。打开/切换、工程包及下游使用同一保存来源，减少 codec 遍历和 schema 校验器分配；独立复审及全库 Ruff/格式通过。真实“老滚5”准备中位减少约44%，完整重开仍约92秒；首次成本、测试复验与剩余按需物化契约见记录。工程包仍只兼容 `.transbridge` 并自动升级，前轮记录保留。
+2026-10-27：[ADR-049：固定任务输入、独立成果与局部合入](adr/049-task-result-lifecycle.md)，对应[计划](../plans/task-result-lifecycle/plan.md)及[第九轮持久来源与统一恢复记录](changelogs/task-result-lifecycle/story-01-to-05/2026-10-26-010-durable-source-restoration.md)。打开/切换、工程包及下游使用同一保存来源，减少 codec 遍历和 schema 校验器分配；独立复审及全库 Ruff/格式通过。真实“老滚5”准备中位减少约44%，完整重开仍约92秒；首次成本、测试复验与剩余按需物化契约见记录。当时工程包自动升级的历史交付记录保留；新存储不兼容旧项目的需求见 [FR32](requirements/project-storage-redesign.md)。
 
 新增提议：[ADR-042：项目作用域优先的助手长期记忆](adr/042-assistant-durable-memory.md)，对应[详细计划与流程图](../plans/assistant-durable-memory/plan.md)；草稿规划，尚未实现。
 
 | 编号 | 标题 | 状态 |
 |------|------|------|
+| [ADR-054](adr/054-project-storage-and-independent-tasks.md) | 翻译数据项目库与独立任务存储 | 已采用；FR32 本地实现与相关验证完成 |
 | [ADR-053](adr/053-eet-binary-io-integration.md) | 二进制 EET 完整来源身份、缓存同步与原格式发布 | 提议；本地实现与相关验证完成，实验性 |
 | [ADR-052](adr/052-sst-io-integration.md) | 完整 SST 来源、原格式写回与插件新建 SSU9 | 提议；本地集成完成，实验性，80份 New ANK 扩展语料通过 |
-| [ADR-051](adr/051-self-contained-project-storage.md) | 正式项目自包含存储与单一升级边界 | 已接受；S01～S03 本地实现与 QA 完成，999 通过、1 项环境跳过；S04 本地实现与相关 QA 完成，广域未全绿，见 [计划](../plans/project-self-contained-storage/plan.md) |
+| [ADR-051](adr/051-self-contained-project-storage.md) | 正式项目自包含存储与单一升级边界 | 历史已接受；插件留存与旧格式升级目标被 [FR32](requirements/project-storage-redesign.md) 取代，新设计见 ADR-054；S01～S03 本地实现与 QA 完成，999 通过、1 项环境跳过；S04 本地实现与相关 QA 完成，广域未全绿，见 [计划](../plans/project-self-contained-storage/plan.md) |
 | [ADR-048](adr/048-ai-project-concurrency-and-terms.md) | AI 多插件并发、共享术语与参考差异综合校对 | S01～S13 本地实现及相关验证完成；术语不再是翻译通过条件，见 [S11～S13 记录](changelogs/ai-project-concurrency/story-11-to-13/2026-10-24-001-terminology-advisory-review.md) |
 | [ADR-047](adr/047-opt-in-categorized-project-upload.md) | 普通与分类上传使用文件 API | 已接受；任务标题命名及手动补传保持。GUI/助手共用无 Qt 应用层下载用例，按插件目录读取并匹配、保存，本轮结束清理，不新增索引或校验。见[使用说明](dev/paratranz-categorized-upload.md) |
 | [ADR-046](adr/046-purpose-aware-data-projection.md) | 按来源与用途保护凭据，业务数据保持原样 | 已接受（2026-10-07），实施中 |

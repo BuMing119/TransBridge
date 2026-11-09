@@ -1,0 +1,321 @@
+{
+  "environment": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.12 (main, Dec 17 2025, 21:10:14) [MSC v.1944 64 bit (AMD64)]",
+    "qt": "6.10.0",
+    "pyqt": "6.10.2",
+    "qt_platform": "offscreen"
+  },
+  "fixture": {
+    "name": "storage-comparison-paratranz-v1",
+    "rows": 100000,
+    "sources": 80
+  },
+  "rss_before_open_bytes": 179240960,
+  "workspace_bytes_before_open": 240367808,
+  "workspace_bytes_after_saves": 240294106,
+  "process_first": {
+    "open": {
+      "elapsed_ms": 50971.38869995251,
+      "max_heartbeat_ms": 1221.7683999915607,
+      "sampled_rss_peak_bytes": 1180958720,
+      "first_rows_ms": 50920.198099978734,
+      "first_viewport_paint_ms": 50971.399099973496,
+      "table_rows": 1250,
+      "open_stage_ms": {
+        "prepare_ms": 36218.20470003877,
+        "prepare_view_ms": 5512.05319998553,
+        "prepare_view_state_ms": 1053.143800003454,
+        "activation_ms": 14685.77549996553,
+        "table_start_render_ms": 0.9290000307373703,
+        "gui_hydration_install_ms": 5.539000034332275
+      }
+    },
+    "full_scope": {
+      "elapsed_ms": 38.0523000494577,
+      "max_heartbeat_ms": 37.94530004961416,
+      "sampled_rss_peak_bytes": 995762176,
+      "rows": 100000,
+      "ready_from_open_ms": 51009.44100000197
+    },
+    "saves": []
+  },
+  "reloads": [
+    {
+      "open": {
+        "elapsed_ms": 38767.21010002075,
+        "max_heartbeat_ms": 1513.476799998898,
+        "sampled_rss_peak_bytes": 1999155200,
+        "first_rows_ms": 38719.93140003178,
+        "first_viewport_paint_ms": 38767.220200039446,
+        "table_rows": 1250,
+        "open_stage_ms": {
+          "prepare_ms": 23991.485000005923,
+          "prepare_view_ms": 5625.199200003408,
+          "prepare_view_state_ms": 1298.2502999948338,
+          "activation_ms": 14393.588099977933,
+          "table_start_render_ms": 2.3978999815881252,
+          "gui_hydration_install_ms": 325.60019998345524
+        }
+      },
+      "full_scope": {
+        "elapsed_ms": 30.252400028984994,
+        "max_heartbeat_ms": 28.637300012633204,
+        "sampled_rss_peak_bytes": 1457311744,
+        "rows": 100000,
+        "ready_from_open_ms": 38797.46250004973
+      },
+      "saves": [
+        {
+          "elapsed_ms": 2.3819999769330025,
+          "max_heartbeat_ms": 2.403699967544526,
+          "sampled_rss_peak_bytes": 1457299456,
+          "edits": 0,
+          "process_write_bytes": 0
+        },
+        {
+          "elapsed_ms": 21673.075900005642,
+          "max_heartbeat_ms": 2509.7672999836504,
+          "sampled_rss_peak_bytes": 2044751872,
+          "edits": 1,
+          "process_write_bytes": 63606294
+        },
+        {
+          "elapsed_ms": 23217.80690003652,
+          "max_heartbeat_ms": 2151.0846000164747,
+          "sampled_rss_peak_bytes": 2043109376,
+          "edits": 100,
+          "process_write_bytes": 63605030
+        },
+        {
+          "elapsed_ms": 32723.845400032587,
+          "max_heartbeat_ms": 3320.5191000015475,
+          "sampled_rss_peak_bytes": 2075095040,
+          "edits": 10000,
+          "process_write_bytes": 63529830
+        }
+      ]
+    },
+    {
+      "open": {
+        "elapsed_ms": 71482.31799999485,
+        "max_heartbeat_ms": 3496.9816000084393,
+        "sampled_rss_peak_bytes": 2035548160,
+        "first_rows_ms": 71380.98649994936,
+        "first_viewport_paint_ms": 71482.32759995153,
+        "table_rows": 1250,
+        "open_stage_ms": {
+          "prepare_ms": 40348.25199999614,
+          "prepare_view_ms": 12934.930799994618,
+          "prepare_view_state_ms": 2055.283199995756,
+          "activation_ms": 30300.068699987605,
+          "table_start_render_ms": 7.188999967183918,
+          "gui_hydration_install_ms": 702.4147000047378
+        }
+      },
+      "full_scope": {
+        "elapsed_ms": 55.59559998800978,
+        "max_heartbeat_ms": 29.758699994999915,
+        "sampled_rss_peak_bytes": 1586794496,
+        "rows": 100000,
+        "ready_from_open_ms": 71537.91359998286
+      },
+      "saves": [
+        {
+          "elapsed_ms": 5.023500008974224,
+          "max_heartbeat_ms": 5.738000036217272,
+          "sampled_rss_peak_bytes": 1586794496,
+          "edits": 0,
+          "process_write_bytes": 0
+        },
+        {
+          "elapsed_ms": 33659.6414000378,
+          "max_heartbeat_ms": 3387.3380000004545,
+          "sampled_rss_peak_bytes": 2093240320,
+          "edits": 1,
+          "process_write_bytes": 63529822
+        },
+        {
+          "elapsed_ms": 34116.750100045465,
+          "max_heartbeat_ms": 3409.7002999624237,
+          "sampled_rss_peak_bytes": 2092904448,
+          "edits": 100,
+          "process_write_bytes": 63529430
+        },
+        {
+          "elapsed_ms": 35108.710600005,
+          "max_heartbeat_ms": 3434.3198999995366,
+          "sampled_rss_peak_bytes": 2118053888,
+          "edits": 10000,
+          "process_write_bytes": 63529830
+        }
+      ]
+    },
+    {
+      "open": {
+        "elapsed_ms": 72968.29179994529,
+        "max_heartbeat_ms": 3637.974400015082,
+        "sampled_rss_peak_bytes": 2071539712,
+        "first_rows_ms": 72876.14760000724,
+        "first_viewport_paint_ms": 72968.29690004233,
+        "table_rows": 1250,
+        "open_stage_ms": {
+          "prepare_ms": 41381.21439999668,
+          "prepare_view_ms": 12794.035900034942,
+          "prepare_view_state_ms": 1967.5002000294626,
+          "activation_ms": 30750.035999983083,
+          "table_start_render_ms": 5.510199989657849,
+          "gui_hydration_install_ms": 718.8064000220038
+        }
+      },
+      "full_scope": {
+        "elapsed_ms": 48.887800017837435,
+        "max_heartbeat_ms": 46.637399995233864,
+        "sampled_rss_peak_bytes": 1662099456,
+        "rows": 100000,
+        "ready_from_open_ms": 73017.17959996313
+      },
+      "saves": [
+        {
+          "elapsed_ms": 2.011600008700043,
+          "max_heartbeat_ms": 2.103899954818189,
+          "sampled_rss_peak_bytes": 1662099456,
+          "edits": 0,
+          "process_write_bytes": 0
+        },
+        {
+          "elapsed_ms": 29734.0014000074,
+          "max_heartbeat_ms": 3269.0944999922067,
+          "sampled_rss_peak_bytes": 2133213184,
+          "edits": 1,
+          "process_write_bytes": 63529822
+        },
+        {
+          "elapsed_ms": 23085.994699969888,
+          "max_heartbeat_ms": 3780.4899999755435,
+          "sampled_rss_peak_bytes": 2152615936,
+          "edits": 100,
+          "process_write_bytes": 63529430
+        },
+        {
+          "elapsed_ms": 34356.69169999892,
+          "max_heartbeat_ms": 3589.2532999860123,
+          "sampled_rss_peak_bytes": 2143133696,
+          "edits": 10000,
+          "process_write_bytes": 63529830
+        }
+      ]
+    },
+    {
+      "open": {
+        "elapsed_ms": 74813.166500011,
+        "max_heartbeat_ms": 4128.060600021854,
+        "sampled_rss_peak_bytes": 2107777024,
+        "first_rows_ms": 74723.73470000457,
+        "first_viewport_paint_ms": 74813.16660001175,
+        "table_rows": 1250,
+        "open_stage_ms": {
+          "prepare_ms": 41652.44470001198,
+          "prepare_view_ms": 13672.656899958383,
+          "prepare_view_state_ms": 2015.8034000196494,
+          "activation_ms": 32359.202300023753,
+          "table_start_render_ms": 5.836000025738031,
+          "gui_hydration_install_ms": 683.2088999799453
+        }
+      },
+      "full_scope": {
+        "elapsed_ms": 57.509400008711964,
+        "max_heartbeat_ms": 54.95299998437986,
+        "sampled_rss_peak_bytes": 1782042624,
+        "rows": 100000,
+        "ready_from_open_ms": 74870.6759000197
+      },
+      "saves": [
+        {
+          "elapsed_ms": 2.3713000118732452,
+          "max_heartbeat_ms": 2.3920999956317246,
+          "sampled_rss_peak_bytes": 1782042624,
+          "edits": 0,
+          "process_write_bytes": 0
+        },
+        {
+          "elapsed_ms": 31567.85640004091,
+          "max_heartbeat_ms": 3756.5719000413083,
+          "sampled_rss_peak_bytes": 2167472128,
+          "edits": 1,
+          "process_write_bytes": 63529825
+        },
+        {
+          "elapsed_ms": 34082.75230001891,
+          "max_heartbeat_ms": 3450.768100039568,
+          "sampled_rss_peak_bytes": 2167611392,
+          "edits": 100,
+          "process_write_bytes": 63529433
+        },
+        {
+          "elapsed_ms": 35928.90040000202,
+          "max_heartbeat_ms": 3869.090399995912,
+          "sampled_rss_peak_bytes": 2178154496,
+          "edits": 10000,
+          "process_write_bytes": 63529833
+        }
+      ]
+    },
+    {
+      "open": {
+        "elapsed_ms": 54588.769100024365,
+        "max_heartbeat_ms": 3340.187199995853,
+        "sampled_rss_peak_bytes": 2144169984,
+        "first_rows_ms": 54553.70889999904,
+        "first_viewport_paint_ms": 54588.781799946446,
+        "table_rows": 1250,
+        "open_stage_ms": {
+          "prepare_ms": 41991.610799974296,
+          "prepare_view_ms": 3173.6677000299096,
+          "prepare_view_state_ms": 677.6330000138842,
+          "activation_ms": 12239.774999965448,
+          "table_start_render_ms": 3.2311000395566225,
+          "gui_hydration_install_ms": 293.2551999692805
+        }
+      },
+      "full_scope": {
+        "elapsed_ms": 20.632200001273304,
+        "max_heartbeat_ms": 20.37360001122579,
+        "sampled_rss_peak_bytes": 1807544320,
+        "rows": 100000,
+        "ready_from_open_ms": 54609.40130002564
+      },
+      "saves": [
+        {
+          "elapsed_ms": 1.5398000250570476,
+          "max_heartbeat_ms": 1.5490999794565141,
+          "sampled_rss_peak_bytes": 1807544320,
+          "edits": 0,
+          "process_write_bytes": 0
+        },
+        {
+          "elapsed_ms": 11712.681200006045,
+          "max_heartbeat_ms": 1987.645099987276,
+          "sampled_rss_peak_bytes": 2232942592,
+          "edits": 1,
+          "process_write_bytes": 63529825
+        },
+        {
+          "elapsed_ms": 14490.625299979001,
+          "max_heartbeat_ms": 2254.443099955097,
+          "sampled_rss_peak_bytes": 2216144896,
+          "edits": 100,
+          "process_write_bytes": 63529433
+        },
+        {
+          "elapsed_ms": 13393.400400003884,
+          "max_heartbeat_ms": 1998.7018999527209,
+          "sampled_rss_peak_bytes": 2241265664,
+          "edits": 10000,
+          "process_write_bytes": 63529932
+        }
+      ]
+    }
+  ],
+  "reload_first_paint_median_ms": 71482.32759995153
+}

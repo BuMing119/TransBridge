@@ -1,0 +1,109 @@
+{
+  "environment": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.12 (main, Dec 17 2025, 21:10:14) [MSC v.1944 64 bit (AMD64)]",
+    "qt": "6.10.0",
+    "pyqt": "6.10.2",
+    "qt_platform": "offscreen"
+  },
+  "fixture": {
+    "name": "storage-comparison-paratranz-v1",
+    "rows": 100000,
+    "sources": 80
+  },
+  "rss_before_open_bytes": 185503744,
+  "workspace_bytes_before_open": 240367808,
+  "workspace_bytes_after_saves": 240294004,
+  "process_first": {
+    "open": {
+      "elapsed_ms": 72302.25440004142,
+      "max_heartbeat_ms": 1582.9053000197746,
+      "sampled_rss_peak_bytes": 1180712960,
+      "first_rows_ms": 72217.95099996962,
+      "first_viewport_paint_ms": 72302.2613999783,
+      "table_rows": 1250,
+      "open_stage_ms": {
+        "prepare_ms": 41822.76480004657,
+        "prepare_view_ms": 12161.837799998466,
+        "prepare_view_state_ms": 1986.441500019282,
+        "activation_ms": 30377.941699989606,
+        "table_start_render_ms": 1.0550000006332994,
+        "gui_hydration_install_ms": 9.848700021393597
+      }
+    },
+    "full_scope": {
+      "elapsed_ms": 63.72660002671182,
+      "max_heartbeat_ms": 32.85009996034205,
+      "sampled_rss_peak_bytes": 995741696,
+      "rows": 100000,
+      "ready_from_open_ms": 72365.98100006813
+    },
+    "saves": []
+  },
+  "reloads": [
+    {
+      "open": {
+        "elapsed_ms": 68679.93089999072,
+        "max_heartbeat_ms": 2911.895299970638,
+        "sampled_rss_peak_bytes": 1999253504,
+        "first_rows_ms": 68584.84210004099,
+        "first_viewport_paint_ms": 68679.93930005468,
+        "table_rows": 1250,
+        "open_stage_ms": {
+          "prepare_ms": 37058.89800004661,
+          "prepare_view_ms": 12693.157900008373,
+          "prepare_view_state_ms": 2133.976300014183,
+          "activation_ms": 30829.36969998991,
+          "table_start_render_ms": 6.305299990344793,
+          "gui_hydration_install_ms": 685.1770999492146
+        }
+      },
+      "full_scope": {
+        "elapsed_ms": 37.606799975037575,
+        "max_heartbeat_ms": 34.11939996294677,
+        "sampled_rss_peak_bytes": 1456795648,
+        "rows": 100000,
+        "ready_from_open_ms": 68717.53769996576
+      },
+      "saves": [
+        {
+          "elapsed_ms": 2.4468000046908855,
+          "max_heartbeat_ms": 2.4575000279583037,
+          "sampled_rss_peak_bytes": 1456795648,
+          "edits": 0,
+          "edit_prepare_ms": 0.0,
+          "edit_and_save_ms": 2.4468000046908855,
+          "process_write_bytes": 0
+        },
+        {
+          "elapsed_ms": 32939.567300025374,
+          "max_heartbeat_ms": 2737.2358000138775,
+          "sampled_rss_peak_bytes": 2066022400,
+          "edits": 1,
+          "edit_prepare_ms": 5805.2996000042185,
+          "edit_and_save_ms": 38744.86690002959,
+          "process_write_bytes": 63606294
+        },
+        {
+          "elapsed_ms": 33901.13279997604,
+          "max_heartbeat_ms": 2763.125299999956,
+          "sampled_rss_peak_bytes": 2063646720,
+          "edits": 100,
+          "edit_prepare_ms": 5999.072300037369,
+          "edit_and_save_ms": 39900.20510001341,
+          "process_write_bytes": 63605030
+        },
+        {
+          "elapsed_ms": 35463.81779998774,
+          "max_heartbeat_ms": 3225.8580999914557,
+          "sampled_rss_peak_bytes": 2063646720,
+          "edits": 10000,
+          "edit_prepare_ms": 10029.515100002754,
+          "edit_and_save_ms": 45493.33289999049,
+          "process_write_bytes": 63529830
+        }
+      ]
+    }
+  ],
+  "reload_first_paint_median_ms": 68679.93930005468
+}

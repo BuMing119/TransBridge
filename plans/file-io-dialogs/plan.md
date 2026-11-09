@@ -1,7 +1,7 @@
 # 打开文件、导入译文与导出文件窗口
 
 - 日期：2026-11-08
-- 状态：S01～S04 本地实现、相关验证及文档记录完成
+- 状态：S01～S05 本地实现、相关验证及文档记录完成
 - 依据：本会话的两个简化窗口原型及用户确认；沿用 [ADR-017](../../docs/adr/017-translation-io-kernel-v2.md) 的格式与发布边界。
 
 ## 目标与边界
@@ -15,7 +15,7 @@
 ESP-ESM Translator XML、ESP-ESM Translator EET、xTranslator XML、xTranslator SST 保持独立。
 DSD JSON 与 ParaTranz JSON 使用不同名称及序列化契约，不能因为同为 .json 而混用。
 保存工程仍为独立动作；不修改 CLI/助手权限、持久化格式或用户样本，不提交 Git，不使用 computer-use。
-此次不重新设计开始页、来源列表或工程创建；沿用已有入口。保留插件套用、Strings、批量等既有能力。
+S01～S04 沿用既有建项入口；S05 按用户后续确认统一建项页的来源文件和可选译文交互。保留插件套用、Strings、批量等既有能力。
 
 ## 实施前事实
 
@@ -75,6 +75,20 @@ S01 与 S02 文件互斥并行；主会话负责 S03、跨入口联调与最终�
 - 文档/增量记录：完成，见 [S04 记录](../../docs/changelogs/file-io-dialogs/story-04/2026-11-08-001-open-translation-file.md)。
 - 实际 Qt 截图：`out/file-io-dialogs-20261108/open-file.png`、`open-file-with-translations.png`，已查看；620×565，启用前后底部按钮位置不变。没有操作桌面。
 - 兼容边界：无 schema/CLI/MCP 迁移；不改用户样本。未运行全仓库测试、发行构建或外部翻译器人工验收。
+
+## Story 05：统一新建工程的来源文件与可选译文（2026-11-09）
+
+用户确认将同一套文件操作交互应用到“创建本地翻译工程”：来源文件支持所有现有格式，固定列表支持添加/移除；保留工程名和默认翻译版本，多个来源默认“新翻译工程”，不取首个文件名。可选译文保持占位和明确策略，直接显示跳过空原文，按钮改为“创建工程”。用户随后要求译文来源支持一次框选多个文件自动匹配：允许混合格式，保留单个 Strings 目录；无匹配保持原样，相同结果合并一次，不同译文或状态冲突拒绝创建并指明文件。
+
+- 页面/接线：`start_center.py`、`start_center_controller.py`、`start_center_landing.py`，按职责提取建项表单；复用格式选项和已有 worker，不在 Qt 主线程解析。
+- 草稿：`guided_project_coordinator.py` 保留既有 prepare/commit 防重、版本保护与兼容调用；加入来源格式及可选译文状态，增删来源不清空用户自定义名称或选项。
+- 应用：通过现有 `ProjectSourceRequest.options` 为每个主来源携带初始译文选项，`TranslationIoProjectSourcePreparer` 复用 `prepare_translation_import`，完整解析及匹配完成才准备建项。新 UI 的译文文件不登记为独立来源；旧 `migration_sources` 契约保留兼容，避免改动无关调用者。
+- 多文件创建继续使用整个工程的原子 prepare/commit：任一主来源或所选译文损坏时不创建半成品工程；每个主来源独立匹配译文。
+- 验收：格式列表/固定布局/添加移除/取消/用户名称保留；所有支持格式真实建项、译文保留/替换、两种 JSON 区分、Strings、失败不落盘，以及现有建项与打开文件回归。
+- 当前另有未提交工程存储重构，沿用工作区现有接口，保存任务开始副本以区分归属，不回退或归档那些改动；不新增哈希协议、依赖、schema、发布或桌面操作。
+- 阶段：分析/计划、开发、QA、文档及增量记录完成；见 [S05 记录](../../docs/changelogs/file-io-dialogs/story-05/2026-11-09-001-project-creation-files.md)。
+- 验证：最终联合 240 passed / 7 deselected，全库 Ruff check 和 format check（2529 文件）通过；真实 Qt 80 个来源/译文截图已核对，布局和页脚保持不变。
+- 既有差异：旧 persistence 建项组 20 项失败、UI 7 项失败均用本轮开始副本复现，未改动无关存储断言。最终联合排除纳入的 7 项 UI 失败；旧 persistence 20 项另行记录，详见增量。未跑全仓库测试、发行构建或真实大语料性能基准。
 
 ## S01～S03 阶段状态
 

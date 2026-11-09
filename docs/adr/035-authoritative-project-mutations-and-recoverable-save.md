@@ -1,6 +1,6 @@
 # ADR-035：统一 Project/Variant 权威变更与可恢复保存
 
-- **状态**：已接受
+- **状态**：历史已接受；新项目的跨文档保存协议拟由 [ADR-054](054-project-storage-and-independent-tasks.md) 的单项目库事务取代，应用层权威变更与冲突保护保留。下文记录原实现合同，不代表新存储已实施。
 - **日期**：2026-08-30
 - **对应需求**：[FR19.9～FR19.13](../requirements.md)
 - **关联 ADR**：[ADR-016](016-modular-monolith-application-composition.md)、[ADR-017](017-translation-io-kernel-v2.md)、[ADR-018](018-project-session-persistence-v2.md)、[ADR-019](019-unified-task-runtime.md)

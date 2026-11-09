@@ -1,0 +1,246 @@
+{
+  "samples": [
+    [
+      {
+        "rows": 10000,
+        "tasks": 0,
+        "open_seconds": [
+          0.0035028000129386783,
+          0.0029806000529788435,
+          0.00294850004138425,
+          0.0028631999739445746,
+          0.0031220000237226486
+        ],
+        "save_seconds": [
+          0.004322099965065718,
+          0.0045971000217832625,
+          0.004163699981290847,
+          0.003928899997845292,
+          0.004024500027298927
+        ],
+        "clean_seconds": [
+          0.0005838999641127884,
+          0.0005787000409327447,
+          0.0005536999669857323,
+          0.0005697000306099653,
+          0.0006347000016830862
+        ],
+        "open_vm_steps": 3800,
+        "changed_rows": 3,
+        "changed_page_bytes": 16384,
+        "journal_bytes_before_commit": 12824,
+        "project_bytes": 1761280
+      },
+      {
+        "rows": 100000,
+        "tasks": 0,
+        "open_seconds": [
+          0.009770699951332062,
+          0.011375100002624094,
+          0.009222300024703145,
+          0.009516999998595566,
+          0.008772900037001818
+        ],
+        "save_seconds": [
+          0.01734540000325069,
+          0.020070799975655973,
+          0.016448099981062114,
+          0.019672100024763495,
+          0.016923599992878735
+        ],
+        "clean_seconds": [
+          0.0032515000202693045,
+          0.0016373000107705593,
+          0.001556800038088113,
+          0.0016939000342972577,
+          0.001629200007300824
+        ],
+        "open_vm_steps": 3800,
+        "changed_rows": 3,
+        "changed_page_bytes": 16384,
+        "journal_bytes_before_commit": 12824,
+        "project_bytes": 17121280
+      },
+      {
+        "rows": 100000,
+        "tasks": 1000,
+        "open_seconds": [
+          0.010217699978966266,
+          0.009881699981633574,
+          0.010001900023780763,
+          0.011602999991737306,
+          0.00995619996683672
+        ],
+        "save_seconds": [
+          0.011433099978603423,
+          0.014110399992205203,
+          0.011634499998763204,
+          0.01111960003618151,
+          0.01263070001732558
+        ],
+        "clean_seconds": [
+          0.0022631000028923154,
+          0.0016731999930925667,
+          0.0019048999529331923,
+          0.0017610000213608146,
+          0.0018260999931953847
+        ],
+        "open_vm_steps": 3800,
+        "changed_rows": 3,
+        "changed_page_bytes": 16384,
+        "journal_bytes_before_commit": 12824,
+        "project_bytes": 17121280
+      }
+    ],
+    [
+      {
+        "sample": "first_open_after_fixture_creation",
+        "sources": 80,
+        "active_source_rows": 1250,
+        "first_page_seconds": 0.09399999998277053,
+        "full_active_source_filter_seconds": 0.26500000001396984,
+        "max_heartbeat_gap_to_first_page_seconds": 0.046999999962281436,
+        "max_heartbeat_gap_during_filter_seconds": 0.03200000000651926,
+        "sampled_peak_open_rss_bytes": 146808832,
+        "sampled_peak_filter_rss_bytes": 148090880,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 80,
+        "active_source_rows": 1250,
+        "first_page_seconds": 0.06300000002374873,
+        "full_active_source_filter_seconds": 0.25,
+        "max_heartbeat_gap_to_first_page_seconds": 0.031000000017229468,
+        "max_heartbeat_gap_during_filter_seconds": 0.031000000017229468,
+        "sampled_peak_open_rss_bytes": 148234240,
+        "sampled_peak_filter_rss_bytes": 148824064,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 80,
+        "active_source_rows": 1250,
+        "first_page_seconds": 0.0779999999795109,
+        "full_active_source_filter_seconds": 0.26600000000325963,
+        "max_heartbeat_gap_to_first_page_seconds": 0.031000000017229468,
+        "max_heartbeat_gap_during_filter_seconds": 0.0470000000204891,
+        "sampled_peak_open_rss_bytes": 149114880,
+        "sampled_peak_filter_rss_bytes": 150843392,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 80,
+        "active_source_rows": 1250,
+        "first_page_seconds": 0.0779999999795109,
+        "full_active_source_filter_seconds": 0.2970000000204891,
+        "max_heartbeat_gap_to_first_page_seconds": 0.030999999959021807,
+        "max_heartbeat_gap_during_filter_seconds": 0.03200000000651926,
+        "sampled_peak_open_rss_bytes": 150929408,
+        "sampled_peak_filter_rss_bytes": 152457216,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 80,
+        "active_source_rows": 1250,
+        "first_page_seconds": 0.062000000034458935,
+        "full_active_source_filter_seconds": 0.2809999999590218,
+        "max_heartbeat_gap_to_first_page_seconds": 0.031000000017229468,
+        "max_heartbeat_gap_during_filter_seconds": 0.0470000000204891,
+        "sampled_peak_open_rss_bytes": 152477696,
+        "sampled_peak_filter_rss_bytes": 153985024,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 80,
+        "active_source_rows": 1250,
+        "first_page_seconds": 0.062000000034458935,
+        "full_active_source_filter_seconds": 0.21899999998277053,
+        "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+        "max_heartbeat_gap_during_filter_seconds": 0.03200000000651926,
+        "sampled_peak_open_rss_bytes": 154046464,
+        "sampled_peak_filter_rss_bytes": 155398144,
+        "first_page_rows": 100
+      }
+    ],
+    [
+      {
+        "sample": "first_open_after_fixture_creation",
+        "sources": 1,
+        "active_source_rows": 100000,
+        "first_page_seconds": 0.06300000002374873,
+        "full_active_source_filter_seconds": 8.702999999979511,
+        "max_heartbeat_gap_to_first_page_seconds": 0.03200000000651926,
+        "max_heartbeat_gap_during_filter_seconds": 0.1720000000204891,
+        "sampled_peak_open_rss_bytes": 157208576,
+        "sampled_peak_filter_rss_bytes": 245334016,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 1,
+        "active_source_rows": 100000,
+        "first_page_seconds": 0.06299999996554106,
+        "full_active_source_filter_seconds": 8.90600000001723,
+        "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+        "max_heartbeat_gap_during_filter_seconds": 0.25,
+        "sampled_peak_open_rss_bytes": 241848320,
+        "sampled_peak_filter_rss_bytes": 256573440,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 1,
+        "active_source_rows": 100000,
+        "first_page_seconds": 0.0779999999795109,
+        "full_active_source_filter_seconds": 8.172000000020489,
+        "max_heartbeat_gap_to_first_page_seconds": 0.031000000017229468,
+        "max_heartbeat_gap_during_filter_seconds": 0.25,
+        "sampled_peak_open_rss_bytes": 240082944,
+        "sampled_peak_filter_rss_bytes": 248094720,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 1,
+        "active_source_rows": 100000,
+        "first_page_seconds": 0.0470000000204891,
+        "full_active_source_filter_seconds": 8.297000000020489,
+        "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+        "max_heartbeat_gap_during_filter_seconds": 0.25,
+        "sampled_peak_open_rss_bytes": 241549312,
+        "sampled_peak_filter_rss_bytes": 256630784,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 1,
+        "active_source_rows": 100000,
+        "first_page_seconds": 0.062000000034458935,
+        "full_active_source_filter_seconds": 6.687999999965541,
+        "max_heartbeat_gap_to_first_page_seconds": 0.031000000017229468,
+        "max_heartbeat_gap_during_filter_seconds": 0.2649999999557622,
+        "sampled_peak_open_rss_bytes": 241737728,
+        "sampled_peak_filter_rss_bytes": 247296000,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 1,
+        "active_source_rows": 100000,
+        "first_page_seconds": 0.031000000017229468,
+        "full_active_source_filter_seconds": 3.405999999959022,
+        "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+        "max_heartbeat_gap_during_filter_seconds": 0.09399999998277053,
+        "sampled_peak_open_rss_bytes": 240197632,
+        "sampled_peak_filter_rss_bytes": 252313600,
+        "first_page_rows": 100
+      }
+    ]
+  ],
+  "cache_state": "after_fixture_creation_not_cold_flushed",
+  "qt_platform": "offscreen"
+}

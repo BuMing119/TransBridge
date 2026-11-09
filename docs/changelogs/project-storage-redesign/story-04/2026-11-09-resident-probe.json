@@ -1,0 +1,123 @@
+{
+  "environment": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.12 (main, Dec 17 2025, 21:10:14) [MSC v.1944 64 bit (AMD64)]",
+    "qt": "6.10.0",
+    "pyqt": "6.10.2",
+    "qt_platform": "offscreen"
+  },
+  "fixture": {
+    "name": "storage-comparison-paratranz-v1",
+    "rows": 1261,
+    "sources": 1
+  },
+  "rss_before_open_bytes": 116158464,
+  "workspace_bytes_before_open": 569444,
+  "workspace_bytes_after_saves": 786533,
+  "process_first": {
+    "open": {
+      "elapsed_ms": 59.450100001413375,
+      "max_heartbeat_ms": 21.411199995782226,
+      "sampled_rss_peak_bytes": 130760704,
+      "first_rows_ms": 32.74980001151562,
+      "first_viewport_paint_ms": 59.46550000226125,
+      "table_rows": 1261,
+      "materialized_table_rows": 100,
+      "open_stage_ms": {
+        "prepare_ms": 9.87050001276657,
+        "prepare_view_state_ms": 2.5514999870210886,
+        "activation_ms": 13.780599983874708,
+        "table_start_render_ms": 0.5372999585233629,
+        "gui_hydration_install_ms": 7.43320002220571
+      },
+      "resident_source": {
+        "elapsed_ms": 73.11380002647638,
+        "max_heartbeat_ms": 71.96820003446192,
+        "sampled_rss_peak_bytes": 133283840,
+        "ready_from_open_ms": 132.85029999678954,
+        "rows": 1261
+      }
+    },
+    "full_scope": {
+      "elapsed_ms": 59.11630002083257,
+      "max_heartbeat_ms": 18.43250001547858,
+      "sampled_rss_peak_bytes": 134975488,
+      "rows": 1261,
+      "ready_from_open_ms": 192.11149995680898
+    },
+    "saves": []
+  },
+  "reloads": [
+    {
+      "open": {
+        "elapsed_ms": 46.48640000959858,
+        "max_heartbeat_ms": 19.537399988621473,
+        "sampled_rss_peak_bytes": 135016448,
+        "first_rows_ms": 20.802100014407188,
+        "first_viewport_paint_ms": 46.487600018735975,
+        "table_rows": 1261,
+        "materialized_table_rows": 100,
+        "open_stage_ms": {
+          "prepare_ms": 5.534500000067055,
+          "prepare_view_state_ms": 2.695599978324026,
+          "activation_ms": 8.935699996072799,
+          "table_start_render_ms": 2.314499986823648,
+          "gui_hydration_install_ms": 7.388399972114712
+        },
+        "resident_source": {
+          "elapsed_ms": 60.50289998529479,
+          "max_heartbeat_ms": 25.885500013828278,
+          "sampled_rss_peak_bytes": 135770112,
+          "ready_from_open_ms": 107.40909999003634,
+          "rows": 1261
+        }
+      },
+      "full_scope": {
+        "elapsed_ms": 52.8500999789685,
+        "max_heartbeat_ms": 17.006699985358864,
+        "sampled_rss_peak_bytes": 136093696,
+        "rows": 1261,
+        "ready_from_open_ms": 160.4967000312172
+      },
+      "saves": [
+        {
+          "elapsed_ms": 3.2092000474222004,
+          "max_heartbeat_ms": 3.225899999961257,
+          "sampled_rss_peak_bytes": 136073216,
+          "edits": 0,
+          "edit_prepare_ms": 0.0,
+          "edit_and_save_ms": 3.2092000474222004,
+          "process_write_bytes": 0
+        },
+        {
+          "elapsed_ms": 26.518200000282377,
+          "max_heartbeat_ms": 18.876600021030754,
+          "sampled_rss_peak_bytes": 136146944,
+          "edits": 1,
+          "edit_prepare_ms": 3.605599980801344,
+          "edit_and_save_ms": 30.12379998108372,
+          "process_write_bytes": 25124
+        },
+        {
+          "elapsed_ms": 37.806899985298514,
+          "max_heartbeat_ms": 24.798700003884733,
+          "sampled_rss_peak_bytes": 136413184,
+          "edits": 100,
+          "edit_prepare_ms": 5.517200042959303,
+          "edit_and_save_ms": 43.32410002825782,
+          "process_write_bytes": 41508
+        },
+        {
+          "elapsed_ms": 168.97669999161735,
+          "max_heartbeat_ms": 35.353500046767294,
+          "sampled_rss_peak_bytes": 139677696,
+          "edits": 1261,
+          "edit_prepare_ms": 99.4273999822326,
+          "edit_and_save_ms": 268.40409997384995,
+          "process_write_bytes": 258628
+        }
+      ]
+    }
+  ],
+  "reload_first_paint_median_ms": 46.487600018735975
+}

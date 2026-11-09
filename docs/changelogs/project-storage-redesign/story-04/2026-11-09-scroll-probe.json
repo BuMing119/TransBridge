@@ -1,0 +1,109 @@
+{
+  "environment": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.12 (main, Dec 17 2025, 21:10:14) [MSC v.1944 64 bit (AMD64)]",
+    "qt": "6.10.0",
+    "pyqt": "6.10.2",
+    "qt_platform": "offscreen"
+  },
+  "fixture": {
+    "name": "storage-comparison-paratranz-v1",
+    "rows": 1261,
+    "sources": 1
+  },
+  "rss_before_open_bytes": 116154368,
+  "workspace_bytes_before_open": 569444,
+  "workspace_bytes_after_saves": 786533,
+  "process_first": {
+    "open": {
+      "elapsed_ms": 37.174099998082966,
+      "max_heartbeat_ms": 13.118400005623698,
+      "sampled_rss_peak_bytes": 130244608,
+      "first_rows_ms": 21.356300043407828,
+      "first_viewport_paint_ms": 37.18570002820343,
+      "table_rows": 1261,
+      "materialized_table_rows": 100,
+      "open_stage_ms": {
+        "prepare_ms": 5.331300024408847,
+        "prepare_view_state_ms": 2.5863000191748142,
+        "activation_ms": 10.198400006629527,
+        "table_start_render_ms": 0.07940002251416445,
+        "gui_hydration_install_ms": 3.272600006312132
+      }
+    },
+    "full_scope": {
+      "elapsed_ms": 47.81170003116131,
+      "max_heartbeat_ms": 37.70089999306947,
+      "sampled_rss_peak_bytes": 132567040,
+      "rows": 1261,
+      "ready_from_open_ms": 84.98580002924427
+    },
+    "saves": []
+  },
+  "reloads": [
+    {
+      "open": {
+        "elapsed_ms": 31.71379998093471,
+        "max_heartbeat_ms": 11.146600008942187,
+        "sampled_rss_peak_bytes": 132939776,
+        "first_rows_ms": 19.40170000307262,
+        "first_viewport_paint_ms": 31.720500031951815,
+        "table_rows": 1261,
+        "materialized_table_rows": 100,
+        "open_stage_ms": {
+          "prepare_ms": 5.870499997399747,
+          "prepare_view_state_ms": 2.5862999609671533,
+          "activation_ms": 8.811800042167306,
+          "table_start_render_ms": 2.1915000397711992,
+          "gui_hydration_install_ms": 2.6126999873667955
+        }
+      },
+      "full_scope": {
+        "elapsed_ms": 35.016899986658245,
+        "max_heartbeat_ms": 25.57529998011887,
+        "sampled_rss_peak_bytes": 133484544,
+        "rows": 1261,
+        "ready_from_open_ms": 66.73069996759295
+      },
+      "saves": [
+        {
+          "elapsed_ms": 1.999800035264343,
+          "max_heartbeat_ms": 2.010399999562651,
+          "sampled_rss_peak_bytes": 133455872,
+          "edits": 0,
+          "edit_prepare_ms": 0.0,
+          "edit_and_save_ms": 1.999800035264343,
+          "process_write_bytes": 0
+        },
+        {
+          "elapsed_ms": 25.921199994627386,
+          "max_heartbeat_ms": 18.809399974998087,
+          "sampled_rss_peak_bytes": 133775360,
+          "edits": 1,
+          "edit_prepare_ms": 6.255799962673336,
+          "edit_and_save_ms": 32.17699995730072,
+          "process_write_bytes": 25124
+        },
+        {
+          "elapsed_ms": 38.077799952588975,
+          "max_heartbeat_ms": 19.580299966037273,
+          "sampled_rss_peak_bytes": 134078464,
+          "edits": 100,
+          "edit_prepare_ms": 6.786299985833466,
+          "edit_and_save_ms": 44.86409993842244,
+          "process_write_bytes": 41508
+        },
+        {
+          "elapsed_ms": 143.12909997534007,
+          "max_heartbeat_ms": 20.377399981953204,
+          "sampled_rss_peak_bytes": 136916992,
+          "edits": 1261,
+          "edit_prepare_ms": 88.3763000019826,
+          "edit_and_save_ms": 231.50539997732267,
+          "process_write_bytes": 258628
+        }
+      ]
+    }
+  ],
+  "reload_first_paint_median_ms": 31.720500031951815
+}

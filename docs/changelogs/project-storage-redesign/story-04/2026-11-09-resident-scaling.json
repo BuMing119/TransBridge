@@ -1,0 +1,278 @@
+{
+  "storage": [
+    {
+      "rows": 10000,
+      "tasks": 0,
+      "open_seconds": [
+        0.002657799981534481,
+        0.0025866999640129507,
+        0.0026987000019289553,
+        0.003247799992095679,
+        0.0035404000082053244
+      ],
+      "save_seconds": [
+        0.004302699991967529,
+        0.004661599989049137,
+        0.004859900043811649,
+        0.003895499976351857,
+        0.004608499992173165
+      ],
+      "clean_seconds": [
+        0.0007356999558396637,
+        0.000590000010561198,
+        0.0006060000159777701,
+        0.000546199968084693,
+        0.0005795999895781279
+      ],
+      "open_vm_steps": 3800,
+      "changed_rows": 3,
+      "changed_page_bytes": 16384,
+      "journal_bytes_before_commit": 12824,
+      "project_bytes": 1761280
+    },
+    {
+      "rows": 100000,
+      "tasks": 0,
+      "open_seconds": [
+        0.0102628999738954,
+        0.008335699967574328,
+        0.008543600037228316,
+        0.01028079999377951,
+        0.009153499966487288
+      ],
+      "save_seconds": [
+        0.015024700027424842,
+        0.013172099948860705,
+        0.013367600040510297,
+        0.011712899955455214,
+        0.011707400029990822
+      ],
+      "clean_seconds": [
+        0.0022444999776780605,
+        0.001781500002834946,
+        0.0021468999912030995,
+        0.0017391000292263925,
+        0.0016883999924175441
+      ],
+      "open_vm_steps": 3800,
+      "changed_rows": 3,
+      "changed_page_bytes": 16384,
+      "journal_bytes_before_commit": 12824,
+      "project_bytes": 17121280
+    },
+    {
+      "rows": 100000,
+      "tasks": 1000,
+      "open_seconds": [
+        0.008935399993788451,
+        0.008404300024267286,
+        0.009701900009531528,
+        0.009957600035704672,
+        0.008610199962276965
+      ],
+      "save_seconds": [
+        0.014359500026330352,
+        0.013406099984422326,
+        0.014794599963352084,
+        0.014007000019773841,
+        0.01505009998800233
+      ],
+      "clean_seconds": [
+        0.002804499992635101,
+        0.0018884000019170344,
+        0.0022995000472292304,
+        0.0018076999695040286,
+        0.0017327999812550843
+      ],
+      "open_vm_steps": 3800,
+      "changed_rows": 3,
+      "changed_page_bytes": 16384,
+      "journal_bytes_before_commit": 12824,
+      "project_bytes": 17121280
+    }
+  ],
+  "gui_80_sources": [
+    {
+      "sample": "first_open_after_fixture_creation",
+      "sources": 80,
+      "active_source_rows": 1250,
+      "first_page_seconds": 0.0470000000204891,
+      "full_active_source_preload_seconds": 0.0779999999795109,
+      "full_active_source_filter_seconds": 0.15600000001722947,
+      "max_heartbeat_gap_to_first_page_seconds": 0.0470000000204891,
+      "max_heartbeat_gap_during_preload_seconds": 0.031000000017229468,
+      "max_heartbeat_gap_during_filter_seconds": 0.01600000000325963,
+      "sampled_peak_open_rss_bytes": 148303872,
+      "sampled_peak_preload_rss_bytes": 149716992,
+      "sampled_peak_filter_rss_bytes": 149782528,
+      "first_page_rows": 100
+    },
+    {
+      "sample": "reload",
+      "sources": 80,
+      "active_source_rows": 1250,
+      "first_page_seconds": 0.030999999959021807,
+      "full_active_source_preload_seconds": 0.0470000000204891,
+      "full_active_source_filter_seconds": 0.15600000001722947,
+      "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+      "max_heartbeat_gap_during_preload_seconds": 0.01600000000325963,
+      "max_heartbeat_gap_during_filter_seconds": 0.01600000000325963,
+      "sampled_peak_open_rss_bytes": 150237184,
+      "sampled_peak_preload_rss_bytes": 150732800,
+      "sampled_peak_filter_rss_bytes": 150724608,
+      "first_page_rows": 100
+    },
+    {
+      "sample": "reload",
+      "sources": 80,
+      "active_source_rows": 1250,
+      "first_page_seconds": 0.07900000002700835,
+      "full_active_source_preload_seconds": 0.0779999999795109,
+      "full_active_source_filter_seconds": 0.15600000001722947,
+      "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+      "max_heartbeat_gap_during_preload_seconds": 0.03200000000651926,
+      "max_heartbeat_gap_during_filter_seconds": 0.01600000000325963,
+      "sampled_peak_open_rss_bytes": 150745088,
+      "sampled_peak_preload_rss_bytes": 150990848,
+      "sampled_peak_filter_rss_bytes": 150966272,
+      "first_page_rows": 100
+    },
+    {
+      "sample": "reload",
+      "sources": 80,
+      "active_source_rows": 1250,
+      "first_page_seconds": 0.015000000013969839,
+      "full_active_source_preload_seconds": 0.06299999996554106,
+      "full_active_source_filter_seconds": 0.15600000001722947,
+      "max_heartbeat_gap_to_first_page_seconds": 0.015000000013969839,
+      "max_heartbeat_gap_during_preload_seconds": 0.030999999959021807,
+      "max_heartbeat_gap_during_filter_seconds": 0.01600000000325963,
+      "sampled_peak_open_rss_bytes": 151040000,
+      "sampled_peak_preload_rss_bytes": 151199744,
+      "sampled_peak_filter_rss_bytes": 151142400,
+      "first_page_rows": 100
+    },
+    {
+      "sample": "reload",
+      "sources": 80,
+      "active_source_rows": 1250,
+      "first_page_seconds": 0.015000000013969839,
+      "full_active_source_preload_seconds": 0.06299999996554106,
+      "full_active_source_filter_seconds": 0.18700000003445894,
+      "max_heartbeat_gap_to_first_page_seconds": 0.015000000013969839,
+      "max_heartbeat_gap_during_preload_seconds": 0.030999999959021807,
+      "max_heartbeat_gap_during_filter_seconds": 0.03200000000651926,
+      "sampled_peak_open_rss_bytes": 151183360,
+      "sampled_peak_preload_rss_bytes": 151257088,
+      "sampled_peak_filter_rss_bytes": 151257088,
+      "first_page_rows": 100
+    },
+    {
+      "sample": "reload",
+      "sources": 80,
+      "active_source_rows": 1250,
+      "first_page_seconds": 0.03200000000651926,
+      "full_active_source_preload_seconds": 0.0470000000204891,
+      "full_active_source_filter_seconds": 0.15600000001722947,
+      "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+      "max_heartbeat_gap_during_preload_seconds": 0.01600000000325963,
+      "max_heartbeat_gap_during_filter_seconds": 0.01600000000325963,
+      "sampled_peak_open_rss_bytes": 151285760,
+      "sampled_peak_preload_rss_bytes": 151629824,
+      "sampled_peak_filter_rss_bytes": 151621632,
+      "first_page_rows": 100
+    }
+  ],
+  "gui_single_source": [
+    {
+      "sample": "first_open_after_fixture_creation",
+      "sources": 1,
+      "active_source_rows": 100000,
+      "first_page_seconds": 0.01600000000325963,
+      "full_active_source_preload_seconds": 3.0160000000032596,
+      "full_active_source_filter_seconds": 0.17099999997299165,
+      "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+      "max_heartbeat_gap_during_preload_seconds": 0.06300000002374873,
+      "max_heartbeat_gap_during_filter_seconds": 0.01600000000325963,
+      "sampled_peak_open_rss_bytes": 152477696,
+      "sampled_peak_preload_rss_bytes": 255381504,
+      "sampled_peak_filter_rss_bytes": 255406080,
+      "first_page_rows": 100
+    },
+    {
+      "sample": "reload",
+      "sources": 1,
+      "active_source_rows": 100000,
+      "first_page_seconds": 0.06300000002374873,
+      "full_active_source_preload_seconds": 2.7810000000172295,
+      "full_active_source_filter_seconds": 0.17199999996228144,
+      "max_heartbeat_gap_to_first_page_seconds": 0.031000000017229468,
+      "max_heartbeat_gap_during_preload_seconds": 0.07800000003771856,
+      "max_heartbeat_gap_during_filter_seconds": 0.01600000000325963,
+      "sampled_peak_open_rss_bytes": 252649472,
+      "sampled_peak_preload_rss_bytes": 254767104,
+      "sampled_peak_filter_rss_bytes": 254763008,
+      "first_page_rows": 100
+    },
+    {
+      "sample": "reload",
+      "sources": 1,
+      "active_source_rows": 100000,
+      "first_page_seconds": 0.031000000017229468,
+      "full_active_source_preload_seconds": 3.0,
+      "full_active_source_filter_seconds": 0.17199999996228144,
+      "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+      "max_heartbeat_gap_during_preload_seconds": 0.07900000002700835,
+      "max_heartbeat_gap_during_filter_seconds": 0.01600000000325963,
+      "sampled_peak_open_rss_bytes": 252018688,
+      "sampled_peak_preload_rss_bytes": 255873024,
+      "sampled_peak_filter_rss_bytes": 255868928,
+      "first_page_rows": 100
+    },
+    {
+      "sample": "reload",
+      "sources": 1,
+      "active_source_rows": 100000,
+      "first_page_seconds": 0.0470000000204891,
+      "full_active_source_preload_seconds": 2.7339999999967404,
+      "full_active_source_filter_seconds": 0.1720000000204891,
+      "max_heartbeat_gap_to_first_page_seconds": 0.031000000017229468,
+      "max_heartbeat_gap_during_preload_seconds": 0.06300000002374873,
+      "max_heartbeat_gap_during_filter_seconds": 0.01600000000325963,
+      "sampled_peak_open_rss_bytes": 253198336,
+      "sampled_peak_preload_rss_bytes": 255070208,
+      "sampled_peak_filter_rss_bytes": 255066112,
+      "first_page_rows": 100
+    },
+    {
+      "sample": "reload",
+      "sources": 1,
+      "active_source_rows": 100000,
+      "first_page_seconds": 0.07800000003771856,
+      "full_active_source_preload_seconds": 2.7969999999622814,
+      "full_active_source_filter_seconds": 0.18800000002374873,
+      "max_heartbeat_gap_to_first_page_seconds": 0.0470000000204891,
+      "max_heartbeat_gap_during_preload_seconds": 0.0779999999795109,
+      "max_heartbeat_gap_during_filter_seconds": 0.03200000000651926,
+      "sampled_peak_open_rss_bytes": 252313600,
+      "sampled_peak_preload_rss_bytes": 255987712,
+      "sampled_peak_filter_rss_bytes": 255979520,
+      "first_page_rows": 100
+    },
+    {
+      "sample": "reload",
+      "sources": 1,
+      "active_source_rows": 100000,
+      "first_page_seconds": 0.030999999959021807,
+      "full_active_source_preload_seconds": 3.4540000000270084,
+      "full_active_source_filter_seconds": 0.18699999997625127,
+      "max_heartbeat_gap_to_first_page_seconds": 0.030999999959021807,
+      "max_heartbeat_gap_during_preload_seconds": 0.0940000000409782,
+      "max_heartbeat_gap_during_filter_seconds": 0.030999999959021807,
+      "sampled_peak_open_rss_bytes": 252129280,
+      "sampled_peak_preload_rss_bytes": 255840256,
+      "sampled_peak_filter_rss_bytes": 255868928,
+      "first_page_rows": 100
+    }
+  ]
+}

@@ -6,9 +6,11 @@
 
 ## 当前实施
 
+- [project-storage-redesign](project-storage-redesign/plan.md)：FR32/S01～S10 本地实现与相关回归完成；[工作台完整滚动与当前来源驻留](../docs/changelogs/project-storage-redesign/story-04/2026-11-09-002-resident-workbench-source.md)已验证。项目 SQLite、独立任务、不保存插件/路径、旧格式拒绝。100k/80 来源首屏中位 103ms、单条保存 80ms；三项既有失败、全范围成本和冷缓存限制见[实施记录](../docs/changelogs/project-storage-redesign/story-01-to-10/2026-11-09-001-translation-project-store.md)（2026-11-09）。
+
 - [app-update](app-update/plan.md)：Windows 安装版检查公开 GitHub Releases、下载校验与安全关闭后启动现有安装器；本地实现及相关验证完成，本轮不发布 Release。
 
-- [file-io-dialogs](file-io-dialogs/plan.md)：S01～S04 本地完成；独立导入/导出及固定布局打开文件入口，两种 JSON 分列。S04 扩大回归 1183 通过/4 项既有夹具失败排除，最后 UI 调整后 29 项通过，全库 Ruff 通过；此前验证和限制见计划及记录。
+- [file-io-dialogs](file-io-dialogs/plan.md)：S01～S05 本地完成；独立导入/导出、固定布局打开文件与多格式建项，建项支持多译文文件自动匹配及冲突保护。S05 最终联合 240 通过/7 项既有失败排除，全库 Ruff 通过；旧存储测试差异和此前验证见计划及记录。
 
 - [eet-integration](eet-integration/plan.md)：EET v3 Classique/BDD 正式来源、工程重开、迁移、GUI/助手原格式写回；本地实现与相关验证完成，保持实验性，最终证据见计划及 [ADR-053](../docs/adr/053-eet-binary-io-integration.md)。
 

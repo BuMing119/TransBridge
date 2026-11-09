@@ -1,6 +1,6 @@
 # ADR-051：正式项目自包含存储与单一升级边界
 
-- 状态：已接受；S01～S03 本地实现与相关 QA 完成，999 通过、1 项环境跳过；S04 缺内容自动恢复本地实现与相关 QA 完成，广域未全绿，详见增量（2026-11-03）。
+- 状态：历史已接受并有本地实现/QA 记录；完整来源闭包、来源路径恢复和旧项目升级目标被已确认 [FR32](../requirements/project-storage-redesign.md) 取代，替代架构见 [ADR-054](054-project-storage-and-independent-tasks.md)（提议、未实施）。下文保留原决策与验证事实。
 - 日期：2026-11-03。
 - 需求：FR8.3、FR8.4、FR8.8、FR19.7、FR19.10、FR19.11、FR19.14.5。
 - 计划：[project-self-contained-storage](../../plans/project-self-contained-storage/plan.md)。

@@ -1,0 +1,246 @@
+{
+  "samples": [
+    [
+      {
+        "rows": 10000,
+        "tasks": 0,
+        "open_seconds": [
+          0.0033248999970965087,
+          0.0032706999918445945,
+          0.003259000019170344,
+          0.004004399990662932,
+          0.0032532999757677317
+        ],
+        "save_seconds": [
+          0.005035000038333237,
+          0.004838599998038262,
+          0.004781699972227216,
+          0.0061843000003136694,
+          0.005009100015740842
+        ],
+        "clean_seconds": [
+          0.0007762000313960016,
+          0.0006406999891623855,
+          0.0005939999828115106,
+          0.0006072000251151621,
+          0.000597700010985136
+        ],
+        "open_vm_steps": 3800,
+        "changed_rows": 3,
+        "changed_page_bytes": 16384,
+        "journal_bytes_before_commit": 12824,
+        "project_bytes": 1761280
+      },
+      {
+        "rows": 100000,
+        "tasks": 0,
+        "open_seconds": [
+          0.0033186000073328614,
+          0.004155699978582561,
+          0.003770400013308972,
+          0.003211100003682077,
+          0.0031326000462286174
+        ],
+        "save_seconds": [
+          0.012081400025635958,
+          0.009607099986169487,
+          0.00746290001552552,
+          0.00950450001982972,
+          0.009462499991059303
+        ],
+        "clean_seconds": [
+          0.0021903999731875956,
+          0.0018914000247605145,
+          0.0017813000013120472,
+          0.0017703999765217304,
+          0.0016980000073090196
+        ],
+        "open_vm_steps": 3800,
+        "changed_rows": 3,
+        "changed_page_bytes": 16384,
+        "journal_bytes_before_commit": 12824,
+        "project_bytes": 17121280
+      },
+      {
+        "rows": 100000,
+        "tasks": 1000,
+        "open_seconds": [
+          0.00307740003336221,
+          0.0041856999741867185,
+          0.003588800027500838,
+          0.004187899990938604,
+          0.008859800000209361
+        ],
+        "save_seconds": [
+          0.006848799996078014,
+          0.007356800022535026,
+          0.006841800000984222,
+          0.008087800000794232,
+          0.008991999959107488
+        ],
+        "clean_seconds": [
+          0.0009934999980032444,
+          0.0007939999923110008,
+          0.0008486000006087124,
+          0.0010759999859146774,
+          0.0007655000081285834
+        ],
+        "open_vm_steps": 3800,
+        "changed_rows": 3,
+        "changed_page_bytes": 16384,
+        "journal_bytes_before_commit": 12824,
+        "project_bytes": 17121280
+      }
+    ],
+    [
+      {
+        "sample": "first_open_after_fixture_creation",
+        "sources": 80,
+        "active_source_rows": 1250,
+        "first_page_seconds": 0.0470000000204891,
+        "full_active_source_filter_seconds": 0.2029999999795109,
+        "max_heartbeat_gap_to_first_page_seconds": 0.03200000000651926,
+        "max_heartbeat_gap_during_filter_seconds": 0.01600000000325963,
+        "sampled_peak_open_rss_bytes": 147709952,
+        "sampled_peak_filter_rss_bytes": 148463616,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 80,
+        "active_source_rows": 1250,
+        "first_page_seconds": 0.0470000000204891,
+        "full_active_source_filter_seconds": 0.18699999997625127,
+        "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+        "max_heartbeat_gap_during_filter_seconds": 0.01600000000325963,
+        "sampled_peak_open_rss_bytes": 148733952,
+        "sampled_peak_filter_rss_bytes": 149475328,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 80,
+        "active_source_rows": 1250,
+        "first_page_seconds": 0.06300000002374873,
+        "full_active_source_filter_seconds": 0.18699999997625127,
+        "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+        "max_heartbeat_gap_during_filter_seconds": 0.01600000000325963,
+        "sampled_peak_open_rss_bytes": 149667840,
+        "sampled_peak_filter_rss_bytes": 151363584,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 80,
+        "active_source_rows": 1250,
+        "first_page_seconds": 0.031000000017229468,
+        "full_active_source_filter_seconds": 0.18699999997625127,
+        "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+        "max_heartbeat_gap_during_filter_seconds": 0.01600000000325963,
+        "sampled_peak_open_rss_bytes": 151384064,
+        "sampled_peak_filter_rss_bytes": 152764416,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 80,
+        "active_source_rows": 1250,
+        "first_page_seconds": 0.01600000000325963,
+        "full_active_source_filter_seconds": 0.18700000003445894,
+        "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+        "max_heartbeat_gap_during_filter_seconds": 0.01600000000325963,
+        "sampled_peak_open_rss_bytes": 152805376,
+        "sampled_peak_filter_rss_bytes": 154374144,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 80,
+        "active_source_rows": 1250,
+        "first_page_seconds": 0.046999999962281436,
+        "full_active_source_filter_seconds": 0.21799999999348074,
+        "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+        "max_heartbeat_gap_during_filter_seconds": 0.045999999972991645,
+        "sampled_peak_open_rss_bytes": 154411008,
+        "sampled_peak_filter_rss_bytes": 156012544,
+        "first_page_rows": 100
+      }
+    ],
+    [
+      {
+        "sample": "first_open_after_fixture_creation",
+        "sources": 1,
+        "active_source_rows": 100000,
+        "first_page_seconds": 0.01600000000325963,
+        "full_active_source_filter_seconds": 3.6869999999762513,
+        "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+        "max_heartbeat_gap_during_filter_seconds": 0.125,
+        "sampled_peak_open_rss_bytes": 159166464,
+        "sampled_peak_filter_rss_bytes": 243118080,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 1,
+        "active_source_rows": 100000,
+        "first_page_seconds": 0.0470000000204891,
+        "full_active_source_filter_seconds": 3.5310000000172295,
+        "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+        "max_heartbeat_gap_during_filter_seconds": 0.18799999996554106,
+        "sampled_peak_open_rss_bytes": 241512448,
+        "sampled_peak_filter_rss_bytes": 249679872,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 1,
+        "active_source_rows": 100000,
+        "first_page_seconds": 0.10899999999674037,
+        "full_active_source_filter_seconds": 8.28200000000652,
+        "max_heartbeat_gap_to_first_page_seconds": 0.03200000000651926,
+        "max_heartbeat_gap_during_filter_seconds": 0.18800000002374873,
+        "sampled_peak_open_rss_bytes": 241479680,
+        "sampled_peak_filter_rss_bytes": 250523648,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 1,
+        "active_source_rows": 100000,
+        "first_page_seconds": 0.09399999998277053,
+        "full_active_source_filter_seconds": 8.26500000001397,
+        "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+        "max_heartbeat_gap_during_filter_seconds": 0.21799999999348074,
+        "sampled_peak_open_rss_bytes": 241786880,
+        "sampled_peak_filter_rss_bytes": 245207040,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 1,
+        "active_source_rows": 100000,
+        "first_page_seconds": 0.045999999972991645,
+        "full_active_source_filter_seconds": 8.14100000000326,
+        "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+        "max_heartbeat_gap_during_filter_seconds": 0.25,
+        "sampled_peak_open_rss_bytes": 240349184,
+        "sampled_peak_filter_rss_bytes": 244461568,
+        "first_page_rows": 100
+      },
+      {
+        "sample": "reload",
+        "sources": 1,
+        "active_source_rows": 100000,
+        "first_page_seconds": 0.0470000000204891,
+        "full_active_source_filter_seconds": 8.062999999965541,
+        "max_heartbeat_gap_to_first_page_seconds": 0.01600000000325963,
+        "max_heartbeat_gap_during_filter_seconds": 0.1720000000204891,
+        "sampled_peak_open_rss_bytes": 240058368,
+        "sampled_peak_filter_rss_bytes": 251850752,
+        "first_page_rows": 100
+      }
+    ]
+  ],
+  "cache_state": "after_fixture_creation_not_cold_flushed",
+  "qt_platform": "offscreen"
+}
