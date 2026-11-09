@@ -17,7 +17,6 @@ from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.infra.limited_llm_client import LimitedLLMClient
-from transbridge.ui.tools.ai_translator import source_execution
 from transbridge.ui.tools.ai_translator.source_dispatch import run_sources
 from transbridge.ui.tools.ai_translator.source_execution import SourceExecutor, SourceOutcome
 from transbridge.ui.tools.ai_translator.source_terms import source_run_id
@@ -132,18 +131,13 @@ def test_source_can_proofread_while_another_translates_under_one_real_budget(tmp
     budget = AiRequestBudget(2)
     request = SimpleNamespace(config=LLMConfig(mixed_execution_order="serial", retrieval_enabled=False))
     request.request_budget = budget
+    request.recovery_directory = tmp_path
     stop, pause = _events()
     translating, proofreading = threading.Event(), threading.Event()
     release_translation, release_proofread = threading.Event(), threading.Event()
     finished_fast = threading.Event()
     # Completion order is deliberately opposite to source order.
     slow, fast = _task(tmp_path, "slow"), _task(tmp_path, "fast", mixed=True)
-    store_class = source_execution.WorkflowLogStore
-    monkeypatch.setattr(
-        source_execution,
-        "WorkflowLogStore",
-        lambda path, **kwargs: store_class(path, log_base=tmp_path / "logs", **kwargs),
-    )
 
     def provider_call(token):
         if token == "slow:translation":

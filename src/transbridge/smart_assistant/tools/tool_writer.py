@@ -154,16 +154,14 @@ _PARAM_SCHEMAS = {
         "path": {
             "type": "str",
             "required": False,
-            "description": (
-                "Output file; defaults to the current optional reference. Required without it or output_dir."
-            ),
+            "description": ("Output file. Required when output_dir is omitted."),
         },
         "output_dir": {
             "type": "str",
             "required": False,
             "description": (
                 "Save selected sources together under their original names; supports all targets. "
-                "Required for strings. Omit to use an available reference location. "
+                "Required for strings. "
                 "Single-file path takes precedence except for strings."
             ),
         },
@@ -175,6 +173,16 @@ _PARAM_SCHEMAS = {
                 "A nonempty unique list selects one or more sources without switching the active collection. "
                 "Multiple sources cannot use path."
             ),
+        },
+        "input_plugin": {
+            "type": "str",
+            "required": False,
+            "description": "Plugin selected for this operation when writing one saved plugin source.",
+        },
+        "input_plugins": {
+            "type": "dict",
+            "required": False,
+            "description": "Source keys mapped to explicit plugin files for this write operation.",
         },
         "pack_bsa": {
             "type": "bool",
@@ -219,8 +227,8 @@ def _register_writer_tools():
                     "actual artifacts and diagnostics. Independent batch members may complete when others fail. "
                     "Wait for the task terminal result before dependent actions. "
                     "Requires admin confirmation and an authorized output root. "
-                    "Uses saved source content; missing content must be supplied for the selected source. "
-                    "Without a current reference location, provide path or output_dir."
+                    "For project plugin sources provide input_plugin or input_plugins for this operation. "
+                    "Specify path or output_dir for the output."
                 ),
                 "execute": _tool_write_back,
                 "permission": "admin",

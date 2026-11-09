@@ -73,7 +73,7 @@ class SourceRegistration:
         if self.source_artifact_id is not None and not _SHA256.fullmatch(self.source_artifact_id):
             raise ValueError("source artifact identifier must be a lowercase SHA-256 digest")
         content_state = self.content_state or ("captured" if self.source_artifact_id is not None else "missing")
-        if content_state not in {"captured", "missing"} or (content_state == "captured") != (
+        if content_state not in {"captured", "missing", "translation"} or (content_state == "captured") != (
             self.source_artifact_id is not None
         ):
             raise ValueError("source content state must agree with its persisted artifact reference")

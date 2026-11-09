@@ -50,7 +50,12 @@ def json_export_plan(draft, fields) -> OperationPlanDraft:
             source,
             format_id=source.source_snapshot.format_id,
             target_path=(
-                str(Path(directory) / Path(source.source_snapshot.source.uri).with_suffix(".json").name)
+                str(
+                    Path(directory)
+                    / Path(source.source_snapshot.source.display_name or source.source_snapshot.source.uri)
+                    .with_suffix(".json")
+                    .name
+                )
                 if batch and directory
                 else ""
                 if batch

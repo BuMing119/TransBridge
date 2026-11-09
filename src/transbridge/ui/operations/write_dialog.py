@@ -48,7 +48,9 @@ class WritePlanDialog(ExecutionPlanDialog):
         self._source_label = QLabel(self)
         self._source_label.setWordWrap(True)
         self._source_label.setTextFormat(Qt.TextFormat.PlainText)
-        source_name = Path(self._source_reference).name if self._source_reference else "当前文件"
+        source_name = (
+            source.source.display_name or Path(self._source_reference).name if source is not None else "当前文件"
+        )
         self._source_label.setText(
             f"导出所选来源：{len(getattr(_context, 'slots', {}))} 个文件"
             if plan.is_batch

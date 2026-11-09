@@ -34,8 +34,15 @@ def frozen_recovery_sources(record, slots):
                 before = inputs.get(key)
                 if before is None:
                     raise ValueError(f"恢复任务缺少词条输入快照：{key.local_key}。")
-                if "entry" in before:
-                    entry = TranslationEntry.from_dict(before["entry"])
+                if "entry" in before or "entry_fields" in before:
+                    data = before.get("entry") or {
+                        **before["entry_fields"],
+                        **{
+                            name: before[name]
+                            for name in ("entry_key", "original", "translation", "stage", "context", "revision")
+                        },
+                    }
+                    entry = TranslationEntry.from_dict(data)
                     if entry.identity != key or (
                         entry.original,
                         entry.translation,

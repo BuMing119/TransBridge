@@ -8,6 +8,16 @@ from transbridge.converter.translation_entry_collection import TranslationEntryC
 from .contracts import FormatId
 from .plugin_transfer_snapshot import target_entries_from_snapshot
 
+DSD_LOCATOR_METADATA = "transbridge.io.dsd.locator"
+
+
+def restore_extracted_dsd_locator(entry):
+    locator = dict(entry.metadata).get(DSD_LOCATOR_METADATA)
+    if locator is None:
+        raise ValueError("该词条没有可验证的 DSD 插件和字段定位。")
+    form, field, index, editor = locator
+    return replace(entry, form_id_with_plugin=form, dsd_type=field, dsd_index=index, editor_id=editor)
+
 
 def restore_plugin_dsd_locators(target, snapshot) -> TranslationEntryCollection:
     """Bind target entries to captured records before restoring DSD convenience fields.
@@ -18,6 +28,8 @@ def restore_plugin_dsd_locators(target, snapshot) -> TranslationEntryCollection:
     """
     if snapshot is None or snapshot.format_id is not FormatId.PLUGIN_SSE:
         raise ValueError("DSD 插件定位需要完整的插件来源快照。")
+    if snapshot.content is None and snapshot.source.uri.startswith("project-source:"):
+        return TranslationEntryCollection(restore_extracted_dsd_locator(entry) for entry in target)
     if (
         snapshot.content is None
         or len(snapshot.content) != snapshot.size_bytes

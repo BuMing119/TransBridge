@@ -31,6 +31,23 @@ class ProfileVariantCommands:
                 _fail("ACTIVE_VARIANT_REQUIRED", "请先打开一个工程翻译版本。")
             self._context(active, context)
             project_id = active.project_ref.identity.value
+            reader = getattr(self._terminology, "variant_targets", None)
+            if reader is not None:
+                self._exact_profile(project_id, target_profile)
+                revision, variants = reader(project_id)
+                if revision != active.persisted_project_revision:
+                    _fail("PROJECT_CATALOG_STALE", "工程版本目录已变化，请重新打开保存窗口。")
+                output = []
+                for descriptor in variant_catalog(active.project):
+                    if descriptor.variant_id == active.formal_variant_ref.identity.value:
+                        continue
+                    evidence = variants.get(descriptor.variant_id)
+                    if evidence is None:
+                        _fail("TARGET_VARIANT_UNAVAILABLE", "目标版本不可读取，请重新打开工程。")
+                    target_revision, selection = evidence
+                    if _same_scheme(selection, target_profile):
+                        output.append({**descriptor.to_dict(), "revision": target_revision})
+                return OperationResult.completed(tuple(output), run_id=context.run_id)
             output = []
             with self._projects.mutation_lock:
                 self._exact_profile(project_id, target_profile)

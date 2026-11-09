@@ -11,6 +11,7 @@ from transbridge.application.io import FormatId
 from transbridge.application.io.paratranz_mapping import PARATRANZ_EXTENSION_METADATA
 from transbridge.application.projects import ProjectProvisioningRequest
 from transbridge.bootstrap.persistence import build_persistence_v2_services
+from transbridge.persistence.task_store import TaskStore
 from transbridge.smart_assistant.tools.tool_parser import _tool_import_json, _tool_parse_eet
 from transbridge.smart_assistant.tools.types import ExecutionContext
 from transbridge.ui.context import AppContext
@@ -26,11 +27,12 @@ def project(tmp_path, monkeypatch):
     services = build_persistence_v2_services(
         tmp_path / "project", id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now"
     )
-    request = RequestContext("fixture", run_id=uuid4().hex, authorized_roots=(str(tmp_path),))
+    request = RequestContext("fixture", run_id=uuid4().hex, authorized_roots=(str(tmp_path),), session_id=uuid4().hex)
     context = AppContext(
         project_projection=services.project_projection,
         project_commands=services.gui_project_commands,
         runtime_context=request,
+        task_store=TaskStore(tmp_path / "task-store-v1"),
     )
     assert services.gui_project_commands.create_project(ProjectProvisioningRequest("Repair"), request).is_success
     source = tmp_path / "source.xml"

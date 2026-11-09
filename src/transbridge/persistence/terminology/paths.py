@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 
+from transbridge.persistence.project_store.format import PROJECT_ROOT
 from transbridge.persistence.v2.ids import OpaqueId, ProjectId
 from transbridge.persistence.v2.models import PathBoundaryError
 
@@ -22,7 +23,7 @@ class TerminologyPaths:
 
     def project_root(self, project_id: str) -> Path:
         encoded = ProjectId(project_id).encoded
-        return self.guard(self.root / "projects" / encoded / "terminology")
+        return self.guard(self.root / PROJECT_ROOT / encoded / "terminology")
 
     def database(self, project_id: str) -> Path:
         return self.guard(self.project_root(project_id) / "db" / "terminology.sqlite3")

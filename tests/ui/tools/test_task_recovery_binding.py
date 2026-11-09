@@ -217,11 +217,11 @@ def test_lifecycle_records_saved_evidence_only(tmp_path):
     run = SimpleNamespace(state="completed", user_cancelled=False, shutting_down=False, entries=results)
     session.completed = True
     binding.update(run)
-    assert binding.record["state"] == "applying" and not binding.record["applied_entries"]
+    assert binding.record["state"] == "completed" and not binding.record["applied_entries"]
     assert binding.record["applied"] and not binding.record["project_saved"]
     run.shutting_down = True
     binding.update(run)
-    assert binding.record["state"] == "interrupted"
+    assert binding.record["state"] == "completed" and not binding.record["applied_entries"]
     run.shutting_down = False
     session.project_saved = True
     binding.update(run)

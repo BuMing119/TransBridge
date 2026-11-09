@@ -13,6 +13,9 @@ from scripts.skyrim_translation_recovery.matching import Decision, RemoteRow, Tr
 from scripts.skyrim_translation_recovery.project import locate, reconcile_shared_ids
 from tests.integration.publish.test_bsa_localized_write import _field, _group, _record, _strings
 from transbridge.application.io.identity import EntryKey, SourceNamespace
+from transbridge.application.io.stage_policy import Stage
+from transbridge.persistence.project_store.format import PROJECT_FILENAME, PROJECT_FORMAT, PROJECT_FORMAT_VERSION
+from transbridge.persistence.project_store.repository import ProjectStore
 
 
 def row(text="修订译文", *, key="Quest:00000800|85~QUST:CNAM", original="First", stage=5, plugin="mod", ref="a"):
@@ -151,12 +154,16 @@ def test_preview_then_independent_project_import_preserves_inputs_and_all_revisi
     report = run(args)
     assert report["status"] == "installed" and report["installed_project_path"]
     with ZipFile(report["archive"]) as archive:
-        document = json.loads(archive.read("archive.json"))
-        states = document["variants"][0]["data"]["entries"]
-        assert len(states) == 1
-        assert (states[0]["translation"], states[0]["stage"]) == ("新剑", 5)
-        assert states[0]["provenance"][0]["source"] == "para_exact"
-        assert any(name.endswith("mod_English.strings") for name in archive.namelist())
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["format"] == PROJECT_FORMAT
+        assert manifest["version"] == PROJECT_FORMAT_VERSION
+        assert set(archive.namelist()) == {"manifest.json", PROJECT_FILENAME}
+    store = ProjectStore(report["installed_project_path"])
+    summary = store.summary()
+    assert summary.identity.value == manifest["project_id"]
+    (entry,) = store.read_page(summary.active_variant)
+    assert (entry.state.translation, entry.state.stage) == ("新剑", Stage.REVIEWED)
+    assert entry.state.provenance[0].source == "para_exact"
     assert all(p.read_bytes() == content for p, content in inputs.items())
     assert not (args.install_root / "active-project.json").exists()
     assert "保留修订" in (args.output / "unmatched-paratranz.json").read_text(encoding="utf-8")

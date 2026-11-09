@@ -1,7 +1,5 @@
-import base64
 from dataclasses import replace
 from itertools import count
-import json
 from pathlib import Path
 
 import pytest
@@ -15,7 +13,10 @@ from transbridge.application.projects import (
     TransitionTarget,
 )
 from transbridge.bootstrap.persistence import build_persistence_v2_services
-from transbridge.persistence.v2.models import ProjectDto
+from transbridge.persistence.project_store.connection import project_connection
+from transbridge.persistence.project_store.history import ProjectHistory
+from transbridge.persistence.project_store.repository import ProjectStore
+from transbridge.persistence.v2.ids import VariantRef
 from transbridge.persistence.v2.variant import VariantSnapshot
 
 
@@ -78,21 +79,23 @@ def test_update_migrates_all_variants_and_reopens_with_new_source(project):
     assert preview.reordered == 2
     result = service.commit(preview.token, context)
     assert result.is_success, result.diagnostics
-    assert Path(result.value.backup_path).exists()
+    history = ProjectHistory(services.projects)
+    store = ProjectStore(path)
+    assert result.value.backup_path.startswith("project-snapshot:")
     assert not services.project_lifecycle.active.dirty
     active = services.project_lifecycle.active
     assert services.gui_project_commands.save(context).is_success
+    source.unlink()
+    replacement.unlink()
     opened = services.current_project_opener.open_path(path, context)
     assert opened.is_success, opened.diagnostics
     assert "recovery" not in opened.value
-    project_data = services.projects.read_snapshot(active.project_ref).envelope.data
-    assert project_data["sources"][0]["location"] == str(replacement.resolve())
-    from transbridge.persistence.v2.ids import VariantId, VariantRef
-
-    for identity in project_data["variant_ids"]:
-        snapshot = VariantSnapshot.from_dto(
-            services.variants.read_snapshot(VariantRef(VariantId(identity), active.project_ref.identity))
-        )
+    assert opened.value["sources"][0]["location"] == ""
+    for variant in store.summary().variants:
+        ref = VariantRef(variant.identity, active.project_ref.identity)
+        (backup,) = history.list(ref)
+        assert backup.name.startswith("更新来源前")
+        snapshot = VariantSnapshot.from_dto(services.variants.read_snapshot(ref), ref)
         entries = {entry.entry_key.local_key: entry for entry in snapshot.entries}
         translated = [entry for entry in entries.values() if entry.translation == "译文"]
         assert sorted(entry.stage.value for entry in translated) == [2, 5]
@@ -114,30 +117,13 @@ def test_overwritten_source_compares_saved_original_and_preserves_reviewed_state
     assert "recovery" not in services.current_project_opener.open_path(path, context).value
 
 
-@pytest.mark.parametrize("reference", ["", "present"])
-@pytest.mark.parametrize("artifact", ["absent", "unavailable"])
-def test_update_without_previous_artifact_never_reads_optional_reference(project, monkeypatch, reference, artifact):
+@pytest.mark.parametrize("original_state", ["removed", "overwritten"])
+def test_update_uses_saved_originals_and_only_reads_explicit_input(project, monkeypatch, original_state):
     services, service, context, source, path, source_id = project
-    active = services.project_lifecycle.active
-    data = {**active.project.envelope.data, "sources": [dict(active.project.envelope.data["sources"][0])]}
-    registration = data["sources"][0]
-    registration["location"] = str(source) if reference else ""
-    registration["legacy"] = {**registration["legacy"], "path": registration["location"]}
-    if artifact == "absent":
-        registration.pop("source_artifact_id")
-        registration["content_state"] = "missing"
+    if original_state == "removed":
+        source.unlink()
     else:
-        registration["source_artifact_id"] = "f" * 64
-    updated = ProjectDto(replace(active.project.envelope, revision=active.project.envelope.revision + 1, data=data))
-    assert services.project_lifecycle.commit_project_update(
-        updated, active.project.envelope.revision, context
-    ).is_success
-    saved = services.gui_project_commands.save(context)
-    if artifact == "absent":
-        assert saved.diagnostics[0].code == "PROJECT_SAVE_SOURCE_CONTENT_MISSING"
-        assert not services.project_lifecycle.active.dirty
-    else:
-        assert saved.is_success
+        source.write_bytes(b"historical input contents are irrelevant")
     replacement = source.with_name("replacement.xml")
     _xml(replacement, [(1, "One changed"), (2, "Two"), (3, "Three")])
     requests = []
@@ -151,46 +137,39 @@ def test_update_without_previous_artifact_never_reads_optional_reference(project
     monkeypatch.setattr(service._preparer, "prepare_source", prepare_explicit)
     result = service.prepare(path, source_id, str(replacement), context)
     assert result.is_success, result.diagnostics
-    assert result.value.unverified == 3 and result.value.warnings
+    assert (result.value.changed, result.value.unchanged, result.value.unverified) == (1, 2, 0)
+    assert not result.value.warnings
     committed = service.commit(result.value.token, context)
     assert committed.is_success, committed.diagnostics
     assert requests == [str(replacement.resolve())] * 2
-    assert all(
-        entry.translation == "译文" and entry.stage.value == 2
-        for entry in services.project_lifecycle.active.variant.snapshot().entries
-    )
+    assert {entry.translation for entry in services.project_lifecycle.active.variant.snapshot().entries} == {"译文"}
+    assert [entry.stage.value for entry in services.project_lifecycle.active.variant.snapshot().entries] == [2, 5, 5]
 
 
-def test_update_allows_another_registration_to_share_the_replacement_reference(project):
+def test_update_allows_reused_input_path_but_rejects_duplicate_source_content(project):
     services, service, context, source, path, source_id = project
     other = source.with_name("other.xml")
     _xml(other, [(9, "Independent content")])
     added = services.gui_project_commands.add_source(ProjectSourceRequest(str(other), FormatId.XML_EET), context)
     assert added.is_success, added.diagnostics
     assert services.gui_project_commands.save(context).is_success
-    replacement = source.with_name("replacement.xml")
-    _xml(replacement, [(1, "One changed"), (2, "Two"), (3, "Three")])
-    active = services.project_lifecycle.active
-    data = {**active.project.envelope.data, "sources": [dict(item) for item in active.project.envelope.data["sources"]]}
-    second = next(item for item in data["sources"] if item["source_id"] == added.value.source_id)
-    second["location"] = str(replacement.resolve())
-    updated = ProjectDto(replace(active.project.envelope, revision=active.project.envelope.revision + 1, data=data))
-    assert services.project_lifecycle.commit_project_update(
-        updated, active.project.envelope.revision, context
-    ).is_success
-    assert services.gui_project_commands.save(context).is_success
+    other_original = other.read_bytes()
+    _xml(other, [(1, "One changed"), (2, "Two"), (3, "Three")])
 
-    preview = service.prepare(path, source_id, str(replacement), context)
+    preview = service.prepare(path, source_id, str(other), context)
     assert preview.is_success, preview.diagnostics
     assert preview.value.changed == 1
     committed = service.commit(preview.value.token, context)
     assert committed.is_success, committed.diagnostics
     registrations = services.project_lifecycle.active.project.envelope.data["sources"]
     assert len(registrations) == 2
-    assert {item["location"] for item in registrations} == {str(replacement.resolve())}
+    assert {item["location"] for item in registrations} == {""}
+    assert {item["source_id"] for item in registrations} == {source_id, added.value.source_id}
     assert len({item["fingerprint"] for item in registrations}) == 2
     before = Path(path).read_bytes()
-    conflict = service.prepare(path, source_id, str(other), context)
+    duplicate = source.with_name("duplicate.xml")
+    duplicate.write_bytes(other_original)
+    conflict = service.prepare(path, source_id, str(duplicate), context)
     assert not conflict.is_success
     assert conflict.diagnostics[0].code == "INVALID_INPUT"
     assert Path(path).read_bytes() == before
@@ -240,8 +219,14 @@ def test_stale_preview_rejected_without_source_registration_change(project, chan
         key = active.variant.snapshot().entries[0].entry_key
         assert services.gui_project_commands.update_entry(key, context, translation="new edit").is_success
     else:
-        target = Path(path if change == "project_disk" else services.variants.path_for(active.formal_variant_ref))
-        target.write_bytes(target.read_bytes() + b"\n")
+        with project_connection(Path(path), write=True) as database:
+            if change == "project_disk":
+                database.execute("UPDATE project SET revision = revision + 1")
+            else:
+                database.execute(
+                    "UPDATE variant SET revision = revision + 1 WHERE identity = ?",
+                    (active.formal_variant_ref.identity.value,),
+                )
     before = Path(path).read_bytes()
     result = service.commit(preview.token, context)
     assert not result.is_success
@@ -274,16 +259,18 @@ def test_recovery_update_without_activating_target(project):
 
 
 def test_removed_entries_are_in_durable_backup(project):
-    _, service, context, _, _, _ = project
+    services, service, context, _, path, _ = project
+    ref = services.project_lifecycle.active.formal_variant_ref
     preview, _ = _prepare(project, [(1, "One")])
     result = service.commit(preview.token, context)
     assert result.is_success, result.diagnostics
-    backup = json.loads(Path(result.value.backup_path).read_bytes())
-    previous = [
-        json.loads(base64.b64decode(item["previous"])) for item in backup["records"] if item["kind"] == "variant"
-    ]
-    assert len(previous[0]["data"]["entries"]) == 3
-    assert all(item["translation"] == "译文" for item in previous[0]["data"]["entries"])
+    history = ProjectHistory(services.projects)
+    (backup,) = history.list(ref)
+    assert result.value.backup_path == f"project-snapshot:{backup.identity.rsplit('-', 1)[0]}"
+    previous = history.read_page(backup.identity, ref)
+    assert [row.snapshot.original for row in previous] == ["One", "Two", "Three"]
+    assert all(row.state.translation == "译文" and row.state.stage.value == 5 for row in previous)
+    assert [row.snapshot.original for row in ProjectStore(path).read_page(ref.identity)] == ["One"]
 
 
 def test_xtranslator_update_survives_runtime_restart(tmp_path):

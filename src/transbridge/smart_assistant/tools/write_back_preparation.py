@@ -12,7 +12,10 @@ from transbridge.application.io.operation_write_batch import isolate_batch_outpu
 from transbridge.application.io.plugin_localized_sources import _snapshot_localized_sources
 from transbridge.application.io.publish import BackupPolicy, ConflictPolicy
 from transbridge.application.io.write_formats import SST_FORMATS, source_output_compatible, write_artifact_paths
+from transbridge.application.projects.write_inputs import bind_plugin_write_input
+from transbridge.application.security.paths import PathAuthorizationPolicy, PathGrant
 from transbridge.application.terminology_profiles import TerminologyProfileWriteProjectionSource
+from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
 
 from .file_undo_capture import authorize_file_outputs
 
@@ -55,6 +58,11 @@ def prepare_write_back(args: dict, ctx) -> PreparedWriteBack:
         raise RequestError("PATH_GRANT_REQUIRED", "写回缺少授权目录。")
     base = Path(dict(getattr(request, "metadata", ()) or ()).get("working_directory") or roots[0])
     request = request or RequestContext("smart-assistant-writer", authorized_roots=roots)
+    inputs = args.get("input_plugins", {})
+    if not isinstance(inputs, dict) or any(
+        not isinstance(value, str) or not value.strip() for value in inputs.values()
+    ):
+        raise RequestError("WRITE_PLUGIN_INPUT_INVALID", "input_plugins 必须把来源键映射到本次插件文件。")
     drafts = []
     for key, slot in selected:
         snapshot, collection = getattr(slot, "source_snapshot", None), getattr(slot, "collection", None)
@@ -76,6 +84,24 @@ def prepare_write_back(args: dict, ctx) -> PreparedWriteBack:
             raise RequestError("SOURCE_SNAPSHOT_REQUIRED", f"来源缺少匹配的快照，请先解析对应源文件：{key}")
         if snapshot.format_id not in {*_FORMATS.values(), *SST_FORMATS, FormatId.BINARY_EET}:
             raise RequestError("SOURCE_FORMAT_UNSUPPORTED", f"来源格式不支持写回：{key}")
+        entries = tuple(entry.snapshot() for entry in collection)
+        template_reader = getattr(collection, "native_template", None)
+        if template_reader is not None:
+            snapshot = template_reader()
+        if snapshot.format_id is FormatId.PLUGIN_SSE and snapshot.content is None and output_format not in SST_FORMATS:
+            input_path = inputs.get(key) or (_path_argument(args, "input_plugin") if len(selected) == 1 else "")
+            if not input_path:
+                raise RequestError("WRITE_PLUGIN_INPUT_REQUIRED", f"请为本次写回明确提供与来源匹配的插件：{key}")
+            grant = PathAuthorizationPolicy(PathGrant(Path(root)) for root in roots)
+            access = grant.authorize(input_path, working_directory=base)
+            if not access.allowed:
+                raise RequestError(access.code, access.reason)
+            absolute_input = Path(input_path)
+            if not absolute_input.is_absolute():
+                absolute_input = base / absolute_input
+            snapshot = bind_plugin_write_input(
+                snapshot, entries, str(absolute_input), request, TranslationIoProjectSourcePreparer()
+            )
         source = Path(snapshot.source.display_name or snapshot.source.uri)
         reference_field = {
             FormatId.PLUGIN_SSE: "esp_path",
@@ -111,7 +137,7 @@ def prepare_write_back(args: dict, ctx) -> PreparedWriteBack:
             HydratedWriteDraft(
                 snapshot,
                 output_format,
-                tuple(entry.snapshot() for entry in collection),
+                entries,
                 path,
                 collection.collection_revision.value,
                 request,

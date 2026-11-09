@@ -438,22 +438,16 @@ class TestListQualityReports(unittest.TestCase):
         from transbridge.smart_assistant.tools.tool_proofreader import _tool_list_quality_reports
 
         self.func = _tool_list_quality_reports
-        self.ctx = project_context(self)
+        self.ctx = project_context(self, make_test_collection(1))
 
-    def test_no_esp_path_returns_empty(self):
+    def test_no_reports_returns_empty(self):
         r = self.func({}, self.ctx)
         self.assertTrue(r.success)
         self.assertNotIn("directory", r.data)
         self.assertEqual(r.data["files"], [])
 
-    def test_with_esp_path_nonexistent_dir(self):
-        import os
-        import tempfile
-
-        self.ctx.esp_path = os.path.join(tempfile.gettempdir(), "nonexistent_mod.esp")
-        r = self.func({}, self.ctx)
-        self.assertTrue(r.success)
-        self.assertEqual(r.data["files"], [])
+    def test_rejects_invalid_limit(self):
+        self.assertFalse(self.func({"limit": 0}, self.ctx).success)
 
     def test_with_limit(self):
         r = self.func({"limit": 5}, self.ctx)

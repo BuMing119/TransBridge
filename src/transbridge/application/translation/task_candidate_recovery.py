@@ -160,7 +160,7 @@ def _execution_inputs(record, execution_id, source_key, original, candidate_keys
     return inputs
 
 
-def load_recovery_candidates(record, source_key: str, config) -> dict[EntryKey, CandidateTranslation]:
+def load_recovery_candidates(record, source_key: str, config, *, root=None) -> dict[EntryKey, CandidateTranslation]:
     """Return validated draft seeds; callers still verify the current project input.
 
     Commit markers refer to private drafts, so they never make a candidate a
@@ -180,9 +180,13 @@ def load_recovery_candidates(record, source_key: str, config) -> dict[EntryKey, 
         raise ValueError("恢复任务执行链无效。")
     runs = tuple(dict.fromkeys(runs))
     references = []
-    for stem in _checkpoint_stems(source):
-        root = Path(config.get_ai_translator_dir(stem)) / "runtime-v2"
-        references.extend(checkpoint_references(root, runs, source_key))
+    roots = (
+        (root,)
+        if root is not None
+        else tuple(Path(config.get_ai_translator_dir(stem)) / "runtime-v2" for stem in _checkpoint_stems(source))
+    )
+    for directory in roots:
+        references.extend(checkpoint_references(directory, runs, source_key))
     recovered = {}
     seen_runs = set()
     for reference in sorted(references, key=lambda value: value.priority):

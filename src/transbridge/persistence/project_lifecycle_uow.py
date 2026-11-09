@@ -1,6 +1,6 @@
 """Repository-backed lifecycle UnitOfWork adapter seam.
 
-The transaction store owns staging and atomic pointer exchange.  This wrapper
+The transaction store owns staging and authoritative publication. This wrapper
 ensures application code cannot call the final commit more than once or stage
 mutations after completion.
 """
@@ -11,6 +11,7 @@ from collections.abc import Callable
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
+from transbridge.application.contracts import Diagnostic
 from transbridge.application.projects.models import (
     LifecycleActivation,
     LifecycleProjectUpdate,
@@ -30,10 +31,11 @@ class LifecycleMutationKind(StrEnum):
 
 @runtime_checkable
 class LifecycleTransactionStorePort(Protocol):
-    """Staging backend whose ``commit`` publishes the active pointer last.
+    """Staging backend whose ``commit`` publishes the authoritative records.
 
     Stage methods may write isolated transaction artifacts but must not mutate
-    repository current/active references.  A failed commit remains rollbackable.
+    repository current/active references. A failed commit remains rollbackable.
+    Diagnostics returned by commit describe work that could not finish after publication.
     """
 
     def begin(self, transaction_id: str) -> None: ...
@@ -52,7 +54,7 @@ class LifecycleTransactionStorePort(Protocol):
         provisioning: ProjectProvisioningCommit,
     ) -> None: ...
 
-    def commit(self, transaction_id: str) -> None: ...
+    def commit(self, transaction_id: str) -> tuple[Diagnostic, ...] | None: ...
 
     def rollback(self, transaction_id: str) -> None: ...
 
@@ -100,12 +102,13 @@ class RepositoryLifecycleUnitOfWork:
             provisioning,
         )
 
-    def commit(self) -> None:
+    def commit(self) -> tuple[Diagnostic, ...] | None:
         self._ensure_open()
         if self._mutation is None:
             raise RuntimeError("cannot commit an empty lifecycle UnitOfWork")
-        self._store.commit(self._transaction_id)
+        diagnostics = self._store.commit(self._transaction_id)
         self._finished = True
+        return diagnostics
 
     def rollback(self) -> None:
         if self._finished:

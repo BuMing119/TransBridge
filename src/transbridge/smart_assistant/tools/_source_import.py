@@ -5,12 +5,7 @@ from __future__ import annotations
 from threading import RLock
 
 from transbridge.application.io import FormatId, default_format_catalog
-from transbridge.application.projects.prepared_source_results import (
-    decode_prepared_source,
-    encode_prepared_source,
-    encode_source_snapshot,
-    prepare_parsed_source,
-)
+from transbridge.application.projects.prepared_source_results import prepare_parsed_source
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
 from .base import ToolResult
@@ -48,8 +43,6 @@ def _retain_source_receipt(store, record, **fields):
 
 def publish_import(target, path, label, collection, snapshot, format_id, action, options=(), *, task):
     if action == "append":
-        if snapshot is not None:
-            task.record["input_snapshot"] = encode_source_snapshot(snapshot)
         candidates = tuple(collection)
         if format_id in {FormatId.SST_SSU8, FormatId.SST_SSU9}:
             from ._sst_import import prepare_sst_candidates
@@ -70,23 +63,26 @@ def publish_import(target, path, label, collection, snapshot, format_id, action,
         return result
     if snapshot is None or default_format_catalog().adapter(format_id) is None:
         raise ValueError("该格式尚无正式来源适配器；内部 JSON 可用 append 更新同一 EntryKey，不能新增未登记来源。")
-    prepared = prepare_parsed_source(path, tuple(collection), snapshot, format_id, options)
+    task.prepared_source = prepare_parsed_source(path, tuple(collection), snapshot, format_id, options)
     task.record.update(
-        prepared_source=encode_prepared_source(prepared, tuple(collection)),
         entries=[entry.to_dict() for entry in collection],
         label=label,
     )
+    task.store.acquire(task.result_id)
     try:
         task.persist(state="partial" if task.record.get("parse_outcome") == "partial" else "completed")
-        summary, warning = merge_source_result(task.ctx, task.store, task.record)
+        summary, warning = merge_source_result(task.ctx, task.store, task.record, prepared=task.prepared_source)
     except Exception as exc:
         return ToolResult(
             success=False,
             partial=True,
             message=f"解析成果已保留，登记待重试：{exc}",
             data={"result_id": task.result_id},
-            recovery_action="使用 get_task_result 查询，merge_task_result 重试；无需重新解析文件。",
+            recovery_action="使用 get_task_result 查询已提取的译文。重新登记来源时请重新选择输入文件。",
         )
+    finally:
+        task.store.release()
+        task.prepared_source = None
     return ToolResult(
         success=True,
         partial=task.record.get("parse_outcome") == "partial",
@@ -104,7 +100,7 @@ def publish_import(target, path, label, collection, snapshot, format_id, action,
     )
 
 
-def merge_source_result(ctx, store, record):
+def merge_source_result(ctx, store, record, *, prepared=None):
     import os
 
     from transbridge.application.projects.source_registry import migrate_legacy_source_registry
@@ -117,8 +113,11 @@ def merge_source_result(ctx, store, record):
     retry_source_receipt(store, record)
     if identity != (record["project_id"], record["variant_id"]):
         raise ValueError("来源成果对应的工程版本已切换，请切回原版本再登记。")
+    if record.get("registration_state") == "committed" or record.get("registered"):
+        return {"activated": False, "registered": True}, ""
+    if prepared is None:
+        raise ValueError("已保留提取的翻译数据；重新登记来源需要再次选择输入文件。")
     target = ProjectToolTarget.capture(ctx)
-    prepared = decode_prepared_source(record["prepared_source"])
     path = dict(prepared.descriptor)["location"]
     expected_registration = migrate_legacy_source_registry(identity[0], (prepared.to_dict(),)).sources[0].to_dict()
 
@@ -158,11 +157,13 @@ def merge_source_result(ctx, store, record):
             _retain_source_receipt(store, record, registration_state="failed")
             raise ValueError("；".join(item.message for item in result.diagnostics))
         receipt_warning = _retain_source_receipt(store, record, registered=True, registration_state="committed")
-        from transbridge.ui.source_hydration import slot_from_hydration
+        from transbridge.ui.source_hydration import slot_from_hydration, source_slot_key
 
         try:
-            app.add_slot(path, slot_from_hydration(result.value.hydration))
-            app.activate_slot(path)
+            hydration = result.value.hydration
+            key = source_slot_key(hydration)
+            app.add_slot(key, slot_from_hydration(hydration))
+            app.activate_slot(key)
             target.acknowledge_projection()
         except Exception as exc:
             return {"activated": False, "registered": True}, f"来源已登记，视图待重新加载：{exc}"

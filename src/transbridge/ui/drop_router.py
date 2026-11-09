@@ -14,7 +14,6 @@ import os
 from pathlib import Path
 import stat
 from types import MappingProxyType
-import zipfile
 
 from transbridge.application.io import FormatCatalog, FormatId, ProbeRequest, ProbeStatus, SourceDescriptor
 from transbridge.fileops.archive import (
@@ -25,17 +24,18 @@ from transbridge.fileops.archive import (
 from transbridge.fileops.archive_policy import (
     ArchiveBudget,
     ArchiveManifest,
-    ArchiveMember,
-    ArchiveMemberType,
     ArchivePolicy,
     ArchivePolicyError,
 )
+from transbridge.persistence.project_store.format import PROJECT_FORMAT
+from transbridge.ui.project_drop_probe import is_legacy_project_json, is_project_archive, is_project_database
 from transbridge.ui.shell.action_catalog import IntentId
 
 
 class DropKind(StrEnum):
     PLUGIN = "plugin"
     PROJECT_ARCHIVE = "project-archive"
+    PROJECT_DATABASE = "project-database"
     JSON = "json"
     EET = "eet"
     XT = "xt"
@@ -314,6 +314,14 @@ class DropRouter:
         suffix = path.suffix.casefold()
         if suffix == ".transbridge":
             return self._inspect_project_archive(path)
+        if suffix == ".sqlite3":
+            try:
+                supported = is_project_database(path)
+            except OSError:
+                return None, self._unreadable(os.fspath(path))
+            if supported:
+                return DropItem(os.fspath(path), DropKind.PROJECT_DATABASE, evidence=(PROJECT_FORMAT,)), None
+            return None, self._unsupported_project(path)
         if suffix in _ARCHIVE_SUFFIXES:
             return self._inspect_fomod_archive(path)
         try:
@@ -334,6 +342,8 @@ class DropRouter:
         except OSError:
             return None, self._unreadable(os.fspath(path))
         source = SourceDescriptor(os.fspath(path), path.name, size)
+        if suffix == ".json" and is_legacy_project_json(content):
+            return None, self._unsupported_project(path)
         probe = self._formats.resolve(ProbeRequest(source, content))
         evidence = tuple(f"{item.kind.value}:{item.value}" for item in probe.evidence)
         if oversized and probe.status is not ProbeStatus.EXACT:
@@ -368,18 +378,12 @@ class DropRouter:
 
     def _inspect_project_archive(self, path: Path) -> tuple[DropItem | None, DropDiagnostic | None]:
         try:
-            manifest = _inspect_zip_with_policy(path, self._archive_policy)
+            supported = is_project_archive(path, self._archive_policy)
         except (ArchivePolicyError, ArchiveExtractionError, OSError) as exc:
             return None, self._archive_diagnostic(path, exc)
-        names = {member.name.casefold() for member in manifest.files}
-        if "project.json" not in names:
-            return None, DropDiagnostic(
-                "DROP_PROJECT_ARCHIVE_INVALID",
-                ".transbridge 归档缺少 project.json。",
-                "请选择由 TransBridge 导出的完整工程归档。",
-                os.fspath(path),
-            )
-        return DropItem(os.fspath(path), DropKind.PROJECT_ARCHIVE, evidence=("project.json",)), None
+        if not supported:
+            return None, self._unsupported_project(path)
+        return DropItem(os.fspath(path), DropKind.PROJECT_ARCHIVE, evidence=(PROJECT_FORMAT,)), None
 
     def _inspect_fomod_archive(self, path: Path) -> tuple[DropItem | None, DropDiagnostic | None]:
         try:
@@ -405,6 +409,8 @@ class DropRouter:
             return DropCandidatePlan(IntentId.PROJECT_CREATE, tuple(payload), "使用该插件准备新建本地翻译工程")
         if item.kind is DropKind.PROJECT_ARCHIVE:
             return DropCandidatePlan(IntentId.PROJECT_IMPORT, tuple(payload), "检查并导入该 .transbridge 工程归档")
+        if item.kind is DropKind.PROJECT_DATABASE:
+            return DropCandidatePlan(IntentId.PROJECT_OPEN, tuple(payload), "打开该工作区项目")
         if item.kind is DropKind.FOMOD_ARCHIVE:
             return DropCandidatePlan(IntentId.PUBLISH_FOMOD, tuple(payload), "打开 FOMOD 操作计划并使用该归档")
         return DropCandidatePlan(IntentId.SOURCE_MIGRATE, tuple(payload), "打开已有译文导入计划并使用该来源")
@@ -436,6 +442,15 @@ class DropRouter:
         )
 
     @staticmethod
+    def _unsupported_project(path: Path) -> DropDiagnostic:
+        return DropDiagnostic(
+            "DROP_PROJECT_FORMAT_UNSUPPORTED",
+            "不支持的项目格式。",
+            "请选择当前工作区的项目数据库或当前版本导出的项目包。",
+            os.fspath(path),
+        )
+
+    @staticmethod
     def _rejected(code: str, message: str, recovery: str) -> DropResolution:
         return DropResolution(
             DropResolutionStatus.REJECTED,
@@ -454,28 +469,6 @@ def _is_reparse_point(path: Path) -> bool:
     except OSError:
         return False
     return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
-
-
-def _inspect_zip_with_policy(path: Path, policy: ArchivePolicy) -> ArchiveManifest:
-    try:
-        with zipfile.ZipFile(path) as archive:
-            members = tuple(_zip_member(info) for info in archive.infolist())
-    except zipfile.BadZipFile as exc:
-        raise ArchiveExtractionError("ARCHIVE_CORRUPT", "ZIP central directory is invalid") from exc
-    return policy.evaluate(members, archive_format="zip")
-
-
-def _zip_member(info: zipfile.ZipInfo) -> ArchiveMember:
-    mode = (info.external_attr >> 16) & 0xFFFF
-    if info.is_dir():
-        member_type = ArchiveMemberType.DIRECTORY
-    elif stat.S_ISLNK(mode):
-        member_type = ArchiveMemberType.SYMLINK
-    elif stat.S_IFMT(mode) and not stat.S_ISREG(mode):
-        member_type = ArchiveMemberType.SPECIAL
-    else:
-        member_type = ArchiveMemberType.FILE
-    return ArchiveMember(info.filename, info.file_size, info.compress_size, member_type)
 
 
 __all__ = [

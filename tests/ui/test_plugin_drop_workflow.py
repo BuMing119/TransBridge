@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import replace
-from pathlib import Path
+import os
+import subprocess
+import sys
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QMessageBox
@@ -9,7 +10,6 @@ import pytest
 
 from tests.plugin_fixtures import write_plugin
 from tests.ui.test_project_creation_reuse import _until, shared_plugin_window as _shared_plugin_window
-from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.coordinators.guided_project_coordinator import GuidedDraftPhase
 
 shared_plugin_window = _shared_plugin_window
@@ -51,7 +51,6 @@ def _dirty(case):
     entry = next(iter(context.collection))
     result = context.update_projected_entry(entry.identity, translation="Unsaved A", stage=1)
     assert result.is_success, result.diagnostics
-    context.collection = TranslationEntryCollection((replace(entry, translation="Unsaved A", stage=1),))
     assert context.dirty
     assert not context.authoritative_projection_diverged()
 
@@ -71,7 +70,7 @@ def test_drop_without_project_opens_prefilled_draft_without_creating_records(sha
     assert draft.source_path == str(case.plugin)
     assert case.window.start_center._pages.currentWidget() is case.window.start_center._draft_page
     assert case.services.project_lifecycle.active is None
-    assert not (case.root / "data/project-catalog.json").exists()
+    assert not case.services.project_catalog.list_projects().projects
 
 
 def test_add_plugin_keeps_unsaved_entries_and_survives_save_and_reopen(shared_plugin_window):
@@ -136,7 +135,8 @@ def test_changed_content_at_existing_reference_can_be_added_as_an_independent_so
     context = case.window.context
     original_key = context.active_key
     original_slot = context.active_slot
-    original_content = original_slot.source_snapshot.content
+    original_fingerprint = original_slot.source_snapshot.sha256
+    original = next(iter(original_slot.collection)).original
     write_plugin(case.plugin, [(0x900, "OtherNPC", "Replacement original")])
 
     _, enabled, _ = _drop_choice(case, case.plugin, "add")
@@ -145,8 +145,9 @@ def test_changed_content_at_existing_reference_can_be_added_as_an_independent_so
 
     assert len(context.slots) == 2
     assert context.active_key != original_key
-    assert context.slots[original_key].source_snapshot.content == original_content
-    assert context.active_slot.source_snapshot.content == case.plugin.read_bytes()
+    assert context.slots[original_key].source_snapshot.sha256 == original_fingerprint
+    assert next(iter(context.slots[original_key].collection)).original == original
+    assert next(iter(context.active_slot.collection)).original == "Replacement original"
 
 
 @pytest.mark.parametrize("decision", [QMessageBox.StandardButton.Save, QMessageBox.StandardButton.Cancel])
@@ -162,7 +163,10 @@ def test_new_project_choice_saves_or_cancels_unsaved_work(shared_plugin_window, 
     assert next(iter(case.window.context.collection)).translation == "Unsaved A"
     if decision == QMessageBox.StandardButton.Save:
         assert not case.window.context.dirty
-        assert "Unsaved A" in Path(case.original_variant_path).read_text(encoding="utf-8")
+        active = case.services.project_lifecycle.active
+        store = case.services.projects.store_for(active.project_ref.identity)
+        (row,) = store.read_page(active.formal_variant_ref.identity)
+        assert row.state.translation == "Unsaved A"
         assert case.window.start_center_controller.guided_project.state.source_path == str(case.plugin)
     else:
         assert case.window.context.dirty
@@ -183,8 +187,34 @@ def test_save_failure_does_not_open_a_new_draft(shared_plugin_window, monkeypatc
     assert case.window.start_center_controller.guided_project.state.source_path is None
 
 
-def test_switching_variant_during_choice_rejects_the_old_target(shared_plugin_window, monkeypatch):
-    case = shared_plugin_window
+def test_switching_variant_during_choice_rejects_the_old_target(request, monkeypatch, tmp_path):
+    # Keep fatal exceptions in PyQt slots from terminating the whole pytest run.
+    if os.environ.get("TRANSBRIDGE_QA_PLUGIN_DROP_CHILD") != "1":
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                "--basetemp",
+                str(tmp_path / "child"),
+            ],
+            env={**os.environ, "TRANSBRIDGE_QA_PLUGIN_DROP_CHILD": "1"},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=40,
+        )
+        assert completed.returncode == 0, (
+            f"Qt subprocess exited with {completed.returncode}\n{completed.stdout}\n{completed.stderr}"
+        )
+        return
+
+    case = request.getfixturevalue("shared_plugin_window")
     other = write_plugin(case.root / "B.esp", [(0x900, "OtherNPC", "Other original")])
     messages, changed = [], []
     monkeypatch.setattr(case.window, "show_message", lambda text, **_: messages.append(text))
@@ -202,6 +232,23 @@ def test_switching_variant_during_choice_rejects_the_old_target(shared_plugin_wi
     assert len(case.services.project_lifecycle.active.project.envelope.data["sources"]) == 1
 
 
+def test_paged_guidance_refreshes_after_a_real_edit_and_save(shared_plugin_window):
+    case = shared_plugin_window
+    context = case.window.context
+    banner = case.window.workbench.guidance_banner
+    _until(lambda: banner.property("tbStatusId") == "publish_pending")
+    entry = next(iter(context.collection))
+
+    changed = context.update_projected_entry(entry.identity, stage=2)
+    assert changed.is_success, changed.diagnostics
+    _until(lambda: banner.property("tbStatusId") == "review_pending")
+
+    saved = []
+    assert case.window.save_current_project_async(on_finished=saved.append)
+    _until(lambda: bool(saved) and banner.property("tbStatusId") == "review_pending")
+    assert saved == [True]
+
+
 def test_view_install_failure_is_explicit_and_does_not_leave_partial_content_editable(
     shared_plugin_window, monkeypatch
 ):
@@ -213,7 +260,7 @@ def test_view_install_failure_is_explicit_and_does_not_leave_partial_content_edi
     messages = []
     monkeypatch.setattr(case.window, "show_message", lambda text, **_: messages.append(text))
 
-    def fail(*_):
+    def fail(*_, **_kwargs):
         raise RuntimeError("injected hydration failure")
 
     with monkeypatch.context() as failures:

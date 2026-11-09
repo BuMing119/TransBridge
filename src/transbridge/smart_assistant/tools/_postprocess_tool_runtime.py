@@ -175,6 +175,7 @@ def execute_postprocess_task(
         workflow="postprocess",
         stop_event=stop_event,
         pause_event=pause_event,
+        log_base=getattr(ctx, "task_log_base", None),
     )
     try:
         stages = _build_stages(request, llm_runtime.client, term_manager, PostProcessor, PostProcessorConfig)

@@ -303,8 +303,8 @@ class StartCenterLanding(QWidget):
         layout.addWidget(heading)
 
         self.choose_plugin_button = _task_button(
-            "选择插件",
-            "可多选 ESP、ESM 或 ESL，一次导入同一个工程",
+            "选择来源文件",
+            "可多选插件、EET、SST、XML 或 JSON，导入同一个工程",
             "language",
             panel,
             primary=True,
@@ -331,13 +331,13 @@ class StartCenterLanding(QWidget):
         self._open_button.clicked.connect(self.open_project_requested)
         layout.addWidget(self._open_button)
 
-        self._empty_button = QPushButton("高级：创建空工程（不导入插件）", panel)
+        self._empty_button = QPushButton("高级：创建空工程（不导入文件）", panel)
         self._empty_button.setFlat(True)
         self._empty_button.setProperty("tbStartAdvanced", True)
         self._empty_button.setIcon(tabler_icon(self._empty_button, "plus", 18, semantic="accent"))
         self._empty_button.setIconSize(QSize(18, 18))
         ComponentStyle.apply_static(self._empty_button, ComponentKind.BUTTON, ComponentDensity.COMPACT)
-        configure_accessible_widget(self._empty_button, name="创建不导入插件的空工程")
+        configure_accessible_widget(self._empty_button, name="创建不导入文件的空工程")
         self._empty_button.clicked.connect(self.create_empty_requested)
         layout.addWidget(self._empty_button, alignment=Qt.AlignmentFlag.AlignLeft)
         layout.addStretch(1)

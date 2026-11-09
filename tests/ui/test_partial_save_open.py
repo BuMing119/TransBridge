@@ -45,7 +45,9 @@ def test_open_after_partial_save_only_continues_for_durably_saved_translations(o
     if persisted:
         assert case.context.project_name == "new"
         assert case.host.successes and not case.host.failures
-        assert warning in case.host.messages
+        # The success message retains the warning instead of immediately
+        # replacing it with a second status-bar notification.
+        assert warning in case.host.messages[-1].splitlines()
     else:
         assert case.context.project_name == "old"
         assert case.host.failures and not case.host.successes

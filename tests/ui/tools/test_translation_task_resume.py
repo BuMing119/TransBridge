@@ -3,7 +3,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import json
-from pathlib import Path
 from threading import Event
 
 import pytest
@@ -21,7 +20,8 @@ name_run = support.name_run
 
 
 def _record(run, task, candidates, *, config=None):
-    root = Path(run.request.config.get_ai_translator_dir(Path(task.esp_path).stem)) / "runtime-v2"
+    task_directory = run.root / "p"
+    root = task_directory / "runtime-v2"
     session = LegacyTranslationCandidateSession(
         run_id=source_run_id("old-task-attempt-1", task.key),
         owner_id="legacy-auto-translator",
@@ -38,7 +38,6 @@ def _record(run, task, candidates, *, config=None):
         "sources": [
             {
                 "key": task.key,
-                "checkpoint_stem": Path(task.esp_path).stem,
                 "translate_keys": [entry.identity.to_dict() for entry in task.translate_entries],
                 "inputs": [
                     {
@@ -67,7 +66,7 @@ def _record(run, task, candidates, *, config=None):
         **execution,
         recovery_record=record,
         recovery_task_id="old-task",
-        recovery_directory=run.root / "p",
+        recovery_directory=task_directory,
     )
     run.executor.request = run.request
     run.executor.config = run.request.config
@@ -222,7 +221,7 @@ def test_interrupted_comprehensive_review_reuses_completed_batches(name_run, mon
     )
     fresh.prepare_names((fresh_task,))
     resumed = fresh.execute(fresh_task)
-    assert resumed.successful, resumed.error
+    assert resumed.successful, (resumed.error, resumed.failed_keys, getattr(resumed.translation, "failed_entries", ()))
     assert len(reviewed) == 3
     assert len({json.dumps(key, sort_keys=True) for key in reviewed}) == 3
     assert all(entry.translation.endswith("（校对）") for entry in fresh_task.collection)

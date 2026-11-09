@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import logging
-from pathlib import Path
 import threading
 
 from .base import ToolResult, require_runtime_context
-
-logger = logging.getLogger(__name__)
 
 _last_reports: dict[tuple, dict] = {}
 _last_report_lock = threading.Lock()
@@ -42,17 +38,6 @@ def get_last_report(ctx) -> dict | None:
         return deepcopy(_last_reports.get(scope))
 
 
-def _resolve_report_directory(ctx) -> Path:
-    from transbridge.paratranz.config_manager import LLMConfig, ParatranzConfig
-
-    snapshot = getattr(getattr(ctx, "active_slot", None), "source_snapshot", None)
-    source = getattr(snapshot, "source", None)
-    name = getattr(source, "display_name", None) or getattr(source, "uri", None) or getattr(ctx, "esp_path", None)
-    if name:
-        return Path(LLMConfig.get_ai_translator_dir(Path(name).stem)) / "reports"
-    return Path(ParatranzConfig.get_data_dir()) / "reports" / "postprocess"
-
-
 class ProofreaderController:
     """Coordinate proofreader tools without owning execution details."""
 
@@ -68,7 +53,6 @@ class ProofreaderController:
         return launch_postprocess_task(
             args,
             ctx,
-            report_directory=_resolve_report_directory,
             report_callback=set_last_report,
             manager=self._task_mgr,
         )
@@ -106,24 +90,33 @@ class ProofreaderController:
 
     def list_quality_reports(self, args: dict, ctx) -> ToolResult:
         """List historical post-process Excel reports."""
+        from .translation_task_results import _caller, _recovery_view, _result_location
 
-        reports_dir = _resolve_report_directory(ctx)
         limit = args.get("limit", 50)
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             return ToolResult.fail("limit 必须是正整数")
         files = []
         try:
-            if reports_dir.is_dir():
-                entries = sorted(
-                    (path for path in reports_dir.iterdir() if path.suffix == ".xlsx"),
-                    key=lambda path: path.stat().st_mtime,
-                    reverse=True,
-                )
-                for path in entries[:limit]:
+            app, context = _caller(ctx)
+            task_store = _result_location(app)
+            recovery = _recovery_view(task_store, context)
+            for record in recovery.list_summaries():
+                if record.get("origin") != "smart-assistant" or record.get("mode") != "postprocess":
+                    continue
+                reports_dir = task_store.run_directory(record["task_id"]) / "reports"
+                for path in reports_dir.glob("*.xlsx"):
                     stat = path.stat()
-                    files.append({"name": path.name, "size": stat.st_size, "modified_at": stat.st_mtime})
-        except OSError as exc:
-            logger.warning("扫描报告目录失败: %s", exc)
+                    files.append({
+                        "name": path.name,
+                        "size": stat.st_size,
+                        "modified_at": stat.st_mtime,
+                        "result_id": record["task_id"],
+                    })
+                if len(files) >= limit:
+                    break
+        except (OSError, ValueError) as exc:
+            return ToolResult.fail(str(exc), error_code="TASK_RESULT_UNAVAILABLE")
+        files = sorted(files, key=lambda item: item["modified_at"], reverse=True)[:limit]
         return ToolResult.ok(f"共 {len(files)} 份报告" if files else "暂无历史报告", data={"files": files})
 
 

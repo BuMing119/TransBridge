@@ -145,6 +145,7 @@ class AiTaskRun(QObject):
         self._attempt += 1
         if self._attempt > 1:
             self.logged.emit(f"正在重试 {len(self._attempt_keys)} 条未完成条目")
+        recovery_directory = getattr(self.request, "recovery_directory", None)
         worker = AiTaskWorker(
             self.request,
             tasks,
@@ -152,9 +153,7 @@ class AiTaskRun(QObject):
             project_id=self.project_id,
             consistency=self.consistency,
             attempt_id=f"{self.request.run_id}-attempt-{self._attempt}",
-            checkpoint_root=(
-                self.session.project_dir / "ai-proofread-resume" if self.session.project_dir is not None else None
-            ),
+            checkpoint_root=(recovery_directory / "ai-proofread-resume" if recovery_directory is not None else None),
         )
         self.worker = worker
         self.request_state.bind(worker)

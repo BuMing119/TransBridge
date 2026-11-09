@@ -4,6 +4,7 @@ from dataclasses import replace
 import json
 
 from transbridge.application.io.identity import EntryKey, ExternalEntryRef
+from transbridge.application.projects.source_fields import entry_fields
 from transbridge.application.projects.variant_commands import EntryStatePatch
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
@@ -20,10 +21,10 @@ def upload_result_owner(context, target):
 
 
 def upload_result_directory(target):
-    if target.identity is None:
-        raise ValueError("请先打开上传对应的工程版本。")
-    request = replace(target.app.runtime_context, project_id=target.identity[0], variant_id=target.identity[1])
-    return target.app.project_commands.task_result_directory(request)
+    store = getattr(target.app, "task_store", None)
+    if store is None:
+        raise ValueError("独立任务存储服务不可用。")
+    return store.root
 
 
 def associate_upload_receipts(target, record):
@@ -62,7 +63,7 @@ def associate_upload_receipts(target, record):
                     current.original,
                     current.context,
                     current.string_id,
-                    _metadata(current.metadata),
+                    _metadata(upload_entry_metadata(current.metadata)),
                 ) != (
                     base["original"],
                     base["context"],
@@ -170,6 +171,22 @@ def associate_upload_receipts(target, record):
 
 def _metadata(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False)
+
+
+def upload_entry_metadata(value):
+    """Only stable locator data participate in a replay-safe upload receipt."""
+    allowed = {
+        "io.format",
+        "io.locator",
+        "plugin.form_id",
+        "plugin.record_type",
+        "plugin.field_type",
+        "eet.record_index",
+        "eet.record_signature",
+        "sst.record_index",
+        "sst.record_signature",
+    }
+    return list(entry_fields((key, item) for key, item in value if key in allowed).items())
 
 
 def _defer(receipts, reason):

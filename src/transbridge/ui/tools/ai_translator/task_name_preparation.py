@@ -338,7 +338,13 @@ def _prepare_source(executor, task, selected):
     entries = tuple(deepcopy(group.representative.entry) for _, group in selected)
     collection = TranslationEntryCollection(entries)
     isolated = replace(task, collection=collection, translate_entries=entries, polish_entries=())
-    store = WorkflowLogStore(task.esp_path, workflow="project_names", max_concurrent=executor.config.max_concurrent)
+    run_directory = getattr(executor.request, "recovery_directory", None)
+    store = WorkflowLogStore(
+        task.esp_path,
+        workflow="project_names",
+        max_concurrent=executor.config.max_concurrent,
+        log_base=None if run_directory is None else run_directory / "logs",
+    )
     try:
         if executor.log_ready is not None:
             executor.log_ready(task.key, store.log_dir)

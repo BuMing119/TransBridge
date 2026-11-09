@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
-
-import pytest
 
 from tests.plugin_fixtures import write_plugin
 from transbridge.application.contracts import RequestContext
@@ -12,9 +9,8 @@ from transbridge.application.projects import ProjectProvisioningRequest, Project
 from transbridge.application.projects.source_content import folded_plugin_pairs
 from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
-from transbridge.persistence.v2 import ProjectId, ProjectRef, VariantId, VariantRef
-
-from .fakes import MemoryFilesystem
+from transbridge.persistence.project_store import lifecycle as storage_lifecycle
+from transbridge.persistence.project_store.repository import ProjectStore
 
 
 class _Ids:
@@ -71,7 +67,7 @@ def test_real_plugins_create_one_project_and_reopen_with_all_untranslated_entrie
         assert prepared.is_success and prepared.value is not None, prepared.diagnostics
         assert prepared.value["source_count"] == prepared.value["entry_count"] == 3
         assert services.project_lifecycle.active is None
-        assert not (root / "project-catalog.json").exists()
+        assert not services.project_catalog.list_projects().projects
 
         committed = services.gui_project_commands.commit_create(str(prepared.value["token"]), _context())
         assert committed.is_success, committed.diagnostics
@@ -79,7 +75,10 @@ def test_real_plugins_create_one_project_and_reopen_with_all_untranslated_entrie
             str(prepared.value["project_id"]), _context()
         )
         assert hydration.is_success and hydration.value is not None
-        assert [source.location for source in hydration.value.sources] == [str(path.resolve()) for path in plugins]
+        assert [source.source_snapshot.source.display_name for source in hydration.value.sources] == [
+            path.name for path in plugins
+        ]
+        assert all(source.source_snapshot.content is None for source in hydration.value.sources)
         assert [source.entries[0].original for source in hydration.value.sources] == [
             f"Original {index}" for index in range(3)
         ]
@@ -88,8 +87,9 @@ def test_real_plugins_create_one_project_and_reopen_with_all_untranslated_entrie
         assert len(snapshot.entries) == len(snapshot.source_fingerprints) == 3
         assert all(entry.translation == "" and entry.stage is Stage.UNTRANSLATED for entry in snapshot.entries)
         assert services.gui_project_commands.save(_context()).is_success
-        catalog = json.loads((root / "project-catalog.json").read_text(encoding="utf-8"))
-        assert list(catalog["projects"]) == [prepared.value["project_id"]]
+        assert [project.project_id for project in services.project_catalog.list_projects().projects] == [
+            prepared.value["project_id"]
+        ]
     finally:
         services.close()
 
@@ -100,9 +100,12 @@ def test_real_plugins_create_one_project_and_reopen_with_all_untranslated_entrie
         assert restarted.current_project_opener.activate(restored.value, _context()).is_success
         active = restarted.project_lifecycle.active
         assert active.project_ref.identity.value == prepared.value["project_id"]
-        assert {source["location"] for source in active.project.envelope.data["sources"]} == {
-            str(path.resolve()) for path in plugins
+        assert {source["display_name"] for source in active.project.envelope.data["sources"]} == {
+            path.name for path in plugins
         }
+        store = ProjectStore(Path(restarted.projects.path_for(active.project_ref)))
+        assert [source.name for source in store.sources()] == [path.name for path in plugins]
+        assert all(str(path) not in repr(active.project.envelope.data) for path in plugins)
         assert active.project.envelope.data["source_relations"] == []
         assert active.variant.snapshot().entries == snapshot.entries
         assert active.variant.snapshot().source_fingerprints == snapshot.source_fingerprints
@@ -122,7 +125,9 @@ def test_second_invalid_plugin_leaves_existing_project_and_disk_unchanged(tmp_pa
         assert existing.value is not None
         assert services.gui_project_commands.commit_create(str(existing.value["token"]), _context()).is_success
         previous = services.project_lifecycle.active
-        persisted_before = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*.json")}
+        persisted_before = {
+            str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()
+        }
 
         failed = services.gui_project_commands.prepare_create(_request((first, invalid)), _context())
 
@@ -131,47 +136,40 @@ def test_second_invalid_plugin_leaves_existing_project_and_disk_unchanged(tmp_pa
         assert dict(failed.diagnostics[0].details)["source_location"] == str(invalid)
         assert services.project_lifecycle.active is previous
         assert services.project_lifecycle.generation == 1
-        # Preparation may retain immutable, unreferenced source artifacts;
-        # authoritative Project/Variant records and pointers stay untouched.
         assert {
-            str(path.relative_to(root)): path.read_bytes()
-            for path in root.rglob("*.json")
-            if "source_artifacts" not in path.relative_to(root).parts
+            str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()
         } == persisted_before
         assert first.exists() and invalid.read_bytes() == b"not a plugin"
     finally:
         services.close()
 
 
-@pytest.mark.parametrize("fault_document", ["variant", "project-catalog.json", "active-project.json"])
-def test_multiple_plugin_transaction_failure_leaves_no_partial_project(tmp_path: Path, fault_document: str) -> None:
+def test_multiple_plugin_transaction_failure_leaves_no_partial_project(tmp_path, monkeypatch):
     plugins = tuple(
         write_plugin(tmp_path / f"Plugin{index}.esp", [(0x800, f"NPC{index}", f"Original {index}")])
         for index in range(2)
     )
-    filesystem = MemoryFilesystem()
-    root = tmp_path / "memory-data"
-    services = _services(root, filesystem=filesystem)
-    try:
-        prepared = services.gui_project_commands.prepare_create(_request(plugins), _context())
-        assert prepared.is_success and prepared.value is not None
-        project_ref = ProjectRef(ProjectId(str(prepared.value["project_id"])))
-        variant_ref = VariantRef(VariantId(str(prepared.value["variant_id"])), project_ref.identity)
-        target = services.variants.path_for(variant_ref) if fault_document == "variant" else str(root / fault_document)
-        filesystem.fail_replace_destinations.add(target)
+    services = _services(tmp_path / "data")
+    original = storage_lifecycle.insert_project
 
-        committed = services.gui_project_commands.commit_create(str(prepared.value["token"]), _context())
+    def fail_after_staging(*args, **kwargs):
+        original(*args, **kwargs)
+        raise OSError("injected SQLite staging failure")
+
+    monkeypatch.setattr(storage_lifecycle, "insert_project", fail_after_staging)
+    try:
+        commands = services.gui_project_commands
+        prepared = commands.prepare_create(_request(plugins), _context())
+        assert prepared.is_success, prepared.diagnostics
+        committed = commands.commit_create(prepared.value["token"], _context())
 
         assert committed.diagnostics[0].code == "PROJECT_PROVISIONING_COMMIT_FAILED"
         assert services.project_lifecycle.active is None
         assert services.project_lifecycle.generation == 0
-        assert services.projects.path_for(project_ref) not in filesystem.files
-        assert services.variants.path_for(variant_ref) not in filesystem.files
-        assert str(root / "project-catalog.json") not in filesystem.files
-        assert str(root / "active-project.json") not in filesystem.files
-        assert not services.gui_project_commands.consume_create_hydration(
-            str(prepared.value["project_id"]), _context()
-        ).is_success
+        assert not services.project_catalog.list_projects().projects
+        assert not services.current_project_opener.has_active_reference
+        assert not tuple((tmp_path / "data").rglob("project.sqlite3"))
+        assert not commands.consume_create_hydration(prepared.value["project_id"], _context()).is_success
     finally:
         services.close()
 

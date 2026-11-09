@@ -123,7 +123,7 @@ def test_missing_referenced_localized_text_fails_before_a_snapshot_is_created(tm
     assert parsed.outcome is OperationOutcome.FAILED
     assert parsed.source_snapshot is None
     assert parsed.entries == ()
-    diagnostic = next(item for item in parsed.diagnostics if item.code == "PLUGIN_PARSE_FAILED")
+    diagnostic = next(item for item in parsed.diagnostics if item.code == "PLUGIN_LOCALIZED_INPUT_REQUIRED")
     assert "mod.esp" in diagnostic.message
     assert "0x00000001" in diagnostic.message
     assert "WEAP FULL (00000800|mod.esp)" in diagnostic.message

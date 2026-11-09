@@ -36,6 +36,7 @@ from .download_merge import (
     publish_results,
     result_changes,
 )
+from .download_task_results import DownloadTaskResults
 from .download_view import DownloadPreview, DownloadSourceOption
 from .review_view import review_rows
 
@@ -77,6 +78,7 @@ class ProjectDownloadSession:
         self.plan = self.snapshot = None
         self._candidate_plan, self._candidates = None, ()
         self._diagnostic_id = uuid4().hex
+        self.task_results = None
         self.source_ids, self.decisions = (), ()
         self.policy = ConflictPolicy.PREFER_REMOTE
         self.review_keys = ()
@@ -164,7 +166,8 @@ class ProjectDownloadSession:
         try:
             return self._compare(tuple(source_ids), policy, tuple(decisions), progress, cancel)
         except Exception:
-            self.discard()
+            if self.task_results is None:
+                self.discard()
             raise
         finally:
             self._lock.release()
@@ -286,12 +289,25 @@ class ProjectDownloadSession:
         with timed_phase("download_preview", operation_id=self._diagnostic_id):
             self.details = self._plan_details(details)
             preview = self._preview()
+        store = getattr(self.context, "task_store", None)
+        if store is not None and self.plan.sources:
+            if self.task_results is None:
+                self.task_results = DownloadTaskResults(
+                    store, self.request_context, self.context.project_commands, self._diagnostic_id
+                )
+            self.task_results.retain(
+                self._result_changes(),
+                tuple(row for plan in self.plan.plans for row in plan.download_review),
+                state="pending_confirmation" if preview.can_apply or preview.review_rows else "completed",
+            )
         if not preview.can_apply and not preview.review_rows:
             self.discard()
         return preview
 
     def discard(self):
-        """Release this round's input and choices; no download payload is durable."""
+        """Release this round's in-memory inputs; the task owns saved candidates."""
+        if self.task_results is not None:
+            self.task_results.close()
         self._reads.clear()
         self._scopes.clear()
         self._bases.clear()
@@ -300,6 +316,7 @@ class ProjectDownloadSession:
         self.plan = self.snapshot = self.merge_result = None
         self._candidate_plan, self._candidates = None, ()
         self._diagnostic_id = uuid4().hex
+        self.task_results = None
         self.source_ids = self.decisions = self.review_keys = self.details = ()
         self._retryable = False
 
@@ -433,7 +450,8 @@ class ProjectDownloadSession:
                 self.discard()
             return receipt
         except Exception:
-            self.discard()
+            if self.task_results is None:
+                self.discard()
             raise
         finally:
             self._lock.release()

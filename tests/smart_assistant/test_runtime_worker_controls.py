@@ -171,7 +171,6 @@ class RecordingCollection(TranslationEntryCollection):
 def test_real_postprocess_respects_task_center_controls_before_candidate_commit(
     manager, monkeypatch, tmp_path, cancel, current_project_factory
 ):
-    from transbridge.smart_assistant.tools import tool_proofreader
 
     entered = threading.Event()
     release = threading.Event()
@@ -199,12 +198,17 @@ def test_real_postprocess_respects_task_center_controls_before_candidate_commit(
         lambda **_kwargs: SimpleNamespace(load_all=lambda: None, match_terms=lambda _texts: {}),
     )
     monkeypatch.setattr("transbridge.paratranz.config_manager.ParatranzConfig.get_data_dir", lambda: str(tmp_path))
-    monkeypatch.setattr(tool_proofreader, "_resolve_report_directory", lambda _ctx: tmp_path / "reports")
     collection = RecordingCollection([make_entry("entry", original="Source", translation="before", stage=1)])
     project = current_project_factory(collection)
     context = project.context
     context.active_slot.collection = collection
-    monkeypatch.setattr(project.commands, "task_result_directory", lambda _context: tmp_path)
+    from transbridge.persistence.task_store import TaskStore
+
+    context.task_store = TaskStore(tmp_path / "task-store-v1")
+    monkeypatch.setattr(
+        project.commands, "project_exists", lambda project_id: project_id == project.project_ref.identity.value
+    )
+    monkeypatch.setattr(project.commands, "result_receipt", lambda _project_id, _operation_id: None)
     project.commands._categorized_uploads = SimpleNamespace(
         result_source_texts=lambda _project, _variant, keys, _context: {
             entry.identity: (entry.original, entry.context or "") for entry in collection if entry.identity in keys

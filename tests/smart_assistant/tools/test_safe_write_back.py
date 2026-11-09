@@ -1,24 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import replace
-import json
 from pathlib import Path
 from time import monotonic
 from types import SimpleNamespace
 
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 import pytest
 
 from tests.contracts.io.test_localized_hydrated_publication import localized as localized_fixture
 from tests.smart_assistant.tools.test_source_import_authority import load_source, project as project_fixture
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import FormatId, ParseRequest, SourceDescriptor, TranslationIoUseCase
-from transbridge.application.projects.prepared_source_results import (
-    decode_prepared_source,
-    encode_prepared_source,
-    prepare_parsed_source,
-)
+from transbridge.application.projects.prepared_source_results import prepare_parsed_source
 from transbridge.application.tasks import TaskRuntime
 from transbridge.smart_assistant.tools.task_manager import TaskManager
 from transbridge.smart_assistant.tools.tool_parser import _tool_parse_esp, _tool_parse_xt
@@ -96,7 +91,7 @@ def _load_localized_translated(project, localized):
     _translate_active(project)
 
 
-def test_localized_prepared_source_roundtrip_preserves_binary_companions_and_metadata(localized):
+def test_localized_request_preparation_keeps_companions_for_current_operation(localized):
     snapshot = replace(
         localized.parsed.source_snapshot,
         metadata=(
@@ -109,39 +104,34 @@ def test_localized_prepared_source_roundtrip_preserves_binary_companions_and_met
         for entry in localized.parsed.entries
     )
     prepared = prepare_parsed_source(str(localized.source), entries, snapshot, FormatId.PLUGIN_SSE)
-    payload = json.loads(json.dumps(encode_prepared_source(prepared, entries)))
-    for path in localized.source.parent.rglob("*"):
-        if path.is_file():
-            path.unlink()
-    restored = decode_prepared_source(payload)
-    assert restored.hydration.source_snapshot == snapshot
-    assert restored.hydration.entries == tuple(entry.snapshot() for entry in entries)
-    companions = dict(restored.hydration.source_snapshot.metadata)["localized_sources"]
+    assert prepared.hydration.source_snapshot == snapshot
+    assert [entry.entry_key for entry in prepared.hydration.entries] == [entry.identity for entry in entries]
+    assert dict(prepared.hydration.entries[0].metadata)["binary"] == (b"\x00\xff", ["text"])
+    companions = dict(prepared.hydration.source_snapshot.metadata)["localized_sources"]
     assert isinstance(companions, tuple) and len(companions) == 3
     assert all(isinstance(rows, tuple) and companion.content for companion, rows in companions)
 
 
-def test_localized_source_save_retry_never_rereads_plugin_or_strings(project, localized, monkeypatch):
-    from transbridge.smart_assistant.tools.entry_task_results import EntryResultStore
-    from transbridge.smart_assistant.tools.tool_translator import _tool_merge_task_result
+def test_localized_source_save_retry_keeps_rows_without_plugin_or_companions(project, localized, monkeypatch):
+    from transbridge.persistence.task_store.recovery import RecoveryView
+    from transbridge.smart_assistant.tools.tool_translator import _tool_get_task_result, _tool_merge_task_result
 
-    create = EntryResultStore.create
-    monkeypatch.setattr(EntryResultStore, "create", lambda *args: (_ for _ in ()).throw(OSError("disk full")))
+    create = RecoveryView.create
+    monkeypatch.setattr(RecoveryView, "create", lambda *args: (_ for _ in ()).throw(OSError("disk full")))
     context = ExecutionContext(app_context=project.ctx)
     result = _tool_parse_esp({"path": str(localized.source)}, context)
     assert result.partial and not result.success
     for path in localized.source.parent.rglob("*"):
         if path.is_file():
             path.unlink()
-    monkeypatch.setattr(EntryResultStore, "create", create)
+    monkeypatch.setattr(RecoveryView, "create", create)
     recovered = _tool_merge_task_result({"result_id": result.data["result_id"]}, context)
-    assert recovered.success, recovered.message
-    snapshot = project.ctx.active_slot.source_snapshot
-    assert snapshot.content == localized.parsed.source_snapshot.content
-    assert (
-        dict(snapshot.metadata)["localized_sources"]
-        == dict(localized.parsed.source_snapshot.metadata)["localized_sources"]
-    )
+    assert not recovered.success and "重新" in recovered.message
+    assert not project.ctx.project_sources
+    viewed = _tool_get_task_result({"result_id": result.data["result_id"]}, context)
+    assert viewed.success and [row["original"] for row in viewed.data["entries"]] == ["Original 1"]
+    assert str(localized.source) not in repr(viewed.data)
+    assert "input_snapshot" not in viewed.data
 
 
 def _read_translation(path, format_id):
@@ -255,7 +245,12 @@ def test_agent_rejects_format_mismatch_and_ungranted_output_root(project, manage
 def test_agent_publishes_localized_bundle_without_precreating_strings_directory(project, localized, manager, target):
     _load_localized_translated(project, localized)
     destination = localized.target if target == "esp" else localized.output / localized.source.name
-    args = {"target": target, "path": str(destination), "output_dir": str(localized.output)}
+    args = {
+        "target": target,
+        "path": str(destination),
+        "output_dir": str(localized.output),
+        "input_plugin": str(localized.source),
+    }
     assert localized.output.is_dir()
     assert not (localized.output / "Strings").exists()
     original_files = {path: path.read_bytes() for path in localized.source.parent.rglob("*") if path.is_file()}
@@ -297,7 +292,9 @@ def test_agent_localized_bundle_rejects_escape_without_creating_output_directori
         request_context=replace(project.request, authorized_roots=(str(localized.source.parent),)),
     )
 
-    result = _tool_write_back({"target": "strings", "output_dir": str(directory)}, context)
+    result = _tool_write_back(
+        {"target": "strings", "output_dir": str(directory), "input_plugin": str(localized.source)}, context
+    )
 
     assert not result.success
     assert result.error_code in {"PATH_OUTSIDE_GRANT", "PATH_RESOLUTION_FAILED"}
@@ -318,11 +315,9 @@ def test_authoritative_gui_write_card_never_falls_back_to_legacy_writers(project
     monkeypatch.setattr("transbridge.writer.plugin_writer.PluginWriter", unexpected)
     monkeypatch.setattr("transbridge.writer.eet_xml_writer.EETWriter", unexpected)
     monkeypatch.setattr("transbridge.writer.xt_xml_writer.XTWriter", unexpected)
-    monkeypatch.setattr(write_card_module.QFileDialog, "getSaveFileName", unexpected)
-    monkeypatch.setattr(write_card_module.QFileDialog, "getExistingDirectory", unexpected)
-    monkeypatch.setattr(
-        write_card_module.QMessageBox, "warning", lambda _parent, title, message: warnings.append((title, message))
-    )
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", unexpected)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", unexpected)
+    monkeypatch.setattr(QMessageBox, "warning", lambda _parent, title, message: warnings.append((title, message)))
     card = write_card_module.WriteCard(project.ctx, unexpected)
     card.bind_operation_plan_facade(SimpleNamespace(supports=lambda *_args, **_kwargs: False, begin_write=unexpected))
     before = project.services.project_lifecycle.active.variant.snapshot()

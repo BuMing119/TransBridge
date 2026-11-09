@@ -12,6 +12,8 @@ from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
 def merge_saved_results(ctx, store, record, payload, *, policy=None, execution=None, evidence=None):
     """Reapply existing successful results without entering any model execution path."""
+    from transbridge.application.tasks.result_application import ResultApplication, prior_merge_plan
+
     from .translation_task_results import _MERGE_PENDING, _RUN_LOCK, _authorized, _caller, task_ports
     from .types import ExecutionContext
     from .undo_capture import capture_variant_command
@@ -51,7 +53,19 @@ def merge_saved_results(ctx, store, record, payload, *, policy=None, execution=N
         )
         for row in (payload or {}).get("rows", ())
     )
-    evidence = evidence or TaskMergeEvidenceStore(store.root, record["task_id"])
+    evidence = evidence or TaskMergeEvidenceStore(store.run_directory(record["task_id"]), record["task_id"])
+    application_service = ResultApplication.for_commands(store, commands)
+    application = None
+    if application_service is not None and candidates:
+        application = application_service.prepare(record["task_id"], *identity, payload["rows"], policy)
+        if (prior := prior_merge_plan(application)) is not None:
+            return {
+                "applied_count": 0,
+                "unchanged_count": len(prior.unchanged_keys),
+                "policy": policy.value,
+                "application_state": application.state.value,
+                "receipt_saved": application.state.value == "committed",
+            }, ""
     dispatch = ctx if isinstance(ctx, ExecutionContext) else ExecutionContext(app_context=ctx)
 
     commit_warnings = []
@@ -85,6 +99,7 @@ def merge_saved_results(ctx, store, record, payload, *, policy=None, execution=N
     completed = []
 
     def command():
+        operation = {"operation_id": application.request.operation_id} if application is not None else {}
         result = commands.merge_entry_states(
             candidates,
             context,
@@ -92,6 +107,7 @@ def merge_saved_results(ctx, store, record, payload, *, policy=None, execution=N
             policy=policy,
             before_commit=lambda plan: evidence.save(candidates, plan, policy),
             commit_mutation=commit,
+            **operation,
         )
         completed.append(result)
         if result.is_success and isinstance(ctx, ExecutionContext) and _app.active_version_identity == identity:
@@ -133,6 +149,9 @@ def merge_saved_results(ctx, store, record, payload, *, policy=None, execution=N
         "receipt_saved": acknowledged,
         "policy": policy.value,
     }
+    if application is not None:
+        outcome = application_service.finish(application, plan)
+        summary.update(application_state=outcome.state.value, receipt_saved=outcome.state.value == "committed")
     warning = "; ".join(filter(None, (warning, evidence.error, *commit_warnings)))
     applied = {row.entry_key for row in plan.applied} | set(plan.unchanged_keys)
     kept = set(plan.kept_current_keys)

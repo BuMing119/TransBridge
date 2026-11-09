@@ -141,14 +141,14 @@ def test_choose_multiple_plugins_creates_one_project_and_loads_every_collection(
     creation.view.choose_plugin_button.click()
 
     state = creation.controller.guided_project.state
-    assert selected == ["选择要翻译的插件（可多选）"]
-    assert state.project_name == "Base"
+    assert selected == ["选择来源文件（可多选）"]
+    assert state.project_name == "新翻译工程"
     assert state.source_paths == tuple(str(Path(path)) for path in _PATHS)
-    assert creation.view._source_label.text() == "已选择 3 个插件"
+    assert creation.view._source_label.text() == "已选择 3 个文件"
     assert creation.view._source_list.count() == 3
     assert not creation.view._source_list.isHidden()
-    assert "3 个插件" in creation.view._draft_summary.text()
-    assert "同一个工程" in creation.view._draft_summary.text()
+    assert "3 个文件" in creation.view._draft_summary.full_text
+    assert "同一个工程" in creation.view._draft_summary.full_text
     assert [creation.view._source_list.item(i).toolTip() for i in range(3)] == list(state.source_paths)
 
     creation.view._draft_primary.click()
@@ -163,7 +163,7 @@ def test_choose_multiple_plugins_creates_one_project_and_loads_every_collection(
 
     assert len(creation.commands.requests) == len(creation.commands.commits) == 1
     assert creation.commands.requests[0].migration_sources == ()
-    assert tuple(creation.context.slots) == state.source_paths
+    assert tuple(creation.context.slots) == ("source-0", "source-1", "source-2")
     assert [next(iter(slot.collection)).original for slot in creation.context.slots.values()] == [
         "Base.esm",
         "Addon.esp",
@@ -172,7 +172,7 @@ def test_choose_multiple_plugins_creates_one_project_and_loads_every_collection(
     assert len({next(iter(slot.collection)).identity for slot in creation.context.slots.values()}) == 3
     assert [next(iter(slot.collection)).string_id for slot in creation.context.slots.values()] == [100, 101, 102]
     assert creation.shown[-1] == 0
-    assert creation.messages == ["本地工程“Base”已创建"]
+    assert creation.messages == ["本地工程“新翻译工程”已创建"]
 
 
 def test_cancelling_file_selection_keeps_the_current_draft(monkeypatch, creation):
@@ -198,8 +198,8 @@ def test_reselecting_plugins_refreshes_the_draft_after_edits(monkeypatch, creati
     creation.controller.choose_source()
 
     assert creation.view._name_edit.text() == "Addon"
-    assert creation.view._source_label.text() == str(Path(_PATHS[1]))
-    assert creation.view._source_list.isHidden()
+    assert creation.view._source_label.text() == "已选择 1 个文件"
+    assert not creation.view._source_list.isHidden()
     assert coordinator.state.source_paths == (str(Path(_PATHS[1])),)
     creation.controller.create_empty()
     assert coordinator.state.source_paths == ()
@@ -230,36 +230,37 @@ def test_multi_plugin_draft_preserves_options_and_paths_when_prepare_fails():
     assert len(coordinator.state.source_paths) == 3
 
 
-def test_existing_translation_picker_includes_xml_and_preserves_selection(monkeypatch, creation):
-    paths = ("D:/translations/eet.xml", "D:/translations/xt.xml")
+def test_existing_translation_picker_includes_formats_and_preserves_selection(monkeypatch, creation):
+    path = "D:/translations/eet.xml"
     filters = []
 
     def choose(_parent, _title, _directory, file_filter):
         filters.append(file_filter)
-        return list(paths), ""
+        return [path], ""
 
     monkeypatch.setattr(QFileDialog, "getOpenFileNames", choose)
     coordinator = creation.controller.guided_project
     coordinator.begin_sources(_PATHS)
+    creation.view._draft_page.with_translations.setChecked(True)
     creation.view._migration_button.click()
 
     assert "*.xml" in filters[0].split(";;")[0]
     assert "*.sst" in filters[0].split(";;")[0]
-    assert "*.xls" not in filters[0]
     assert "*.eet" in filters[0].split(";;")[0]
-    assert coordinator.state.migration_sources == tuple(str(Path(path)) for path in paths)
-    assert all(str(Path(path)) in creation.view._migration_label.toolTip() for path in paths)
+    assert "DSD JSON" in filters[0] and "ParaTranz JSON" in filters[0]
+    assert coordinator.state.translation_path == path
+    assert coordinator.state.migration_sources == ()
+    assert creation.view._migration_label.toolTip() == path
 
-    # Cancelling a second selection must not clear the accepted XML sources.
     monkeypatch.setattr(QFileDialog, "getOpenFileNames", lambda *_args: ([], ""))
     creation.view._migration_button.click()
-    assert coordinator.state.migration_sources == tuple(str(Path(path)) for path in paths)
+    assert coordinator.state.translation_path == path
     assert coordinator.create()
     operation, _callbacks = creation.pending.pop(0)
     operation()
-    assert tuple(source.location for source in creation.commands.requests[-1].migration_sources) == tuple(
-        str(Path(path)) for path in paths
-    )
+    request = creation.commands.requests[-1]
+    assert request.migration_sources == ()
+    assert dict(request.source.options)["initial_translation"]["locations"] == (path,)
 
 
 def test_many_selected_plugins_use_a_scrollable_list(creation, layout_app):

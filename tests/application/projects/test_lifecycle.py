@@ -591,7 +591,7 @@ def test_save_uses_immutable_revision_capture_and_keeps_later_mutation_dirty() -
     harness.store.before_commit = mutate_during_commit
     result = harness.service.save_active(_context())
 
-    assert result.diagnostics[0].code == "ACTIVE_SAVE_REVISION_CHANGED"
+    assert result.is_success, result.diagnostics
     assert harness.store.saved_revisions == [2]
     assert harness.service.active is not None
     assert harness.service.active.variant is active.variant

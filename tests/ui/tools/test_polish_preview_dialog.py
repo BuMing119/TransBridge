@@ -11,6 +11,8 @@ from tests.ui.tools.ai_read_projection_support import wait_for
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.ui.tools.ai_translator._polish_preview_dialog import _PolishPreviewDialog
 
+_APP = QApplication.instance() or QApplication([])
+
 
 def _entry(entry_id: str) -> TranslationEntry:
     return TranslationEntry(

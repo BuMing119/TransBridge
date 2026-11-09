@@ -1,10 +1,13 @@
+from contextlib import closing
 from pathlib import Path
+import sqlite3
 
 import pytest
 
 from tests.application.projects.test_categorized_upload import project as project_fixture
 from transbridge.application.io.identity import ExternalEntryRef
 from transbridge.application.projects.variant_commands import EntryStatePatch
+from transbridge.persistence.project_store import lifecycle as storage_lifecycle
 
 project = project_fixture
 
@@ -15,18 +18,19 @@ def snapshot(project, **options):
 
 
 def unavailable_saved_source(project, source_path, *, missing=False):
-    services, *_ = project
-    registration = next(
-        source
-        for source in services.project_lifecycle.active.project.envelope.data["sources"]
-        if source["location"] == str(source_path.resolve())
-    )
-    artifact = Path(services.root) / "source_artifacts" / "manifests" / f"{registration['source_artifact_id']}.json"
-    assert artifact.is_file()
-    if missing:
-        artifact.unlink()
-    else:
-        artifact.write_bytes(b'{"corrupt":true}')
+    services, service, context, *_ = project
+    source = next(source for source in service.catalog(context).value if source.label == source_path.name)
+    database = services.projects.path_for(services.project_lifecycle.active.project_ref)
+    with closing(sqlite3.connect(database)) as db, db:
+        if missing:
+            changed = db.execute("DELETE FROM project_source WHERE namespace = ?", (source.namespace.value,))
+        else:
+            changed = db.execute(
+                "UPDATE source_entry SET metadata = '{broken' WHERE source_id = "
+                "(SELECT source_id FROM project_source WHERE namespace = ?)",
+                (source.namespace.value,),
+            )
+        assert changed.rowcount == 1
 
 
 def test_selected_source_never_hydrates_or_gets_blocked_by_an_unselected_broken_source(project, monkeypatch):
@@ -35,21 +39,27 @@ def test_selected_source_never_hydrates_or_gets_blocked_by_an_unselected_broken_
     initial = snapshot(project, source_ids=(selected_id,)).value
     selected = next(source for source in initial.sources if source.label == first.name)
     unavailable_saved_source(project, second)
-    prepared = []
-    original = service._source_preparer.prepare_source
+    selected_namespaces = []
+    original = service._stored_sources.source
+    original_open = Path.open
 
-    def prepare(request, *args, **kwargs):
-        prepared.append(request.location)
-        return original(request, *args, **kwargs)
+    def read(variant, namespace, **kwargs):
+        selected_namespaces.append(namespace)
+        return original(variant, namespace, **kwargs)
 
-    monkeypatch.setattr(service._source_preparer, "prepare_source", prepare)
+    def open_without_source(path, *args, **kwargs):
+        assert path not in {first, second}, "Source input opened"
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(service._stored_sources, "source", read)
+    monkeypatch.setattr(Path, "open", open_without_source)
 
     result = snapshot(project, source_ids=(selected.source_id,), tolerate_failures=True)
 
     assert result.is_success, result.diagnostics
     assert result.value.sources == (selected,)
     assert result.value.failures == ()
-    assert prepared == []  # The complete selected source was already cached by the initial capture.
+    assert selected_namespaces == [selected.entries[0].identity.namespace]
 
 
 @pytest.mark.parametrize("missing", [False, True])
@@ -66,7 +76,8 @@ def test_tolerant_snapshot_keeps_complete_sources_and_reports_the_specific_faile
     assert len(result.value.failures) == 1
     source_id, label, error = result.value.failures[0]
     assert (source_id, label) == (failed.source_id, second.name)
-    assert "保存的来源成果不可用" in error
+    expected_error = "source changed before" if missing else "Expecting property name"
+    assert expected_error in error
 
 
 def test_default_upload_snapshot_still_rejects_an_incomplete_source(project):
@@ -77,7 +88,7 @@ def test_default_upload_snapshot_still_rejects_an_incomplete_source(project):
 
     assert not result.is_success
     assert result.value is None
-    assert result.diagnostics[0].code == "PROJECT_SOURCE_ARTIFACT_UNAVAILABLE"
+    assert result.diagnostics[0].code == "INVALID_INPUT"
 
 
 def test_download_snapshot_keeps_unsaved_translations_and_other_system_and_project_references(project):
@@ -233,14 +244,13 @@ def test_recovery_snapshot_write_failure_keeps_unsaved_state_and_allows_same_win
     before = active.variant.snapshot()
     projection_before = services.project_projection.snapshot()
     generation = services.project_lifecycle.generation
-    original_replace = services.filesystem.replace
+    write_snapshot = storage_lifecycle.write_snapshot
 
-    def fail_snapshot(source, destination):
-        if "/snapshots/" in str(destination).replace("\\", "/"):
-            raise OSError("Snapshot destination is full")
-        return original_replace(source, destination)
+    def fail_snapshot(connection, mutation, identity):
+        write_snapshot(connection, mutation, identity)
+        raise OSError("Snapshot destination is full")
 
-    monkeypatch.setattr(services.filesystem, "replace", fail_snapshot)
+    monkeypatch.setattr(storage_lifecycle, "write_snapshot", fail_snapshot)
     failed = services.gui_project_commands.save_snapshot("download-recovery", context)
 
     assert not failed.is_success
@@ -250,8 +260,9 @@ def test_recovery_snapshot_write_failure_keeps_unsaved_state_and_allows_same_win
     assert services.project_projection.snapshot() == projection_before
     assert services.project_lifecycle.generation == generation
     assert active.dirty
+    assert not services.project_snapshots.list(context)
 
-    monkeypatch.setattr(services.filesystem, "replace", original_replace)
+    monkeypatch.setattr(storage_lifecycle, "write_snapshot", write_snapshot)
     retried = services.gui_project_commands.save_snapshot("download-recovery", context)
 
     assert retried.is_success, retried.diagnostics

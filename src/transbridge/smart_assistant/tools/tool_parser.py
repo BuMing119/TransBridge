@@ -122,7 +122,7 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
         ctx,
         target.collection,
         kind="source" if action == "create_slot" else "import",
-        inputs={"path": path, "action": action, "file_type": file_type},
+        inputs={"source_name": Path(path).name, "action": action, "file_type": file_type},
     )
 
     dispatch = _PARSER_DISPATCH[file_type]
@@ -157,6 +157,9 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
                 SourceDescriptor(str(source), source.name, source.stat().st_size),
                 RequestContext("smart-assistant-parser"),
                 format_id,
+                options=(("capture_sst_export_facts", True),)
+                if format_id is FormatId.PLUGIN_SSE and action == "create_slot"
+                else (),
             )
             if file_type == "eet":
                 from transbridge.application.io.eet_source import parse_eet_source

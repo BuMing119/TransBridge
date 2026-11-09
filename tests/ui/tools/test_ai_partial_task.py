@@ -232,7 +232,8 @@ def test_partial_completion_requires_action_and_publishes_only_confirmed_success
     assert window.session.applied_keys == {_key("translated"), _key("polished")}
     assert window.run.entries.failed_keys == {_key("failed")}
     assert window.run.entries.entries[_key("rejected")].decision == "rejected"
-    assert window.session.saved and not window.session.can_save and not window.session.completed
+    assert not window.session.saved and window.session.can_save and not window.session.completed
+    assert not window.session._persistence.saves
     _wait(qapp, lambda: not window.run.records.busy)
     record = TaskHistoryStore(window.session.history_dir).load(window.request.run_id)
     details = {
@@ -244,13 +245,16 @@ def test_partial_completion_requires_action_and_publishes_only_confirmed_success
     assert details["failed"]["processing_status"] == "failed"
 
 
-def test_partial_auto_save_then_retry_only_failed_and_auto_apply_again(qapp, make_task):
+def test_partial_explicit_save_then_retry_only_failed_and_stage_again(qapp, make_task):
     window, _, _ = make_task()
     worker = window.run.worker
     worker.publish(_outcome(worker))
     _settle(window)
     _apply_rejecting_one(window)
     persistence = window.session._persistence
+    assert window.session.can_save and not persistence.saves
+    window.run.save()
+    _settle(window)
     assert window.session.saved
     window.run.retry()
     _settle(window)
@@ -263,7 +267,8 @@ def test_partial_auto_save_then_retry_only_failed_and_auto_apply_again(qapp, mak
     _settle(window)
     assert _live(window)["failed"] == "新 failed"
     assert _live(window)["rejected"] == "旧 rejected"
-    assert window.session.completed and window.session.saved
+    assert window.session.completed and window.session.can_save and not window.session.saved
+    assert len(persistence.saves) == 1
     assert window.session._persistence is persistence
     assert window.run.entries.entries[_key("failed")].attempt == 2
     assert window.run.entries.entries[_key("translated")].attempt == 1
@@ -332,7 +337,7 @@ def test_direct_apply_cannot_skip_required_polish_confirmation(make_task):
     assert _live(window)["polished"] == "旧 polished"
 
 
-def test_partial_without_preview_automatically_applies_and_saves_successes(make_task):
+def test_partial_without_preview_automatically_stages_successes(make_task):
     window, _, _ = make_task(preview_enabled=False)
     notices = []
     window.run.completion_notice.connect(notices.append)
@@ -341,7 +346,8 @@ def test_partial_without_preview_automatically_applies_and_saves_successes(make_
     _settle(window)
 
     assert window.run.state == "partial"
-    assert window.session.saved
+    assert window.session.can_save and not window.session.saved
+    assert not window.session._persistence.saves
     assert window.session.applied_keys == {_key("translated"), _key("polished"), _key("rejected")}
     assert _live(window)["failed"] == "旧 failed"
     assert window.run.entries.failed_keys == {_key("failed")}
@@ -350,7 +356,7 @@ def test_partial_without_preview_automatically_applies_and_saves_successes(make_
     assert "失败 1 条" in notices[0]["text"]
 
 
-def test_questionable_success_without_preview_is_applied_and_saved(make_task):
+def test_questionable_success_without_preview_is_staged_for_save(make_task):
     window, _, _ = make_task(preview_enabled=False)
     worker = window.run.worker
     outcome = _outcome(worker, failed=False)
@@ -363,13 +369,14 @@ def test_questionable_success_without_preview_is_applied_and_saved(make_task):
 
     current = window.session._ctx.collection.get(_key("polished"))
     assert current.stage == 2 and current.translation == "旧 polished"
-    assert window.session.saved and window.session.completed
+    assert window.session.can_save and not window.session.saved and window.session.completed
+    assert not window.session._persistence.saves
     assert not window.run.entries.failed_keys
     assert len(notices) == 1 and "有疑问 1 条" in notices[0]["text"]
     assert not notices[0]["error"]
 
 
-def test_automatic_save_failure_keeps_applied_results_and_retries_only_save(make_task):
+def test_explicit_save_failure_keeps_applied_results_and_retries_only_save(make_task):
     window, _, _ = make_task(preview_enabled=False)
     persistence = window.session._persistence
     persistence.fail_save = True
@@ -378,6 +385,9 @@ def test_automatic_save_failure_keeps_applied_results_and_retries_only_save(make
     _settle(window)
 
     assert window.session.can_save and not window.session.saved
+    assert not persistence.saves
+    window.run.save()
+    _settle(window)
     assert "项目保存失败" in window.run.save_status
     assert len(persistence.commits) == 1 and len(persistence.saves) == 1
     assert _live(window)["translated"] == "新 translated"
@@ -506,6 +516,8 @@ def test_cancel_retry_preserves_previously_applied_but_drops_late_success(make_t
     first.publish(_outcome(first))
     _settle(window)
     _apply_rejecting_one(window)
+    window.run.save()
+    _settle(window)
     window.run.retry()
     _settle(window)
     retry = window.run.worker
@@ -553,6 +565,9 @@ def test_changed_reference_does_not_block_partial_apply_saved_success_or_failed_
     _settle(window)
     terms.snapshot_identity = "reference-updated-before-apply"
     _apply_rejecting_one(window)
+    assert window.session.can_save and not window.session.saved
+    window.run.save()
+    _settle(window)
     assert window.session.saved and not window.run.blocked
     assert _live(window)["translated"] == "新 translated"
 
@@ -564,7 +579,7 @@ def test_changed_reference_does_not_block_partial_apply_saved_success_or_failed_
     assert [entry.id for entry in retry.tasks[0].entries] == ["failed"]
     retry.publish(_outcome(retry, failed=False))
     _settle(window)
-    assert window.session.completed and window.session.saved and not window.run.blocked
+    assert window.session.completed and window.session.can_save and not window.session.saved and not window.run.blocked
     assert _live(window) == {
         "translated": "新 translated",
         "failed": "新 failed",

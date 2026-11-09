@@ -183,7 +183,7 @@ def test_label_command_uses_preparation_baseline_and_current_cas(current_project
 def test_upload_association_builds_one_collection_and_reuses_untouched_entry(
     current_project_factory, tmp_path, monkeypatch
 ):
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    context, project = _context(current_project_factory, tmp_path)
     first, second, third = tuple(project.context.collection)
     _forbid_snapshot_serialization(monkeypatch)
     built = []
@@ -208,7 +208,7 @@ def test_upload_association_builds_one_collection_and_reuses_untouched_entry(
 def test_upload_reference_conflict_preserves_remote_receipt_without_local_partial_commit(
     current_project_factory, tmp_path, monkeypatch
 ):
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    context, project = _context(current_project_factory, tmp_path)
     first, second, _ = tuple(project.context.collection)
     reference = ExternalEntryRef("paratranz", "project:7", 701)
     ProjectToolTarget.capture(context).commit_records((replace(second, external_refs=(reference,)),))

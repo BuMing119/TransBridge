@@ -46,11 +46,14 @@ class ProjectCategorizedUploadService:
         lifecycle: ProjectLifecycleService,
         baselines: BaselineRegistry,
         source_preparer: ProjectSourcePreparationPort,
+        *,
+        stored_sources=None,
     ) -> None:
         self._lifecycle = lifecycle
         self._baselines = baselines
         self._source_preparer = source_preparer
         self._hydrations = SourceHydrationCache()
+        self._stored_sources = stored_sources
 
     def catalog(self, context: RequestContext):
         """Read the current source directory without parsing any source files."""
@@ -185,22 +188,29 @@ class ProjectCategorizedUploadService:
                 and baseline.fingerprint.sha256 == source.fingerprint
                 and baseline.fingerprint in variant.source_fingerprints
             )
-            if len(matches) != 1 or not source.source_artifact_id:
+            if self._stored_sources is not None:
+                prepared = self._stored_sources.source(
+                    variant, namespace, include_dialogue_order=include_dialogue_order, cancellation=cancellation
+                )
+            elif len(matches) != 1 or not source.source_artifact_id:
                 _conflict("CATEGORIZED_SOURCE_BASELINE_AMBIGUOUS", f"来源的保存内容尚不可用，请补充输入：{label}")
-            baseline = matches[0]
-            options = dict(source.format_options)
-            options["source_namespace"] = namespace.value
-            prepared = self._hydrations.read_installed(
-                self._source_preparer,
-                InstalledSourceRequest(source.location, source.format_id, source.fingerprint, tuple(options.items())),
-                context,
-                scope_key=scope_key,
-                source=raw_source,
-                include_dialogue_order=include_dialogue_order,
-                cancellation=cancellation,
-            )
-            if prepared is None or prepared.fingerprint != baseline.fingerprint:
-                _conflict("CATEGORIZED_SOURCE_CHANGED", f"来源内容已变化，请先更新工程来源：{source.location}")
+            else:
+                baseline = matches[0]
+                options = dict(source.format_options)
+                options["source_namespace"] = namespace.value
+                prepared = self._hydrations.read_installed(
+                    self._source_preparer,
+                    InstalledSourceRequest(
+                        source.location, source.format_id, source.fingerprint, tuple(options.items())
+                    ),
+                    context,
+                    scope_key=scope_key,
+                    source=raw_source,
+                    include_dialogue_order=include_dialogue_order,
+                    cancellation=cancellation,
+                )
+                if prepared is None or prepared.fingerprint != baseline.fingerprint:
+                    _conflict("CATEGORIZED_SOURCE_CHANGED", f"来源内容已变化，请先更新工程来源：{source.location}")
         except (DomainError, OSError) as exc:
             if isinstance(exc, DomainError) and exc.category is ErrorCategory.CANCELLED:
                 raise
@@ -272,6 +282,8 @@ class ProjectCategorizedUploadService:
 
     def result_source_texts(self, project, variant, keys, context):
         """Read verified input text for just the sources containing result targets."""
+        if self._stored_sources is not None:
+            return self._stored_sources.result_texts(project, variant, keys, context)
         from .result_sources import read_result_source_texts
 
         return read_result_source_texts(

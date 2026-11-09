@@ -1,5 +1,6 @@
 """Default Workbench ranks remain a display projection of captured plugin data."""
 
+from contextlib import closing
 from dataclasses import replace
 import os
 from pathlib import Path
@@ -15,13 +16,17 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QLineEdit
 import pytest
 
+from tests.dialogue_catalog_support import field, plugin_bytes, record
 from tests.dialogue_order_support import dialogue_bytes
+from tests.integration.gui.test_project_paged_workbench import _CONTEXT, _services, _wait_until, _workbench
 from tests.ui.fixtures.current_editing import CurrentEditingProject
 from transbridge.application.io import FormatId, SourceDescriptor, SourceSnapshot
 from transbridge.application.io.dialogue_reading_view import ReadingEntry
+from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.parser.plugin_parser import PluginParser
+from transbridge.persistence.project_store.paged_reads import WORKBENCH_PAGE_SIZE
 from transbridge.ui import context as context_module
 from transbridge.ui.project_labels import entry_label_key
 from transbridge.ui.workbench import dialogue_reading_order as reading
@@ -46,6 +51,48 @@ def texts(view):
 
 def numbers(view):
     return [view._table.model().index(row, COL_INDEX).data() for row in range(view._table.rowCount())]
+
+
+def test_paged_project_reopens_in_dialogue_reading_order_without_source(tmp_path, monkeypatch):
+    monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: SimpleNamespace(token=""))
+    root = tmp_path / "data"
+    plugin = tmp_path / "Dialogue.esp"
+    fillers = [f"Filler {index}" for index in range(WORKBENCH_PAGE_SIZE - 4)]
+    filler_plugin = plugin_bytes({
+        "NPC_": b"".join(
+            record("NPC_", 0x900 + index, field("FULL", text.encode() + b"\0")) for index, text in enumerate(fillers)
+        ),
+    })
+    header_length = len(plugin_bytes({}))
+    plugin.write_bytes(filler_plugin + dialogue_bytes()[header_length:])
+    expected = [*fillers, *_READING_TEXTS]
+    with closing(_services(root)) as services:
+        created = services.gui_project_commands.create_project(
+            ProjectProvisioningRequest("Paged dialogue", source=ProjectSourceRequest(str(plugin))), _CONTEXT
+        )
+        assert created.is_success, created.diagnostics
+        active = services.project_lifecycle.active
+        database = services.projects.path_for(active.project_ref)
+        identity = active.project_ref.identity.value, active.formal_variant_ref.identity.value
+    plugin.unlink()
+
+    with _workbench(root, _APP) as (host, coordinator, _services_for_view):
+        coordinator.open_project_path(str(database))
+        _wait_until(_APP, lambda: host.project_open_worker is None)
+
+        assert host.context.active_version_identity == identity
+        preview = host.workbench.preview
+        table = preview._table
+        assert table.rowCount() == len(expected)
+        first_page = [table.entry_at_row(row).original for row in range(WORKBENCH_PAGE_SIZE)]
+        assert first_page == expected[:WORKBENCH_PAGE_SIZE]
+        scrollbar = table.verticalScrollBar()
+        _wait_until(_APP, lambda: scrollbar.maximum() > 0)
+        scrollbar.setValue(scrollbar.maximum())
+        tail = range(len(fillers), len(expected))
+        _wait_until(_APP, lambda: all(table.entry_at_row(row) is not None for row in tail))
+        assert table.rowCount() == len(expected)
+        assert [table.entry_at_row(row).original for row in tail] == _READING_TEXTS
 
 
 @pytest.fixture

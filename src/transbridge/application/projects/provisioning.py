@@ -9,7 +9,7 @@ UnitOfWork while the lifecycle generation lock is held.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import secrets
 from threading import RLock
@@ -43,6 +43,10 @@ from .provisioning_models import (
     _name_key,
 )
 from .provisioning_sources import prepare_project_sources
+from .source_content import source_content_identity
+from .source_extraction import extract_source, hydrate_extracted
+from .source_fields import source_name
+from .source_registry import SourceRegistrySnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +105,20 @@ class ProjectProvisioningService:
                 prepared_sources = prepare_project_sources(self._sources, request, context)
                 baselines = prepared_sources.baselines
                 registry = prepared_sources.registry(project_ref.identity.value)
+                extracted_sources = ()
+                hydrations = prepared_sources.hydrations
+                if hydrations:
+                    by_hydration = {id(item.hydration): item for item in prepared_sources.registrations}
+                    extracted_sources = tuple(extract_source(by_hydration[id(item)]) for item in hydrations)
+                    registry = translation_registry(registry)
+                    registered = {
+                        source_content_identity(source.to_dict()): source.source_id
+                        for source in registry.sources
+                        if dict(source.legacy).get("role") != "migration"
+                    }
+                    hydrations = tuple(
+                        hydrate_extracted(item, registered.get(item.namespace.value)) for item in extracted_sources
+                    )
                 fingerprints = tuple(item.fingerprint for item in baselines)
                 entries = tuple(entry for item in baselines for entry in item.entries)
                 snapshot = VariantSnapshot(variant_ref, fingerprints, entries)
@@ -126,7 +144,7 @@ class ProjectProvisioningService:
                     0,
                     0,
                 )
-                commit = ProjectProvisioningCommit(project, snapshot, baselines, name_key)
+                commit = ProjectProvisioningCommit(project, snapshot, baselines, name_key, extracted_sources)
                 token = self._new_token()
                 diagnostics = (
                     *(item for source in prepared_sources.registrations for item in source.diagnostics),
@@ -159,7 +177,7 @@ class ProjectProvisioningService:
                     old_signature,
                     commit,
                     candidate,
-                    prepared_sources.hydrations,
+                    hydrations,
                 )
                 return OperationResult.completed(preview, run_id=context.run_id)
             except Exception as exc:  # noqa: BLE001 - application boundary maps adapter failures
@@ -294,6 +312,24 @@ class ProjectProvisioningService:
             raise RuntimeError("token factory returned an empty or duplicate token")
         self._issued_tokens.add(token)
         return token
+
+
+def translation_registry(registry: SourceRegistrySnapshot) -> SourceRegistrySnapshot:
+    """Keep explicit registration facts while discarding operation-local locations."""
+    return replace(
+        registry,
+        sources=tuple(
+            replace(
+                source,
+                location="",
+                display_name=source_name(source.display_name or source.location or source.source_id),
+                legacy=tuple((key, value) for key, value in source.legacy if key in {"namespace", "source_id", "role"}),
+                source_artifact_id=None,
+                content_state="translation",
+            )
+            for source in registry.sources
+        ),
+    )
 
 
 def _opaque_candidate(prefix: str, raw: str) -> str:

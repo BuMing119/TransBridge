@@ -4,125 +4,136 @@ from uuid import uuid4
 
 import pytest
 
+from tests.application.projects.test_source_update_plugin import _plugin
 from transbridge.application.contracts import DomainError, RequestContext
-from transbridge.application.io import EntryKey, FormatId, SourceDescriptor, SourceNamespace, SourceSnapshot
-from transbridge.application.projects.prepared_source_results import prepare_parsed_source
-from transbridge.application.projects.source_registry import (
-    BilingualCapability,
-    SourceKind,
-    SourceRegistration,
-    SourceRegistrySnapshot,
-)
-from transbridge.application.terminology.build import TranslationIoRegisteredSourceParser
-from transbridge.application.terminology.input_capture import (
-    BuildInputCaptureService,
-    CapturedSource,
-    TerminologyBaseline,
-)
+from transbridge.application.io import FormatId, default_format_catalog
+from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
+from transbridge.application.projects.source_content import source_content_identity
+from transbridge.application.projects.source_registry import SourceRegistrySnapshot
+from transbridge.application.terminology.build import TerminologyFullBuilder, TranslationIoRegisteredSourceParser
+from transbridge.application.terminology.build_freshness import build_input_digest
+from transbridge.application.terminology.in_memory import InMemoryTerminologyRepository
+from transbridge.application.terminology.input_capture import BuildInputCaptureService, TerminologyBaseline
+from transbridge.application.terminology.models import BuildCompleteness
+from transbridge.bootstrap.history_search import ProjectVariantHistoryProvider
+from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.bootstrap.terminology_sources import ProjectSourceLeases, lightweight_build_snapshot
-from transbridge.bootstrap.terminology_storage import FormatCapabilities, LifecycleCapture
-from transbridge.converter.translation_entry import TranslationEntry
-from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
+from transbridge.bootstrap.terminology_storage import (
+    FormatCapabilities,
+    LifecycleCapture,
+    ProductionState,
+    ProductionTerminologyCommitPort,
+    expected_state,
+)
+from transbridge.persistence.project_store.repository import ProjectStore
 
 
-def _saved_source(tmp_path):
-    source = tmp_path / "source.json"
-    source.write_bytes(b"saved source")
-    namespace = SourceNamespace("source:retained-original-namespace")
-    entry = TranslationEntry("1", "1", "Dragon", "龙", 1, "context", entry_key=EntryKey(namespace, "1"))
-    snapshot = SourceSnapshot.from_bytes(SourceDescriptor(str(source)), FormatId.JSON_TRANSBRIDGE, source.read_bytes())
-    prepared = prepare_parsed_source(str(source), (entry,), snapshot, FormatId.JSON_TRANSBRIDGE)
-    artifact = ProjectSourceArtifactStore(str(tmp_path / "state")).put(prepared)
-    registration = SourceRegistration(
-        "source-1",
-        True,
-        FormatId.JSON_TRANSBRIDGE,
-        str(source),
-        SourceKind.BILINGUAL,
-        BilingualCapability.SELF_CONTAINED,
-        snapshot.sha256,
-        format_options=(("skip_empty", False),),
-        source_artifact_id=artifact,
+@pytest.fixture
+def services(tmp_path):
+    storage = build_persistence_v2_services(
+        tmp_path / "state",
+        id_factory=lambda: uuid4().hex,
+        timestamp_factory=lambda: "2026-10-28T00:00:00+00:00",
     )
-    data = SourceRegistrySnapshot((registration,)).to_project_data()
-    lifecycle = SimpleNamespace(active=SimpleNamespace(project=SimpleNamespace(envelope=SimpleNamespace(data=data))))
-    return source, registration, lifecycle, snapshot, entry
+    try:
+        yield storage
+    finally:
+        storage.close()
 
 
-@pytest.mark.parametrize("clear_reference", [False, True])
-def test_project_source_lease_and_parser_use_saved_entries_after_reference_disappears(
-    tmp_path, clear_reference, monkeypatch
+@pytest.fixture
+def saved_source(tmp_path, services):
+    source = tmp_path / "source.esp"
+    _plugin(source, [(0x800, "Dragon")])
+    commands = services.gui_project_commands
+    context = RequestContext("test", run_id="save-terminology-source")
+    created = commands.create_project(
+        ProjectProvisioningRequest("Saved project", source=ProjectSourceRequest(str(source), FormatId.PLUGIN_SSE)),
+        context,
+    )
+    assert created.is_success, created.diagnostics
+    active = services.project_lifecycle.active
+    (registration,) = SourceRegistrySnapshot.from_project_data(active.project.envelope.data).sources
+    (entry,) = active.variant.snapshot().entries
+    updated = commands.update_entry(entry.entry_key, context, translation="龙", stage=1)
+    assert updated.is_success, updated.diagnostics
+    saved = commands.save(context)
+    assert saved.is_success, saved.diagnostics
+    return source, registration, entry.entry_key, context
+
+
+class _NoExternalRead:
+    def parse(self, request):
+        raise AssertionError(f"saved terminology source must not reopen {request.source.uri}")
+
+
+def _capture(services, leases, context):
+    result = BuildInputCaptureService(
+        LifecycleCapture(services.project_lifecycle),
+        leases,
+        FormatCapabilities(default_format_catalog()),
+        SimpleNamespace(capture_baseline=lambda *_args: TerminologyBaseline()),
+    ).capture_build_input(context, config={})
+    assert result.is_success, result.diagnostics
+    return result.value
+
+
+@pytest.mark.parametrize("source_change", ["removed", "replaced"])
+def test_project_source_lease_and_parser_use_saved_entries_after_reference_changes(
+    services, saved_source, source_change, monkeypatch
 ):
-    from transbridge.application.io import default_format_catalog
+    source, registration, key, context = saved_source
+    if source_change == "removed":
+        source.unlink()
+    else:
+        _plugin(source, [(0x800, "Different text on disk")])
 
-    source, registration, lifecycle, saved_snapshot, entry = _saved_source(tmp_path)
-    source.unlink()
-    if clear_reference:
-        registration = replace(registration, location="")
-        lifecycle.active.project.envelope.data = SourceRegistrySnapshot((registration,)).to_project_data()
-    leases = ProjectSourceLeases(tmp_path / "state", lifecycle)
-    lease = leases.acquire(registration)
-    assert lease.snapshot.size_bytes == saved_snapshot.size_bytes
-    capability = FormatCapabilities(default_format_catalog()).capability_for(registration.format_id)
-    captured = CapturedSource(
-        registration, lease, capability.adapter_id, capability.adapter_version, capability, registration.format_options
-    )
-
-    class Io:
-        def parse(self, request):
-            raise AssertionError("saved terminology source must not reopen its original URI")
-
-    result = TranslationIoRegisteredSourceParser(Io()).parse(captured, RequestContext("test"))
-
-    assert result.entries == (entry.snapshot(),)
-    assert result.source_snapshot == saved_snapshot
+    assert registration.location == ""
+    assert registration.source_artifact_id is None
+    leases = ProjectSourceLeases(services.root, services.project_lifecycle)
+    (captured,) = _capture(services, leases, context).sources
+    result = TranslationIoRegisteredSourceParser(_NoExternalRead()).parse(captured, context)
+    (entry,) = result.entries
+    assert (entry.entry_key, entry.original, entry.translation, entry.stage) == (key, "Dragon", "龙", 1)
+    assert result.source_snapshot == captured.lease.snapshot
+    assert result.source_snapshot.source.uri.startswith("project-source:")
+    assert result.source_snapshot.content is None
 
     def unexpected_read(*_args, **_kwargs):
-        raise AssertionError("an unchanged immutable artifact identity must not be read again")
+        raise AssertionError("checking a captured source fingerprint must not reload its entries")
 
-    monkeypatch.setattr(leases._artifacts, "get", unexpected_read)
-    assert leases.current_fingerprint(lease) == saved_snapshot.sha256
-    changed = replace(registration, source_artifact_id="f" * 64)
-    lifecycle.active.project.envelope.data = SourceRegistrySnapshot((changed,)).to_project_data()
-    assert leases.current_fingerprint(lease) == ""
+    with monkeypatch.context() as patch:
+        patch.setattr(ProjectStore, "iter_source_entries", unexpected_read)
+        assert leases.current_fingerprint(captured.lease) == registration.fingerprint
+    removed = services.gui_project_commands.remove_source(registration.source_id, context)
+    assert removed.is_success, removed.diagnostics
+    assert leases.current_fingerprint(captured.lease) == ""
 
 
-def test_saved_source_budget_and_missing_content_do_not_fall_back_to_reference(tmp_path):
-    source, registration, lifecycle, saved_snapshot, _entry = _saved_source(tmp_path)
-    source.write_bytes(b"changed reference")
-    leases = ProjectSourceLeases(tmp_path / "state", lifecycle)
+def test_saved_source_budget_and_missing_content_do_not_fall_back_to_reference(services, saved_source):
+    source, registration, _key, _context = saved_source
+    _plugin(source, [(0x800, "Changed reference")])
+    leases = ProjectSourceLeases(services.root, services.project_lifecycle)
+    saved = leases.acquire(registration)
     with pytest.raises(DomainError) as error:
-        leases.acquire_bounded(registration, max_bytes=saved_snapshot.size_bytes - 1)
+        leases.acquire_bounded(registration, max_bytes=saved.snapshot.size_bytes - 1)
     assert error.value.code == "TERMINOLOGY_STREAMING_REQUIRED"
+    missing = replace(registration, location=str(source), legacy=(("namespace", "source:missing"),))
     with pytest.raises(DomainError) as error:
-        leases.acquire(replace(registration, source_artifact_id=None))
+        leases.acquire(missing)
     assert error.value.code == "TERMINOLOGY_SOURCE_REQUIRED"
-    assert leases.acquire(registration).actual_fingerprint == saved_snapshot.sha256
+    assert saved.actual_fingerprint == registration.fingerprint
 
 
-def test_lightweight_guard_snapshot_preserves_identity_without_retaining_captured_payload(tmp_path):
-    from tests.application.terminology.test_build import _snapshot
-    from transbridge.application.io import default_format_catalog
-    from transbridge.application.terminology.build_freshness import build_input_digest
-    from transbridge.application.terminology.in_memory import InMemoryTerminologyRepository
-    from transbridge.bootstrap.terminology_storage import (
-        ProductionState,
-        ProductionTerminologyCommitPort,
-        expected_state,
-    )
-
-    _path, registration, lifecycle, saved_snapshot, _entry = _saved_source(tmp_path)
-    leases = ProjectSourceLeases(tmp_path / "state", lifecycle)
-    lease = leases.acquire(registration)
-    lease = replace(lease, snapshot=replace(lease.snapshot, metadata=(("localized", (saved_snapshot,)),)))
-    capability = FormatCapabilities(default_format_catalog()).capability_for(registration.format_id)
-    source = CapturedSource(
-        registration, lease, capability.adapter_id, capability.adapter_version, capability, registration.format_options
-    )
-    original = _snapshot((source,))
+def test_lightweight_guard_snapshot_preserves_identity_without_retaining_captured_payload(services, saved_source):
+    _path, _registration, _key, context = saved_source
+    leases = ProjectSourceLeases(services.root, services.project_lifecycle)
+    original = _capture(services, leases, context)
     repository = InMemoryTerminologyRepository()
     expected = expected_state(original, repository)
+
     lightweight = lightweight_build_snapshot(original)
+
     assert lightweight.canonical_payload() == original.canonical_payload()
     assert build_input_digest(lightweight) == build_input_digest(original)
     assert expected_state(lightweight, repository) == expected
@@ -130,98 +141,65 @@ def test_lightweight_guard_snapshot_preserves_identity_without_retaining_capture
     assert lightweight.sources[0].lease.snapshot.content is None
     assert lightweight.sources[0].lease.snapshot.metadata == ()
     assert original.sources[0].lease.saved_result is not None
-    assert original.sources[0].lease.snapshot.content == saved_snapshot.content
-    assert original.sources[0].lease.snapshot.metadata == (("localized", (saved_snapshot,)),)
+    assert original.sources[0].lease.snapshot.metadata
 
-    lifecycle.active.project.envelope.identity = original.project_id
-    lifecycle.active.project.envelope.revision = original.project_revision
-    lifecycle.active.variant = SimpleNamespace(ref=original.variant_snapshot.ref, revision=original.variant_revision)
     state = ProductionState()
     state.put(state.snapshots, expected.digest, original)
-    retained = state.get(state.snapshots, expected.digest)
-    assert retained == lightweight
-    assert retained.sources[0].lease.saved_result is None
-    assert retained.sources[0].lease.snapshot.content is None
-    assert retained.sources[0].lease.snapshot.metadata == ()
+    assert state.get(state.snapshots, expected.digest) == lightweight
     committed = []
     guard = ProductionTerminologyCommitPort(
-        lifecycle, SimpleNamespace(for_project=lambda _project: repository), state, leases
+        services.project_lifecycle, SimpleNamespace(for_project=lambda _project: repository), state, leases
     )
     assert guard.commit_if_current(expected, lambda: committed.append(True)).current
     assert committed == [True]
 
 
-def test_folded_project_build_retains_merged_saved_translation_without_reference_files(tmp_path, monkeypatch):
-    from tests.application.projects.test_source_update_plugin import _plugin
-    from transbridge.application.io import default_format_catalog
-    from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
-    from transbridge.application.terminology.build import TerminologyFullBuilder
-    from transbridge.application.terminology.in_memory import InMemoryTerminologyRepository
-    from transbridge.application.terminology.models import BuildCompleteness
-    from transbridge.bootstrap.history_search import ProjectVariantHistoryProvider
-    from transbridge.bootstrap.persistence import build_persistence_v2_services
-
+def test_folded_project_build_retains_merged_saved_translation_without_reference_files(tmp_path, services, monkeypatch):
     original, translated = tmp_path / "original.esp", tmp_path / "translated.esp"
     _plugin(original, [(0x800, "Dragon")])
     _plugin(translated, [(0x800, "Imported translation")])
-    root = tmp_path / "state"
-    services = build_persistence_v2_services(
-        root, id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "2026-10-28T00:00:00+00:00"
-    )
     context = RequestContext("test")
-    try:
-        created = services.gui_project_commands.create_project(
-            ProjectProvisioningRequest(
-                "Folded project",
-                source=ProjectSourceRequest(str(original), FormatId.PLUGIN_SSE),
-                migration_sources=(ProjectSourceRequest(str(translated), FormatId.PLUGIN_SSE),),
-            ),
-            context,
-        )
-        assert created.is_success, created.diagnostics
-        assert services.project_lifecycle.active.project.envelope.data["source_relations"][0]["folded_into_baseline"]
-        original.unlink()
-        translated.unlink()
-        leases = ProjectSourceLeases(root, services.project_lifecycle)
-        artifact_reads = []
-        get = leases._artifacts.get
+    created = services.gui_project_commands.create_project(
+        ProjectProvisioningRequest(
+            "Folded project",
+            source=ProjectSourceRequest(str(original), FormatId.PLUGIN_SSE),
+            migration_sources=(ProjectSourceRequest(str(translated), FormatId.PLUGIN_SSE),),
+        ),
+        context,
+    )
+    assert created.is_success, created.diagnostics
+    active = services.project_lifecycle.active
+    registry = SourceRegistrySnapshot.from_project_data(active.project.envelope.data)
+    (relation,) = registry.relations
+    assert relation.folded_into_baseline
+    primary = next(source for source in registry.sources if source.source_id == relation.to_source_id)
+    original.unlink()
+    translated.unlink()
+    leases = ProjectSourceLeases(services.root, services.project_lifecycle)
+    reads = []
+    read = ProjectStore.iter_source_entries
 
-        def counted_get(artifact_id, **options):
-            artifact_reads.append(artifact_id)
-            return get(artifact_id, **options)
+    def counted_read(store, variant, namespace, **options):
+        reads.append(namespace.value)
+        return read(store, variant, namespace, **options)
 
-        monkeypatch.setattr(leases._artifacts, "get", counted_get)
-        capture = BuildInputCaptureService(
-            LifecycleCapture(services.project_lifecycle),
-            leases,
-            FormatCapabilities(default_format_catalog()),
-            SimpleNamespace(capture_baseline=lambda *_args: TerminologyBaseline()),
-        ).capture_build_input(context, config={})
-        assert capture.is_success, capture.diagnostics
-        assert len(artifact_reads) == len(capture.value.sources)
+    with monkeypatch.context() as patch:
+        patch.setattr(ProjectStore, "iter_source_entries", counted_read)
+        captured = _capture(services, leases, context)
+    assert reads == [source_content_identity(primary.to_dict())]
+    assert {source.registration.source_id for source in captured.sources} == {
+        item.source_id for item in registry.sources
+    }
 
-        class Io:
-            def parse(self, request):
-                raise AssertionError("a folded Project build must use its merged saved artifact")
+    outcome = TerminologyFullBuilder(
+        TranslationIoRegisteredSourceParser(_NoExternalRead()), InMemoryTerminologyRepository()
+    ).build(captured, context)
+    assert outcome.result.completeness is BuildCompleteness.FULL
+    assert {(item.original, item.translation) for item in outcome.result.evidence} == {
+        ("Dragon", "Imported translation")
+    }
+    assert not any(item.startswith("VARIANT_FINGERPRINT_MISMATCH") for item in outcome.result.diagnostics)
 
-        outcome = TerminologyFullBuilder(
-            TranslationIoRegisteredSourceParser(Io()), InMemoryTerminologyRepository()
-        ).build(capture.value, context)
-
-        assert outcome.result.completeness is BuildCompleteness.FULL
-        assert {(item.original, item.translation) for item in outcome.result.evidence} == {
-            ("Dragon", "Imported translation")
-        }
-        assert not any(item.startswith("VARIANT_FINGERPRINT_MISMATCH") for item in outcome.result.diagnostics)
-        registry = SourceRegistrySnapshot.from_project_data(services.project_lifecycle.active.project.envelope.data)
-        history = ProjectVariantHistoryProvider(None, None, None, artifacts=ProjectSourceArtifactStore(str(root)))
-        for sources in (registry.sources, tuple(reversed(registry.sources))):
-            originals, _registrations, diagnostics = history._originals(
-                services.project_lifecycle.active.project.envelope.identity,
-                SimpleNamespace(sources=sources, relations=registry.relations),
-                None,
-            )
-            assert set(originals.values()) == {"Dragon"}
-            assert not diagnostics
-    finally:
-        services.close()
+    history = ProjectVariantHistoryProvider(services.project_catalog, services.projects).collect(None)
+    assert [(record.original, record.translation) for record in history.records] == [("Dragon", "Imported translation")]
+    assert not history.diagnostics

@@ -37,6 +37,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Windows file associations conventionally invoke the executable with
         # the selected document as a lone positional argument.
         raw_args = ["gui", "--import-project", raw_args[0]]
+    elif len(raw_args) == 1 and Path(raw_args[0]).name.casefold() == "project.sqlite3":
+        raw_args = ["gui", "--open-project", raw_args[0]]
     args = build_parser().parse_args(raw_args)
     if args.open_project and args.command != "gui":
         build_parser().error("--open-project is only valid with the gui command")

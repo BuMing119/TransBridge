@@ -4,9 +4,10 @@ from threading import RLock
 from typing import Any
 
 from transbridge.application.io.identity import EntryKey
+from transbridge.persistence.v2.deferred_variant_rows import DeferredVariantRows
 from transbridge.persistence.v2.variant import VariantEntryState, VariantSnapshot
 
-from .models import freeze_projection_value
+from .models import DeferredProjectRows, freeze_projection_value
 
 
 class ProjectEntryProjection:
@@ -40,5 +41,12 @@ class ProjectEntryProjection:
     def frozen_rows(self, snapshot: VariantSnapshot | None) -> Any:
         """Return the immutable row container without refreezing every row on publication."""
         with self._lock:
+            if snapshot is not None and isinstance(snapshot.entries, DeferredVariantRows):
+                if snapshot is not self._snapshot:
+                    self._snapshot = snapshot
+                    self._rows = ()
+                    self._by_key.clear()
+                    self._frozen_rows = DeferredProjectRows(snapshot.entries)
+                return self._frozen_rows
             self.rows(snapshot)
             return self._frozen_rows

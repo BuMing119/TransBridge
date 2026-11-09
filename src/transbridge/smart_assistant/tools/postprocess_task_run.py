@@ -20,7 +20,7 @@ from .translation_task_results import AssistantTaskResults
 logger = logging.getLogger(__name__)
 
 
-def launch_postprocess_task(args, ctx, *, report_directory, report_callback, manager=None):
+def launch_postprocess_task(args, ctx, *, report_directory=None, report_callback, manager=None):
     """Capture live inputs on their owner thread; prepare durable storage in the worker."""
     dispatch = ctx if isinstance(ctx, ExecutionContext) else ExecutionContext(app_context=ctx)
 
@@ -70,7 +70,9 @@ def launch_postprocess_task(args, ctx, *, report_directory, report_callback, man
             lambda: execute_task(
                 task,
                 request,
-                lambda: report_directory(task.report_context),
+                task.store.run_directory(task.result_id) / "reports"
+                if report_directory is None
+                else lambda: report_directory(task.report_context),
                 report_callback,
                 manager,
                 task_id,
@@ -115,7 +117,11 @@ def execute_task(task, request, directory, report_callback, manager, task_id, ha
         try:
             result = execute_postprocess_task(
                 request,
-                ctx=SimpleNamespace(esp_path=task.esp_path, request_context=task.context),
+                ctx=SimpleNamespace(
+                    esp_path=task.esp_path,
+                    request_context=task.context,
+                    task_log_base=task.store.run_directory(task.result_id) / "logs",
+                ),
                 collection=task.task.collection,
                 task_id=task.result_id,
                 stop_event=handle.stop_event,

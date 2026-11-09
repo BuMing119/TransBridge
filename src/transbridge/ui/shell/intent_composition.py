@@ -117,6 +117,7 @@ class ShellIntentComposition:
             self._host.workbench.guidance_banner,
             self.dispatch,
             preferences=preferences,
+            paging=getattr(getattr(self._host.workbench, "preview", None), "_paging", None),
             parent=self._host,
         )
         self._drop_controller = ShellDropController(self._host, self.dispatch)

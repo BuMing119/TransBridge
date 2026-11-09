@@ -238,7 +238,7 @@ def test_workbench_recovery_uses_normal_runtime_and_bypasses_foreground(monkeypa
         ai_tasks=registry,
         _pending_ai_recovery=(manifest, restart),
         _ctx=object(),
-        _step2=object(),
+        _step2=SimpleNamespace(_paging=SimpleNamespace(when_ready=Mock(return_value=True))),
         _theme_view=None,
         _terminology_profile_controller=None,
         _on_progress_window_created=Mock(),

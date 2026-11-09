@@ -53,7 +53,8 @@ class VersionPersistence:
         target = VariantRef(VariantId(variant_id), ProjectId(project_id))
         candidates = tuple(candidates)
 
-        def operation():
+        def operation(operation_id=None):
+            options = {"operation_id": operation_id} if operation_id is not None else {}
             return commands.merge_entry_states(
                 candidates,
                 context,
@@ -62,6 +63,7 @@ class VersionPersistence:
                 commit_mutation=commit_mutation,
                 before_commit=before_commit,
                 decision_states=decision_states,
+                **options,
             )
 
         return operation
@@ -84,16 +86,7 @@ class VersionPersistence:
             else {}
         )
 
-        def operation():
-            result = commands.save(context, **options)
-            if result.is_success:
-                self._version_saved = True
-            return result
-
-        return operation
-
-    def acknowledge_save(self):
-        self._require_identity()
+        return lambda: commands.save(context, **options)
 
     def _require_identity(self) -> None:
         current = self._context.active_version_identity

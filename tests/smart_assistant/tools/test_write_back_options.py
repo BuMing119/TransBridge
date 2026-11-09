@@ -9,6 +9,7 @@ import pytest
 from tests.contracts.io.test_localized_hydrated_publication import localized as localized_fixture
 from tests.plugin_fixtures import write_plugin
 from tests.smart_assistant.tools.test_safe_write_back import manager as manager_fixture
+from tests.smart_assistant.tools.test_source_import_authority import project as project_fixture
 from tests.smart_assistant.tools.test_write_back_publication_boundary import _finish
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import FormatId, ParseRequest, SourceDescriptor, TranslationIoUseCase
@@ -22,6 +23,7 @@ from transbridge.smart_assistant.tools.tool_default import _tool_list_collection
 
 manager = manager_fixture
 localized = localized_fixture
+project = project_fixture
 
 
 def _slot(source, format_id, request):
@@ -74,21 +76,38 @@ def test_assistant_plugin_to_sst_uses_shared_publication(sources, manager):
     assert sources.plugin.read_bytes() == original
 
 
-def test_restored_plugin_sst_output_uses_saved_display_name(sources, manager):
+def test_restored_plugin_sst_output_uses_saved_display_name(project, manager):
     from transbridge.parser.xt.sst_codec import SstDocument
+    from transbridge.smart_assistant.tools.tool_parser import _tool_parse_esp
+    from transbridge.smart_assistant.tools.types import ExecutionContext
+    from transbridge.ui.source_hydration import slot_from_hydration
 
-    slot = sources.ctx.active_slot
-    slot.esp_path = None
-    slot.source_snapshot = replace(
-        slot.source_snapshot,
-        source=replace(slot.source_snapshot.source, uri="source:restored-identity", display_name="SavedPlugin.esp"),
+    source = write_plugin(project.root / "SavedPlugin.esp", [(0x800, "Npc", "Original")])
+    ctx = ExecutionContext(app_context=project.ctx)
+    imported = _tool_parse_esp({"path": str(source)}, ctx)
+    assert imported.success, imported.message
+    row = next(iter(project.ctx.collection))
+    commands = project.services.gui_project_commands
+    assert commands.update_entry(row.identity, project.request, translation="Translated", stage=1).is_success
+    assert commands.save(project.request).is_success
+    source.unlink()
+    reopened = project.services.current_project_opener.prepare_active(project.request)
+    assert reopened.is_success, reopened.diagnostics
+    (hydration,) = reopened.value.hydrations
+    assert hydration.source_snapshot.content is None
+    slot = slot_from_hydration(hydration)
+    project.ctx.add_slot(hydration.source_id, slot)
+    project.ctx.activate_slot(hydration.source_id)
+    output = project.root / "restored-output"
+    started = tool_writer._tool_write_back(
+        {"target": "sst", "output_dir": str(output)}, ExecutionContext(app_context=project.ctx)
     )
-    output = sources.root / "restored-output"
-    started = tool_writer._tool_write_back({"target": "sst", "output_dir": str(output)}, sources.ctx)
     result = _result(manager, started)
     path = output / "SavedPlugin.sst"
     assert result["artifacts"] == [str(path)]
-    assert SstDocument.from_bytes(path.read_bytes()).masters == ("savedplugin.esp",)
+    document = SstDocument.from_bytes(path.read_bytes())
+    assert document.masters == ("savedplugin.esp",)
+    assert [record.translation for record in document.records] == ["Translated"]
 
 
 def test_assistant_sst_conversion_requires_explicit_destination(sources, manager):

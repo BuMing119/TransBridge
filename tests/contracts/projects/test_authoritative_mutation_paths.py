@@ -70,7 +70,8 @@ class _ProjectionWriteVisitor(ast.NodeVisitor):
 
 def test_known_translation_adapters_commit_or_fail_closed_for_v2_projects() -> None:
     assert "commands.replace_entry_states(" in _source("ui/tools/dictionary_panel.py")
-    assert "commands.merge_entry_states(" in _source("smart_assistant/tools/translation_task_results.py")
+    assert "return merge_saved_results(" in _source("smart_assistant/tools/translation_task_results.py")
+    assert "commands.merge_entry_states(" in _source("smart_assistant/tools/translation_task_merge.py")
     assert "commands.merge_entry_states(" in _source("application/sync/download_merge.py")
     assert "commands.replace_entry_states(" in _source("ui/workbench/translation_stage_action.py")
 
@@ -88,11 +89,9 @@ def test_download_card_requires_the_shared_plan_without_direct_projection_writes
     assert "collection_changed.emit" not in download_card
 
 
-def test_projection_divergence_guard_compares_complete_visible_and_authoritative_sets() -> None:
+def test_materialized_projection_divergence_guard_delegates_to_consistency_tracker() -> None:
     assert "return self._project_view.diverged()" in _source("ui/context.py")
-    context = _source("ui/project_view_binding.py")
-    assert "return visible != states" in context
-    assert "external_refs" in context
+    assert "return self._consistency.diverged(" in _source("ui/project_view_binding.py")
 
 
 def test_direct_projection_writes_stay_inside_reviewed_commit_or_rollback_boundaries() -> None:

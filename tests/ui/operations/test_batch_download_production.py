@@ -38,10 +38,11 @@ class Window:
 
 
 def context():
+    collection = TranslationEntryCollection((TranslationEntry("key", "key", "Original", "Local", 1, "INFO:NAM1"),))
     return SimpleNamespace(
         uses_authoritative_projection=True,
-        collection=TranslationEntryCollection((TranslationEntry("key", "key", "Original", "Local", 1, "INFO:NAM1"),)),
-        slots={"one": object(), "two": object()},
+        collection=collection,
+        slots={"one": SimpleNamespace(collection=collection), "two": SimpleNamespace(collection=collection)},
         esp_path="source.esp",
         config=SimpleNamespace(
             token="configured",

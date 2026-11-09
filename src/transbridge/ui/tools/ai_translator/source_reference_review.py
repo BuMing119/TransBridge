@@ -75,7 +75,13 @@ def review_source_references(executor, task, references, evidence):
     by_key = {
         entry.identity: references[ai_entry_key(entry)] for entry in task.entries if ai_entry_key(entry) in references
     }
-    store = WorkflowLogStore(task.esp_path, workflow="reference_review", max_concurrent=executor.config.max_concurrent)
+    run_directory = getattr(executor.request, "recovery_directory", None)
+    store = WorkflowLogStore(
+        task.esp_path,
+        workflow="reference_review",
+        max_concurrent=executor.config.max_concurrent,
+        log_base=None if run_directory is None else run_directory / "logs",
+    )
     try:
         client = WorkflowLoggingLLMClient(
             LimitedLLMClient(

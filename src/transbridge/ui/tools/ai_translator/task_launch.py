@@ -200,7 +200,7 @@ class TaskLaunch(QObject):
                 return
             from .task_empty_recovery import EmptyRecoveryCompletion
 
-            operation = EmptyRecoveryCompletion(session.project_dir, self.selection)
+            operation = EmptyRecoveryCompletion(session.project_dir, self.selection, session.task_store)
             self.dialog.setLabelText("正在结束已完成的恢复任务…")
             self.worker.start(operation.prepare, on_success=self._empty_prepared, on_error=self._failed)
             return
@@ -239,7 +239,7 @@ class TaskLaunch(QObject):
         owner_id, options = self.controller.owner_id, dict(self.options)
         if self.selection and not self.selection[1]:
             options["reference_recovery_record"] = self.selection[0]
-            options["reference_recovery_directory"] = self.session.project_dir
+            options["reference_recovery_directory"] = self.session.artifact_directory(self.selection[0]["task_id"])
         self.worker.start(
             lambda: inspect_launch(mode, config, tasks, remote, owner_id, options),
             on_success=self._inspected,
@@ -282,7 +282,6 @@ class TaskLaunch(QObject):
             self.request = self.controller.begin(
                 self.mode, self.config, prepared.entries, prepared=prepared, **self.options
             )
-            self.request = replace(self.request, recovery_directory=self.session.project_dir)
             if self.selection and not self.selection[1]:
                 self.request = replace(
                     self.request,
@@ -290,8 +289,10 @@ class TaskLaunch(QObject):
                     recovery_task_id=None if self.selection[0].get("legacy") else self.selection[0]["task_id"],
                     recovery_record=self.selection[0],
                 )
+            result_run_id = self.request.recovery_task_id or self.request.run_id
+            self.request = replace(self.request, recovery_directory=self.session.artifact_directory(result_run_id))
             self.activity = self.controller.create_activity(self.request)
-            self.session.bind_run_identity(self.request.run_id)
+            self.session.bind_run_identity(self.request.run_id, result_run_id=result_run_id)
             self.dialog.setLabelText("正在记录配置与术语版本…")
             request, owner = self.request, self.owner
             self.worker.start(

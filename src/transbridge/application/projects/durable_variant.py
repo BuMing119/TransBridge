@@ -3,20 +3,29 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import errno
 import logging
 
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult, RequestContext
 from transbridge.application.tasks import TaskCancelled
+from transbridge.persistence.v2.deferred_variant_rows import DeferredVariantRows
 from transbridge.persistence.v2.ids import ProjectRef
-from transbridge.persistence.v2.variant import VariantAggregate, VariantChangeSet
+from transbridge.persistence.v2.variant import VariantChangeSet, VariantEntryState
 
 from .lifecycle import ProjectLifecycleService
 from .models import LifecycleSave
 from .ports import LifecycleUnitOfWorkFactoryPort
 
 _logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _UnconfirmedSave:
+    operation_id: str
+    save: LifecycleSave
+    observed_revision: int
+    observed_entries: tuple[VariantEntryState, ...]
 
 
 class DurableVariantCommitService:
@@ -29,11 +38,107 @@ class DurableVariantCommitService:
         *,
         projects=None,
         variants=None,
+        saved_candidate_verifier=None,
     ):
         self._lifecycle = lifecycle
         self._unit_of_work_factory = unit_of_work_factory
         self._projects = projects
         self._variants = variants
+        self._saved_candidate_verifier = saved_candidate_verifier
+        self._unconfirmed: _UnconfirmedSave | None = None
+
+    def reconcile(self, operation_id, receipt, context, *, commit_mutation):
+        pending = self._unconfirmed
+        if pending is None or pending.operation_id != operation_id:
+            active = self._lifecycle.active
+            if receipt is not None and (
+                active is None
+                or active.formal_variant_ref is None
+                or active.project_ref.identity.value != context.project_id
+                or active.formal_variant_ref.identity.value != context.variant_id
+                or active.persisted_project_revision < receipt["project_revision"]
+                or active.persisted_variant_revision is None
+                or active.persisted_variant_revision < receipt["variant_revision"]
+            ):
+                return OperationResult.failed(_stale_saved_variant(), run_id=context.run_id)
+            return OperationResult.completed(run_id=context.run_id)
+
+        def verify():
+            matches = self._verify_saved_candidate(pending.save)
+            if matches is False:
+                raise _stale_saved_variant()
+            if matches is None:
+                raise DomainError(
+                    ErrorCategory.INTERNAL,
+                    "DURABLE_VARIANT_SAVE_FAILED",
+                    "下载成果已提交，但暂时无法读取保存结果以同步工作台；请重试。",
+                    retryable=True,
+                )
+
+        return self._publish_pending(pending, context, verify=verify, commit_mutation=commit_mutation)
+
+    def _publish_pending(self, pending, context, *, verify, commit_mutation):
+        result = self._lifecycle.reconcile_variant_save(
+            pending.save,
+            pending.observed_revision,
+            pending.observed_entries,
+            context,
+            verify=verify,
+            commit_mutation=commit_mutation,
+        )
+        if result.is_success and self._unconfirmed is pending:
+            self._unconfirmed = None
+        return result
+
+    def _before_mutation(self, context):
+        pending = self._unconfirmed
+        if pending is None:
+            return OperationResult.completed(run_id=context.run_id)
+        active = self._lifecycle.active
+        if (
+            active is not None
+            and active.formal_variant_ref == pending.save.formal_variant_ref
+            and active.persisted_variant_revision is not None
+            and active.persisted_variant_revision >= pending.save.variant.revision
+            and active.persisted_project_revision >= pending.save.project.envelope.revision
+            and (
+                active.persisted_variant_revision != pending.save.expected_persisted_revision
+                or active.persisted_project_revision != pending.save.expected_persisted_project_revision
+            )
+        ):
+            self._unconfirmed = None
+            return OperationResult.completed(run_id=context.run_id)
+        matches = self._verify_saved_candidate(pending.save)
+        if matches is True:
+            return self._publish_pending(pending, context, verify=lambda: None, commit_mutation=None)
+        if matches is False and self._original_base_is_current(pending):
+            self._unconfirmed = None
+            return OperationResult.completed(run_id=context.run_id)
+        return OperationResult.failed(
+            DomainError(
+                ErrorCategory.CONFLICT,
+                "DURABLE_VARIANT_SAVE_CHECK_REQUIRED",
+                "上次下载保存尚未对账；已保留当前修改，请重试保存确认后再变更来源或保存工程。",
+                retryable=True,
+            ),
+            run_id=context.run_id,
+        )
+
+    def _original_base_is_current(self, pending):
+        if not hasattr(self._projects, "store_for"):
+            return False
+        ref = pending.save.formal_variant_ref
+        try:
+            store = self._projects.store_for(ref.project_id)
+            token = store.read_token(ref.identity)
+            return (
+                token.project_revision == pending.save.expected_persisted_project_revision
+                and token.variant_revision == pending.save.expected_persisted_revision
+                and store.receipt(pending.operation_id) is None
+            )
+        except Exception:
+            _logger.exception("Unable to verify the previous Variant save base")
+            return False
 
     def commit(
         self,
@@ -55,20 +160,39 @@ class DurableVariantCommitService:
         if snapshot.revision != change_set.expected_revision:
             return _failed("ACTIVE_VARIANT_REVISION_CHANGED", "本地译文已变化，请按当前内容重试保存。", context)
         try:
-            candidate = VariantAggregate(snapshot)
+            candidate = active.variant.fork()
             if (
                 change_set.entries != snapshot.entries
                 or change_set.source_fingerprints != snapshot.source_fingerprints
                 or change_set.label_library != snapshot.label_library
+                or change_set.operation_id is not None
             ):
                 candidate.commit(change_set, context)
             save = LifecycleSave.capture(replace(active, variant=candidate))
+            published_variant = save.variant
+            if isinstance(published_variant.entries, DeferredVariantRows):
+                published_variant = replace(
+                    published_variant,
+                    entries=published_variant.entries.rebased(
+                        save.project.envelope.revision, published_variant.revision
+                    ),
+                )
             written = False
 
             def persist():
                 nonlocal written
                 if written:
                     raise DomainError(ErrorCategory.INTERNAL, "DURABLE_SAVE_REPEATED", "当前保存请求已执行。")
+                observed_entries = ()
+                if change_set.operation_id is not None:
+                    keys = {
+                        key for key, disposition, _, _ in change_set.application_outcomes if disposition == "applied"
+                    }
+                    observed_entries = (
+                        snapshot.entries.get_many(keys)
+                        if isinstance(snapshot.entries, DeferredVariantRows)
+                        else tuple(entry for entry in snapshot.entries if entry.entry_key in keys)
+                    )
                 work = None
                 try:
                     work = self._unit_of_work_factory.begin()
@@ -81,10 +205,16 @@ class DurableVariantCommitService:
                             work.rollback()
                         except Exception:
                             _logger.exception("Failed to roll back automatic Variant save")
-                    if self._persisted_candidate_matches(save):
+                    matches = self._verify_saved_candidate(save)
+                    if matches is True:
                         written = True
                         _logger.warning("Automatic Variant save recovered an already-persisted candidate", exc_info=exc)
                         return
+                    if matches is None and change_set.operation_id is not None:
+                        self._unconfirmed = _UnconfirmedSave(
+                            change_set.operation_id, save, snapshot.revision, observed_entries
+                        )
+                        self._lifecycle.defer_variant_save_check(change_set.ref, self._before_mutation)
                     raise _save_error(exc) from exc
 
             def guarded_publish(publish):
@@ -113,9 +243,9 @@ class DurableVariantCommitService:
                         "当前保存请求未获执行，版本未修改；请重试。",
                     )
 
-            return self._lifecycle.commit_active_content(
+            result = self._lifecycle.commit_active_content(
                 save.project,
-                save.variant,
+                published_variant,
                 context,
                 expected_project_revision=expected_project_revision,
                 expected_variant_revision=snapshot.revision,
@@ -124,27 +254,48 @@ class DurableVariantCommitService:
                 expected_generation=generation,
                 commit_mutation=guarded_publish,
             )
+            if (
+                result.is_success
+                and self._unconfirmed is not None
+                and self._unconfirmed.save.formal_variant_ref == change_set.ref
+            ):
+                self._unconfirmed = None
+            return result
         except Exception as exc:
             return OperationResult.from_exception(exc, run_id=context.run_id)
 
+    def _verify_saved_candidate(self, save) -> bool | None:
+        for attempt in range(2):
+            try:
+                return self._persisted_candidate_matches(save)
+            except Exception:
+                _logger.exception("Unable to verify the automatic Variant save result (attempt %d)", attempt + 1)
+        return None
+
     def _persisted_candidate_matches(self, save):
+        if self._saved_candidate_verifier is not None:
+            return self._saved_candidate_verifier(save)
         if self._projects is None or self._variants is None or save.variant is None:
             return False
-        try:
-            lock = self._projects.mutation_lock
-            if lock is not self._variants.mutation_lock:
-                return False
-            with lock.reading():
-                project = self._projects.read_snapshot(ProjectRef(save.variant.ref.project_id))
-                variant = self._variants.read_snapshot(save.formal_variant_ref)
-                return project == save.project and variant == save.variant.to_dto()
-        except Exception:
-            _logger.exception("Unable to verify the automatic Variant save result; retry will verify it again")
+        lock = self._projects.mutation_lock
+        if lock is not self._variants.mutation_lock:
             return False
+        with lock.reading():
+            project = self._projects.read_snapshot(ProjectRef(save.variant.ref.project_id))
+            variant = self._variants.read_snapshot(save.formal_variant_ref)
+            return project == save.project and variant == save.variant.to_dto()
 
 
 def _failed(code, message, context):
     return OperationResult.failed(DomainError(ErrorCategory.CONFLICT, code, message), run_id=context.run_id)
+
+
+def _stale_saved_variant():
+    return DomainError(
+        ErrorCategory.CONFLICT,
+        "DURABLE_VARIANT_RECONCILIATION_STALE",
+        "下载成果已提交，但无法同步到当前工作台；请重新打开原工程版本后核对成果。",
+    )
 
 
 def _save_error(exc):

@@ -27,7 +27,9 @@ def prepare_translation_recovery(executor, tasks):
             continue
         executor.progress(task.key, "recover", 0, len(task.translate_entries), "正在校验已保存的翻译候选")
         before = {EntryKey.from_dict(item["entry_key"]): item for item in source.get("inputs", ())}
-        candidates = load_recovery_candidates(record, task.key, executor.config)
+        directory = getattr(executor.request, "recovery_directory", None)
+        root = directory / "runtime-v2" if directory is not None and not record.get("legacy") else None
+        candidates = load_recovery_candidates(record, task.key, executor.config, root=root)
         values, changed = {}, 0
         for entry in task.translate_entries:
             if executor.stop.is_set():

@@ -181,26 +181,21 @@ class FiltersView(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-    def build_categories(self, entries: Sequence[TranslationEntry]) -> None:
+    def build_categories(self, entries: Sequence[TranslationEntry], *, counts=None) -> None:
         self._clear_layout(self.category_container)
-        if not entries:
+        if not entries and not counts:
             self.category_widget.hide()
             return
-        counter = Counter()
-        categories = {}
-        for entry in entries:
-            context = entry.context or ""
-            if context not in categories:
-                categories[context] = entry_category(entry)
-            counter[categories[context]] += 1
+        if counts is None:
+            counts = Counter(entry_category(entry) for entry in entries)
         self._add_tag(
             self.category_container,
-            f"全部 {len(entries)}",
+            f"全部 {sum(counts.values())}",
             not self.category_filters,
             lambda: self.toggle_category(None),
         )
         for category in ALL_CATEGORIES:
-            count = counter.get(category, 0)
+            count = counts.get(category, 0)
             if count:
                 self._add_tag(
                     self.category_container,
@@ -210,20 +205,21 @@ class FiltersView(QWidget):
                 )
         self.category_widget.setVisible(self._advanced_visible)
 
-    def build_stages(self, entries: Sequence[TranslationEntry]) -> None:
+    def build_stages(self, entries: Sequence[TranslationEntry], *, counts=None) -> None:
         self._clear_layout(self.stage_container)
-        if not entries:
+        if not entries and not counts:
             self.stage_widget.hide()
             return
-        counter = Counter(entry.stage for entry in entries)
+        if counts is None:
+            counts = Counter(entry.stage for entry in entries)
         self._add_tag(
             self.stage_container,
-            f"全部 {len(entries)}",
+            f"全部 {sum(counts.values())}",
             not self.stage_filters,
             lambda: self.toggle_stage(None),
         )
         for value, name in STAGE_LABELS.items():
-            count = counter.get(value, 0)
+            count = counts.get(value, 0)
             if count or value in self.stage_filters:
                 self._add_tag(
                     self.stage_container,
@@ -238,6 +234,9 @@ class FiltersView(QWidget):
         entries: Sequence[TranslationEntry],
         label_library: Mapping[str, Mapping[str, str]],
         entry_labels: Mapping[str, set[str]],
+        *,
+        counts=None,
+        labeled_count=None,
     ) -> None:
         self._clear_layout(self.label_container)
         self._label_buttons.clear()
@@ -245,8 +244,10 @@ class FiltersView(QWidget):
             self.label_widget.hide()
             self.focus_button.setEnabled(False)
             return
-        counter = Counter(label for labels in entry_labels.values() for label in labels)
-        labeled_count = sum(bool(labels) for labels in entry_labels.values())
+        if counts is None:
+            counts = Counter(label for labels in entry_labels.values() for label in labels)
+        if labeled_count is None:
+            labeled_count = sum(bool(labels) for labels in entry_labels.values())
         self._add_tag(
             self.label_container,
             f"全部 {labeled_count}",
@@ -254,7 +255,7 @@ class FiltersView(QWidget):
             lambda: self.toggle_label(None),
         )
         for label_id, info in label_library.items():
-            count = counter.get(label_id, 0)
+            count = counts.get(label_id, 0)
             if count or label_id in self.label_filters:
                 button = self._add_tag(
                     self.label_container,

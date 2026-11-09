@@ -30,6 +30,7 @@ def create_workflow_llm_runtime(
     workflow: str,
     stop_event: object,
     pause_event: object | None = None,
+    log_base=None,
 ) -> WorkflowLlmRuntime:
     """Create one budgeted, pausable and logged client for a complete workflow."""
 
@@ -41,7 +42,7 @@ def create_workflow_llm_runtime(
 
     max_concurrent = int(getattr(llm_config, "max_concurrent", 1))
     request_budget = AiRequestBudget(max(1, max_concurrent))
-    log_store = WorkflowLogStore(esp_path, workflow=workflow, max_concurrent=max_concurrent)
+    log_store = WorkflowLogStore(esp_path, workflow=workflow, max_concurrent=max_concurrent, log_base=log_base)
     provider_client = create_llm_client(llm_config)
     limited_client = LimitedLLMClient(
         provider_client,

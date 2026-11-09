@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 from PyQt6.QtCore import QThread
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 import pytest
 
 from transbridge.application.contracts import RequestContext
@@ -173,48 +173,69 @@ def environment(tmp_path, monkeypatch):
     monkeypatch.setattr(panel_module, "set_window_app_user_model_id", lambda *_args: False)
     client = _AnswerClient()
     monkeypatch.setattr(ConversationOrchestrator, "_get_llm_client", lambda _self: client)
-    panel = panel_module.SmartAssistantPanel(
-        SimpleNamespace(),
-        session_commands=services.gui_session_commands,
-        session_projection=services.session_projection,
-        runtime_context=RequestContext("owner"),
-    )
-    _until(lambda: panel.chat.session_ready and panel._workspace.ready())
-    panel.chat.add_system_prompt("Offline request integration context")
-    binding = panel.chat._request_binding
-    assert binding is not None
-    # Synthetic view projections must not race the initial saved-session restore.
-    _until(
-        lambda: (
-            binding.context is not None
-            and binding.context.session_id == panel._current_session_id()
-            and binding._accepting == 0
-            and not binding.management._refresh._pending
+    panel = binding = None
+    setup_errors = []
+
+    def record_warning(_parent, title, message, *_args):
+        setup_errors.append(f"{title}: {message}")
+        return QMessageBox.StandardButton.Ok
+
+    try:
+        with monkeypatch.context() as setup:
+            # A session initialization failure must surface on the pytest stack.
+            setup.setattr(QMessageBox, "warning", record_warning)
+            panel = panel_module.SmartAssistantPanel(
+                SimpleNamespace(),
+                session_commands=services.gui_session_commands,
+                session_projection=services.session_projection,
+                runtime_context=RequestContext("owner"),
+            )
+            _until(lambda: bool(setup_errors) or (panel.chat.session_ready and panel._workspace.ready()))
+            assert not setup_errors, "\n".join(setup_errors)
+            panel.chat.add_system_prompt("Offline request integration context")
+            binding = panel.chat._request_binding
+            assert binding is not None
+            # Synthetic view projections must not race the initial saved-session restore.
+            _until(
+                lambda: (
+                    bool(setup_errors)
+                    or (
+                        binding.context is not None
+                        and binding.context.session_id == panel._current_session_id()
+                        and binding._accepting == 0
+                        and not binding.management._refresh._pending
+                    )
+                )
+            )
+            assert not setup_errors, "\n".join(setup_errors)
+        response_threads = []
+        original = binding.handle_response
+
+        def handle_response(*args):
+            response_threads.append((QThread.currentThread(), panel.chat._controller.state.value))
+            return original(*args)
+
+        monkeypatch.setattr(binding, "handle_response", handle_response)
+        yield SimpleNamespace(
+            services=services,
+            service=services.gui_session_commands.assistant_requests,
+            panel=panel,
+            binding=binding,
+            client=client,
+            response_threads=response_threads,
         )
-    )
-    response_threads = []
-    original = binding.handle_response
-
-    def handle_response(*args):
-        response_threads.append((QThread.currentThread(), panel.chat._controller.state.value))
-        return original(*args)
-
-    monkeypatch.setattr(binding, "handle_response", handle_response)
-    yield SimpleNamespace(
-        services=services,
-        service=services.gui_session_commands.assistant_requests,
-        panel=panel,
-        binding=binding,
-        client=client,
-        response_threads=response_threads,
-    )
-    client.release.set()
-    client.routing_release.set()
-    panel.dispose()
-    binding._queue.shutdown(wait=True)
-    services.close()
-    panel.deleteLater()
-    _APP.processEvents()
+    finally:
+        client.release.set()
+        client.routing_release.set()
+        if panel is not None:
+            if binding is None:
+                binding = panel.chat._request_binding
+            panel.dispose()
+            panel.deleteLater()
+        if binding is not None:
+            binding._queue.shutdown(wait=True)
+        services.close()
+        _APP.processEvents()
 
 
 def _requests(environment):

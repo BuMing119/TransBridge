@@ -35,6 +35,7 @@ class SqliteTerminologyProfileRepository:
         self._connection = connection
         self._lock = lock or RLock()
         self._publication_lock = None
+        self._project_selection = None
         self._reads = ProfileReadStore(connection, self._lock, _published_from_row)
         connection.execute("PRAGMA foreign_keys = ON")
         if int(connection.execute("PRAGMA foreign_keys").fetchone()[0]) != 1:
@@ -45,14 +46,29 @@ class SqliteTerminologyProfileRepository:
 
     def get_selected_published(self, project_id: str, variant_id: str) -> PublishedTerminologyProfile | None:
         with self._publication_lock or nullcontext():
+            if self._project_selection is not None:
+                selection = self.get_selection(project_id, variant_id)
+                if selection is None:
+                    return None
+                published = self._reads.published(selection.profile_id, selection.revision)
+                if published is None or published.project_id != project_id:
+                    raise ValueError("Project references an unavailable published terminology profile")
+                return published
             return self._reads.selected(project_id, variant_id)
+
+    def bind_project_selection(self, selection, project_id: str) -> None:
+        self._project_selection = (selection, project_id)
 
     def bind_publication_lock(self, lock) -> None:
         """Share the Project journal boundary for association readers and writers."""
         self._publication_lock = lock
 
     def read_cache_token(self) -> object:
-        return self._reads.token()
+        token = self._reads.token()
+        if self._project_selection is None:
+            return token
+        reader, project_id = self._project_selection
+        return token, reader.cache_token(project_id)
 
     def list_profiles(self, project_id: str, *, include_archived: bool = False) -> tuple[TerminologyProfile, ...]:
         sql = (
@@ -229,6 +245,11 @@ class SqliteTerminologyProfileRepository:
             return commit_publication(self, preview, published_at=published_at)
 
     def get_selection(self, project_id: str, variant_id: str) -> TerminologyProfileSelection | None:
+        if self._project_selection is not None:
+            reader, identity = self._project_selection
+            if project_id != identity:
+                raise ValueError("profile selection belongs to another project")
+            return reader.selection(project_id, variant_id)
         with self._publication_lock or nullcontext(), self._lock:
             row = self._connection.execute(
                 "SELECT project_id, variant_id, profile_id, revision, selected_at "
@@ -238,6 +259,9 @@ class SqliteTerminologyProfileRepository:
         return None if row is None else _selection_from_row(row)
 
     def list_profile_selections(self, profile_id: str) -> tuple[TerminologyProfileSelection, ...]:
+        if self._project_selection is not None:
+            reader, project_id = self._project_selection
+            return tuple(item for item in reader.selections(project_id) if item.profile_id == profile_id)
         with self._publication_lock or nullcontext(), self._lock:
             rows = self._connection.execute(
                 "SELECT project_id, variant_id, profile_id, revision, selected_at "
@@ -247,6 +271,7 @@ class SqliteTerminologyProfileRepository:
         return tuple(_selection_from_row(row) for row in rows)
 
     def set_selection(self, selection: TerminologyProfileSelection) -> None:
+        self._require_local_selection()
         try:
             with self._publication_lock or nullcontext(), self._lock, self._write_transaction():
                 row = self._connection.execute(
@@ -277,6 +302,7 @@ class SqliteTerminologyProfileRepository:
             raise ValueError("selected profile revision is unavailable") from exc
 
     def clear_selection(self, project_id: str, variant_id: str) -> None:
+        self._require_local_selection()
         with self._publication_lock or nullcontext(), self._lock, self._write_transaction():
             self._connection.execute(
                 "DELETE FROM terminology_profile_selections WHERE project_id = ? AND variant_id = ?",
@@ -284,11 +310,16 @@ class SqliteTerminologyProfileRepository:
             )
 
     def clear_profile_selections(self, profile_id: str) -> None:
+        self._require_local_selection()
         with self._publication_lock or nullcontext(), self._lock, self._write_transaction():
             self._connection.execute(
                 "DELETE FROM terminology_profile_selections WHERE profile_id = ?",
                 (profile_id,),
             )
+
+    def _require_local_selection(self):
+        if self._project_selection is not None:
+            raise ValueError("Use the project version command to change its terminology selection")
 
     def _require_profile(self, profile_id: str) -> TerminologyProfile:
         row = self._connection.execute(

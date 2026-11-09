@@ -62,6 +62,11 @@ class SourceInputCoordinator:
     def open_ai(self, keys):
         self._host.tool_windows.open_ai_translator(source_keys=self.resolved_keys(keys))
 
+    def select_write_inputs(self, scope, resume, **options):
+        from .write_input_coordinator import select_write_inputs
+
+        select_write_inputs(self._host, scope, resume, **options)
+
     def ensure(
         self,
         requirement,

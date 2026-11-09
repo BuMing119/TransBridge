@@ -110,7 +110,13 @@ class SourceExecutor:
             self.prepared_names.setdefault(source, {}).update(values)
 
     def execute(self, task: SourceTask) -> SourceOutcome:
-        store = WorkflowLogStore(task.esp_path, workflow="ai_task", max_concurrent=self.config.max_concurrent)
+        run_directory = getattr(self.request, "recovery_directory", None)
+        store = WorkflowLogStore(
+            task.esp_path,
+            workflow="ai_task",
+            max_concurrent=self.config.max_concurrent,
+            log_base=None if run_directory is None else run_directory / "logs",
+        )
         result = SourceOutcome(task, log_dir=store.log_dir)
         try:
             if self.log_ready is not None:
@@ -176,6 +182,7 @@ class SourceExecutor:
 
     def _translate(self, task, store, *, repair_requirements=None, name_preparation=False):
         from transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig
+        from transbridge.application.translation import FilesystemTranslationCheckpointPort
 
         from .source_terms import source_run_id, source_terminology_path
         from .task_translation_resume import postprocess_recovery_options
@@ -189,6 +196,7 @@ class SourceExecutor:
             run_id += "-term-repair"
         elif name_preparation:
             run_id += "-names"
+        directory = getattr(self.request, "recovery_directory", None)
 
         translator = AutoTranslator(
             TranslatorConfig(
@@ -200,6 +208,9 @@ class SourceExecutor:
             self.project_id,
             shared_in_flight_terms=self.shared_terms if self.shared_term_pool is None else None,
             shared_in_flight_lock=self.terms_lock if self.shared_term_pool is None else None,
+            candidate_checkpoint=None
+            if directory is None
+            else FilesystemTranslationCheckpointPort(directory / "runtime-v2"),
             run_id_factory=lambda: run_id,
             request_budget=self.request.request_budget,
             llm_client_wrapper=lambda client: WorkflowLoggingLLMClient(client, store, channel_prefix="translate_call"),

@@ -131,10 +131,16 @@ class TranslationController:
         try:
             store, record, payload = load_task_result(ctx, result_id)
             summary, warning = merge_saved_results(ctx, store, record, payload, policy=args.get("policy"))
+            message = {
+                "staged-unsaved": "任务成果已应用，等待项目保存",
+                "acknowledgement-pending": "任务应用已处理，回执待同步",
+                "conflicted": "任务成果存在待处理的冲突",
+                "discarded-or-superseded": "原应用已撤销或被后续编辑替换",
+            }.get(summary.get("application_state"), "已合入保存的任务成果")
             return ToolResult(
                 success=True,
                 partial=record.get("parse_outcome") == "partial" or bool(summary.get("pending_count")),
-                message="已合入保存的任务成果",
+                message=message,
                 data={
                     "result_id": result_id,
                     "merge": summary,

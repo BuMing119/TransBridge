@@ -4,17 +4,17 @@ from pathlib import Path
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import Mock
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QWidget
 import pytest
 
-from transbridge.application.contracts import Diagnostic, OperationOutcome, RequestContext
+from transbridge.application.contracts import Diagnostic, OperationOutcome
 from transbridge.application.io import EntryKey, EntryRevision, SourceNamespace
 from transbridge.application.translation.postprocess import PostProcessCandidate, ReportSnapshot
 from transbridge.application.translation.task_history import TaskHistoryStore
+from transbridge.persistence.task_store import TaskStore
 from transbridge.ui.tools.ai_translator import task_history_dialog, task_registry, task_result_dialog
 from transbridge.ui.tools.ai_translator.task_history_dialog import TaskHistoryDialog
 from transbridge.ui.tools.ai_translator.task_registry import AiTaskRegistry, project_directory
@@ -78,22 +78,13 @@ def _record(run_id="past-run", state="cancelled"):
     }
 
 
-def test_project_directory_resolves_current_v2_project_without_variant_scope(tmp_path):
-    context = RequestContext(owner_id="owner", project_id="old-project", variant_id="old-version")
-    active_path = tmp_path / "current" / "project.json"
-    service = SimpleNamespace(active_project_path=Mock(return_value=active_path))
-    use_cases = SimpleNamespace(
-        names=lambda: ("project_source_updates",),
-        resolve=Mock(return_value=service),
-    )
-    ctx = SimpleNamespace(active_project_id="new-project")
+def test_task_directory_uses_independent_store_before_and_after_a_project_switch(tmp_path):
+    task_store = TaskStore(tmp_path / "task-store-v1")
+    ctx = SimpleNamespace(task_store=task_store, active_version_identity=None)
 
-    assert project_directory(ctx, SimpleNamespace(use_cases=use_cases), context) == active_path.parent
-    passed_context = service.active_project_path.call_args.args[0]
-    assert passed_context.project_id == "new-project"
-    assert passed_context.variant_id is None
-    assert passed_context.owner_id == context.owner_id
-    assert context.project_id == "old-project" and context.variant_id == "old-version"
+    assert project_directory(ctx) == task_store.root
+    ctx.active_version_identity = ("new-project", "new-variant")
+    assert project_directory(ctx) == task_store.root
 
 
 def test_task_center_opens_requested_history_result_instead_of_newest(qapp, tmp_path):

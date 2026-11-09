@@ -30,6 +30,7 @@ def prepare_translation_import(
     strings_lang: str = "chinese",
     context: RequestContext | None = None,
     target_snapshot: SourceSnapshot | None = None,
+    require_original_match: bool = False,
 ) -> LegacyMigrationDraft:
     """Apply uniquely matched proposals, retaining protected and unmatched entries."""
     path = Path(source_path)
@@ -69,7 +70,11 @@ def prepare_translation_import(
             ):
                 matching_target = restore_plugin_dsd_locators(target, target_snapshot)
             draft = migration_import.prepare_migration_import(
-                path, matching_target, format_hint=format_id, context=context
+                path,
+                matching_target,
+                format_hint=format_id,
+                context=context,
+                require_original_match=require_original_match,
             )
             proposals = draft.state_mapping()
 

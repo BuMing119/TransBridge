@@ -12,7 +12,9 @@ from transbridge.converter.translation_entry_collection import TranslationEntryC
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
 from transbridge.ui.project_labels import entry_label_key
+from transbridge.ui.project_rows import ProjectRowsCollection
 
+from .resident_rows import ResidentTableRows
 from .table_presenter import RenderSession
 from .translation_model import TranslationTableModel
 from .translation_table_columns import (
@@ -34,6 +36,8 @@ class TranslationTable(QTableView):
 
     entry_edit_requested = pyqtSignal(object)
     translation_edit_requested = pyqtSignal(object, str, int)
+    scope_sort_requested = pyqtSignal(object, bool)
+    scope_select_all_requested = pyqtSignal()
 
     def __init__(
         self,
@@ -49,6 +53,7 @@ class TranslationTable(QTableView):
         self._display_order: tuple[int, ...] = ()
         self._label_keys = ()
         self._entry_rows: dict[str, int] = {}
+        self._selected_logical_ids: dict[int, str] = {}
         self._entry_labels: Mapping[str, set[str]] = {}
         self._label_library: Mapping[str, Mapping[str, str]] = {}
         self._closed = False
@@ -106,6 +111,7 @@ class TranslationTable(QTableView):
         self.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
         self.setAlternatingRowColors(True)
         self.setShowGrid(False)
         self.setWordWrap(False)
@@ -117,7 +123,9 @@ class TranslationTable(QTableView):
     def set_editable_entry_keys(self, keys) -> None:
         # A collection already supplies exact identity membership. Reuse it so
         # enabling popup editing does not build another full set during restore.
-        self._editable_entry_keys = keys if isinstance(keys, TranslationEntryCollection) else frozenset(keys)
+        self._editable_entry_keys = (
+            keys if isinstance(keys, (TranslationEntryCollection, ProjectRowsCollection)) else frozenset(keys)
+        )
 
     def set_terminology_projection(
         self, values: Mapping[str, object], *, profile_label: str | None, pending: bool = False, error: str = ""
@@ -154,6 +162,7 @@ class TranslationTable(QTableView):
 
     def start_render(self, session, entry_labels, label_library, *, preserve_scroll=True) -> None:
         selected, current, top, scroll = self._capture_view_state()
+        self._selected_logical_ids.clear()
         self._closed = False
         self._session = session
         self._entry_labels, self._label_library = entry_labels, label_library
@@ -173,6 +182,32 @@ class TranslationTable(QTableView):
         self._on_progress(total, total)
         self._on_batch()
 
+    def start_logical_range(self, session, total, rows, entry_labels, label_library) -> None:
+        self._closed = False
+        model = self._translation_model
+        if model.logical_count != total or session.content_scope != self._session.content_scope:
+            self._selected_logical_ids.clear()
+        elif not isinstance(model.logical_rows, ResidentTableRows):
+            self._remember_logical_selection()
+        editing_row = None
+        if (
+            self.state() == QAbstractItemView.State.EditingState
+            and session.content_scope == self._session.content_scope
+        ):
+            editing_row = self.currentIndex().row()
+        self._session = session
+        self._entry_labels, self._label_library = entry_labels, label_library
+        self._entry_rows = (
+            rows.positions
+            if isinstance(rows, ResidentTableRows)
+            else {entry_label_key(entry): row for row, entry in rows.items()}
+        )
+        self._label_keys, self._display_order = (), ()
+        if model.install_logical(session, total, rows, entry_labels, label_library, editing_row=editing_row):
+            self.scrollToTop()
+        self._on_progress(total, total)
+        self._on_batch()
+
     def replace_session(self, session: RenderSession) -> None:
         """Install replacement entries while retaining all existing Qt indexes."""
         self._translation_model.replace_session(session)
@@ -182,12 +217,14 @@ class TranslationTable(QTableView):
         """Change display indices while retaining current source objects and intent."""
         self._sorting.set_default_order(keys, ranks=ranks, source_keys=source_keys, source_rows=source_rows)
         self._translation_model.default_ranks = self._sorting.default_ranks
-        if render and not self._closed:
+        if render and not self._closed and self._translation_model.logical_count is None:
             self.start_render(self._session, self._entry_labels, self._label_library)
 
     def _sort_display(self) -> None:
-        self.start_render(self._session, self._entry_labels, self._label_library, preserve_scroll=False)
-        self.scrollToTop()
+        if self._translation_model.logical_count is None:
+            self.start_render(self._session, self._entry_labels, self._label_library, preserve_scroll=False)
+            self.scrollToTop()
+        self.scope_sort_requested.emit(self._sorting._column, self._sorting._descending)
 
     def close_rendering(self) -> None:
         if self._closed:
@@ -198,7 +235,8 @@ class TranslationTable(QTableView):
         self._label_keys = ()
         self._sorting.clear()
         self._translation_model.default_ranks = {}
-        self._entry_rows.clear()
+        self._entry_rows = {}
+        self._selected_logical_ids.clear()
         self._session = RenderSession(self._session.generation + 1, None, ())
         self._translation_model.install(self._session, (), {}, {})
         self._translation_model.set_terminology_projection({}, profile_label=None)
@@ -251,15 +289,64 @@ class TranslationTable(QTableView):
     def locate_entry(self, entry_id: str) -> None:
         row = self.find_entry_row(-1, entry_id)
         if row >= 0:
+            self.focus_row(row, select=True)
+
+    def focus_row(self, row, *, select=False):
+        index = self.model().index(row, COL_KEY)
+        if not index.isValid():
+            return
+        if select:
             self.selectRow(row)
-            self.scrollTo(self.model().index(row, COL_KEY), QAbstractItemView.ScrollHint.PositionAtCenter)
+        else:
+            self.selectionModel().setCurrentIndex(index, QItemSelectionModel.SelectionFlag.NoUpdate)
+        self.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
 
     def selected_entry_ids(self) -> tuple[str, ...]:
+        rows = self._translation_model.logical_rows
+        if isinstance(rows, ResidentTableRows):
+            return tuple(key for start, end in self.selected_row_spans() for key in rows.identities[start : end + 1])
+        if self._translation_model.logical_count is not None:
+            self._remember_logical_selection()
+            return tuple(self._selected_logical_ids[row] for row in sorted(self._selected_logical_ids))
         return tuple(
             entry_label_key(entry)
             for index in self.selectionModel().selectedRows(COL_KEY)
             if (entry := self.entry_at_row(index.row())) is not None and entry.id
         )
+
+    def _remember_logical_selection(self):
+        spans = self.selected_row_spans()
+        known = self._selected_logical_ids
+        known.update((row, entry_label_key(entry)) for row, entry in self._translation_model.logical_rows.items())
+        self._selected_logical_ids = {
+            row: key for row, key in known.items() if any(start <= row <= end for start, end in spans)
+        }
+
+    def selected_row_spans(self):
+        spans = []
+        for start, end in sorted((span.top(), span.bottom()) for span in self.selectionModel().selection()):
+            if spans and start <= spans[-1][1] + 1:
+                spans[-1] = (spans[-1][0], max(end, spans[-1][1]))
+            else:
+                spans.append((start, end))
+        return tuple(spans)
+
+    def viewport_rows(self):
+        total = self.rowCount()
+        if not total:
+            return 0, -1
+        first = self.rowAt(0)
+        if first < 0:
+            first = min(self.verticalScrollBar().value(), total - 1)
+        last = self.rowAt(max(0, self.viewport().height() - 1))
+        if last < 0:
+            height = max(1, self.verticalHeader().defaultSectionSize())
+            last = min(total - 1, first + self.viewport().height() // height)
+        return first, max(first, last)
+
+    def selectAll(self) -> None:  # noqa: N802 - Qt override
+        super().selectAll()
+        self.scope_select_all_requested.emit()
 
     def _capture_view_state(self):
         selected = self.selected_entry_ids()

@@ -3,7 +3,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from transbridge.application.contracts import OperationResult
+from transbridge.application.io import FormatId, SourceDescriptor, SourceSnapshot
 from transbridge.application.io.identity import EntryKey, SourceNamespace
+from transbridge.application.projects.provisioning_models import PreparedSourceHydration
+from transbridge.application.projects.source_commands import SourceMutationResult
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.coordinators.operation_coordinator import OperationCoordinator
@@ -34,6 +37,18 @@ def _menu():
         batch_download=_Action(),
         write=_Action(),
         batch_write=_Action(),
+    )
+
+
+def _plugin_source_result(entries):
+    location = "project-source:Plugin.esp"
+    snapshot = SourceSnapshot(SourceDescriptor(location), FormatId.PLUGIN_SSE, "0" * 64, 0, lease_id="test")
+    return SourceMutationResult(
+        source_id="registered-source",
+        location="",
+        hydration=PreparedSourceHydration(location, snapshot.sha256, snapshot.format_id, snapshot, entries),
+        project_revision=2,
+        variant_revision=4,
     )
 
 
@@ -115,13 +130,7 @@ def test_authoritative_source_import_commits_initial_states_without_second_varia
         def add_source(self, request, _context, **kwargs):
             captured["options"] = dict(request.options)
             captured["kwargs"] = kwargs
-            return OperationResult.completed(
-                SimpleNamespace(
-                    hydration=SimpleNamespace(entries=(entry.snapshot(),)),
-                    project_revision=2,
-                    variant_revision=4,
-                )
-            )
+            return OperationResult.completed(_plugin_source_result((entry.snapshot(),)))
 
         def replace_entry_states(self, *_args, **_kwargs):
             raise AssertionError("initial source states must be part of add_source")
@@ -160,9 +169,7 @@ def test_authoritative_source_import_preserves_each_same_key_initial_state() -> 
     def add_source(request, _context, **_kwargs):
         _sanitized, states = _split_initial_entry_states(request)
         captured.update(states)
-        return OperationResult.completed(
-            SimpleNamespace(hydration=SimpleNamespace(entries=tuple(entry.snapshot() for entry in entries)))
-        )
+        return OperationResult.completed(_plugin_source_result(tuple(entry.snapshot() for entry in entries)))
 
     coordinator = ParseCoordinator(
         SimpleNamespace(

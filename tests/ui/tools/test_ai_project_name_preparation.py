@@ -22,7 +22,7 @@ from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from transbridge.ui.tools.ai_translator import source_execution, workflow_log_store
+from transbridge.paratranz.config_manager import ParatranzConfig
 from transbridge.ui.tools.ai_translator.source_execution import SourceExecutor
 from transbridge.ui.tools.ai_translator.task_consistency import TaskConsistency
 
@@ -80,13 +80,7 @@ def name_run(tmp_path, monkeypatch, request):
     provider = _Provider()
     monkeypatch.setattr("transbridge.infra.llm_client.create_llm_client", lambda _: provider)
     monkeypatch.setattr("transbridge.infra.llm_reasoning.with_reasoning_intent", lambda client, *_: client)
-    store_class = workflow_log_store.WorkflowLogStore
-
-    def store(path, **kwargs):
-        return store_class(path, log_base=tmp_path / "logs", **kwargs)
-
-    monkeypatch.setattr(source_execution, "WorkflowLogStore", store)
-    monkeypatch.setattr(workflow_log_store, "WorkflowLogStore", store)
+    monkeypatch.setattr(ParatranzConfig, "get_data_dir", lambda: str(tmp_path))
     config = LLMConfig(
         model="fake",
         max_concurrent=2,
@@ -178,6 +172,20 @@ def test_names_are_translated_once_before_body_and_reused_with_per_source_commit
     assert run.request.request_budget.snapshot().in_flight == 0
     if run.request.config.enable_post_process:
         assert any(event[1] == "format" for event in run.events)
+
+
+def test_name_preparation_keeps_logs_in_its_task_run_directory(name_run):
+    run = name_run
+    directory = run.root / "run"
+    run.executor.request = replace(run.request, recovery_directory=directory)
+    task = run.task("A", [("place", "Whiterun", "LCTN:FULL")])
+
+    run.executor.prepare_names((task,))
+
+    assert run.provider.counts() == {"Whiterun": 1}
+    (logs,) = (directory / "logs").glob("*_project_names_*")
+    assert logs.is_dir() and any(logs.iterdir())
+    assert not (run.root / "log").exists()
 
 
 def test_failed_unique_name_propagates_without_second_model_attempt(name_run):

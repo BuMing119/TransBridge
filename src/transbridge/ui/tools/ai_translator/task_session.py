@@ -62,18 +62,24 @@ class TaskSession:
         )
         if self._identity is None:
             raise RuntimeError("请先打开一个项目版本，再创建 AI 任务。")
-        self._project_dir = Path(project_dir) if project_dir is not None else None
+        self.task_store = getattr(ctx, "task_store", None)
+        self.task_result_run_id = None
+        self._project_dir = (
+            self.task_store.root
+            if self.task_store is not None
+            else (Path(project_dir) if project_dir is not None else None)
+        )
         self._persistence = VersionPersistence(ctx, self._identity)
         provider = getattr(ctx, "task_result_preferences_provider", None) or TaskResultPreferences
         self.policy = ResultConflictPolicy(provider().ai_policy)
         self.merge_evidence_writer = (
             TaskMergeEvidenceStore(self._project_dir / "ai-task-recovery", str(getattr(spec, "run_id", "run")))
-            if self._project_dir is not None
+            if self._project_dir is not None and self.task_store is None
             else None
         )
         self._worker: ApiWorker | None = None
         self._apply_delivery: ApplyDelivery | None = None
-        self._captured = self._completed = self._saved = self._discarded = False
+        self._captured = self._completed = self._discarded = False
         self._commit_result = None
         self.commit_mutation: Callable[[Callable[[], None]], None] | None = None
         self._applied_keys: set[EntryKey] = set()
@@ -97,11 +103,11 @@ class TaskSession:
 
     @property
     def saved(self) -> bool:
-        return self._saved
+        return self.project_saved
 
     @property
     def project_saved(self) -> bool:
-        return (self._saved or bool(self._persistence.project_saved)) and self._applied_values_match()
+        return self._persistence.project_saved and self._applied_values_match()
 
     @property
     def project_saved_signal(self):
@@ -127,6 +133,10 @@ class TaskSession:
         return self._identity
 
     @property
+    def target_active(self) -> bool:
+        return self._ctx.active_version_identity == self._identity
+
+    @property
     def project_dir(self) -> Path | None:
         return self._project_dir
 
@@ -136,7 +146,7 @@ class TaskSession:
 
     @property
     def can_save(self) -> bool:
-        return bool(self._applied_keys) and not self._saved
+        return bool(self._applied_keys) and not self.project_saved
 
     @property
     def applied_keys(self) -> frozenset[EntryKey]:
@@ -146,16 +156,18 @@ class TaskSession:
         """Validate the current project inputs before applying or dispatching retries."""
         self._require_current()
 
-    def bind_run_identity(self, run_id: str) -> None:
+    def artifact_directory(self, run_id):
+        return self.task_store.run_directory(run_id) if self.task_store is not None else self._project_dir
+
+    def bind_run_identity(self, run_id: str, *, result_run_id=None) -> None:
         """Bind every output to the admitted runtime ID before any task writes."""
         self._require_current()
         if self._captured or self.is_busy or self._applied_keys:
             raise RuntimeError("任务已经开始，不能重新绑定执行身份。")
         self.initial_entry_results.run_id = run_id
+        directory = self.artifact_directory(result_run_id or run_id)
         self.merge_evidence_writer = (
-            TaskMergeEvidenceStore(self._project_dir / "ai-task-recovery", run_id)
-            if self._project_dir is not None
-            else None
+            TaskMergeEvidenceStore(directory / "ai-task-recovery", run_id) if directory is not None else None
         )
 
     def capture_before(
@@ -167,7 +179,6 @@ class TaskSession:
 
     def finish(self) -> None:
         """Seal a task after its ledger has no remaining executable entries."""
-        self._require_current()
         self._completed = True
 
     def apply_entries(self, keys: set[EntryKey]) -> object:
@@ -245,7 +256,7 @@ class TaskSession:
         self._require_current(allow_discarded=True)
         if not self._applied_keys:
             raise RuntimeError("任务结果尚未应用，不能保存翻译。")
-        if self._saved:
+        if self.project_saved:
             on_success({"already_saved": True})
             return
         operation = self._persistence.freeze_save_project()
@@ -253,23 +264,13 @@ class TaskSession:
         def saved(result):
             try:
                 self._require_current(allow_discarded=True)
-                self._persistence.acknowledge_save()
                 if not self._applied_values_match():
                     raise RuntimeError("当前项目已保存，但部分任务结果已被后续编辑替换；AI 成果仍保留。")
+                self._persistence.mark_project_saved()
             except RuntimeError as exc:
                 on_error(str(exc))
                 return
-            self._saved = True
             on_success(result)
-
-        def failed(message):
-            try:
-                self._require_current(allow_discarded=True)
-                self._persistence.acknowledge_save()
-            except RuntimeError:
-                # A different version must not inherit this operation's clean flag.
-                pass
-            on_error(message)
 
         writer = self.merge_evidence_writer
 
@@ -281,7 +282,7 @@ class TaskSession:
         self._run(
             persist,
             on_success=saved,
-            on_error=failed,
+            on_error=on_error,
             background_validate=background_validate,
         )
 
@@ -336,7 +337,8 @@ class TaskSession:
             return False
         for key, expected in self._applied_values.items():
             current = next(
-                (slot.collection.get(key) for slot in self._ctx.slots.values() if slot.collection.get(key)), None
+                (entry for slot in self._ctx.slots.values() if (entry := slot.collection.get(key)) is not None),
+                None,
             )
             if (
                 current is None

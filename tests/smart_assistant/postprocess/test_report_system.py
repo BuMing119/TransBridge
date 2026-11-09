@@ -3,19 +3,21 @@
 from __future__ import annotations
 
 import inspect
+from os import utime
 from pathlib import Path
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from tests.conftest import MockAppContext, make_test_collection
+from tests.conftest import make_test_collection
 from tests.smart_assistant.postprocess.project_support import project_context
 from transbridge.smart_assistant.tools.base import ExecutionContext
 
 
 class TestReportSystem(unittest.TestCase):
-    """The proofreader consumes canonical snapshots and keeps old workbooks discoverable."""
+    """The proofreader lists independent run workbooks under the caller's scope."""
 
     def setUp(self):
         import transbridge.smart_assistant.tools.tool_proofreader as proofreader
@@ -34,89 +36,65 @@ class TestReportSystem(unittest.TestCase):
         self.assertFalse(hasattr(ProofreaderController, "_summarize_polish_results"))
         self.assertFalse(hasattr(ProofreaderController, "_summarize_decisions"))
 
-    def test_list_quality_reports_without_esp_uses_saved_fallback_reports(self):
+    def _record_report(self, run_id, *, owner="ui", session=None):
+        task_store = self.ctx.task_store
+        task_store.recovery().create({
+            "task_id": run_id,
+            "owner_id": owner,
+            "session_id": session,
+            "project_id": "removed-project",
+            "variant_id": "removed-version",
+            "origin": "smart-assistant",
+            "mode": "postprocess",
+            "config_digest": "fixture",
+            "state": "completed",
+            "created_at": "2026-11-09T00:00:00+00:00",
+            "sources": [],
+            "result_kind": "postprocess",
+            "results_only": True,
+        })
+        reports = task_store.run_directory(run_id) / "reports"
+        reports.mkdir(parents=True)
+        return reports
+
+    def test_reports_are_scoped_and_available_without_an_active_project(self):
         from transbridge.smart_assistant.tools.tool_proofreader import _tool_list_quality_reports
 
-        ctx = MockAppContext(collection=None)
-        ctx.esp_path = None
-
-        with (
-            tempfile.TemporaryDirectory() as data_dir,
-            patch("transbridge.paratranz.config_manager.ParatranzConfig.get_data_dir", return_value=data_dir),
-        ):
-            reports = Path(data_dir) / "reports" / "postprocess"
-            reports.mkdir(parents=True)
-            (reports / "fallback.xlsx").write_bytes(b"report")
-            result = _tool_list_quality_reports({}, ExecutionContext(app_context=ctx))
-
-        self.assertTrue(result.success)
-        self.assertEqual([item["name"] for item in result.data["files"]], ["fallback.xlsx"])
-
-    def test_saved_source_name_locates_reports_when_reference_is_missing_or_changed(self):
-        from transbridge.application.io import FormatId, SourceDescriptor, SourceSnapshot
-        from transbridge.smart_assistant.tools.tool_proofreader import _tool_list_quality_reports
-
-        ctx = MockAppContext(collection=make_test_collection(1))
-        ctx.active_slot.source_snapshot = SourceSnapshot.from_bytes(
-            SourceDescriptor("C:/old/Demo.esp", "Demo.esp"), FormatId.PLUGIN_SSE, b"captured plugin"
+        (self._record_report("mine") / "report.xlsx").write_bytes(b"mine")
+        (self._record_report("foreign", owner="other") / "foreign.xlsx").write_bytes(b"foreign")
+        (self._record_report("session", session="other") / "session.xlsx").write_bytes(b"session")
+        app = SimpleNamespace(
+            active_version_identity=None, task_store=self.ctx.task_store, runtime_context=self.ctx.runtime_context
         )
-        with tempfile.TemporaryDirectory() as data_dir:
-            reports = Path(data_dir) / "reports"
-            reports.mkdir()
-            (reports / "saved.xlsx").write_bytes(b"report")
-            for reference in (None, "C:/other/Changed.esp"):
-                ctx.esp_path = reference
-                with patch(
-                    "transbridge.paratranz.config_manager.LLMConfig.get_ai_translator_dir", return_value=data_dir
-                ) as resolve:
-                    result = _tool_list_quality_reports({}, ExecutionContext(app_context=ctx))
-                resolve.assert_called_once_with("Demo")
-                self.assertEqual([item["name"] for item in result.data["files"]], ["saved.xlsx"])
-
-    def test_report_directory_without_esp_falls_back_under_data_dir(self):
-        from transbridge.smart_assistant.tools.tool_proofreader import _resolve_report_directory
-
-        with (
-            tempfile.TemporaryDirectory() as data_dir,
-            patch("transbridge.paratranz.config_manager.ParatranzConfig.get_data_dir", return_value=data_dir),
-        ):
-            report_dir = _resolve_report_directory(MockAppContext())
-
-        self.assertEqual(report_dir, Path(data_dir) / "reports" / "postprocess")
-
-    def test_list_quality_reports_includes_legacy_and_canonical_xlsx(self):
-        from transbridge.smart_assistant.tools.tool_proofreader import _tool_list_quality_reports
-
-        ctx = MockAppContext(collection=None)
-        ctx.esp_path = "C:/games/Data/Demo.esp"
-        with tempfile.TemporaryDirectory() as data_dir:
-            ai_dir = Path(data_dir) / "ai_translator" / "Demo"
-            reports_dir = ai_dir / "reports"
-            reports_dir.mkdir(parents=True)
-            legacy = reports_dir / "translate_report_Demo_20250825_120000.xlsx"
-            canonical = reports_dir / "postprocess-report-0123456789abcdef.xlsx"
-            ignored = reports_dir / "postprocess-report-0123456789abcdef.json"
-            legacy.write_bytes(b"legacy")
-            canonical.write_bytes(b"canonical")
-            ignored.write_text("{}", encoding="utf-8")
-            legacy.touch()
-            time.sleep(0.01)
-            canonical.touch()
-
-            with patch(
-                "transbridge.paratranz.config_manager.LLMConfig.get_ai_translator_dir",
-                return_value=str(ai_dir),
-            ):
-                result = _tool_list_quality_reports(
-                    {"limit": 10},
-                    ExecutionContext(app_context=ctx),
-                )
-
-        self.assertTrue(result.success)
+        result = _tool_list_quality_reports({}, ExecutionContext(app_context=app))
+        self.assertTrue(result.success, result.message)
         self.assertEqual(
-            [item["name"] for item in result.data["files"]],
-            [canonical.name, legacy.name],
+            [(item["result_id"], item["name"]) for item in result.data["files"]], [("mine", "report.xlsx")]
         )
+
+    def test_lists_only_run_workbooks_in_modified_order_and_ignores_old_report_tree(self):
+        from transbridge.smart_assistant.tools.tool_proofreader import _tool_list_quality_reports
+
+        with tempfile.TemporaryDirectory() as data_dir:
+            legacy = Path(data_dir) / "reports" / "postprocess" / "legacy.xlsx"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_bytes(b"legacy")
+            reports = self._record_report("run")
+            first, second = reports / "first.xlsx", reports / "second.xlsx"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            (reports / "metadata.json").write_text("{}", encoding="utf-8")
+            utime(first, (1_700_000_000, 1_700_000_000))
+            utime(second, (1_700_000_100, 1_700_000_100))
+
+            with patch("transbridge.paratranz.config_manager.ParatranzConfig.get_data_dir", return_value=data_dir):
+                result = _tool_list_quality_reports({"limit": 10}, self.ctx)
+                limited = _tool_list_quality_reports({"limit": 1}, self.ctx)
+
+        self.assertTrue(result.success, result.message)
+        self.assertEqual([item["name"] for item in result.data["files"]], ["second.xlsx", "first.xlsx"])
+        self.assertTrue(limited.success, limited.message)
+        self.assertEqual([item["name"] for item in limited.data["files"]], ["second.xlsx"])
 
 
 class TestLastReportIntegrity(unittest.TestCase):

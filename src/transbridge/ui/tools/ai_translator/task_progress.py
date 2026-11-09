@@ -252,11 +252,7 @@ class AiTaskProgressWindow(QWidget):
             )
         elif self.session.can_save:
             primary = self.save_button
-            hint = (
-                "项目已保存，可创建或重试快照；无需重新运行任务。"
-                if getattr(self.session, "project_saved", False)
-                else "结果已应用，项目尚未保存；请保存项目，无需重新运行任务。"
-            )
+            hint = "结果已应用，项目尚未保存；请保存项目，无需重新运行任务。"
         elif run.can_retry:
             primary = self.retry_button
             hint = "可重试失败条目，已应用的结果会保留；也可查看结果详情。"

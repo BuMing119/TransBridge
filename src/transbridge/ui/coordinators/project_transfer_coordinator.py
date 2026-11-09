@@ -59,7 +59,8 @@ class ProjectTransferCoordinator:
             answer = QMessageBox.question(
                 self._host,
                 "确认加载",
-                "加载快照将替换当前版本内容，并成为未保存修改。\n加载前会自动为当前内容创建还原点。是否继续？",
+                "加载快照会替换当前版本内容。若快照包含旧来源，工程版本会同步恢复来源修订。\n"
+                "系统会保留恢复前的还原点。是否继续？",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if answer != QMessageBox.StandardButton.Yes:
@@ -71,10 +72,17 @@ class ProjectTransferCoordinator:
                     return backup
                 return service.restore(selected.identity, context)
 
+            def finished(result):
+                if result.is_success and isinstance(result.value, dict) and result.value.get("dirty") is False:
+                    self._finish(result, "快照及来源修订已恢复")
+                    self._host.project_coordinator.restore_active_sources()
+                else:
+                    self._finish(result, "快照已加载，请保存当前翻译版本")
+
             self._host.start_foreground_task(
                 restore,
                 message="正在加载快照…",
-                on_result=lambda result: self._finish(result, "快照已加载，请保存当前翻译版本"),
+                on_result=finished,
             )
 
         self._host.start_foreground_task(

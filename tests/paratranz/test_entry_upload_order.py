@@ -4,17 +4,16 @@ from types import SimpleNamespace
 
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.persistence.task_store import TaskStore
 from transbridge.smart_assistant.tools._entry_upload import upload_entries
 from transbridge.smart_assistant.tools.types import ExecutionContext
 
 
-def test_assistant_selected_upload_retains_full_collection_order_and_local_context(
-    current_project_factory, tmp_path, monkeypatch
-):
+def test_assistant_selected_upload_retains_full_collection_order_and_local_context(current_project_factory, tmp_path):
     entries = tuple(TranslationEntry(key, key, key, "", 0, "BOOK:FULL") for key in ("a", "b", "c"))
     collection = TranslationEntryCollection(entries)
     project = current_project_factory(collection)
-    monkeypatch.setattr(project.commands, "task_result_directory", lambda _context: tmp_path)
+    project.context.task_store = TaskStore(tmp_path / "task-store-v1")
     collection = project.context.collection
     ctx = ExecutionContext(app_context=project.context)
     sent = []
@@ -33,14 +32,14 @@ def test_assistant_selected_upload_retains_full_collection_order_and_local_conte
     assert project.context.collection.get("c").external_refs[0].opaque_id == 17
 
 
-def test_assistant_upload_preserves_sparse_plugin_order_and_free_text(current_project_factory, tmp_path, monkeypatch):
+def test_assistant_upload_preserves_sparse_plugin_order_and_free_text(current_project_factory, tmp_path):
     entries = (
         TranslationEntry("a", "a", "a", "", 0, "INFO:NAM1|", metadata=(("plugin.source_order", 428),)),
         TranslationEntry("b", "b", "b", "", 0, "custom text", metadata=(("plugin.source_order", 512),)),
     )
     collection = TranslationEntryCollection(entries)
     project = current_project_factory(collection)
-    monkeypatch.setattr(project.commands, "task_result_directory", lambda _context: tmp_path)
+    project.context.task_store = TaskStore(tmp_path / "task-store-v1")
     collection = project.context.collection
     ctx = ExecutionContext(app_context=project.context)
     sent = []

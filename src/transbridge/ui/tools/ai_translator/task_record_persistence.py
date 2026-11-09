@@ -16,7 +16,20 @@ class TaskRecordPersistence:
         self._cancelled = False
         self._payload = None
 
-    def save(self, directory, sources, ledger, request, *, created_at, state, **status):
+    def save(
+        self,
+        directory,
+        sources,
+        ledger,
+        request,
+        *,
+        created_at,
+        state,
+        history=None,
+        result_run_id=None,
+        owner=None,
+        **status,
+    ):
         from .source_execution import build_task_record
         from .task_record_inputs import ledger_outcomes
 
@@ -25,7 +38,7 @@ class TaskRecordPersistence:
         reusable = (
             self._record is not None
             and self._payload is not None
-            and self._payload.parent.parent == directory
+            and (history is not None or self._payload.parent.parent == directory)
             and self._sources == sources
             and self._cancelled == cancelled
             and len(self._rows) == len(ledger.entries)
@@ -44,16 +57,28 @@ class TaskRecordPersistence:
             outcomes = ledger_outcomes(sources, ledger, cancelled=cancelled)
             record = build_task_record(outcomes, request, state=state, applied=status["applied"], saved=status["saved"])
             record.update(created_at=created_at, **status)
+            if history is not None and result_run_id is not None:
+                record["recovery_task_id"] = result_run_id
         try:
-            if directory is None:
+            if directory is None and history is None:
                 raise RuntimeError("项目目录不可用")
-            store = TaskHistoryStore(directory)
+            store = history or TaskHistoryStore(directory)
             if reusable:
                 # This compares only small metadata, and rejects a different
                 # payload generation instead of applying a stale writer's state.
-                store.update_metadata(request.run_id, expected_record_file=self._payload.name, **fields)
+                reference = self._payload if history is not None else self._payload.name
+                revision = store.update_metadata(request.run_id, expected_record_file=reference, **fields)
+                if history is not None:
+                    self._payload = revision
             else:
-                self._payload = store.save(record)
+                if history is None:
+                    self._payload = store.save(record)
+                else:
+                    from transbridge.application.translation.task_result_recovery import recovery_result_rows
+
+                    self._payload = history.save(
+                        record, candidates=recovery_result_rows(ledger), result_run_id=result_run_id, owner=owner
+                    )
         except Exception as exc:
             return record, str(exc)
         self._record = record

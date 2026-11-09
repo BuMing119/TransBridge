@@ -123,6 +123,7 @@ class RepresentativeWindowTree:
             QApplication.processEvents()
 
     def close(self) -> None:
+        from PyQt6.QtCore import QCoreApplication, QEvent
         from PyQt6.QtWidgets import QApplication
 
         for window in reversed(self.auxiliary_windows):
@@ -148,6 +149,8 @@ class RepresentativeWindowTree:
         self.main_window.close()
         self.main_window.deleteLater()
         for _ in range(3):
+            # processEvents alone does not flush deferred deletes without exec().
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
             QApplication.processEvents()
         self.patch_stack.close()
 

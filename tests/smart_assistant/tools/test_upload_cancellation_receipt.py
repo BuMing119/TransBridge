@@ -7,11 +7,12 @@ from transbridge.application.ports.paratranz import ParaTranzEntry
 from transbridge.application.tasks import CancellationToken, TaskCancelled
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.persistence.task_store import TaskStore
 from transbridge.smart_assistant.tools._entry_upload import upload_entries
 from transbridge.smart_assistant.tools.types import ExecutionContext
 
 
-def _context(current_project_factory, tmp_path, monkeypatch):
+def _context(current_project_factory, tmp_path):
     collection = TranslationEntryCollection(
         TranslationEntry(
             id=key,
@@ -24,7 +25,7 @@ def _context(current_project_factory, tmp_path, monkeypatch):
         for key in ("first", "second", "third")
     )
     project = current_project_factory(collection)
-    monkeypatch.setattr(project.commands, "task_result_directory", lambda _context: tmp_path)
+    project.context.task_store = TaskStore(tmp_path)
     return ExecutionContext(app_context=project.context), project
 
 
@@ -39,10 +40,8 @@ class _RemoteService:
         return replace(entry, remote_id=701)
 
 
-def test_cancel_after_upload_preserves_remote_identity_and_returns_partial_receipt(
-    current_project_factory, tmp_path, monkeypatch
-):
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+def test_cancel_after_upload_preserves_remote_identity_and_returns_partial_receipt(current_project_factory, tmp_path):
+    context, project = _context(current_project_factory, tmp_path)
     collection = project.context.collection
     remote = _RemoteService()
     token = CancellationToken()
@@ -67,8 +66,8 @@ def test_cancel_after_upload_preserves_remote_identity_and_returns_partial_recei
     assert not collection.get("third").external_refs
 
 
-def test_cancel_before_upload_raises_without_remote_or_local_changes(current_project_factory, tmp_path, monkeypatch):
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+def test_cancel_before_upload_raises_without_remote_or_local_changes(current_project_factory, tmp_path):
+    context, project = _context(current_project_factory, tmp_path)
     collection = project.context.collection
     before = tuple(entry.snapshot() for entry in collection)
     remote = _RemoteService()

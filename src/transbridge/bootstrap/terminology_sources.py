@@ -1,18 +1,18 @@
-"""Terminology leases over the Project's durable parsed source content."""
+"""Terminology leases over the project's stored translation entries."""
 
+from contextlib import closing
 from dataclasses import replace
-from pathlib import Path
 
-from transbridge.application.contracts import DiagnosticSeverity, DomainError, ErrorCategory, OperationOutcome
-from transbridge.application.io import ParseResult, ParseStats
+from transbridge.application.contracts import DomainError, ErrorCategory, OperationOutcome
+from transbridge.application.io import ParseResult, ParseStats, SourceDescriptor, SourceNamespace, SourceSnapshot
+from transbridge.application.projects.source_content import source_content_identity
 from transbridge.application.projects.source_registry import SourceRegistrySnapshot
 from transbridge.application.terminology.input_capture import BuildInputSnapshot, SourceLease
-from transbridge.persistence.saved_project_sources import load_saved_project_source
-from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
+from transbridge.persistence.project_store.records import WorkspaceProjects
 
 
 def lightweight_build_snapshot(snapshot: BuildInputSnapshot) -> BuildInputSnapshot:
-    """Keep commit identity without retaining parsed entries or captured source bytes."""
+    """Keep only the lease identity needed for the commit guard."""
     sources = tuple(
         replace(
             source,
@@ -23,8 +23,7 @@ def lightweight_build_snapshot(snapshot: BuildInputSnapshot) -> BuildInputSnapsh
                     source.lease.snapshot,
                     content=None,
                     metadata=(),
-                    lease_id=source.lease.snapshot.lease_id
-                    or f"project-source-artifact:{source.lease.source_artifact_id or source.lease.actual_fingerprint}",
+                    lease_id=source.lease.snapshot.lease_id or "project-translation-content",
                 ),
             ),
         )
@@ -34,60 +33,66 @@ def lightweight_build_snapshot(snapshot: BuildInputSnapshot) -> BuildInputSnapsh
 
 
 class ProjectSourceLeases:
-    def __init__(self, root: str | Path, lifecycle) -> None:
-        self._artifacts = ProjectSourceArtifactStore(str(root))
+    def __init__(self, root, lifecycle) -> None:
+        self._projects = WorkspaceProjects(root)
         self._lifecycle = lifecycle
-
-    def _load(self, registration):
-        if registration.source_artifact_id is None:
-            raise DomainError(
-                ErrorCategory.PREREQUISITE,
-                "TERMINOLOGY_SOURCE_REQUIRED",
-                "该工程尚未保存来源内容，请补充来源文件后重新构建。",
-                details={"source_id": registration.source_id},
-            )
-        prepared = load_saved_project_source(self._artifacts, registration.to_dict(), ())
-        if prepared.hydration is None:
-            raise DomainError(
-                ErrorCategory.PREREQUISITE,
-                "PROJECT_SOURCE_ARTIFACT_UNAVAILABLE",
-                "工程保存的来源内容不可用，请补充来源文件后重试。",
-                details={"source_id": registration.source_id},
-            )
-        return prepared
 
     def acquire(self, registration) -> SourceLease:
         return self.acquire_bounded(registration, max_bytes=None)
 
     def acquire_bounded(self, registration, *, max_bytes: int | None) -> SourceLease:
-        prepared = self._load(registration)
-        hydration = prepared.hydration
-        snapshot = hydration.source_snapshot
-        if max_bytes is not None and snapshot.size_bytes > max_bytes:
-            raise DomainError(
-                ErrorCategory.PREREQUISITE,
-                "TERMINOLOGY_STREAMING_REQUIRED",
-                "该来源超过当前完整载入适配器的安全边界，需要流式读取能力后才能构建。",
-                details={
-                    "source_id": registration.source_id,
-                    "source_bytes": snapshot.size_bytes,
-                    "limit_bytes": max_bytes,
-                    "recovery": "拆分来源或使用支持流式读取的适配器后重试。",
-                },
-            )
-        errors = sum(item.severity is DiagnosticSeverity.ERROR for item in prepared.diagnostics)
-        result = ParseResult(
-            OperationOutcome.PARTIAL
-            if errors and hydration.entries
-            else (OperationOutcome.FAILED if errors else OperationOutcome.COMPLETED),
-            hydration.format_id,
-            snapshot.source,
-            snapshot if hydration.entries or not errors else None,
-            hydration.entries,
-            prepared.diagnostics,
-            ParseStats(parsed=len(hydration.entries), failed=errors),
+        active = self._lifecycle.active
+        identity = source_content_identity(registration.to_dict())
+        if active is None or active.formal_variant_ref is None or identity is None:
+            raise _unavailable(registration)
+        store = self._projects.store_for(active.project_ref.identity)
+        variant = active.formal_variant_ref.identity
+        namespace = SourceNamespace(identity)
+        before = store.summary()
+        info = next((item for item in store.sources() if item.namespace == namespace), None)
+        registry = SourceRegistrySnapshot.from_project_data(active.project.envelope.data)
+        folded = next(
+            (
+                relation
+                for relation in registry.relations
+                if relation.from_source_id == registration.source_id and relation.folded_into_baseline
+            ),
+            None,
         )
-        return SourceLease(registration.source_id, snapshot, snapshot.sha256, result, registration.source_artifact_id)
+        if (
+            info is None
+            or registration.fingerprint is None
+            or (folded is None and info.fingerprint != registration.fingerprint)
+        ):
+            raise _unavailable(registration)
+        # A folded source has no independent translation rows. Its primary
+        # registration already supplies the Variant's canonical content.
+        rows, size_bytes = (
+            ((), 0) if folded is not None else _read_rows(store, variant, namespace, registration.source_id, max_bytes)
+        )
+        if store.summary() != before:
+            raise DomainError(
+                ErrorCategory.CONFLICT, "TERMINOLOGY_SOURCE_CHANGED", "项目来源正在变化，请重新捕获术语输入。"
+            )
+        descriptor = SourceDescriptor(f"project-source:{identity}", registration.display_name or info.name, size_bytes)
+        snapshot = SourceSnapshot(
+            descriptor,
+            info.format_id,
+            registration.fingerprint,
+            size_bytes,
+            lease_id="project-translation-content",
+            metadata=(("source_namespace", identity),),
+        )
+        result = ParseResult(
+            OperationOutcome.COMPLETED,
+            info.format_id,
+            descriptor,
+            snapshot,
+            rows,
+            (),
+            ParseStats(parsed=len(rows)),
+        )
+        return SourceLease(registration.source_id, snapshot, snapshot.sha256, result)
 
     def current_fingerprint(self, lease: SourceLease) -> str:
         active = self._lifecycle.active
@@ -95,6 +100,35 @@ class ProjectSourceLeases:
             return ""
         registry = SourceRegistrySnapshot.from_project_data(active.project.envelope.data)
         registration = next((item for item in registry.sources if item.source_id == lease.source_id), None)
-        if registration is None or registration.source_artifact_id != lease.source_artifact_id:
+        if registration is None or registration.content_state != "translation":
             return ""
         return registration.fingerprint or ""
+
+
+def _read_rows(store, variant, namespace, source_id, max_bytes):
+    rows, size_bytes = [], 0
+    with closing(store.iter_source_entries(variant, namespace)) as entries:
+        for item in entries:
+            entry = item.snapshot
+            size_bytes += sum(
+                len(value.encode("utf-8", errors="surrogatepass"))
+                for value in (entry.original, entry.context or "", item.state.translation)
+            )
+            if max_bytes is not None and size_bytes > max_bytes:
+                raise DomainError(
+                    ErrorCategory.PREREQUISITE,
+                    "TERMINOLOGY_STREAMING_REQUIRED",
+                    "已保存的翻译来源超过本次术语构建的读取上限。",
+                    details={"source_id": source_id, "limit_bytes": max_bytes},
+                )
+            rows.append(replace(entry, translation=item.state.translation, stage=item.state.stage.value))
+    return tuple(rows), size_bytes
+
+
+def _unavailable(registration):
+    return DomainError(
+        ErrorCategory.PREREQUISITE,
+        "TERMINOLOGY_SOURCE_REQUIRED",
+        "当前版本没有可读取的已保存翻译来源。",
+        details={"source_id": registration.source_id},
+    )

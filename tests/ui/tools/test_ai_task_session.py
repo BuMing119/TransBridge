@@ -93,12 +93,10 @@ class _Persistence:
 
     def save_translation(self, entries, name):
         self.saves.append((name, deepcopy(entries)))
-        if not self.fail_save:
-            self.project_saved = True
         return OperationResult.completed({}) if not self.fail_save else OperationResult.cancelled()
 
     def freeze_merge_translation(self, candidates, policy, **options):
-        return lambda: self.merge_translation(candidates, policy, **options)
+        return lambda _operation_id=None: self.merge_translation(candidates, policy, **options)
 
     def acknowledge_merge(self, result):
         assert result.is_success
@@ -106,9 +104,6 @@ class _Persistence:
     def freeze_save_project(self):
         entries = tuple(entry for slot in self.ctx.slots.values() for entry in slot.collection)
         return lambda: self.save_translation(entries, "current")
-
-    def acknowledge_save(self):
-        pass
 
     def mark_project_saved(self):
         self.project_saved = True
@@ -374,7 +369,7 @@ def test_v2_session_accepts_explicit_project_location(session, tmp_path):
     assert run.history_dir == tmp_path / "v2-project" / "ai-task-history"
 
 
-def test_external_project_save_is_latched_without_claiming_snapshot_saved(qapp, session):
+def test_external_project_save_confirms_current_task_result(qapp, session):
     session._ctx.dirty = False
     assert not session.observe_project_saved()
     _capture(qapp, session)
@@ -383,8 +378,7 @@ def test_external_project_save_is_latched_without_claiming_snapshot_saved(qapp, 
     assert not session.observe_project_saved()
     session._ctx.dirty = False
     assert session.observe_project_saved()
-    assert session.project_saved and not session.saved
-    assert session.can_save
+    assert session.project_saved and session.saved and not session.can_save
     assert not session.observe_project_saved()
     session._ctx.dirty = True
     assert session.project_saved  # Historical durability of this task's version stays latched.
@@ -705,5 +699,6 @@ def test_save_current_project_does_not_mark_replaced_ai_result_durable(qapp, ses
     next(iter(session._ctx.collection)).translation = "用户后续编辑"
     success, errors = _save(qapp, session)
     assert not success and errors and "替换" in errors[0]
-    assert session._persistence.project_saved
+    assert len(session._persistence.saves) == 1
+    assert not session._persistence.project_saved
     assert not session.project_saved and not session.saved

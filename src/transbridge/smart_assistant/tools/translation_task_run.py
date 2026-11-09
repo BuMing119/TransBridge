@@ -147,7 +147,7 @@ def _capture_references(task, remote_config, remote_project):
 
     task.references = TaskReferenceStore(
         task.result_id,
-        root=task.store.root / "references",
+        root=task.store.run_directory(task.result_id) / "references",
         identity=(*task.identity, task.config.target_lang),
     )
     task.references.capture_published(capture_project_reference(task.terminology))
@@ -187,11 +187,15 @@ def execute_task(task, manager, task_id, handle, remote_config, remote_project, 
             client = ParatranzClient(remote_config)
         if task.task.translate_entries:
             from transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig
+            from transbridge.application.translation import FilesystemTranslationCheckpointPort
 
             translator = AutoTranslator(
                 TranslatorConfig(llm_config=task.config, esp_path=task.esp_path, overwrite=False),
                 client,
                 remote_project,
+                candidate_checkpoint=FilesystemTranslationCheckpointPort(
+                    task.store.run_directory(task.result_id) / "runtime-v2"
+                ),
                 run_id_factory=lambda: task.result_id,
                 reference_store=task.references,
                 reference_source=task.task.key,
@@ -224,6 +228,7 @@ def execute_task(task, manager, task_id, handle, remote_config, remote_project, 
                 esp_path=task.esp_path,
                 stop_event=stop,
                 pause_event=handle.pause_event,
+                log_base=task.store.run_directory(task.result_id) / "logs",
             )
             terms = TermDatabaseManager(
                 config=task.config,

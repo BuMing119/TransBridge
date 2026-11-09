@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.ui.workbench.resident_rows import ResidentTableRows
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +25,8 @@ class TranslationTablePort(Protocol):
         entry_labels: Mapping[str, set[str]],
         label_library: Mapping[str, Mapping[str, str]],
     ) -> None: ...
+
+    def start_logical_range(self, session, total, rows, entry_labels, label_library) -> None: ...
 
 
 class TablePresenter:
@@ -64,6 +67,13 @@ class TablePresenter:
     def invalidate(self) -> None:
         self._generation += 1
         self._session = RenderSession(self._generation, None, ())
+
+    def render_logical(self, total, rows, entry_labels, label_library, *, projection_revision, content_scope):
+        self._generation += 1
+        entries = rows.entries if isinstance(rows, ResidentTableRows) else tuple(rows.values())
+        self._session = RenderSession(self._generation, projection_revision, entries, content_scope)
+        self._view.start_logical_range(self._session, total, rows, entry_labels, label_library)
+        return self._session
 
     def replace_entries(
         self, entries: Sequence[TranslationEntry], *, projection_revision: int | None = None

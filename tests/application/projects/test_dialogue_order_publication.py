@@ -1,6 +1,5 @@
-from dataclasses import replace
 from itertools import count
-from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -13,8 +12,9 @@ from transbridge.application.io.dialogue_reading_view import build_dialogue_read
 from transbridge.application.io.plugin_dialogue_order import METADATA_KEY, dialogue_order_from_snapshot
 from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
 from transbridge.application.projects.categorized_upload import ProjectCategorizedUploadService
-from transbridge.application.projects.source_hydration_cache import SourceHydrationCache
+from transbridge.application.tasks import CancellationToken
 from transbridge.bootstrap.persistence import build_persistence_v2_services
+from transbridge.persistence.project_store import source_reads
 from transbridge.ui.source_hydration import slot_from_hydration
 
 
@@ -73,51 +73,45 @@ def test_reopen_without_live_plugin_restores_same_order_and_does_not_save(projec
     )
     quest = next(quest for quest in index.quests if quest.identity[1] == "00000001")
     assert [topic.identity[2] for topic in quest.topics if topic.kind == "DIAL"] == ["00000010", "00000020"]
-    fresh = ProjectCategorizedUploadService(service._lifecycle, service._baselines, service._source_preparer)
+    fresh = ProjectCategorizedUploadService(
+        service._lifecycle, service._baselines, service._source_preparer, stored_sources=service._stored_sources
+    )
     restored = capture(fresh, context)
     assert restored.is_success, restored.diagnostics
     assert texts(restored.value) == texts(original.value)
     assert services.variants.read_snapshot(services.project_lifecycle.active.formal_variant_ref) == before
 
 
-def test_old_artifact_without_metadata_derives_from_captured_bytes(project, monkeypatch):
-    _services, service, context, plugin = project
-    loader = service._source_preparer.load_saved_source
-    calls = []
-    from transbridge.application.io import plugin_dialogue_order as graph_cache
-
-    graph_cache._cache.clear()
-
-    def old_artifact(source):
-        prepared = loader(source)
-        snapshot = prepared.hydration.source_snapshot
-        snapshot = replace(snapshot, metadata=tuple(item for item in snapshot.metadata if item[0] != METADATA_KEY))
-        calls.append(snapshot.sha256)
-        return replace(prepared, hydration=replace(prepared.hydration, source_snapshot=snapshot))
-
-    monkeypatch.setattr(service._source_preparer, "load_saved_source", old_artifact)
-    service._hydrations = SourceHydrationCache()
+def test_dialogue_order_is_retained_as_extracted_metadata(project, monkeypatch):
+    services, service, context, plugin = project
+    original_bytes = plugin.read_bytes()
     plugin.unlink()
-    first = capture(service, context)
-    second = capture(service, context)
-    assert first.is_success and second.is_success, (first.diagnostics, second.diagnostics)
-    assert texts(first.value) == texts(second.value)
-    assert texts(first.value)[0] == "First topic"
-    assert len(calls) == 1
+    active = services.project_lifecycle.active
+    database = Path(services.projects.path_for(active.project_ref))
+    assert original_bytes not in database.read_bytes()
+    monkeypatch.setattr(
+        service._source_preparer, "prepare_source", lambda *_args, **_kwargs: pytest.fail("Plugin source was read")
+    )
+    reopened = services.current_project_opener.prepare_path(database, context)
+    assert reopened.is_success, reopened.diagnostics
+    (hydration,) = reopened.value.hydrations
+    assert hydration.source_snapshot.content is None
+    assert METADATA_KEY in dict(hydration.source_snapshot.metadata)
+    result = capture(service, context)
+    assert result.is_success, result.diagnostics
+    assert texts(result.value) == ["First topic", "First reply", "Second reply", "Later topic", "Later reply"]
 
 
-def test_plain_capture_does_not_derive_topology_and_cache_modes_are_separate(project, monkeypatch):
+def test_plain_capture_does_not_read_dialogue_metadata(project, monkeypatch):
     _services, service, context, _plugin = project
-    from transbridge.application.projects import source_hydration_cache as cache
-
-    actual = cache.dialogue_order_from_snapshot
+    actual = source_reads.dialogue_order_from_snapshot
     calls = []
 
     def read(snapshot, **kwargs):
         calls.append(snapshot.sha256)
         return actual(snapshot, **kwargs)
 
-    monkeypatch.setattr(cache, "dialogue_order_from_snapshot", read)
+    monkeypatch.setattr(source_reads, "dialogue_order_from_snapshot", read)
     plain = capture(service, context, include_dialogue_order=False)
     assert plain.is_success and plain.value.sources[0].dialogue_order is None
     assert calls == []
@@ -128,6 +122,8 @@ def test_plain_capture_does_not_derive_topology_and_cache_modes_are_separate(pro
 
 def test_cancelled_capture_does_not_fallback_to_saved_identity_text(project):
     _services, service, context, _plugin = project
-    result = capture(service, context, cancellation=SimpleNamespace(is_cancelled=True))
+    token = CancellationToken()
+    token._cancel("Cancelled before source capture")
+    result = capture(service, context, cancellation=token)
     assert not result.is_success
     assert result.diagnostics[0].category is ErrorCategory.CANCELLED

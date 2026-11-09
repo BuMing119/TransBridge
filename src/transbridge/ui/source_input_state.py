@@ -1,12 +1,13 @@
 """Explicit source availability on saved translation rows used by the workbench."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 from transbridge.application.preflight.inputs import (
     ORIGINAL_KNOWN as ORIGINAL_KNOWN,
     SourceInputFacts,
     missing_source_keys as _missing_source_keys,
 )
+from transbridge.ui.project_rows import ProjectRowsCollection
 
 
 def original_known(entry) -> bool:
@@ -21,7 +22,8 @@ def missing_source_keys(context, requirement: str, source_keys=None) -> tuple[st
         (
             SourceInputFacts(
                 key,
-                all(original_known(entry) for entry in slots[key].collection),
+                isinstance(slots[key].collection, ProjectRowsCollection)
+                or all(original_known(entry) for entry in slots[key].collection),
                 getattr(slots[key], "source_snapshot", None) is not None,
             )
             for key in selected
@@ -64,13 +66,18 @@ def ensure_source_input(
 class SourceInputScope:
     context: object
     source_keys: tuple[str, ...]
+    snapshots: dict = field(default_factory=dict)
 
     @property
     def slots(self):
         coordinator = getattr(self.context, "source_input_coordinator", None)
         keys = self.source_keys if coordinator is None else coordinator.resolved_keys(self.source_keys)
         slots = getattr(self.context, "slots", {})
-        return {key: slots[key] for key in keys if key in slots}
+        return {
+            key: replace(slots[key], source_snapshot=self.snapshots[key]) if key in self.snapshots else slots[key]
+            for key in keys
+            if key in slots
+        }
 
     @property
     def active_key(self):

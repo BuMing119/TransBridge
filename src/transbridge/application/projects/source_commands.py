@@ -26,8 +26,10 @@ from .provisioning import (
     PreparedSourceHydration,
     ProjectSourcePreparationPort,
     ProjectSourceRequest,
+    translation_registry,
 )
 from .source_content import folded_plugin_pairs, source_content_identity
+from .source_extraction import extract_source, hydrate_extracted
 from .source_registry import (
     SourceKind,
     SourceRegistrySnapshot,
@@ -131,9 +133,7 @@ class ProjectSourceMutationService:
             active.variant.revision if expected_variant_revision is None else expected_variant_revision
         )
         try:
-            persist_prepared = getattr(self._preparer, "persist_prepared_source", None)
-            if persist and persist_prepared is not None:
-                prepared = persist_prepared(prepared)
+            extracted = extract_source(prepared)
             registry = _source_registry(active.project)
             registration = migrate_legacy_source_registry(
                 active.project_ref.identity.value,
@@ -161,10 +161,8 @@ class ProjectSourceMutationService:
                     "该来源包含与工程中已有来源重复的条目身份。",
                 )
 
-            next_registry = SourceRegistrySnapshot(
-                (*registry.sources, registration),
-                registry.relations,
-                registry.diagnostics,
+            next_registry = translation_registry(
+                SourceRegistrySnapshot((*registry.sources, registration), registry.relations, registry.diagnostics)
             )
             project = _project_with_registry(active.project, next_registry)
             variant = VariantSnapshot(
@@ -185,6 +183,7 @@ class ProjectSourceMutationService:
                 context,
                 expected_project_revision=expected_project_revision,
                 expected_variant_revision=expected_variant_revision,
+                source_additions=(extracted,),
                 before_publish=lambda: self._baselines.replace_many(
                     active.project_ref,
                     variant_refs,
@@ -202,8 +201,8 @@ class ProjectSourceMutationService:
             return OperationResult.completed(
                 SourceMutationResult(
                     registration.source_id,
-                    registration.location,
-                    prepared.hydration,
+                    "",
+                    hydrate_extracted(extracted, registration.source_id),
                     project.envelope.revision,
                     variant.revision,
                 ),

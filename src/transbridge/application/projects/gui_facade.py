@@ -17,7 +17,8 @@ from transbridge.application.contracts import (
 )
 from transbridge.application.io.identity import EntryKey
 from transbridge.application.translation.result_merge import ResultConflictPolicy
-from transbridge.persistence.v2.ids import ProjectRef, VariantRef
+from transbridge.persistence.v2.deferred_variant_rows import DeferredVariantRows
+from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantRef
 from transbridge.persistence.v2.variant import VariantChangeSet
 
 from .categorized_upload import ProjectCategorizedUploadService
@@ -117,6 +118,25 @@ class GuiProjectCommandFacade:
         ):
             raise DomainError(ErrorCategory.CONFLICT, "PROJECT_CONTEXT_MISMATCH", "任务对应的工程版本已切换。")
         return Path(self._projects.path_for(active.project_ref)).parent
+
+    def project_exists(self, project_id: str) -> bool:
+        return self._projects.exists(ProjectRef(ProjectId(project_id)))
+
+    def result_receipt(self, project_id: str, operation_id: str):
+        return self._projects.store_for(ProjectId(project_id)).receipt(operation_id)
+
+    def reconcile_variant_save(self, operation_id, receipt, context, *, commit_mutation):
+        if self._durable_variant_commits is None:
+            return OperationResult.completed(run_id=context.run_id)
+        return self._durable_variant_commits.reconcile(operation_id, receipt, context, commit_mutation=commit_mutation)
+
+    def result_is_staged(self, operation_id: str) -> bool:
+        active = self._lifecycle.active
+        return (
+            active is not None
+            and active.variant is not None
+            and any(key == operation_id for key, _ in active.variant.pending_applications())
+        )
 
     def _categorized_upload_service(self) -> ProjectCategorizedUploadService:
         if self._categorized_uploads is None:
@@ -362,6 +382,13 @@ class GuiProjectCommandFacade:
         translation: str | None = None,
         stage: int | None = None,
     ) -> OperationResult[dict[str, Any]]:
+        active = self._lifecycle.active
+        if active is not None and active.variant is not None and isinstance(local_key, EntryKey):
+            snapshot = active.variant.snapshot()
+            if isinstance(snapshot.entries, DeferredVariantRows):
+                from .variant_commands import update_deferred_entry
+
+                return update_deferred_entry(self._lifecycle, active, snapshot, local_key, context, translation, stage)
         update = update_entry_by_key if isinstance(local_key, EntryKey) else update_entry_by_local_key
         return self._commit_variant(
             context,
@@ -374,13 +401,14 @@ class GuiProjectCommandFacade:
         label_library: Mapping[str, Mapping[str, Any]],
         context: RequestContext,
         *,
+        only_listed: bool = False,
         expected_project_revision: int | None = None,
         expected_variant_revision: int | None = None,
         expected_variant_ref: VariantRef | None = None,
     ) -> OperationResult[dict[str, Any]]:
         return self._commit_variant(
             context,
-            update_entries=lambda entries: replace_variant_labels(entries, entry_labels),
+            update_entries=lambda entries: replace_variant_labels(entries, entry_labels, only_listed=only_listed),
             label_library=normalize_label_library(label_library),
             expected_project_revision=expected_project_revision,
             expected_variant_revision=expected_variant_revision,
@@ -397,6 +425,8 @@ class GuiProjectCommandFacade:
         expected_variant_ref: VariantRef | None = None,
         commit_mutation: Callable[[Callable[[], None]], None] | None = None,
         persist: bool = False,
+        operation_id=None,
+        application_outcomes=(),
     ) -> OperationResult[dict[str, Any]]:
         """Commit a complete set of projected translation/stage changes once."""
 
@@ -408,6 +438,8 @@ class GuiProjectCommandFacade:
             expected_variant_ref=expected_variant_ref,
             commit_mutation=commit_mutation,
             persist=persist,
+            operation_id=operation_id,
+            application_outcomes=application_outcomes,
         )
 
     def merge_entry_states(
@@ -423,6 +455,7 @@ class GuiProjectCommandFacade:
         policies=None,
         decision_states=None,
         clear_external_scope=None,
+        operation_id=None,
     ):
         """Merge completed asynchronous results without relying on launch revisions."""
         from .result_merge import ProjectResultMergeService
@@ -443,6 +476,7 @@ class GuiProjectCommandFacade:
             policies=policies,
             decision_states=decision_states,
             clear_external_scope=clear_external_scope,
+            operation_id=operation_id,
         )
 
     def replace_entry_records(
@@ -455,6 +489,8 @@ class GuiProjectCommandFacade:
         expected_variant_ref: VariantRef | None = None,
         commit_mutation: Callable[[Callable[[], None]], None] | None = None,
         persist: bool = False,
+        operation_id=None,
+        application_outcomes=(),
     ) -> OperationResult[dict[str, Any]]:
         """Commit all Variant-owned state for existing entries."""
 
@@ -466,6 +502,8 @@ class GuiProjectCommandFacade:
             expected_variant_ref=expected_variant_ref,
             commit_mutation=commit_mutation,
             persist=persist,
+            operation_id=operation_id,
+            application_outcomes=application_outcomes,
         )
 
     def _commit_variant(
@@ -479,6 +517,8 @@ class GuiProjectCommandFacade:
         expected_variant_ref: VariantRef | None = None,
         commit_mutation: Callable[[Callable[[], None]], None] | None = None,
         persist: bool = False,
+        operation_id=None,
+        application_outcomes=(),
     ) -> OperationResult[dict[str, Any]]:
         active = self._lifecycle.active
         if active is None or active.variant is None or active.formal_variant_ref is None:
@@ -527,11 +567,14 @@ class GuiProjectCommandFacade:
                     "自动保存服务尚未配置，本次未修改译文；请检查工程保存配置。",
                 )
             entries = update_entries(snapshot.entries)
-            next_label_library = snapshot.label_library if label_library is None else label_library
+            next_label_library = snapshot.label_library
+            if label_library is not None and dict(label_library) != snapshot.label_library_data():
+                next_label_library = label_library
             if (
                 entries == snapshot.entries
                 and next_label_library == snapshot.label_library
                 and not (persist and active.dirty)
+                and operation_id is None
             ):
                 if commit_mutation is not None:
                     return self._lifecycle.commit_active_content(
@@ -558,6 +601,13 @@ class GuiProjectCommandFacade:
                 entries,
                 next_label_library,
                 context.run_id or "",
+                operation_id,
+                tuple(application_outcomes),
+                sparse_entries=(
+                    entries.changed_from(snapshot.entries)
+                    if isinstance(entries, DeferredVariantRows) and isinstance(snapshot.entries, DeferredVariantRows)
+                    else ()
+                ),
             )
             if persist:
                 return self._durable_variant_commits.commit(

@@ -16,8 +16,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtCore import QThread
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QApplication, QDialog
+import pytest
 
-from transbridge.application.contracts import OperationResult
+from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, OperationResult
 from transbridge.application.io import FormatId
 from transbridge.application.io.identity import EntryKey, ExternalEntryRef, SourceNamespace
 from transbridge.converter.translation_entry import TranslationEntry
@@ -170,13 +171,20 @@ def test_authoritative_save_runs_off_gui_thread_and_reports_completion() -> None
     assert not harness._workbench.progress_visible
 
 
-def test_current_window_project_open_shows_and_clears_start_center_progress() -> None:
+@pytest.mark.parametrize("preference_warning", [False, True])
+def test_current_window_project_open_shows_and_clears_start_center_progress(preference_warning) -> None:
     started = threading.Event()
     release = threading.Event()
     progress: list[str | None] = []
     messages: list[str] = []
     restored_sources: list[str] = []
     operation_threads: dict[str, QThread] = {}
+    warning = "工程数据已保存，但启动项目偏好未能确认更新。"
+    diagnostics = (
+        (Diagnostic("PROJECT_ACTIVE_PREFERENCE_WRITE_FAILED", warning, DiagnosticSeverity.WARNING),)
+        if preference_warning
+        else ()
+    )
 
     class Workbench:
         def __init__(self) -> None:
@@ -198,20 +206,23 @@ def test_current_window_project_open_shows_and_clears_start_center_progress() ->
         def activate(self, _prepared, _context, *, dirty_decision):
             operation_threads["activate"] = QThread.currentThread()
             assert dirty_decision is None
-            return OperationResult.completed({
-                "name": "OtherMod",
-                "sources": [
-                    {
-                        "source_id": "source-current",
-                        "enabled": True,
-                        "format_id": "plugin.sse",
-                        "location": "D:/mods/OtherMod.esp",
-                        "kind": "plugin",
-                        "bilingual_capability": "none",
-                        "format_options": {},
-                    }
-                ],
-            })
+            return OperationResult.completed(
+                {
+                    "name": "OtherMod",
+                    "sources": [
+                        {
+                            "source_id": "source-current",
+                            "enabled": True,
+                            "format_id": "plugin.sse",
+                            "location": "D:/mods/OtherMod.esp",
+                            "kind": "plugin",
+                            "bilingual_capability": "none",
+                            "format_options": {},
+                        }
+                    ],
+                },
+                diagnostics=diagnostics,
+            )
 
     host = SimpleNamespace(
         context=SimpleNamespace(
@@ -245,7 +256,8 @@ def test_current_window_project_open_shows_and_clears_start_center_progress() ->
     assert all(isinstance(message, str) for message in progress[:-1])
     assert not host.workbench.progress_visible
     assert restored_sources == ["D:/mods/OtherMod.esp"]
-    assert messages == ["项目「OtherMod」已打开", "workbench"]
+    expected = "项目「OtherMod」已打开" + (f"\n{warning}" if preference_warning else "")
+    assert messages == [expected, "workbench"]
     assert operation_threads["prepare"] is not _APP.thread()
     assert operation_threads["activate"] is not _APP.thread()
 
@@ -354,7 +366,7 @@ def test_authoritative_hydrations_restore_all_sources_without_reparsing() -> Non
             state["external_refs"] = [ExternalEntryRef("paratranz", "project:42", 99).to_dict()]
             state["revision"] = 3
         states.append(state)
-    projection = SimpleNamespace(snapshot=lambda: SimpleNamespace(to_dict=lambda: {"values": {"entries": states}}))
+    projection = SimpleNamespace(snapshot=lambda: SimpleNamespace(values={"entries": states}))
     context = Context()
     host = SimpleNamespace(
         context=context,
@@ -389,7 +401,7 @@ def test_authoritative_hydration_failure_is_visible_and_keeps_existing_slots(mon
         def add_slot(self, key: str, slot) -> None:
             self.slots[key] = slot
 
-    projection = SimpleNamespace(snapshot=lambda: SimpleNamespace(to_dict=lambda: {"values": {"entries": []}}))
+    projection = SimpleNamespace(snapshot=lambda: SimpleNamespace(values={"entries": []}))
     host = SimpleNamespace(
         context=Context(),
         app_runtime=SimpleNamespace(use_cases=SimpleNamespace(resolve=lambda _name: projection)),
@@ -399,10 +411,11 @@ def test_authoritative_hydration_failure_is_visible_and_keeps_existing_slots(mon
     monkeypatch.setattr(
         source_hydration_module,
         "slot_from_hydration",
-        lambda _hydration: (_ for _ in ()).throw(ValueError("broken hydration")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("broken hydration")),
     )
 
-    error = coordinator._restore_plugin_sources((), (SimpleNamespace(location="D:/mods/Broken.esp"),))
+    broken = SimpleNamespace(location="D:/mods/Broken.esp", entries=(), source_id="broken")
+    error = coordinator._restore_plugin_sources((), (broken,))
 
     assert error is not None and "broken hydration" in error
     assert set(host.context.slots) == {"existing"}

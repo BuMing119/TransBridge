@@ -1,0 +1,1 @@
+"""SQLite translation project persistence."""

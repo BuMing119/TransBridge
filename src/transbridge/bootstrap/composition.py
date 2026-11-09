@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,6 @@ from transbridge.application.ports import ClosablePort, closeables
 from transbridge.application.tasks import (
     BoundedThreadPoolBackend,
     FilesystemCheckpointCatalog,
-    FilesystemTaskHistoryPort,
     RecoveryCatalog,
     RecoveryExpectationRegistry,
     RuntimeTaskProjection,
@@ -38,10 +38,13 @@ from transbridge.application.use_cases import ValidateContextUseCase
 from transbridge.config import ConfigRepository, UiPreferenceRepository, default_config_repository
 from transbridge.config.paths import get_data_dir
 from transbridge.config.task_results import TaskResultPreferenceRepository
+from transbridge.persistence.task_store import TaskStore
 
 from .adapters import DenyByDefaultSecurity, NullSecretStore, SystemClock, UuidGenerator
 from .persistence import build_persistence_v2_services
 from .runtime import AppRuntime, RuntimePorts, UseCaseRegistry
+
+_logger = logging.getLogger(__name__)
 
 
 def build_runtime(
@@ -108,9 +111,22 @@ def build_runtime(
         id_factory=runtime_ports.ids.new_id,
         timestamp_factory=lambda: runtime_ports.clock.now().isoformat(),
     )
-    task_data_root = Path(persistence_root) / "task-activity"
-    task_history = FilesystemTaskHistoryPort(task_data_root)
-    task_history_recorder = TaskHistoryRecorder(tasks, task_history)
+    if "task_store" in runtime_use_cases.names():
+        task_store = runtime_use_cases.resolve("task_store")
+    else:
+        task_store = TaskStore(Path(persistence_root) / "task-store-v1")
+        runtime_use_cases.register("task_store", task_store)
+    task_data_root = task_store.root
+    task_history = (
+        runtime_use_cases.resolve("task_history") if "task_history" in runtime_use_cases.names() else task_store
+    )
+    task_history_recorder = TaskHistoryRecorder(
+        tasks,
+        task_history,
+        on_failure=lambda issue: _logger.warning(
+            "Cannot persist task %s: %s (%s)", issue.run_id, issue.message, issue.code
+        ),
+    )
     task_recovery_expectations = RecoveryExpectationRegistry()
     task_recovery = RecoveryCatalog(
         FilesystemCheckpointCatalog(task_data_root / "checkpoints"),
@@ -164,13 +180,11 @@ def build_runtime(
         "project_provisioning": persistence.project_provisioning,
         "project_remote_bindings": persistence.project_remote_bindings,
         "project_catalog": persistence.project_catalog,
-        "project_catalog_repair_report": persistence.project_catalog_repair_report,
         "gui_project_commands": persistence.gui_project_commands,
         "current_project_opener": persistence.current_project_opener,
         "project_snapshots": persistence.project_snapshots,
         "project_archive": persistence.project_archive,
         "project_source_updates": persistence.project_source_updates,
-        "project_source_supplements": persistence.project_source_supplements,
         "session_lifecycle": persistence.session_lifecycle,
         "gui_session_commands": persistence.gui_session_commands,
         "project_projection": persistence.project_projection,

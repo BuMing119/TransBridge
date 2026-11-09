@@ -33,6 +33,7 @@ class RecoveryInitialization:
     origin: dict | None = None
     reference_snapshot: dict | None = None
     conflict_policy: str = "keep_current"
+    owner: object | None = None
 
     def execute(self, store):
         previous = store.load(self.continuing) if self.continuing else None
@@ -59,7 +60,6 @@ class RecoveryInitialization:
                 "label": source.label,
                 "translate_keys": [key.to_dict() for key in source.translate_keys],
                 "polish_keys": [key.to_dict() for key in source.polish_keys],
-                "esp_path": source.esp_path,
                 "checkpoint_stem": Path(source_terminology_path(source.esp_path, source.key)).stem,
                 "inputs": [
                     {
@@ -114,6 +114,15 @@ class RecoveryInitialization:
                 "supported": True,
                 "recovery_contract": 2,
                 "overwrite": self.overwrite,
+                **(
+                    {
+                        "owner_id": self.owner.owner_id,
+                        "session_id": self.owner.session_id,
+                        "entrypoint": self.owner.entrypoint,
+                    }
+                    if self.owner is not None
+                    else {}
+                ),
                 "execution_runs": list(dict.fromkeys(executions)),
                 "execution_inputs": execution_inputs,
                 **({"reference_snapshot": self.reference_snapshot} if self.reference_snapshot is not None else {}),

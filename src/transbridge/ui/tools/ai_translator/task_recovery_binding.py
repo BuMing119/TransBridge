@@ -132,7 +132,7 @@ def complete_empty_recovery(window, tasks) -> bool:
         return False
     provider = getattr(window, "_task_project_directory_provider", None)
     directory = provider() if provider is not None else None
-    EmptyRecoveryCompletion(directory, selection).execute()
+    EmptyRecoveryCompletion(directory, selection, getattr(window._ctx, "task_store", None)).execute()
     publish_empty_recovery(window)
     return True
 
@@ -169,7 +169,12 @@ class TaskRecoveryBinding(QObject):
         )
         if not self.supported:
             return
-        self.store = TaskRecoveryStore(session.project_dir / "ai-task-recovery")
+        task_store = getattr(session, "task_store", None)
+        self.store = (
+            task_store.recovery()
+            if task_store is not None
+            else TaskRecoveryStore(session.project_dir / "ai-task-recovery")
+        )
         reference = getattr(getattr(request, "terminology_binding", None), "snapshot_ref", None)
         self._initialization = RecoveryInitialization(
             request.run_id,
@@ -192,8 +197,10 @@ class TaskRecoveryBinding(QObject):
             origin=getattr(request, "recovery_record", None),
             reference_snapshot=None if reference is None else reference.to_dict(),
             conflict_policy=str(getattr(session, "policy", "keep_current")),
+            owner=getattr(request.spec, "owner", None),
         )
         self._task_id = request.recovery_task_id or request.run_id
+        session.task_result_run_id = self._task_id
         if not asynchronous:
             self.record = self._initialization.execute(self.store)
             self._initialized = True
@@ -229,12 +236,8 @@ class TaskRecoveryBinding(QObject):
             raise ValueError(f"无法记录未知任务状态：{state}")
         if getattr(run, "user_cancelled", False):
             state = "cancelled"
-        elif run.shutting_down and not (self.session.completed and self.session.project_saved):
+        elif run.shutting_down and not self.session.completed:
             state = "interrupted"
-        elif state == "completed" and bool(run.entries.ready_keys):
-            state = "partial"
-        elif state == "completed" and not self.session.project_saved:
-            state = "applying"
         entries = frozen_entry_results
         if entries is None:
             entries = run.entries.freeze()

@@ -8,6 +8,7 @@ import logging
 from PyQt6.QtCore import QObject, QTimer
 from PyQt6.QtWidgets import QMessageBox
 
+from transbridge.application.contracts import DiagnosticSeverity
 from transbridge.application.projects import DirtyDecision
 from transbridge.application.projects.save_result import translations_were_saved
 from transbridge.ui.project_view_binding import ProjectViewState, prepare_project_view
@@ -36,6 +37,14 @@ def _prepare_workbench_view(hydrations, candidate):
     state = prepare_project_view(candidate)
     evidence = PreparedProjectionConsistency(candidate, (slot for _, slot in slots))
     return PreparedWorkbenchView(slots, replace(state, consistency=evidence))
+
+
+def _prepare_paged_workbench_view(reader, candidate):
+    from transbridge.ui.project_rows import build_paged_slots
+
+    slots = build_paged_slots(reader)
+    state = prepare_project_view(candidate)
+    return PreparedWorkbenchView(slots, replace(state, initial_source_key=next(iter(dict(slots)), None)))
 
 
 class ProjectOpenOperation(QObject):
@@ -116,8 +125,14 @@ class ProjectOpenOperation(QObject):
             worker.progress.emit(0, 0, "正在加载项目版本并准备工作台…")
             options = {"dirty_decision": dirty_decision}
             if self.token is not None:
+                records = getattr(prepared.value, "records", None)
+                reader = getattr(records, "paged_read", None)
                 options.update(
-                    prepare_view=lambda candidate: _prepare_workbench_view(prepared.value.hydrations, candidate),
+                    prepare_view=(
+                        (lambda candidate: _prepare_workbench_view(prepared.value.hydrations, candidate))
+                        if reader is None
+                        else (lambda candidate: _prepare_paged_workbench_view(reader, candidate))
+                    ),
                     expected_active_signature=expected,
                 )
             opened = host.current_project_opener.activate(prepared.value, execution_context, **options)
@@ -129,7 +144,8 @@ class ProjectOpenOperation(QObject):
             if self.token is not None:
                 payload = opened.value["view_payload"]
                 state = payload.state.committed(snapshot)
-                state.consistency.acknowledge(snapshot, (slot for _, slot in payload.slots))
+                if state.consistency is not None:
+                    state.consistency.acknowledge(snapshot, (slot for _, slot in payload.slots))
             return OpenedProjectView(opened, snapshot, state)
 
         worker = ApiWorker(run, route_http_errors=False)
@@ -171,6 +187,7 @@ class ProjectOpenOperation(QObject):
         worker = self.worker
         opened = None
         failure = None
+        warnings = ()
         try:
             if self.error is not None:
                 failure = ("PROJECT_OPEN_FAILED", self.error)
@@ -187,6 +204,11 @@ class ProjectOpenOperation(QObject):
                     )
                 else:
                     opened = result.value
+                    warnings = tuple(
+                        diagnostic.message
+                        for diagnostic in result.diagnostics
+                        if diagnostic.severity is DiagnosticSeverity.WARNING
+                    )
                     if opened.get("recovery") is None:
                         if self.token is not None:
                             installed = self.host.context.install_project_open(
@@ -231,9 +253,8 @@ class ProjectOpenOperation(QObject):
             if recovery is not None:
                 self._show_recovery(recovery)
             else:
-                if self._save_warning is not None:
-                    self.host.show_message(self._save_warning)
-                self.host.show_message(f"项目「{opened['name']}」{self.success_verb}")
+                notes = (() if self._save_warning is None else (self._save_warning,)) + warnings
+                self.host.show_message("\n".join((f"项目「{opened['name']}」{self.success_verb}", *notes)))
                 if self.on_success is not None:
                     self.on_success(opened)
 

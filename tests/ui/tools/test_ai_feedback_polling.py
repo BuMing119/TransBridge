@@ -128,6 +128,11 @@ def test_finished_drains_last_values_once_and_preserves_save_and_cancel(make_win
     support._wait_reports(None, window)
     assert seen == ["progress", "progress", "source-finished", "source-finished", "completed"]
     assert session.commits == (0 if cancel else 1)
+    assert not session.saved
+    if not cancel:
+        assert window.save_button.isEnabled()
+        window.save_button.click()
+        support._wait_until(lambda: session.project_saved)
     assert session.saved is (not cancel)
     worker._feedback.progress("first", "translate", 0, 1000, "迟到状态")
     worker.poll_feedback(all_pending=True)

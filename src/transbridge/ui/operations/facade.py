@@ -183,10 +183,30 @@ class OperationPlanFacade:
         return window
 
     def begin_write(self, context, *, batch: bool = False, **values):
+        from transbridge.application.io.json_export import JSON_EXPORT_FORMATS
+        from transbridge.ui.coordinators.write_input_coordinator import requires_write_inputs
+
         owner = getattr(context, "context", context)
         slots = getattr(context, "slots", {})
         keys = tuple(slots) if batch else tuple(key for key, slot in slots.items() if slot is context.active_slot)
         scope = SourceInputScope(owner, keys) if hasattr(context, "slots") else context
+        output_format = values.get("output_format")
+        if output_format in JSON_EXPORT_FORMATS:
+            return self._coordinator.begin_write(scope, batch=batch, **values)
+        if isinstance(scope, SourceInputScope) and requires_write_inputs(scope, output_format):
+            coordinator = getattr(owner, "source_input_coordinator", None)
+            if coordinator is not None:
+                if output_format is None:
+                    return self._coordinator.begin_write(
+                        scope, batch=batch, prepare_inputs=self._prepare_export_inputs(scope, coordinator), **values
+                    )
+                coordinator.select_write_inputs(
+                    scope,
+                    lambda ready: self._coordinator.begin_write(ready, batch=batch, **values),
+                    output_format=output_format,
+                    select_plugins=batch or not str(values.get("plugin_path") or "").strip(),
+                )
+            return None
         destination = values.get("output_directory") if batch else values.get("target_path")
         operation_label = "本次批量写回" if batch else "本次写回"
         operation_label += f" → {destination}" if destination else " · 下一步选择输出位置"
@@ -201,6 +221,42 @@ class OperationPlanFacade:
         ):
             return None
         return self._coordinator.begin_write(scope, batch=batch, **values)
+
+    @staticmethod
+    def _prepare_export_inputs(scope, coordinator):
+        from transbridge.application.io.json_export import JSON_EXPORT_FORMATS
+        from transbridge.ui.coordinators.write_input_coordinator import requires_write_inputs
+
+        owner = scope.context
+        identity = owner.active_version_identity, owner.project_revision, owner.variant_revision
+        prepared = {}
+
+        def prepare(fields, ready, unavailable):
+            if (owner.active_version_identity, owner.project_revision, owner.variant_revision) != identity:
+                unavailable("工程版本已变化，请重新发起导出。")
+                return
+            output_format = fields.get("output_format")
+            if output_format in JSON_EXPORT_FORMATS or not requires_write_inputs(scope, output_format):
+                ready(None)
+                return
+            key = output_format, bool(fields.get("plugin_path", "").strip())
+            if key in prepared:
+                ready(prepared[key])
+                return
+
+            def bound(ready_scope):
+                prepared[key] = ready_scope
+                ready(ready_scope)
+
+            coordinator.select_write_inputs(
+                scope,
+                bound,
+                output_format=output_format,
+                select_plugins=not key[1],
+                on_unavailable=unavailable,
+            )
+
+        return prepare
 
     def begin_fomod(self, context, *, batch: bool = False, parent=None, **values):
         return self._coordinator.begin_fomod(context, batch=batch, parent=parent, **values)

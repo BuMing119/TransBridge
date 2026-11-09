@@ -21,10 +21,10 @@ from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import STAGE_QUESTIONABLE, STAGE_TRANSLATED, TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.paratranz.config_manager import ParatranzConfig
 from transbridge.ui.tools.ai_translator import source_reference_review
 from transbridge.ui.tools.ai_translator.source_execution import SourceOutcome
 from transbridge.ui.tools.ai_translator.task_term_closure import close_task_terms
-from transbridge.ui.tools.ai_translator.workflow_log_store import WorkflowLogStore
 
 
 def test_unchanged_translation_pending_review_commits_stage_and_exports_mark(tmp_path, monkeypatch):
@@ -63,17 +63,19 @@ def test_unchanged_translation_pending_review_commits_stage_and_exports_mark(tmp
             )
 
     monkeypatch.setattr(source_reference_review, "create_llm_client", lambda _: Provider())
-    monkeypatch.setattr(
-        source_reference_review,
-        "WorkflowLogStore",
-        lambda path, **kwargs: WorkflowLogStore(path, log_base=tmp_path / "logs", **kwargs),
-    )
+    monkeypatch.setattr(ParatranzConfig, "get_data_dir", lambda: str(tmp_path))
     pause = threading.Event()
     pause.set()
     budget = AiRequestBudget(1)
+    directory = tmp_path / "run"
     executor = SimpleNamespace(
         attempt_id=None,
-        request=SimpleNamespace(run_id="stage-review", request_budget=budget),
+        request=SimpleNamespace(
+            run_id="stage-review",
+            request_budget=budget,
+            recovery_directory=directory,
+            spec=SimpleNamespace(owner=SimpleNamespace(project_id="project", variant_id="variant")),
+        ),
         config=LLMConfig(model="fake", max_concurrent=1),
         stop=threading.Event(),
         pause=pause,
@@ -101,6 +103,9 @@ def test_unchanged_translation_pending_review_commits_stage_and_exports_mark(tmp
     review_progress = [event for event in progress if event[1] == "term_closure"]
     assert review_progress[-1][2:4] == (1, 1)
     assert progress[-1][1:4] == ("term_closure_finalize", 1, 1)
+    (logs,) = (directory / "logs").glob("*_reference_review_*")
+    assert logs.is_dir() and any(logs.iterdir())
+    assert not (tmp_path / "log").exists()
 
     outcome = SourceOutcome(task, translation=SimpleNamespace(entry_outcomes={entry.identity: result}))
     ledger.ingest((outcome,), (entry.identity,))
@@ -152,11 +157,7 @@ def test_supplemental_review_reports_each_completed_batch_before_draft_commit(tm
     monkeypatch.setattr(
         source_reference_review, "ProofreadStage", lambda *args, **kwargs: ProofreadStage(*args, max_items=2, **kwargs)
     )
-    monkeypatch.setattr(
-        source_reference_review,
-        "WorkflowLogStore",
-        lambda path, **kwargs: WorkflowLogStore(path, log_base=tmp_path / "logs", **kwargs),
-    )
+    monkeypatch.setattr(ParatranzConfig, "get_data_dir", lambda: str(tmp_path))
     pause = threading.Event()
     pause.set()
     executor = SimpleNamespace(

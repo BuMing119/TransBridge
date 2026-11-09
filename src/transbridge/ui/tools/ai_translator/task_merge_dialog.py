@@ -126,8 +126,10 @@ class TaskMergeDialog(QDialog):
 
     def _refresh(self):
         self.status.setText(
-            self.review.error
-            or ("选择词条后保留当前译文、采纳 AI 结果或恢复覆盖前译文；处理期间再次修改的词条会保留待处理。")
+            "正在补记已处理的合入结果…"
+            if self.busy and self.review.confirmation_finish_pending
+            else self.review.error
+            or "选择词条后保留当前译文、采纳 AI 结果或恢复覆盖前译文；处理期间再次修改的词条会保留待处理。"
         )
         for button in self.buttons:
             button.setEnabled(not self.busy and not self.review.shutting_down)
@@ -155,7 +157,22 @@ class TaskMergeDialog(QDialog):
     def resume_exports(self):
         self.review.resume_exports()
 
-    def closeEvent(self, event):
-        # Keep the QObject and worker alive under the registry after hiding it.
+    def _request_close(self, after_finish):
+        if self.busy:
+            self.status.setText("正在处理任务结果，请等待处理完成后关闭。")
+            return False
+        if self.review.confirmation_finish_pending and not self.review.shutting_down:
+            self.review.finish_before_close(after_finish)
+            return False
         self.review.close()
-        event.accept()
+        return True
+
+    def closeEvent(self, event):
+        if self._request_close(self.close):
+            event.accept()
+        else:
+            event.ignore()
+
+    def done(self, result):
+        if self._request_close(lambda: self.done(result)):
+            super().done(result)

@@ -123,9 +123,9 @@ def test_switch_prepares_exact_variant_off_gui_thread_and_completes_after_instal
     preparation_threads, completions = [], []
     prepare = case.host.current_project_opener.prepare_identity
 
-    def capture_prepare(*args):
+    def capture_prepare(*args, **kwargs):
         preparation_threads.append(QThread.currentThread())
-        return prepare(*args)
+        return prepare(*args, **kwargs)
 
     monkeypatch.setattr(case.host.current_project_opener, "prepare_identity", capture_prepare)
     case.switch(case.target, lambda ok: completions.append((ok, case.context.active_version_identity)))
@@ -219,14 +219,15 @@ def test_missing_or_foreign_variant_preserves_current_project(navigation, varian
         variant_id="missing" if variant == "missing" else case.old.formal_variant_ref.identity.value,
     )
     before = case.context.active_version_identity
-    pointer = Path(case.services.root) / "active-project.json"
-    previous_pointer = pointer.read_bytes()
+    pointer = case.services.project_catalog.active
+    previous_pointer = pointer.read()
+    assert previous_pointer == case.old.project_ref.identity
     outcomes = []
     case.switch(target, outcomes.append)
     _wait_until(lambda: bool(outcomes))
     assert outcomes == [False]
     assert case.context.active_version_identity == before
-    assert pointer.read_bytes() == previous_pointer
+    assert pointer.read() == previous_pointer
     assert case.services.project_lifecycle.active is case.old
     assert not case.host.shown
     assert case.host.warnings
@@ -237,10 +238,10 @@ def test_duplicate_switch_is_rejected_while_preparation_is_running(navigation, m
     entered, release = Event(), Event()
     prepare = case.host.current_project_opener.prepare_identity
 
-    def blocking_prepare(*args):
+    def blocking_prepare(*args, **kwargs):
         entered.set()
         assert release.wait(5)
-        return prepare(*args)
+        return prepare(*args, **kwargs)
 
     monkeypatch.setattr(case.host.current_project_opener, "prepare_identity", blocking_prepare)
     first, second = [], []
@@ -285,12 +286,16 @@ def test_labels_keep_history_available_but_report_missing_binding(navigation, mi
     case = navigation
     project_ref = ProjectRef(ProjectId(case.target.project_id))
     variant_ref = VariantRef(VariantId(case.target.variant_id), project_ref.identity)
-    path = (
-        case.services.projects.path_for(project_ref)
-        if missing == "project"
-        else case.services.variants.path_for(variant_ref)
-    )
-    Path(path).unlink()
+    if missing == "project":
+        Path(case.services.projects.path_for(project_ref)).unlink()
+    else:
+        commands = case.services.gui_project_commands
+        runtime = case.host.runtime_context
+        switched = commands.switch_v2(project_ref, case.target_alternative, runtime)
+        assert switched.is_success, switched.diagnostics
+        deleted = commands.delete_variant(variant_ref.identity.value, runtime)
+        assert deleted.is_success, deleted.diagnostics
+        assert case.services.projects.exists(project_ref)
     labels = case.ports["session_project_labels"](case.target.project_id, case.target.variant_id)
     assert not labels["available"] and labels["reason"]
 

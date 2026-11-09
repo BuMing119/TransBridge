@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from transbridge.application.contracts import OperationResult
+from transbridge.application.tasks.result_application import ResultApplication, prior_merge_plan, select_saved_rows
 from transbridge.application.translation.result_merge import ResultEntryChange, ResultEntryState
 
 
@@ -21,6 +23,10 @@ def freeze_application(session, candidates):
     """Freeze the authoritative command port before background execution."""
     persistence = session._persistence
     writer, policy = session.merge_evidence_writer, session.policy
+    task_store = getattr(session, "task_store", None)
+    recovery = task_store.recovery() if task_store is not None else None
+    task_id = session.task_result_run_id
+    service = ResultApplication.for_commands(recovery, session._ctx.project_commands) if recovery is not None else None
 
     def preserve(plan):
         if writer is None:
@@ -34,9 +40,18 @@ def freeze_application(session, candidates):
     )
 
     def operation():
-        result = merge()
+        application = None
+        if service is not None:
+            rows = select_saved_rows(recovery, task_id, candidates)
+            application = service.prepare(task_id, *session.version_identity, rows, policy)
+            prior = prior_merge_plan(application)
+            if prior is not None:
+                return OperationResult.completed(prior)
+        result = merge(application.request.operation_id if application is not None else None)
         if result.is_success and writer is not None:
             writer.acknowledge(candidates, result.value, policy)
+        if result.is_success and application is not None:
+            service.finish(application, result.value)
         return result
 
     return operation
@@ -52,7 +67,6 @@ def accept_result(session, plan, candidates):
         session._applied_values[key] = (row.original, row.translation, row.stage, row.context or "")
     session._commit_result = plan
     if plan.applied:
-        session._saved = False
         signal = (
             getattr(session._ctx, "collection_changed", None)
             if session._ctx.active_version_identity == session.version_identity
@@ -65,6 +79,12 @@ def accept_result(session, plan, candidates):
 
 def apply_result(session, candidates):
     """Commit selected fields against the current version; retain the frozen task base."""
+    if getattr(session, "task_store", None) is not None:
+        from .version_operations import require_success
+
+        result = require_success(freeze_application(session, candidates)())
+        session._persistence.acknowledge_merge(result)
+        return accept_result(session, result.value, candidates)
     persistence = session._persistence
 
     def preserve(plan):

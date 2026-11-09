@@ -1,31 +1,14 @@
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
 from uuid import uuid4
-
-import pytest
 
 from transbridge.application.contracts import RequestContext
 from transbridge.application.io import FormatId
 from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
-from transbridge.application.projects.models import LifecycleProjectUpdate
 from transbridge.bootstrap.persistence import build_persistence_v2_services
-from transbridge.persistence.project_catalog_document import ProjectCatalogRecord, build_project_catalog
-from transbridge.persistence.v2 import (
-    SCHEMA_VERSION,
-    ProjectDto,
-    ProjectId,
-    ProjectRef,
-    ProjectRepository,
-    SchemaEnvelope,
-    VariantRepository,
-)
-from transbridge.persistence.v2.atomic_documents import AtomicDocumentStore
-from transbridge.persistence.v2.lifecycle_transactions import ProjectLifecycleTransactionStore
-
-from .fakes import MemoryFilesystem
+from transbridge.persistence.project_store import lifecycle as storage_lifecycle
+from transbridge.persistence.project_store.repository import ProjectStore
 
 
 def _services(tmp_path):
@@ -48,49 +31,49 @@ def test_authoritative_rename_updates_project_and_catalog_without_changing_ident
     assert result.is_success, result.diagnostics
     assert services.project_lifecycle.active.project_ref == active.project_ref
     assert services.project_lifecycle.active.project.envelope.revision == active.project.envelope.revision + 1
-    assert json.loads(project_path.read_text(encoding="utf-8"))["data"]["name"] == "新名称"
-    catalog = json.loads((tmp_path / "project-catalog.json").read_text(encoding="utf-8"))
-    assert catalog["projects"][active.project_ref.identity.value]["name"] == "新名称"
+    assert ProjectStore(project_path).summary().name == "新名称"
+    entries = services.project_catalog.list_projects().projects
+    assert [(entry.project_id, entry.name) for entry in entries] == [(active.project_ref.identity.value, "新名称")]
 
 
-def test_rename_catalog_publish_failure_restores_exact_project_preimage():
-    root = os.path.abspath(os.path.join(os.sep, "transbridge-project-rename-rollback"))
-    filesystem = MemoryFilesystem()
-    projects = ProjectRepository(root, filesystem)
-    variants = VariantRepository(root, filesystem)
-    ref = ProjectRef(ProjectId("project-1"))
-    current = ProjectDto(
-        SchemaEnvelope(
-            SCHEMA_VERSION,
-            ref.kind,
-            ref.identity.value,
-            1,
-            {"name": "原名称", "sources": [], "variant_ids": [], "active_variant_id": None},
-        )
-    )
-    projects.save(ref, current)
-    documents = AtomicDocumentStore(root, filesystem)
-    documents.write_json(
-        "project-catalog.json",
-        build_project_catalog((ProjectCatalogRecord(ref.identity.value, "原名称", "原名称".casefold()),)),
-        "seed-catalog",
-    )
-    before_project = filesystem.read_bytes(projects.path_for(ref))
-    catalog_path = documents.path("project-catalog.json")
-    before_catalog = filesystem.read_bytes(catalog_path)
-    filesystem.fail_durable_replace_destinations.add(catalog_path)
-    data = dict(current.envelope.data)
-    data["name"] = "新名称"
-    updated = ProjectDto(SchemaEnvelope(SCHEMA_VERSION, ref.kind, ref.identity.value, 2, data))
-    store = ProjectLifecycleTransactionStore(root, filesystem, projects, variants)
-    store.begin("rename-fault")
-    store.stage_project_update("rename-fault", LifecycleProjectUpdate(updated, 1))
+def test_rename_write_failure_rolls_back_project_and_catalog(tmp_path, monkeypatch):
+    services = _services(tmp_path)
+    context = RequestContext("gui", run_id="rename-rollback")
+    assert services.gui_project_commands.create_project(ProjectProvisioningRequest("原名称"), context).is_success
+    active = services.project_lifecycle.active
+    path = Path(services.projects.path_for(active.project_ref))
+    before = ProjectStore(path).summary()
+    original_write = storage_lifecycle._write_project
 
-    with pytest.raises(OSError):
-        store.commit("rename-fault")
+    def fail_after_write(*args):
+        original_write(*args)
+        raise OSError("injected rename write failure")
 
-    assert filesystem.read_bytes(projects.path_for(ref)) == before_project
-    assert filesystem.read_bytes(catalog_path) == before_catalog
+    monkeypatch.setattr(storage_lifecycle, "_write_project", fail_after_write)
+    result = services.project_management.rename("新名称", context)
+
+    assert not result.is_success
+    assert services.project_lifecycle.active is active
+    assert ProjectStore(path).summary() == before
+    assert [project.name for project in services.project_catalog.list_projects().projects] == ["原名称"]
+
+
+def test_rename_rejects_another_projects_normalized_name(tmp_path):
+    services = _services(tmp_path)
+    context = RequestContext("gui", run_id="rename-conflict")
+    try:
+        for name in ("Existing", "Second"):
+            assert services.gui_project_commands.create_project(ProjectProvisioningRequest(name), context).is_success
+        active = services.project_lifecycle.active
+
+        rejected = services.project_management.rename(" EXISTING ", context)
+
+        assert not rejected.is_success
+        assert rejected.diagnostics[0].code == "PROJECT_NAME_ALREADY_EXISTS"
+        assert services.project_lifecycle.active is active
+        assert [item.name for item in services.project_catalog.list_projects().projects] == ["Existing", "Second"]
+    finally:
+        services.close()
 
 
 def test_delete_current_project_removes_owned_aggregate_but_preserves_external_source(tmp_path):
@@ -124,11 +107,9 @@ def test_delete_current_project_removes_owned_aggregate_but_preserves_external_s
     assert source.exists()
     assert services.project_lifecycle.active is None
     assert not Path(services.projects.path_for(active.project_ref)).exists()
-    assert not (tmp_path / "projects" / active.project_ref.identity.encoded).exists()
-    assert not tuple((tmp_path / "snapshots").glob("*.json"))
+    assert not Path(services.projects.path_for(active.project_ref)).parent.exists()
     assert services.project_catalog.list_projects().projects == ()
-    active_pointer = json.loads((tmp_path / "active-project.json").read_text(encoding="utf-8"))
-    assert active_pointer["project_id"] is None
+    assert not services.current_project_opener.has_active_reference
 
 
 def test_delete_noncurrent_project_does_not_interrupt_current_project(tmp_path):
@@ -153,20 +134,15 @@ def test_delete_failure_restores_owned_files_before_republishing_catalog(tmp_pat
     assert services.gui_project_commands.create_project(ProjectProvisioningRequest("可恢复工程"), context).is_success
     active = services.project_lifecycle.active
     project_path = Path(services.projects.path_for(active.project_ref))
-    variant_path = Path(services.variants.path_for(active.formal_variant_ref))
-    before_project = project_path.read_bytes()
-    before_variant = variant_path.read_bytes()
-    original_remove = services.filesystem.remove
-    failed = False
+    before = project_path.read_bytes()
+    original_rename = Path.rename
 
-    def fail_project_remove(path, *, missing_ok=False):
-        nonlocal failed
-        if not failed and services.filesystem.canonicalize(path) == services.filesystem.canonicalize(str(project_path)):
-            failed = True
-            raise OSError("injected Project delete fault")
-        return original_remove(path, missing_ok=missing_ok)
+    def fail_project_rename(path, target):
+        if path == project_path.parent:
+            raise OSError("injected project isolation failure")
+        return original_rename(path, target)
 
-    monkeypatch.setattr(services.filesystem, "remove", fail_project_remove)
+    monkeypatch.setattr(Path, "rename", fail_project_rename)
 
     result = services.project_management.delete(
         active.project_ref.identity.value,
@@ -175,7 +151,6 @@ def test_delete_failure_restores_owned_files_before_republishing_catalog(tmp_pat
     )
 
     assert not result.is_success
-    assert project_path.read_bytes() == before_project
-    assert variant_path.read_bytes() == before_variant
+    assert project_path.read_bytes() == before
     assert [item.name for item in services.project_catalog.list_projects().projects] == ["可恢复工程"]
     assert services.project_lifecycle.active.project_ref == active.project_ref

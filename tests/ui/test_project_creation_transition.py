@@ -61,7 +61,13 @@ def creation(tmp_path_factory, monkeypatch):
     controller = StartCenterController(host, view)
     controller.start()
     yield SimpleNamespace(
-        host=host, controller=controller, view=view, services=services, context=context, root=tmp_path
+        host=host,
+        controller=controller,
+        view=view,
+        services=services,
+        context=context,
+        root=tmp_path,
+        messages=messages,
     )
     for worker in host._workers:
         worker.wait(5_000)
@@ -102,11 +108,11 @@ def test_new_project_replaces_all_old_slots_and_remains_saveable(creation, sourc
     assert _create(creation, "Skyrim", paths).phase is GuidedDraftPhase.COMPLETED
 
     assert creation.context.active_project_id != old_project
-    expected = tuple(source["source_id"] for source in creation.context.project_sources)
+    sources_by_name = {source["display_name"]: source["source_id"] for source in creation.context.project_sources}
+    assert set(sources_by_name) == {path.name for path in paths}
+    expected = tuple(sources_by_name[path.name] for path in paths)
     assert tuple(creation.context.slots) == expected
-    assert tuple(slot.esp_path for slot in creation.context.slots.values()) == tuple(
-        str(path.resolve()) for path in paths
-    )
+    assert all(slot.esp_path is None for slot in creation.context.slots.values())
     assert observations == [("Skyrim", expected)]
     assert sum(len(slot.collection) for slot in creation.context.slots.values()) == source_count
     assert not creation.context.project_opening
@@ -131,6 +137,22 @@ def test_invalid_new_project_keeps_previous_workbench_and_saved_content(creation
     assert not creation.context.project_opening
     assert not creation.context.authoritative_projection_diverged()
     assert MainWindow._save_current_project(creation.host).is_success
+
+
+def test_created_project_remains_usable_and_reports_active_preference_warning(creation, monkeypatch):
+    from tests.persistence.v2.test_workflow_closure_audit import _fail_active_preference
+
+    _fail_active_preference(creation.services, monkeypatch)
+
+    state = _create(creation, "Preference warning")
+
+    assert state.phase is GuidedDraftPhase.COMPLETED
+    assert creation.context.project_name == "Preference warning"
+    assert not creation.context.project_view_failed
+    assert state.completion_notes
+    assert all(note in creation.messages[-1] for note in state.completion_notes)
+    assert "已创建" in creation.messages[-1]
+    assert len(creation.services.project_catalog.list_projects().projects) == 1
 
 
 def test_failed_view_preparation_retains_old_slots_and_blocks_edits(creation, monkeypatch):
@@ -185,10 +207,9 @@ def test_independent_migration_sources_are_included_in_the_new_workbench(creatio
 
     assert state.phase is GuidedDraftPhase.COMPLETED
     assert set(creation.context.slots) == {source["source_id"] for source in creation.context.project_sources}
-    assert {slot.esp_path for slot in creation.context.slots.values()} == {str(translated.resolve())} | (
-        {str(primary.resolve())} if with_primary else set()
-    )
-    migrated_slot = next(slot for slot in creation.context.slots.values() if slot.esp_path == str(translated.resolve()))
+    sources = {source["display_name"]: source["source_id"] for source in creation.context.project_sources}
+    assert set(sources) == {translated.name} | ({primary.name} if with_primary else set())
+    migrated_slot = creation.context.slots[sources[translated.name]]
     migrated = next(iter(migrated_slot.collection))
     assert migrated.translation == "已有译文"
     assert migrated.stage == 1

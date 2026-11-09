@@ -33,6 +33,7 @@ def test_upload_menu_uses_card_mode_selection_while_other_intents_use_plan_facad
     host = SimpleNamespace(
         context=context,
         operation_plan_facade=facade,
+        workbench=SimpleNamespace(),
         upload_card=SimpleNamespace(
             upload=lambda: legacy.append("upload"), batch_upload=lambda: legacy.append("batch")
         ),

@@ -50,13 +50,13 @@ class OperationPlanCoordinator:
     def active_window_count(self) -> int:
         return len(self._owned_windows)
 
-    def begin_write(self, context, *, batch: bool = False, **values):
-        return self._begin(OperationKind.WRITE, context, batch=batch, values=values)
+    def begin_write(self, context, *, batch: bool = False, prepare_inputs=None, **values):
+        return self._begin(OperationKind.WRITE, context, batch=batch, values=values, prepare_inputs=prepare_inputs)
 
     def begin_fomod(self, context, *, batch: bool = False, parent=None, **values):
         return self._begin(OperationKind.FOMOD, context, batch=batch, values=values, parent=parent)
 
-    def _begin(self, kind, context, *, batch, values, parent=None):
+    def _begin(self, kind, context, *, batch, values, parent=None, prepare_inputs=None):
         factory = self._draft_factories.get(kind)
         if factory is None:
             raise OperationPlanError("DRAFT_FACTORY_UNAVAILABLE", f"no draft factory is registered for {kind.value}")
@@ -72,6 +72,7 @@ class OperationPlanCoordinator:
         self._owned_windows[plan.session_id] = dialog
         released = False
         execution_running = False
+        preparing_inputs = False
         preflight_generation = 0
         pending_generation: int | None = None
         in_flight_draft: object | None = None
@@ -101,7 +102,7 @@ class OperationPlanCoordinator:
             edited = self._presenter.edit(plan.session_id, draft_holder[0], owner_id=owner_id)
             dialog.render_plan(edited)
 
-        def preflight(_session_id, fields) -> None:
+        def check(fields) -> None:
             nonlocal preflight_generation, pending_generation
             if released or execution_running:
                 return
@@ -125,6 +126,46 @@ class OperationPlanCoordinator:
                     running(True)
                 return
             start_remote_preflight(generation)
+
+        def preflight(_session_id, fields) -> None:
+            nonlocal preparing_inputs
+            if released or execution_running or preparing_inputs:
+                return
+            if prepare_inputs is None:
+                check(fields)
+                return
+            if plan.session_id in self._preflight_workers:
+                return
+            preparing_inputs = True
+            running = getattr(dialog, "set_preflight_running", lambda _value: None)
+            running(True)
+
+            def unavailable(message):
+                nonlocal preparing_inputs
+                preparing_inputs = False
+                if not released:
+                    running(False)
+                    if message:
+                        show_error("无法准备导出输入", str(message))
+
+            def ready(prepared_context):
+                if released:
+                    return
+                try:
+                    if prepared_context is not None:
+                        replacement = factory(prepared_context, batch, values)
+                        self._discard_factories.get(kind, lambda _draft: None)(draft_holder[0])
+                        draft_holder[0] = replacement
+                except (RuntimeError, TypeError, ValueError) as exc:
+                    unavailable(str(exc))
+                    return
+                unavailable(None)
+                check(fields)
+
+            try:
+                prepare_inputs(dict(fields), ready, unavailable)
+            except (RuntimeError, TypeError, ValueError) as exc:
+                unavailable(str(exc))
 
         def start_remote_preflight(generation: int) -> None:
             nonlocal in_flight_draft, pending_generation

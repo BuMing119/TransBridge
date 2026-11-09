@@ -10,6 +10,7 @@ from transbridge.application.ports.paratranz import ExternalServiceCategory, Ext
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.service import ParaTranzService
+from transbridge.persistence.task_store import TaskStore
 from transbridge.smart_assistant.tools.types import ExecutionContext
 
 
@@ -144,7 +145,7 @@ def test_assistant_upload_reuses_only_the_target_projects_known_identity(
         external_refs=(ExternalEntryRef("paratranz", f"project:{reference_project}", 801),),
     )
     project = current_project_factory(TranslationEntryCollection([entry]))
-    monkeypatch.setattr(project.commands, "task_result_directory", lambda _context: tmp_path)
+    project.context.task_store = TaskStore(tmp_path / "task-store-v1")
     context = ExecutionContext(app_context=project.context)
 
     result = tool_paratranz._tool_upload_entries({"project_id": 7, "force_overwrite": True}, context)

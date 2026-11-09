@@ -77,8 +77,12 @@ msgstr ""
 msgid "导入 .transbridge…"
 msgstr ""
 
-#: ui/shell/menu_builder.py
-msgid "导入已有译文…"
+#: ui/shell/action_catalog.py
+msgid "导入译文…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "从文件导入译文到当前内容；保留或替换已有译文，不添加新的来源文件"
 msgstr ""
 
 #: ui/shell/menu_builder.py
@@ -106,7 +110,11 @@ msgid "管理当前翻译内容"
 msgstr ""
 
 #: ui/shell/action_catalog.py
-msgid "为当前工程添加插件…"
+msgid "打开翻译文件…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "打开文件作为当前工程的新翻译内容；可同时导入一份已有译文"
 msgstr ""
 
 #: ui/shell/action_catalog.py
@@ -125,12 +133,20 @@ msgstr ""
 msgid "从paratranz上同步"
 msgstr ""
 
-#: ui/shell/menu_builder.py
-msgid "写回当前文件…"
+#: ui/shell/action_catalog.py
+msgid "导出文件…"
 msgstr ""
 
-#: ui/shell/menu_builder.py
-msgid "批量写回文件…"
+#: ui/shell/action_catalog.py
+msgid "选择当前文件的输出格式和保存位置，自动检查后导出"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "批量导出文件…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "检查更新"
 msgstr ""
 
 #: ui/shell/menu_builder.py

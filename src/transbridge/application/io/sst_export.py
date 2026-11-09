@@ -12,6 +12,7 @@ TESVT_MainLoader.pas (loadEspStrings), and Data/SkyrimSE/_recorddefs.txt.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import astuple, dataclass
 from pathlib import Path
 
 from sse_plugin_interface.flags import RecordFlags
@@ -27,6 +28,52 @@ from .contracts import FormatId, WriteRequest
 from .identity import EntryKey
 from .plugin_publication_source import prepared_plugin_source
 from .stage_policy import DEFAULT_STAGE_POLICY, StageOperation
+
+PLUGIN_SST_MASTERS = "plugin_sst_masters"
+PLUGIN_SST_UNAVAILABLE = "plugin_sst_unavailable"
+PLUGIN_SST_LOCATOR = "plugin.sst_locator"
+PLUGIN_SST_BLOCKER_CODES = frozenset({
+    "SST_EXPORT_SOURCE_INVALID",
+    "SST_EXPORT_SOURCE_UNSUPPORTED",
+    "SST_EXPORT_MASTER_ENCODING",
+    "SST_EXPORT_VMAD_UNSUPPORTED",
+    "SOURCE_LOCATOR_NOT_FOUND",
+    "SOURCE_LOCATOR_CONFLICT",
+})
+
+
+@dataclass(frozen=True, slots=True)
+class PluginSstLocator:
+    record_type: str
+    field_type: str
+    form_id: int
+    index: int
+    index_max: int
+    edid_hash: int
+    deleted: bool
+
+    @classmethod
+    def from_values(cls, value):
+        if not isinstance(value, (list, tuple)) or len(value) != 7:
+            raise ValueError("SST physical locator has an invalid shape")
+        locator = cls(*value)
+        for signature in (locator.record_type, locator.field_type):
+            if not isinstance(signature, str) or len(signature) != 4 or len(signature.encode("latin-1")) != 4:
+                raise ValueError("SST physical signatures must contain four single-byte characters")
+        for number, maximum in (
+            (locator.form_id, 0xFFFFFFFF),
+            (locator.index, 0xFFFF),
+            (locator.index_max, 0xFFFF),
+            (locator.edid_hash, 0xFFFFFFFF),
+        ):
+            if type(number) is not int or not 0 <= number <= maximum:
+                raise ValueError("SST physical locator is outside its wire range")
+        if type(locator.deleted) is not bool or locator.index > locator.index_max:
+            raise ValueError("SST physical locator contains invalid entry state")
+        return locator
+
+    def values(self):
+        return astuple(self)
 
 
 class SstExportError(ValueError):
@@ -145,6 +192,17 @@ def _masters(content: bytes, name: str) -> tuple[str, ...]:
     if not name or not name.isascii():
         raise SstExportError("SST_EXPORT_MASTER_ENCODING", "插件文件名需为已验证的 ASCII 名称。")
     names.append(name.strip().lower())
+    return validate_master_names(names)
+
+
+def validate_master_names(names):
+    if not isinstance(names, (list, tuple)) or not names:
+        raise ValueError("SST master names must be a non-empty sequence")
+    if any(
+        not isinstance(name, str) or not name.isascii() or not name.strip() or any(char in name for char in "/\\:\x00")
+        for name in names
+    ):
+        raise ValueError("SST master names must identify plugins without source paths")
     return tuple(names)
 
 
@@ -167,7 +225,7 @@ def build_sst_from_plugin(request: WriteRequest) -> SstDocument:
     if request.format_id is not FormatId.SST_SSU9 or snapshot is None or snapshot.format_id is not FormatId.PLUGIN_SSE:
         raise SstExportError("SST_EXPORT_SOURCE_REQUIRED", "新建 SSU9 需要对应插件的已保存来源快照。")
     if snapshot.content is None:
-        raise SstExportError("SST_EXPORT_SOURCE_REQUIRED", "插件来源快照没有可用内容，请先补充来源。")
+        return _build_from_saved_entries(request, _snapshot_namespace(snapshot))
     masters = _masters(snapshot.content, Path(snapshot.source.display_name or snapshot.source.uri).name)
     # Publication retires parsed plugins between render and fidelity validation.
     # Request a fresh source when this is a repeated build in the same scope.
@@ -210,41 +268,76 @@ def build_sst_from_plugin(request: WriteRequest) -> SstDocument:
             raise SstExportError("SOURCE_LOCATOR_CONFLICT", "SST 导出词条不能唯一定位到插件物理字段。")
         _physical_source, field = matches[0]
         record, index, index_max = owners[id(field)]
-        if RecordFlags.Deleted in record.flags:
-            raise SstExportError("SST_EXPORT_DELETED_RECORD", "SST 导出包含已删除插件记录。")
-        editor_id = SSEPlugin.get_record_edid(record)
-        form_id = int(record.formid, 16)
-        name = str(editor_id) if editor_id else f"[{sanitize_form_id(form_id):08X}]"
-        decision = policy.evaluate(entry.stage, entry.translation, StageOperation.PUBLISH, original=source.original)
-        if decision.blocks_publish or decision.publish_text is None:
-            diagnostic = decision.diagnostic
-            raise SstExportError(
-                diagnostic.code if diagnostic else "STAGE_PUBLISH_BLOCKED",
-                diagnostic.message if diagnostic else "词条状态不允许发布。",
-            )
-        params = {1: 1, 2: 4, 3: 1, 5: 1, 9: 2}.get(entry.stage, 0)
-        if decision.preserve_source:
-            params = 0
-        string_id = 0 if source.string_id is None else source.string_id
-        if not 0 <= string_id <= 0xFFFFFFFF:
-            raise SstExportError("SST_EXPORT_STRING_ID_INVALID", "插件 StringID 不在 uint32 范围内。")
-        records.append(
-            SstRecord(
-                list_index=_list_index(record.type, field.type),
-                string_id=string_id if string_id < 0x80000000 else string_id - 0x100000000,
-                form_id=form_id,
-                record_type=record.type,
-                field_type=field.type,
-                index=index,
-                index_max=index_max,
-                edid_hash=sst_hash(name),
-                collab_id=0,
-                params=params,
-                original=source.original,
-                translation=decision.publish_text,
-            )
-        )
+        locator = physical_sst_locator(record, field, index, index_max)
+        records.append(_render_record(entry, locator, policy))
     document = SstDocument(b"SSU9", 0, masters, (), tuple(records))
     document.to_bytes()  # Validate all representable ranges before a caller creates an artifact.
     _cancel(request)
     return document
+
+
+def physical_sst_locator(record, field, index, index_max):
+    editor_id = SSEPlugin.get_record_edid(record)
+    form_id = int(record.formid, 16)
+    name = str(editor_id) if editor_id else f"[{sanitize_form_id(form_id):08X}]"
+    return PluginSstLocator(
+        record.type, field.type, form_id, index, index_max, sst_hash(name), RecordFlags.Deleted in record.flags
+    )
+
+
+def _build_from_saved_entries(request, namespace):
+    snapshot = request.source_snapshot
+    fields = dict(snapshot.metadata)
+    if snapshot.lease_id != "project-translation-content" or PLUGIN_SST_MASTERS not in fields:
+        raise SstExportError(
+            fields.get(PLUGIN_SST_UNAVAILABLE, "SST_EXPORT_SOURCE_REQUIRED"),
+            "工程没有可用的 SST 定位信息，无法导出此来源。",
+        )
+    masters = validate_master_names(fields[PLUGIN_SST_MASTERS])
+    policy = request.stage_policy or DEFAULT_STAGE_POLICY
+    records, seen = [], set()
+    for entry in request.entries:
+        _cancel(request)
+        identity = entry.entry_key
+        if not isinstance(identity, EntryKey) or identity.namespace != namespace or identity in seen:
+            raise SstExportError("SOURCE_IDENTITY_CONFLICT", "SST 导出包含重复或其他来源的词条身份。")
+        seen.add(identity)
+        try:
+            locator = PluginSstLocator.from_values(dict(entry.metadata).get(PLUGIN_SST_LOCATOR))
+        except ValueError as exc:
+            raise SstExportError("SOURCE_LOCATOR_NOT_FOUND", "SST 导出词条缺少已保存的物理定位信息。") from exc
+        records.append(_render_record(entry, locator, policy))
+    document = SstDocument(b"SSU9", 0, masters, (), tuple(records))
+    document.to_bytes()
+    _cancel(request)
+    return document
+
+
+def _render_record(entry, locator, policy):
+    if locator.deleted:
+        raise SstExportError("SST_EXPORT_DELETED_RECORD", "SST 导出包含已删除插件记录。")
+    decision = policy.evaluate(entry.stage, entry.translation, StageOperation.PUBLISH, original=entry.original)
+    if decision.blocks_publish or decision.publish_text is None:
+        diagnostic = decision.diagnostic
+        raise SstExportError(
+            diagnostic.code if diagnostic else "STAGE_PUBLISH_BLOCKED",
+            diagnostic.message if diagnostic else "词条状态不允许发布。",
+        )
+    params = 0 if decision.preserve_source else {1: 1, 2: 4, 3: 1, 5: 1, 9: 2}.get(entry.stage, 0)
+    string_id = 0 if entry.string_id is None else entry.string_id
+    if not 0 <= string_id <= 0xFFFFFFFF:
+        raise SstExportError("SST_EXPORT_STRING_ID_INVALID", "插件 StringID 不在 uint32 范围内。")
+    return SstRecord(
+        list_index=_list_index(locator.record_type, locator.field_type),
+        string_id=string_id if string_id < 0x80000000 else string_id - 0x100000000,
+        form_id=locator.form_id,
+        record_type=locator.record_type,
+        field_type=locator.field_type,
+        index=locator.index,
+        index_max=locator.index_max,
+        edid_hash=locator.edid_hash,
+        collab_id=0,
+        params=params,
+        original=entry.original,
+        translation=decision.publish_text,
+    )

@@ -12,7 +12,12 @@ from transbridge.application.ports.paratranz import ExternalServiceCategory, Ext
 from transbridge.application.sync.entry_upload_results import EntryUploadResultStore
 from transbridge.application.tasks import TaskCancelled
 
-from ._entry_upload_associations import associate_upload_receipts, upload_result_directory, upload_result_owner
+from ._entry_upload_associations import (
+    associate_upload_receipts,
+    upload_entry_metadata,
+    upload_result_directory,
+    upload_result_owner,
+)
 from ._project_tool_mutations import ProjectToolTarget
 from .base import ToolResult
 from .diagnostics import technical_error
@@ -196,11 +201,15 @@ def _input(entry, order, scope, overwrite):
     snapshot = entry.snapshot()
     return {
         "base": {
-            **asdict(snapshot),
             "entry_key": snapshot.entry_key.to_dict(),
-            "external_refs": [ref.to_dict() for ref in snapshot.external_refs],
+            "original": snapshot.original,
+            "context": snapshot.context,
+            "string_id": snapshot.string_id,
+            "metadata": upload_entry_metadata(snapshot.metadata),
+            "external_refs": [
+                ref.to_dict() for ref in snapshot.external_refs if (ref.system, ref.scope) == ("paratranz", scope)
+            ],
             "revision": snapshot.revision.value,
-            "provenance": [item.to_dict() for item in snapshot.provenance],
         },
         "payload": asdict(
             ParaTranzEntry(

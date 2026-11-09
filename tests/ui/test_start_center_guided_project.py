@@ -158,7 +158,7 @@ def test_draft_primary_button_is_always_one_confirm_action() -> None:
     widget.commit_requested.connect(lambda: committed.append(True))
     widget.render_draft(GuidedProjectDraftState("D:/mods/MyMod.esp", "MyMod", revision=1))
 
-    assert widget._draft_primary.text() == "确定"
+    assert widget._draft_primary.text() == "创建工程"
     widget._draft_primary.click()
     widget.render_draft(
         GuidedProjectDraftState(
@@ -173,7 +173,7 @@ def test_draft_primary_button_is_always_one_confirm_action() -> None:
         )
     )
 
-    assert widget._draft_primary.text() == "确定"
+    assert widget._draft_primary.text() == "创建工程"
     widget._draft_primary.click()
     assert requested == [True, True]
     assert committed == []
@@ -255,8 +255,8 @@ def test_start_center_renders_one_primary_action_and_unavailable_recent_reason()
         )
     )
 
-    assert widget.choose_plugin_button.accessibleName() == "选择插件"
-    assert widget._empty_button.text() == "高级：创建空工程（不导入插件）"
+    assert widget.choose_plugin_button.accessibleName() == "选择来源文件"
+    assert widget._empty_button.text() == "高级：创建空工程（不导入文件）"
     assert widget._recent_list.count() == 1
     item = widget._recent_list.item(0)
     assert item.text() == ""
@@ -585,7 +585,8 @@ def test_begin_project_from_workbench_shows_the_guided_draft() -> None:
 
     assert shown == [view]
     assert view._pages.currentWidget() is view._draft_page
-    assert view._source_label.text().replace("\\", "/") == "D:/mods/MyMod.esp"
+    assert view._source_label.text() == "已选择 1 个文件"
+    assert view._source_list.item(0).toolTip().replace("\\", "/") == "D:/mods/MyMod.esp"
     assert view._name_edit.text() == "MyMod"
     view.close()
 
@@ -703,7 +704,7 @@ def test_created_project_only_navigates_after_the_view_has_been_installed() -> N
     controller = StartCenterController.__new__(StartCenterController)
     controller._host = host
     controller.guided_project = SimpleNamespace(
-        state=SimpleNamespace(source_path="D:/mods/MyMod.esp", project_name="MyMod")
+        state=SimpleNamespace(source_path="D:/mods/MyMod.esp", project_name="MyMod", completion_notes=())
     )
     controller.show_workbench = lambda: calls.append("workbench")
 

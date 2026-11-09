@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from transbridge.application.contracts import RequestContext
+from transbridge.application.contracts import Diagnostic, RequestContext
 
 from .models import (
     ActiveProject,
@@ -48,7 +48,7 @@ class LifecycleUnitOfWorkPort(Protocol):
 
     def stage_provisioning(self, provisioning: ProjectProvisioningCommit) -> None: ...
 
-    def commit(self) -> None: ...
+    def commit(self) -> tuple[Diagnostic, ...] | None: ...
 
     def rollback(self) -> None: ...
 

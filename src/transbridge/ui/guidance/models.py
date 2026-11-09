@@ -11,6 +11,7 @@ from transbridge.ui.shell.action_catalog import IntentId as GuidanceIntentId
 class GuidanceKind(StrEnum):
     NO_PROJECT = "no_project"
     EMPTY_PROJECT = "empty_project"
+    LOADING_CONTENT = "loading_content"
     UNTRANSLATED = "untranslated"
     REVIEW_PENDING = "review_pending"
     PUBLISH_PENDING = "publish_pending"

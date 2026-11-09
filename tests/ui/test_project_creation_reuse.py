@@ -45,17 +45,23 @@ def shared_plugin_window(tmp_path, monkeypatch, request):
     )
     plugin = write_plugin(tmp_path / "A.esp", [(0x800, "SharedNPC", "Original")])
     runtime = build_runtime({"persistence_v2_root": tmp_path / "data", "ui_config_path": tmp_path / "config.ini"})
-    with_project = getattr(request, "param", True)
+    setup = getattr(request, "param", True)
+    with_project = bool(setup)
     request = RequestContext("gui", run_id="shared-plugin-creation", authorized_roots=(str(tmp_path),))
     services = runtime.use_cases.resolve("persistence_v2")
     commands = services.gui_project_commands
     active = None
     original_variant_path = None
+    other_plugin = None
     if with_project:
         created = commands.create_project(
             ProjectProvisioningRequest("A", source=ProjectSourceRequest(str(plugin))), request
         )
         assert created.is_success, created.diagnostics
+        if setup == "multiple":
+            other_plugin = write_plugin(tmp_path / "B.esp", [(0x900, "OtherNPC", "Other original")])
+            added = commands.add_source(ProjectSourceRequest(str(other_plugin)), request)
+            assert added.is_success, added.diagnostics
         active = services.project_lifecycle.active
         key = active.variant.snapshot().entries[0].entry_key
         assert commands.update_entry(key, request, translation="Project A translation", stage=1).is_success
@@ -73,6 +79,7 @@ def shared_plugin_window(tmp_path, monkeypatch, request):
             window=window,
             services=services,
             plugin=plugin,
+            other_plugin=other_plugin,
             root=tmp_path,
             request=request,
             original_project_id=None if active is None else active.project_ref.identity.value,
@@ -110,7 +117,8 @@ def test_reusing_active_plugin_opens_draft_and_creates_independent_project(
 
     assert window.mode_tabs.widget(window.mode_tabs.currentIndex()) is view
     assert view._pages.currentWidget() is view._draft_page
-    assert view._source_label.text() == str(case.plugin)
+    assert view._source_label.text() == "已选择 1 个文件"
+    assert view._source_list.item(0).toolTip() == str(case.plugin)
     assert view._draft_primary.isVisible() and view._draft_primary.isEnabled()
     if not rename_before_submit:
         view._draft_primary.click()
@@ -132,7 +140,8 @@ def test_reusing_active_plugin_opens_draft_and_creates_independent_project(
     assert window.context.active_project_id != case.original_project_id
     assert window.context.project_name == "Project B"
     assert tuple(window.context.slots) == (window.context.project_sources[0]["source_id"],)
-    assert window.context.active_slot.esp_path == str(case.plugin)
+    assert window.context.project_sources[0]["display_name"] == case.plugin.name
+    assert window.context.active_slot.esp_path is None
     assert next(iter(window.context.collection)).translation == ""
     table = window.workbench.preview._table
     _until(lambda: table.rowCount() == 1)
@@ -198,5 +207,6 @@ def test_dragging_the_active_plugin_repeatedly_shows_review_before_opening_a_new
     view = window.start_center
     assert window.mode_tabs.widget(window.mode_tabs.currentIndex()) is view
     assert view._pages.currentWidget() is view._draft_page
-    assert view._source_label.text() == str(case.plugin)
+    assert view._source_label.text() == "已选择 1 个文件"
+    assert view._source_list.item(0).toolTip() == str(case.plugin)
     assert window.start_center_controller.guided_project.state.phase is GuidedDraftPhase.EDITING

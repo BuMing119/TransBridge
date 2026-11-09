@@ -24,6 +24,7 @@ from transbridge.config.paratranz import ParatranzConfig
 from transbridge.config.paratranz_credentials import UnavailableCredentialStore
 from transbridge.paratranz import file_publication
 from transbridge.paratranz.file_publication import RequestBudget
+from transbridge.persistence.project_store.lifecycle import ProjectLifecycleStore
 from transbridge.ui.operations.batch_download_session import BatchDownloadSession
 from transbridge.ui.operations.production import build_operation_plan_facade
 from transbridge.ui.operations.sync_review_dialog import SyncReviewDialog
@@ -74,14 +75,17 @@ def default_download(case, monkeypatch, tmp_path):
     monkeypatch.setattr(requests.Session, "send", send)
     monkeypatch.setattr(file_publication, "_SHARED_BUDGET", RequestBudget(0))
     session = BatchDownloadSession(case.context, case.runtime)
-    return SimpleNamespace(
-        case=case,
-        session=session,
-        calls=calls,
-        failures=failures,
-        projects=projects,
-        file_responses=file_responses,
-    )
+    try:
+        yield SimpleNamespace(
+            case=case,
+            session=session,
+            calls=calls,
+            failures=failures,
+            projects=projects,
+            file_responses=file_responses,
+        )
+    finally:
+        session.discard()
 
 
 def compare(data, sources=None, *, policy="prefer_remote"):
@@ -105,14 +109,8 @@ def assert_persisted(data):
     assert data.case.services.projects.read_snapshot(active.project_ref) == active.project
 
 
-def merge_evidence_files(data):
-    directory = data.case.context.project_commands.task_result_directory(data.case.context.runtime_context)
-    return tuple((Path(directory) / "download-results").glob("*/merge-*.json"))
-
-
-def source_path(data, source_id):
-    registration = next(source for source in data.case.context.project_sources if source["source_id"] == source_id)
-    return Path(registration["location"])
+def project_snapshots(data):
+    return data.case.services.project_snapshots.list(data.case.context.runtime_context)
 
 
 def rename_registered_sources(data, labels):
@@ -166,9 +164,12 @@ def test_default_service_factory_reaches_permissions_and_current_file_reads_with
     )
 
     assert preview.updates == 2
-    assert [(method, path) for method, path, _query in data.calls] == [
+    reads = [(method, path) for method, path, _query in data.calls]
+    assert reads[:2] == [
         ("GET", "/api/projects"),
         ("GET", "/api/projects/42/files"),
+    ]
+    assert sorted(reads[2:]) == [
         ("GET", "/api/projects/42/files/1/translation"),
         ("GET", "/api/projects/42/files/2/translation"),
     ]
@@ -193,7 +194,7 @@ def test_named_plugin_subdirectory_is_downloaded_and_saved_without_local_classif
     assert all(states(data.case)[entry.identity][0] for entry in selected.entries)
     assert_persisted(data)
     assert data.session.plan is None and not data.session._reads
-    assert not list(Path(data.case.services.root).rglob("download-results"))
+    assert not project_snapshots(data)
     assert paths(data).count(f"/api/projects/42/files/{file_id}/translation") == 1
 
 
@@ -213,7 +214,7 @@ def test_real_service_policy_changes_and_successful_save_reuse_the_complete_clou
     assert receipt.updated == 2 and tuple(data.calls) == calls
     assert {translation for translation, _stage in states(data.case).values()} == {"云端1", "云端2"}
     assert_persisted(data)
-    assert not list((Path(data.case.services.root) / "snapshots").glob("*.json"))
+    assert not project_snapshots(data)
     assert data.session.plan is None and not data.session._reads
 
 
@@ -252,22 +253,18 @@ def test_real_service_save_failure_preserves_review_and_retries_without_http(def
     data = default_download
     compare(data)
     calls, before = tuple(data.calls), states(data.case)
-    original = data.case.services.variants.save_if_revision
 
     def fail(*_args, **_kwargs):
         raise OSError("真实持久化端口临时写入失败")
 
     with monkeypatch.context() as patch:
-        patch.setattr(data.case.services.variants, "save_if_revision", fail)
+        patch.setattr(ProjectLifecycleStore, "_save", fail)
         with pytest.raises(RuntimeError, match="临时写入失败"):
             data.session.apply(lambda *_: None, data.case.cancel)
     assert states(data.case) == before
-    assert data.case.services.variants.save_if_revision == original
-
-    assert compare(data).updates == 2
     assert data.session.apply(lambda *_: None, data.case.cancel).updated == 2
 
-    assert len(data.calls) > len(calls)
+    assert tuple(data.calls) == calls
     assert_persisted(data)
 
 
@@ -320,7 +317,7 @@ def test_download_uses_saved_authoritative_source_until_an_explicit_source_updat
     data = default_download
     first = data.case.sources[0]
     assert compare(data, (first.source_id,)).updates == 1
-    selected_path = source_path(data, first.source_id)
+    selected_path = data.case.source_paths[first.source_id]
     source_bytes = selected_path.read_bytes()
     calls = tuple(data.calls)
     write_plugin(selected_path, [(0x800, "Shared", "Physical source changed")])
@@ -338,7 +335,7 @@ def test_download_uses_saved_authoritative_source_until_an_explicit_source_updat
 def test_an_unselected_broken_source_does_not_block_selected_source_download(default_download):
     data = default_download
     selected, unselected = data.case.sources
-    unselected_path = source_path(data, unselected.source_id)
+    unselected_path = data.case.source_paths[unselected.source_id]
     unselected_path.write_bytes(b"not a plugin")
 
     preview = compare(data, (selected.source_id,))
@@ -430,7 +427,7 @@ def test_real_one_click_disk_failure_retries_same_button_without_http_or_another
 ):
     data = default_download
     selected = data.case.sources[0]
-    original_save = data.case.services.variants.save_if_revision
+    original_save = ProjectLifecycleStore._save
     attempts = []
 
     def fail_first_save(*args, **kwargs):
@@ -439,7 +436,7 @@ def test_real_one_click_disk_failure_retries_same_button_without_http_or_another
             raise OSError("首次自动保存遇到临时磁盘故障")
         return original_save(*args, **kwargs)
 
-    monkeypatch.setattr(data.case.services.variants, "save_if_revision", fail_first_save)
+    monkeypatch.setattr(ProjectLifecycleStore, "_save", fail_first_save)
     with real_download_dialog(data) as dialog:
         dialog._primary_button.click()
         wait_for_dialog(dialog, lambda: dialog._worker is None)
@@ -447,17 +444,99 @@ def test_real_one_click_disk_failure_retries_same_button_without_http_or_another
         assert states(data.case)[selected.entries[0].identity] == ("", 0)
         assert dialog._primary_button.isEnabled() and dialog._primary_button.text() == "重试未完成项"
         initial_http = tuple(data.calls)
-        restore_points = {path: path.read_bytes() for path in merge_evidence_files(data)}
-        assert not restore_points
+        recovery = data.case.context.task_store.recovery()
+        (task,) = recovery.list_summaries()
+        (application,) = recovery.decisions.list(task["task_id"])
+        assert application.receipt is None
+        assert not project_snapshots(data)
 
         dialog._primary_button.click()
         wait_for_dialog(dialog, lambda: dialog._worker is None)
 
         assert "并保存到当前本地版本" in dialog._status.text()
         assert states(data.case)[selected.entries[0].identity] == ("云端1", 3)
-        assert len(data.calls) > len(initial_http)
-        assert {path: path.read_bytes() for path in merge_evidence_files(data)} == restore_points
+        assert tuple(data.calls) == initial_http
+        assert [record["task_id"] for record in recovery.list_summaries()] == [task["task_id"]]
+        (confirmed,) = recovery.decisions.list(task["task_id"])
+        assert confirmed.request.operation_id == application.request.operation_id
+        assert len(confirmed.receipt["entries"]) == 1
+        assert not project_snapshots(data)
         assert attempts == [True, True]
+        assert_persisted(data)
+
+
+def test_changing_selection_after_save_failure_starts_a_new_download(default_download, monkeypatch):
+    data = default_download
+    original_save = ProjectLifecycleStore._save
+    attempts = []
+
+    def fail_once(store, save):
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise OSError("首次自动保存遇到临时磁盘故障")
+        return original_save(store, save)
+
+    monkeypatch.setattr(ProjectLifecycleStore, "_save", fail_once)
+    recovery = data.case.context.task_store.recovery()
+    with real_download_dialog(data) as dialog:
+        dialog._primary_button.click()
+        wait_for_dialog(dialog, lambda: dialog._worker is None)
+        assert "临时磁盘故障" in dialog._status.text()
+        (original,) = recovery.list_summaries()
+        initial_http = tuple(data.calls)
+        dialog._select_all.click()
+        dialog._primary_button.click()
+        wait_for_dialog(dialog, lambda: dialog._worker is None)
+
+        assert tuple(data.calls)[: len(initial_http)] == initial_http
+        assert paths(data).count("/api/projects/42/files/2/translation") == 1
+        assert {translation for translation, _stage in states(data.case).values()} == {"云端1", "云端2"}
+        tasks = {record["task_id"] for record in recovery.list_summaries()}
+        assert len(tasks) == 2 and original["task_id"] in tasks
+        (previous,) = recovery.decisions.list(original["task_id"])
+        assert previous.receipt is None
+        assert attempts == [True, True]
+        assert_persisted(data)
+
+
+def test_late_cancel_during_unconfirmed_save_keeps_original_download_retry(default_download, monkeypatch):
+    data = default_download
+    original_save = ProjectLifecycleStore._save
+    original_verify = ProjectLifecycleStore.verify_saved
+    writes, reads = [], []
+
+    with real_download_dialog(data) as dialog:
+
+        def lose_reply(store, save):
+            original_save(store, save)
+            writes.append(save.variant.revision)
+            dialog._cancel_event.set()
+            raise OSError("lost committed reply")
+
+        def verify(store, save):
+            reads.append(save.variant.revision)
+            if len(reads) <= 2:
+                raise OSError("verification initially unavailable")
+            return original_verify(store, save)
+
+        monkeypatch.setattr(ProjectLifecycleStore, "_save", lose_reply)
+        monkeypatch.setattr(ProjectLifecycleStore, "verify_saved", verify)
+        dialog._primary_button.click()
+        wait_for_dialog(dialog, lambda: dialog._worker is None)
+        assert "未确认成功" in dialog._status.text()
+        recovery = data.case.context.task_store.recovery()
+        (task,) = recovery.list_summaries()
+        (application,) = recovery.decisions.list(task["task_id"])
+        initial_http = tuple(data.calls)
+
+        dialog._primary_button.click()
+        wait_for_dialog(dialog, lambda: dialog._worker is None)
+
+        assert tuple(data.calls) == initial_http
+        assert writes == [1] and reads == [1, 1, 1]
+        assert recovery.load(task["task_id"])["state"] == "completed"
+        (confirmed,) = recovery.decisions.list(task["task_id"])
+        assert confirmed.request.operation_id == application.request.operation_id
         assert_persisted(data)
 
 
@@ -521,8 +600,7 @@ def test_real_one_click_saves_dirty_current_version_when_remote_content_already_
         assert_persisted(data)
         active = data.case.services.project_lifecycle.active
         assert data.case.services.variants.read_snapshot(active.formal_variant_ref) != old_disk
-        assert not list((Path(data.case.services.root) / "snapshots").glob("*.json"))
-        assert not merge_evidence_files(data)
+        assert not project_snapshots(data)
         assert paths(data) == [
             "/api/projects",
             "/api/projects/42/files",
@@ -548,7 +626,7 @@ def test_real_one_click_with_no_remote_files_preserves_dirty_state_without_false
         assert data.case.services.project_lifecycle.active.dirty
         assert states(data.case)[key] == ("本地尚未保存的译文", 1)
         assert data.case.services.variants.read_snapshot(active.formal_variant_ref) == disk_before
-        assert not list((Path(data.case.services.root) / "snapshots").glob("*.json"))
+        assert not project_snapshots(data)
         assert "并保存到当前本地版本" not in dialog._status.text()
         details = dialog._details.toPlainText()
         assert "云端未找到匹配文件" in details
@@ -576,8 +654,7 @@ def test_real_one_click_all_conflicts_can_save_existing_local_edits_and_keep_pen
         assert dialog._preview is not None and dialog._preview.deferred == 1
         assert not dialog._preview.can_save
         assert dialog._review_button.isVisible() and dialog._review_button.isEnabled()
-        assert not list((Path(data.case.services.root) / "snapshots").glob("*.json"))
-        assert not merge_evidence_files(data)
+        assert not project_snapshots(data)
 
 
 @pytest.mark.parametrize("legacy_path", ["LegacyPlugin.json", "legacyplugin.json"])
@@ -647,7 +724,7 @@ def test_real_one_click_new_layout_read_failure_never_falls_back_to_stale_legacy
         assert "并保存到当前本地版本" not in dialog._status.text()
         assert "下载失败" in dialog._details.toPlainText()
         assert "/api/projects/42/files/9/translation" not in paths(data)
-        assert not list((Path(data.case.services.root) / "snapshots").glob("*.json"))
+        assert not project_snapshots(data)
         assert data.case.services.project_lifecycle.active.dirty == dirty_before
 
 
@@ -673,7 +750,7 @@ def test_real_one_click_404_refresh_cannot_switch_to_legacy_until_an_explicit_re
         assert "下载失败" in dialog._details.toPlainText()
         assert "/api/projects/42/files/9/translation" not in paths(data)
         assert paths(data).count("/api/projects/42/files") == 2
-        assert not list((Path(data.case.services.root) / "snapshots").glob("*.json"))
+        assert not project_snapshots(data)
 
         dialog._primary_button.click()
         wait_for_dialog(dialog, lambda: dialog._worker is None)
@@ -699,7 +776,7 @@ def test_real_one_click_does_not_guess_legacy_owner_when_unselected_plugin_has_s
         assert states(data.case)[unselected.entries[0].identity] == ("", 0)
         assert "/api/projects/42/files/1/translation" not in paths(data)
         assert "并保存到当前本地版本" not in dialog._status.text()
-        assert not list((Path(data.case.services.root) / "snapshots").glob("*.json"))
+        assert not project_snapshots(data)
 
 
 def test_real_content_download_ignores_candidate_context_and_stage_differences(default_download):
@@ -768,7 +845,7 @@ def test_real_content_download_never_chooses_between_different_nonempty_translat
         assert states(data.case)[selected.entries[0].identity] == ("", 0)
         assert dialog._preview is not None and dialog._preview.deferred == 1
         assert dialog._review_button.isVisible() and dialog._review_button.isEnabled()
-        assert not list((Path(data.case.services.root) / "snapshots").glob("*.json"))
+        assert not project_snapshots(data)
 
 
 def test_real_content_download_retains_local_text_when_it_uniquely_matches_one_remote_translation(default_download):
@@ -803,8 +880,7 @@ def test_real_partial_content_download_retries_only_unfinished_source_after_succ
         assert states(data.case)[second.entries[0].identity] == ("", 0)
         assert_persisted(data)
         assert dialog._primary_button.isEnabled() and dialog._primary_button.text() == "重试未完成项"
-        original_restore_points = {path: path.read_bytes() for path in merge_evidence_files(data)}
-        assert not original_restore_points
+        assert not project_snapshots(data)
         data.failures.clear()
 
         dialog._primary_button.click()
@@ -817,4 +893,4 @@ def test_real_partial_content_download_retries_only_unfinished_source_after_succ
         assert paths(data).count("/api/projects") == 2
         assert paths(data).count("/api/projects/42/files/1/translation") == 2
         assert paths(data).count("/api/projects/42/files/2/translation") == 2
-        assert all(path.read_bytes() == content for path, content in original_restore_points.items())
+        assert not project_snapshots(data)

@@ -98,17 +98,17 @@ def test_unified_mixed_completion_distinguishes_rejecting_candidates_from_cancel
         time.sleep(0.001)
     assert not window.run.busy
     session.rollback_uncommitted()
-    committed = preview_action != "cancel_dialog"
-    assert session.completed is committed and session.saved is committed
-    assert not session.can_save
-    assert context.collection.get("one").translation == ("Translated" if committed else "")
+    staged = preview_action != "cancel_dialog"
+    assert session.completed is staged and session.can_save is staged
+    assert not session.saved and not persistence.saves
+    assert context.collection.get("one").translation == ("Translated" if staged else "")
     assert context.collection.get("two").translation == "旧译文"
     assert context.collection is collection
-    assert collection.get("one").translation == ("Translated" if committed else "")
+    assert collection.get("one").translation == ("Translated" if staged else "")
     assert collection.get("one").original == "Source"
     assert collection.get("two").translation == "旧译文"
-    assert published == ([context.collection] if committed else [])
-    assert len(persistence.commits) == int(committed)
+    assert published == ([context.collection] if staged else [])
+    assert len(persistence.commits) == int(staged)
     if preview_action == "reject_candidates":
         assert window.run.entries.entries[polish_entry.identity].decision == "rejected"
         assert polish_entry.identity not in window.run.entries.failed_keys

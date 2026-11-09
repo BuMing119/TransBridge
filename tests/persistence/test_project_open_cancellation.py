@@ -1,32 +1,45 @@
-"""An explicit cancelled open must not publish recovery over dirty active state."""
+"""Cancelling an open leaves the current SQLite working copy saveable."""
 
 from pathlib import Path
 
-from tests.persistence import test_project_recovery as recovery_support
+from tests.persistence.v2.test_project_archive import (
+    exported_project as exported_fixture,
+    services_factory as services_fixture,
+)
 from transbridge.application.contracts import OperationOutcome
-from transbridge.application.projects import DirtyDecision
-from transbridge.persistence.v2 import VariantSnapshot
+from transbridge.application.projects import DirtyDecision, ProjectProvisioningRequest
+from transbridge.persistence.v2.variant import VariantSnapshot
 
-project = recovery_support.project
+exported_project = exported_fixture
+services_factory = services_fixture
 
 
-def test_cancelled_open_does_not_prepare_repair_and_dirty_active_can_still_save(project):
-    services, context, _source, _raw, path, key = project
+def test_cancelled_open_does_not_prepare_target_and_dirty_active_can_still_save(exported_project, monkeypatch):
+    project = exported_project
+    services = project.services
+    commands = services.gui_project_commands
+    target_path = services.projects.path_for(project.project_ref)
+    assert commands.create_project(ProjectProvisioningRequest("Other"), project.context).is_success
+    other_path = services.projects.path_for(services.project_lifecycle.active.project_ref)
+    assert services.current_project_opener.open_path(target_path, project.context).is_success
+    assert commands.update_entry(project.key, project.context, translation="Unsaved change").is_success
     active = services.project_lifecycle.active
-    variant_path = Path(services.variants.path_for(active.formal_variant_ref))
-    recovery_support._set_schema(path, 2)
-    recovery_support._set_schema(variant_path, 2)
-    assert services.gui_project_commands.update_entry(key, context, translation="Keep my pending edit").is_success
-    project_before, variant_before = Path(path).read_bytes(), variant_path.read_bytes()
+    pointer = Path(services.root) / "project-store-v1" / "active.json"
+    before = pointer.read_bytes()
 
-    result = services.current_project_opener.open_path(path, context, dirty_decision=DirtyDecision.CANCEL)
+    def unexpected_prepare(*_args):
+        raise AssertionError("cancelled open prepared the target")
 
-    assert result.outcome is OperationOutcome.CANCELLED
+    monkeypatch.setattr(services.current_project_opener, "prepare_path", unexpected_prepare)
+    cancelled = services.current_project_opener.open_path(
+        other_path, project.context, dirty_decision=DirtyDecision.CANCEL
+    )
+
+    assert cancelled.outcome is OperationOutcome.CANCELLED
     assert services.project_lifecycle.active is active
-    assert active.dirty
-    assert Path(path).read_bytes() == project_before
-    assert variant_path.read_bytes() == variant_before
-    saved = services.gui_project_commands.save(context)
-    assert saved.is_success, saved.diagnostics
-    persisted = VariantSnapshot.from_dto(services.variants.read_snapshot(active.formal_variant_ref))
-    assert next(row for row in persisted.entries if row.entry_key == key).translation == "Keep my pending edit"
+    assert active.dirty and pointer.read_bytes() == before
+    assert commands.save(project.context).is_success
+    assert not services.project_lifecycle.active.dirty
+    ref = active.formal_variant_ref
+    snapshot = VariantSnapshot.from_dto(services.variants.read_snapshot(ref), ref)
+    assert next(entry for entry in snapshot.entries if entry.entry_key == project.key).translation == "Unsaved change"

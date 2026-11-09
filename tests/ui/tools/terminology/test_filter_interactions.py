@@ -17,10 +17,8 @@ from transbridge.ui.foundation.model import ThemeScheme
 from transbridge.ui.foundation.theme_service import ThemeApplyStatus, ThemePreference, ThemeService
 from transbridge.ui.tools.terminology.asset_snapshot import WorkbenchAssets
 
-
-@pytest.fixture(name="workbench")
-def filter_workbench(tmp_path, monkeypatch):
-    yield from workflow_tests.workbench.__wrapped__(tmp_path, monkeypatch)
+project_runtime = workflow_tests.project_runtime
+workbench = workflow_tests.workbench
 
 
 def _clear_text(editor):

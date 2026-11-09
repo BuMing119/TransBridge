@@ -30,6 +30,10 @@ class TaskRecordWriter(QObject):
 
         self._persistence = TaskRecordPersistence()
         owner = getattr(getattr(request, "spec", None), "owner", None)
+        task_store = getattr(session, "task_store", None)
+        self._history = task_store.history() if task_store is not None else None
+        self._owner = owner
+        self._result_run_id = getattr(request, "recovery_task_id", None) or request.run_id
         self._report_request = SimpleNamespace(
             run_id=request.run_id,
             spec=SimpleNamespace(
@@ -93,6 +97,9 @@ class TaskRecordWriter(QObject):
                 project_saved=project_saved,
                 snapshot_saved=snapshot_saved,
                 version_label=version_label,
+                history=self._history,
+                result_run_id=self._result_run_id,
+                owner=self._owner,
             )
 
         worker = ApiWorker(persist, route_http_errors=False)

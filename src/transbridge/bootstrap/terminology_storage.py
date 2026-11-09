@@ -22,11 +22,11 @@ from transbridge.application.terminology.input_capture import (
 )
 from transbridge.application.terminology.runtime import TerminologyBusinessGuardResult
 from transbridge.application.terminology.workloads import TerminologyExpectedState
+from transbridge.persistence.project_store.records import WorkspaceProjects
 from transbridge.persistence.terminology import SqliteTerminologyRepository, TerminologyPaths
-from transbridge.persistence.v2.filesystem import OsPersistenceFilesystem, RepositoryPaths
+from transbridge.persistence.terminology.project_selection import ProjectTerminologySelection
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef
 from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
-from transbridge.persistence.v2.repository import ProjectRepository
 
 from .terminology_sources import lightweight_build_snapshot
 
@@ -41,8 +41,8 @@ class ProjectTerminologyRepositories:
 
     def __init__(self, root: str | Path) -> None:
         self.paths = TerminologyPaths(Path(root).resolve(strict=False))
-        self._records = RepositoryPaths(str(self.paths.root), OsPersistenceFilesystem())
-        self._publication_lock = ProjectRepository(str(self.paths.root), OsPersistenceFilesystem()).mutation_lock
+        self._projects = WorkspaceProjects(self.paths.root)
+        self._selections = ProjectTerminologySelection(self.paths.root)
         self._items: dict[str, SqliteTerminologyRepository] = {}
         self._deleting: set[str] = set()
         self._deleted: set[str] = set()
@@ -52,8 +52,7 @@ class ProjectTerminologyRepositories:
         with self._lock:
             if project_id in self._deleted:
                 # A later archive import may legitimately restore the same identity.
-                record = self._records.record(ProjectRef(ProjectId(project_id)))
-                if Path(record).is_file():
+                if self._projects.exists(ProjectRef(ProjectId(project_id))):
                     self._deleted.remove(project_id)
             if project_id in self._deleting or project_id in self._deleted:
                 raise DomainError(
@@ -63,8 +62,10 @@ class ProjectTerminologyRepositories:
                 )
             repository = self._items.get(project_id)
             if repository is None:
+                if not self._projects.exists(ProjectRef(ProjectId(project_id))):
+                    raise DomainError(ErrorCategory.PREREQUISITE, "TERMINOLOGY_PROJECT_REQUIRED", "项目不存在。")
                 repository = SqliteTerminologyRepository.open(str(self.paths.root), project_id)
-                repository.localization_profiles.bind_publication_lock(self._publication_lock)
+                repository.localization_profiles.bind_project_selection(self._selections, project_id)
                 self._items[project_id] = repository
             return repository
 

@@ -1,21 +1,23 @@
-import json
 from pathlib import Path
 from time import monotonic
 from types import SimpleNamespace
 from uuid import uuid4
-from zipfile import ZipFile
 
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMainWindow, QMenu, QMessageBox
 import pytest
 
-from tests.ui.fixtures.project_runtime import project_window_dependencies
+from tests.ui.fixtures.project_runtime import (
+    project_window_dependencies,
+    write_legacy_project_package,
+    write_project_package,
+)
 from transbridge.application.contracts import RequestContext
 from transbridge.application.projects import ProjectProvisioningRequest
 from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.bootstrap.runtime import UseCaseRegistry
-from transbridge.persistence.v2 import ProjectId, ProjectRef
-from transbridge.persistence.v2.models import SCHEMA_VERSION
+from transbridge.persistence.project_store.format import UnsupportedProjectFormat
+from transbridge.persistence.project_store.repository import ProjectStore
 from transbridge.persistence.workspace import WorkspaceState
 from transbridge.ui.context import AppContext
 from transbridge.ui.coordinators.project_transfer_coordinator import ProjectTransferCoordinator
@@ -124,38 +126,8 @@ def test_project_bar_snapshot_actions_dispatch_real_shell_intents(qapp, monkeypa
     widget.close()
 
 
-def write_import_package(tmp_path, archive_format="current"):
-    package = tmp_path / "project.transbridge"
-    if archive_format == "legacy":
-        with ZipFile(package, "w") as archive:
-            archive.writestr(
-                "project.json",
-                json.dumps({
-                    "name": "GUI project",
-                    "sources": [],
-                    "variants": [{"name": "main"}],
-                    "active_variant": "main",
-                }),
-            )
-            archive.writestr("main/current.json", json.dumps({"variant": "main", "translations": {}}))
-    else:
-        services = build_persistence_v2_services(
-            tmp_path / "source", id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now"
-        )
-        context = RequestContext("gui", run_id=uuid4().hex)
-        try:
-            assert services.gui_project_commands.create_project(
-                ProjectProvisioningRequest("GUI project"), context
-            ).is_success
-            services.project_archive.export_project(str(package), context)
-        finally:
-            services.close()
-    return package
-
-
-@pytest.mark.parametrize("archive_format", ["legacy", "current"])
-def test_import_chooser_normalizes_packaged_projects_without_format_choice(qapp, tmp_path, monkeypatch, archive_format):
-    package = write_import_package(tmp_path, archive_format)
+def test_import_chooser_installs_current_package_without_format_choice(qapp, tmp_path, monkeypatch):
+    package = write_project_package(tmp_path)
     before = package.read_bytes()
     host, services = host_for(tmp_path / "new")
     selections = []
@@ -173,14 +145,44 @@ def test_import_chooser_normalizes_packaged_projects_without_format_choice(qapp,
         assert selections[0][-1] == "TransBridge 项目 (*.transbridge)"
         assert "project.json" not in selections[0][1]
         assert services.project_lifecycle.active is None
-        catalog = json.loads((tmp_path / "new" / "project-catalog.json").read_bytes())
-        assert len(catalog["projects"]) == 1
-        project_id = next(iter(catalog["projects"]))
-        project = services.projects.read_snapshot(ProjectRef(ProjectId(project_id)))
-        assert project.envelope.schema_version == SCHEMA_VERSION
-        assert project.envelope.data["name"] == "GUI project"
+        (entry,) = services.project_catalog.list_projects().projects
+        project = ProjectStore(Path(entry.path)).summary()
+        assert project.identity.value == entry.project_id
+        assert project.name == entry.name == "GUI project"
         assert package.read_bytes() == before
         assert host.messages
+    finally:
+        host.close()
+        services.close()
+
+
+def test_legacy_package_refusal_preserves_active_project_and_original_bytes(qapp, tmp_path, monkeypatch):
+    package = write_legacy_project_package(tmp_path)
+    package_bytes = package.read_bytes()
+    host, services = host_for(tmp_path / "target")
+    try:
+        created = host.project_commands.create_project(
+            ProjectProvisioningRequest("Existing project"), host.runtime_context
+        )
+        assert created.is_success, created.diagnostics
+        active = services.project_lifecycle.active
+        catalog_before = services.project_catalog.list_projects()
+        (existing,) = catalog_before.projects
+        existing_path = Path(existing.path)
+        existing_bytes = existing_path.read_bytes()
+        paths_before = set((tmp_path / "target").rglob("*"))
+        monkeypatch.setattr(QMessageBox, "question", lambda *_args: pytest.fail("unexpected import confirmation"))
+        monkeypatch.setattr(QInputDialog, "getText", lambda *_args, **_kwargs: pytest.fail("unexpected name prompt"))
+
+        with pytest.raises(UnsupportedProjectFormat, match="不支持的项目格式"):
+            ProjectTransferCoordinator(host).import_transbridge(str(package))
+
+        assert services.project_lifecycle.active is active
+        assert services.project_catalog.list_projects() == catalog_before
+        assert set((tmp_path / "target").rglob("*")) == paths_before
+        assert existing_path.read_bytes() == existing_bytes
+        assert package.read_bytes() == package_bytes
+        assert not host.messages
     finally:
         host.close()
         services.close()
@@ -191,7 +193,8 @@ def test_import_chooser_normalizes_packaged_projects_without_format_choice(qapp,
 def test_package_import_conflicts_require_copy_or_name_and_preserve_existing_project(
     qapp, tmp_path, monkeypatch, conflict, proceed
 ):
-    package = write_import_package(tmp_path)
+    package = write_project_package(tmp_path)
+    package_bytes = package.read_bytes()
     host, services = host_for(tmp_path / "target")
     try:
         context = host.runtime_context
@@ -204,8 +207,8 @@ def test_package_import_conflicts_require_copy_or_name_and_preserve_existing_pro
         active = services.project_lifecycle.active
         existing_path = Path(services.projects.path_for(active.project_ref))
         existing_bytes = existing_path.read_bytes()
-        catalog_path = tmp_path / "target" / "project-catalog.json"
-        catalog_bytes = catalog_path.read_bytes()
+        existing_summary = ProjectStore(existing_path).summary()
+        catalog_before = services.project_catalog.list_projects()
         prompts = []
 
         def answer(_parent, title, *_args):
@@ -220,17 +223,29 @@ def test_package_import_conflicts_require_copy_or_name_and_preserve_existing_pro
 
         assert services.project_lifecycle.active is active
         assert existing_path.read_bytes() == existing_bytes
+        assert package.read_bytes() == package_bytes
+        catalog = services.project_catalog.list_projects()
         if not proceed:
-            assert catalog_path.read_bytes() == catalog_bytes
+            assert catalog == catalog_before
             assert not host.messages
             return
-        catalog = json.loads(catalog_path.read_bytes())["projects"]
-        assert len(catalog) == 2
-        imported_id = next(key for key, value in catalog.items() if value["name"] == "Imported copy")
-        assert (imported_id != archive_identity) == (conflict == "identity")
-        imported = services.projects.read_snapshot(ProjectRef(ProjectId(imported_id)))
+        assert len(catalog.projects) == 2
+        assert catalog_before.projects[0] in catalog.projects
+        imported = next(item for item in catalog.projects if item.name == "Imported copy")
+        summary = ProjectStore(Path(imported.path)).summary()
+        assert summary.identity.value == imported.project_id
+        assert summary.identity != existing_summary.identity
+        assert (imported.project_id != archive_identity) == (conflict == "identity")
         if conflict == "identity":
-            assert set(imported.envelope.data["variant_ids"]).isdisjoint(active.project.envelope.data["variant_ids"])
+            assert [(variant.name, variant.revision) for variant in summary.variants] == [
+                (variant.name, variant.revision) for variant in existing_summary.variants
+            ]
+            copied_ids = {variant.identity for variant in summary.variants}
+            assert copied_ids.isdisjoint(variant.identity for variant in existing_summary.variants)
+            assert summary.active_variant in copied_ids
+            assert tuple(ProjectStore(Path(imported.path)).iter_entries(summary.active_variant)) == tuple(
+                ProjectStore(existing_path).iter_entries(existing_summary.active_variant)
+            )
             assert prompts == ["工程已存在", "导入完成"]
         else:
             assert prompts == ["导入完成"]
@@ -253,7 +268,7 @@ def test_package_import_conflicts_require_copy_or_name_and_preserve_existing_pro
 def test_package_import_stops_gui_continuation_when_closing(
     qapp, tmp_path, monkeypatch, close_stage, expected_prompts, publishes
 ):
-    package = write_import_package(tmp_path)
+    package = write_project_package(tmp_path)
     host, services = host_for(tmp_path / "target")
     host.close_pending = False
     prompts = []
@@ -305,7 +320,7 @@ def test_package_import_stops_gui_continuation_when_closing(
         services.close()
 
 
-@pytest.mark.parametrize("outcome", ["import", "cancel", "failure", "explicit-project"])
+@pytest.mark.parametrize("outcome", ["import", "cancel", "failure", "legacy", "explicit-project"])
 def test_main_window_startup_package_intent_does_not_restore_last_project(qapp, tmp_path, monkeypatch, outcome):
     monkeypatch.setattr(
         "transbridge.paratranz.config_manager.ParatranzConfig.create_or_load",
@@ -318,7 +333,7 @@ def test_main_window_startup_package_intent_does_not_restore_last_project(qapp, 
     workspace.last_session["filter_state"] = {"search_key": "saved filter"}
     workspace.save()
     monkeypatch.setattr("transbridge.ui.coordinators.project_coordinator.workspace_path", lambda: workspace_path)
-    package = write_import_package(tmp_path)
+    package = write_legacy_project_package(tmp_path) if outcome == "legacy" else write_project_package(tmp_path)
     if outcome == "failure":
         package.write_bytes(b"invalid archive")
     prior = project_window_dependencies(tmp_path / "target")
@@ -378,6 +393,8 @@ def test_main_window_startup_package_intent_does_not_restore_last_project(qapp, 
             assert window._start_center._open_button.isEnabled()
             if outcome == "failure":
                 assert "后台操作失败" in window._msg_label.toolTip()
+            if outcome == "legacy":
+                assert "不支持的项目格式" in window._msg_label.toolTip()
     finally:
         if window is not None:
             window.close_pending = True

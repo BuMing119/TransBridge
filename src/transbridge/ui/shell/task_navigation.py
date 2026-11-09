@@ -49,9 +49,16 @@ class DesktopTaskNavigation:
         )
 
     def _ai_result_available(self, record) -> bool:
+        registry = self._host.workbench.ai_tasks
+        task_store = getattr(registry.ctx, "task_store", None)
+        if task_store is not None:
+            return (
+                record.run_id in registry.windows
+                or task_store.history().contains(record.run_id)
+                or task_store.recovery().contains(record.run_id)
+            )
         if not self._same_project(record):
             return False
-        registry = self._host.workbench.ai_tasks
         directory = registry.directory_provider()
         return record.run_id in registry.windows or (
             directory is not None and TaskHistoryStore(directory / "ai-task-history").contains(record.run_id)

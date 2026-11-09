@@ -22,25 +22,11 @@ from PyQt6.QtWidgets import (
 from transbridge.application.io.open_file_options import OpenFileOptions
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState, configure_dialog
 from transbridge.ui.operations.export_format_combo import ExportFormatComboBox
-
-_FORMATS = (
-    ("自动识别文件内容", None),
-    ("Bethesda 插件", "plugin.sse"),
-    ("ESP-ESM Translator EET", "binary.eet"),
-    ("ESP-ESM Translator XML", "xml.eet"),
-    ("xTranslator XML", "xml.xt"),
-    ("xTranslator SST · SSU8", "sst.ssu8"),
-    ("xTranslator SST · SSU9", "sst.ssu9"),
-    ("DSD JSON", "json.dsd"),
-    ("ParaTranz JSON", "json.paratranz"),
+from transbridge.ui.workbench.file_source_formats import (
+    FILE_FILTER_HINTS as _FILTER_HINTS,
+    FILE_SOURCE_FILTER as _FILE_FILTER,
+    FILE_SOURCE_FORMATS as _FORMATS,
 )
-_FILE_FILTER = (
-    "支持的文件 (*.esp *.esm *.esl *.eet *.xml *.sst *.json);;"
-    "Bethesda 插件 (*.esp *.esm *.esl);;ESP-ESM Translator EET (*.eet);;"
-    "ESP-ESM Translator XML (*.xml);;xTranslator XML (*.xml);;xTranslator SST (*.sst);;"
-    "DSD JSON (*.json);;ParaTranz JSON (*.json);;所有文件 (*)"
-)
-_FILTER_HINTS = {"DSD JSON (*.json)": "json.dsd", "ParaTranz JSON (*.json)": "json.paratranz"}
 
 
 class OpenFileDialog(QDialog):

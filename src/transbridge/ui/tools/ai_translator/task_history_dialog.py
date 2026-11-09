@@ -8,12 +8,14 @@ from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
 )
 
+from transbridge.application.tasks.history_service import TaskHistoryService
 from transbridge.application.translation.imported_task_history import ProjectTaskHistoryReader
 from transbridge.ui.windowing import show_and_activate
 from transbridge.ui.workers import ApiWorker
@@ -34,6 +36,7 @@ STATE_LABELS = {
     "partial": "部分已应用",
     "interrupted": "已中断",
     "applying": "应用未完成",
+    "cleanup_pending": "临时材料清理待重试",
 }
 
 
@@ -44,7 +47,9 @@ class TaskHistoryDialog(QDialog):
         identity = registry.ctx.active_version_identity
         self.project_id = identity[0] if identity is not None else None
         directory = registry.directory_provider()
-        self.store = ProjectTaskHistoryReader(directory, self.project_id) if directory else None
+        task_store = getattr(registry.ctx, "task_store", None)
+        self.history = TaskHistoryService(task_store, registry.ctx.project_commands) if task_store is not None else None
+        self.store = self.history or (ProjectTaskHistoryReader(directory, self.project_id) if directory else None)
         self.project_dir = directory
         self._theme_view = theme_view
         self._dialogs = []
@@ -89,6 +94,13 @@ class TaskHistoryDialog(QDialog):
         self.refresh_button = QPushButton("刷新")
         self.refresh_button.clicked.connect(self.refresh)
         buttons.addWidget(self.open_button)
+        self.delete_button = QPushButton("删除任务记录")
+        self.delete_button.clicked.connect(self._delete_selected)
+        self.reclaim_button = QPushButton("回收临时检查点")
+        self.reclaim_button.clicked.connect(self._reclaim_selected)
+        if self.history is not None:
+            buttons.addWidget(self.delete_button)
+            buttons.addWidget(self.reclaim_button)
         self.continue_button = QPushButton("继续任务")
         self.restart_button = QPushButton("重新开始")
         for button in (self.continue_button, self.restart_button, self.refresh_button):
@@ -129,6 +141,9 @@ class TaskHistoryDialog(QDialog):
             self._populate()
 
         def read():
+            if self.history is not None:
+                records, recoveries = self.history.catalog()
+                return records, recoveries, ""
             records = tuple(
                 record
                 for record in self.store.list_records()
@@ -149,7 +164,8 @@ class TaskHistoryDialog(QDialog):
         live = {
             run_id: win
             for run_id, win in self.registry.windows.items()
-            if win.session.project_dir == self.project_dir and win.session.version_identity[0] == self.project_id
+            if self.history is not None
+            or (win.session.project_dir == self.project_dir and win.session.version_identity[0] == self.project_id)
         }
         records = {item["run_id"]: item for item in self._records}
         for run_id, record in self._recovery_records.items():
@@ -204,6 +220,9 @@ class TaskHistoryDialog(QDialog):
                     )
                 else:
                     project_state = "已保存部分结果" if recovery.get("applied_entries") else "保存状态待核验"
+            if record.get("target_unavailable") or (recovery or {}).get("target_unavailable"):
+                project_state = "原项目已删除"
+                summary = f"{project_state} · {summary}"
             values = [
                 record.get("created_at", "")[:19].replace("T", " "),
                 "、".join(item["label"] for item in record.get("sources", ())),
@@ -242,7 +261,7 @@ class TaskHistoryDialog(QDialog):
         self.tasks.horizontalScrollBar().setValue(horizontal)
         del blocker
         if self._requested_run_id is not None and self.tasks.currentItem() is None:
-            self.status.setText("所选任务记录已不存在或不属于当前项目，请刷新或返回原项目。")
+            self.status.setText("所选任务记录已不存在，请刷新。")
         self._update_recovery_buttons()
 
     def _selected_recovery(self, *, restart=False):
@@ -269,7 +288,19 @@ class TaskHistoryDialog(QDialog):
             self.status.setText(text)
         self._selection_recovery_error = text
         available = not self.registry.shutting_down and not self._closed and not self.busy
-        self.open_button.setEnabled(available and self.tasks.currentItem() is not None)
+        cleanup_pending = self._recovery_records.get(key, {}).get("state") == "cleanup_pending"
+        self.open_button.setEnabled(available and self.tasks.currentItem() is not None and not cleanup_pending)
+        self.delete_button.setText("重试清理" if cleanup_pending else "删除任务记录")
+        self.delete_button.setEnabled(
+            available
+            and key is not None
+            and key not in self.registry.windows
+            and not self.registry.is_recovery_active(key)
+        )
+        record = self._recovery_records.get(key, {})
+        self.reclaim_button.setEnabled(
+            self.delete_button.isEnabled() and record.get("state") == "completed" and not record.get("result_kind")
+        )
         self.refresh_button.setEnabled(available)
         self.continue_button.setEnabled(not self.registry.shutting_down and self._selected_recovery() is not None)
         self.restart_button.setEnabled(
@@ -288,16 +319,51 @@ class TaskHistoryDialog(QDialog):
         if row is None or self.busy:
             return
         run_id = row.data(0, Qt.ItemDataRole.UserRole)
+        if self._recovery_records.get(run_id, {}).get("state") == "cleanup_pending":
+            return
         live = self.registry.windows.get(run_id)
-        if live is not None and live.session.version_identity[0] == self.project_id:
+        if live is not None and (self.history is not None or live.session.version_identity[0] == self.project_id):
             show_and_activate(live)
             return
-        if run_id in self._recovery_records and not any(record["run_id"] == run_id for record in self._records):
+        if (
+            self.history is None
+            and run_id in self._recovery_records
+            and not any(record["run_id"] == run_id for record in self._records)
+        ):
             self.status.setText("该任务尚无完整结果报告，可选择继续任务或重新开始。")
             return
         if self.store is not None:
             generation = self._result_generation
             self._dispatch(lambda: self.store.load(run_id), lambda record: self._open_record(record, generation))
+
+    def _delete_selected(self):
+        row = self.tasks.currentItem()
+        if self.history is None or row is None or not self.delete_button.isEnabled():
+            return
+        run_id = row.data(0, Qt.ItemDataRole.UserRole)
+        if self._recovery_records.get(run_id, {}).get("state") == "cleanup_pending":
+            self._dispatch(lambda: self.history.delete(run_id), lambda _: QTimer.singleShot(0, self.refresh))
+            return
+        answer = QMessageBox.question(
+            self,
+            "删除任务记录",
+            "删除此任务的执行记录、续跑材料和待合入成果？已保存的项目译文将保留。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._dispatch(lambda: self.history.delete(run_id), lambda _: QTimer.singleShot(0, self.refresh))
+
+    def _reclaim_selected(self):
+        if self.history is None or not self.reclaim_button.isEnabled():
+            return
+        row = self.tasks.currentItem()
+        if row is not None:
+            run_id = row.data(0, Qt.ItemDataRole.UserRole)
+            self._dispatch(
+                lambda: self.history.reclaim_checkpoints(run_id),
+                lambda _: self.status.setText("已回收临时检查点，任务成果和报告已保留。"),
+            )
 
     def _open_record(self, record, generation):
         if generation != self._result_generation or self._closed or self.registry.shutting_down:
@@ -316,7 +382,9 @@ class TaskHistoryDialog(QDialog):
             record,
             theme_view=self._theme_view,
             review_results=(lambda: self._open_merge_review(task_id))
-            if task_id is not None and record.get("project_id") == self.project_id
+            if task_id is not None
+            and not record.get("target_unavailable")
+            and matches_version(record, self.registry.ctx.active_version_identity)
             else None,
         )
         self._dialogs.append(dialog)
@@ -325,7 +393,12 @@ class TaskHistoryDialog(QDialog):
     def _open_merge_review(self, task_id):
         from .task_merge_dialog import TaskMergeDialog
 
-        dialog = TaskMergeDialog(self.registry.ctx, self.project_dir, task_id, theme_view=self._theme_view)
+        dialog = TaskMergeDialog(
+            self.registry.ctx,
+            self.project_dir,
+            task_id,
+            theme_view=self._theme_view,
+        )
         self._dialogs.append(dialog)
         show_and_activate(dialog)
 

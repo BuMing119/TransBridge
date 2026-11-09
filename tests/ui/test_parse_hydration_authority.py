@@ -32,8 +32,8 @@ def _until(project, predicate):
 
 
 def source_keys(project, paths):
-    by_location = {source["location"]: source["source_id"] for source in project.ctx.project_sources}
-    return [by_location[path] for path in paths]
+    by_name = {source["display_name"]: source["source_id"] for source in project.ctx.project_sources}
+    return [by_name[Path(path).name] for path in paths]
 
 
 def _plugin(path: Path, index: int) -> None:
@@ -126,10 +126,10 @@ def test_gui_parse_publishes_authoritative_hydration_usable_by_safe_writer(proje
 
     project.ctx.activate_slot(keys[-1])
     target = project.root / ("written.xml" if kind == "eet" else "written.esp")
-    result = _tool_write_back(
-        {"target": "eet" if kind == "eet" else "esp", "path": str(target)},
-        ExecutionContext(app_context=project.ctx),
-    )
+    options = {"target": "eet" if kind == "eet" else "esp", "path": str(target)}
+    if kind != "eet":
+        options["input_plugins"] = {keys[-1]: paths[-1]}
+    result = _tool_write_back(options, ExecutionContext(app_context=project.ctx, request_context=project.request))
     assert result.success, result.message
     handle = TaskManager().get_handle(result.data["task_id"])
     _until(project, lambda: not handle._thread.is_alive())

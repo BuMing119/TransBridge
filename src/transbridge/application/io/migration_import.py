@@ -77,6 +77,7 @@ def prepare_migration_import(
     *,
     format_hint: FormatId | str | None = None,
     context: RequestContext | None = None,
+    require_original_match: bool = False,
 ) -> MigrationImportDraft:
     """Parse and map one source without changing ``target``.
 
@@ -135,7 +136,9 @@ def prepare_migration_import(
         unique = tuple(item for item in translated if occurrences[(item.sst_key, item.original)] == 1)
         skipped_conflicts += len(translated) - len(unique)
         translated = unique
-    states, unmatched, unproved = _map_to_target(translated, target)
+    states, unmatched, unproved = _map_to_target(
+        translated, target, require_original_match=require_original_match and format_id is not FormatId.PLUGIN_SSE
+    )
     skipped_conflicts += unproved
     if not states and not skipped_conflicts:
         raise MigrationImportError("MIGRATION_NO_PROVABLE_MATCHES", "没有译文能唯一映射到当前版本词条。")
@@ -340,6 +343,8 @@ def _parse_binary_eet(content: bytes) -> tuple[_ImportedEntry, ...]:
 def _map_to_target(
     imported: tuple[_ImportedEntry, ...],
     target: TranslationEntryCollection,
+    *,
+    require_original_match: bool = False,
 ) -> tuple[dict[EntryKey, tuple[str, int]], int, int]:
     target_entries = tuple(target)
     by_identity = {entry.identity: entry.identity for entry in target_entries}
@@ -387,8 +392,10 @@ def _map_to_target(
                 if not known_editor_id(by_key[key]) or known_editor_id(by_key[key]) == source.editor_id.casefold()
             }
 
-        original_required = source.requires_original_match or any(
-            by_key[key].requires_original_match for key in candidates
+        original_required = (
+            require_original_match
+            or source.requires_original_match
+            or any(by_key[key].requires_original_match for key in candidates)
         )
         if original_required:
             candidates = {key for key in candidates if by_key[key].original == source.original}

@@ -1,8 +1,11 @@
 """Real V2 facade, task actions and durable result review work together."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QPushButton
 import pytest
 
@@ -10,10 +13,13 @@ from tests.application.projects.test_categorized_upload import project as projec
 from tests.ui.tools import test_ai_partial_task as support
 from tests.ui.tools.test_task_recovery_binding import setup_binding
 from transbridge.ai_translator.translation_entry_outcomes import TranslationEntryOutcome
+from transbridge.application.tasks.result_application import ResultApplication
+from transbridge.application.tasks.storage_contracts import ApplicationState
 from transbridge.application.translation.result_merge import ResultConflictPolicy
 from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.config.task_results import TaskResultPreferences
+from transbridge.persistence.task_store import TaskStore
 from transbridge.ui.context import AppContext
 from transbridge.ui.projection_types import CollectionSlot
 from transbridge.ui.tools.ai_translator import task_run
@@ -21,8 +27,13 @@ from transbridge.ui.tools.ai_translator.source_execution import SourceOutcome
 from transbridge.ui.tools.ai_translator.task_merge_dialog import TaskMergeDialog
 from transbridge.ui.tools.ai_translator.task_merge_review import saved_state
 
-project = project_fixture
 qapp = support.qapp
+
+
+@pytest.fixture
+def project(tmp_path_factory, request):
+    # Keep the test directory short because evidence paths include the encoded run ID.
+    yield from project_fixture.__wrapped__(tmp_path_factory.mktemp("p"), request)
 
 
 @pytest.fixture
@@ -30,10 +41,14 @@ def real_task(project, qapp, monkeypatch, request):
     services, sources, context, *_ = project
     snapshot = sources.snapshot(context, endpoint="https://paratranz.cn", remote_project_id=42)
     assert snapshot.is_success
+    scenario = getattr(request, "param", "translate")
+    mode = "polish" if scenario == "polish" else "translate"
+    task_store = TaskStore(Path(services.root) / "task-store-v1")
     app_context = AppContext(
         project_projection=services.project_projection,
         project_commands=services.gui_project_commands,
         runtime_context=context,
+        task_store=task_store,
         task_result_preferences_provider=lambda: TaskResultPreferences(ai_policy=ResultConflictPolicy.DEFER),
     )
     app_context._slots = {
@@ -45,7 +60,6 @@ def real_task(project, qapp, monkeypatch, request):
 
     for slot in app_context._slots.values():
         slot.collection = TranslationEntryCollection(slot.collection)
-    mode = getattr(request, "param", "translate")
     tasks = tuple(
         SourceTask(
             key,
@@ -62,7 +76,7 @@ def real_task(project, qapp, monkeypatch, request):
     from transbridge.ui.tools.ai_translator.run_controller import RunController
     from transbridge.ui.tools.ai_translator.run_spec import AiPreflightResult
 
-    directory = services.gui_project_commands.task_result_directory(context)
+    directory = task_store.root
     monkeypatch.setattr(task_run, "AiTaskWorker", support._Worker)
     monkeypatch.setattr(task_launch, "preflight_ai_run", lambda *_args, **_kwargs: AiPreflightResult())
     monkeypatch.setattr(task_launch.TermSourceInspector, "all_empty", lambda *_args: False)
@@ -146,7 +160,7 @@ def open_review(case):
     return case.window._dialogs[-1]
 
 
-def test_real_task_conflict_retains_result_and_applies_unrelated_success_without_history(real_task):
+def test_real_task_conflict_retains_result_and_applies_unrelated_success_without_project_snapshot(real_task):
     case = real_task
     key = case.window.session.tasks[0].entries[0].identity
     assert case.services.gui_project_commands.update_entry(key, case.context, translation="manual", stage=5).is_success
@@ -162,7 +176,7 @@ def test_real_task_conflict_retains_result_and_applies_unrelated_success_without
     saved = run.recovery.store.load_results(run.recovery.record["task_id"])
     assert len(saved["rows"]) == 2
     assert not case.services.project_snapshots.list(case.context)
-    assert len(list((case.directory / "ai-task-history").glob("*/record-*.json"))) == 1
+    assert [row["run_id"] for row in case.ctx.task_store.history().list_records()] == [case.window.request.run_id]
 
 
 @pytest.mark.parametrize("real_task", ["polish"], indirect=True)
@@ -196,7 +210,38 @@ def test_result_disk_failure_keeps_memory_and_retries_save_without_model(real_ta
     run.apply_results()
     support._settle(case.window)
     assert len(run.entries.applied_keys) == 2 and run.worker is None
+    assert run.session.can_save and not run.session.project_saved
+    run.save()
+    support._settle(case.window)
     assert run.session.project_saved
+
+
+def test_ordinary_project_save_confirms_staged_task_without_another_task_action(real_task):
+    case = real_task
+    commands = case.services.gui_project_commands
+    publish(case)
+    run = case.window.run
+    decisions = case.ctx.task_store.decisions
+    (application,) = decisions.list(run.recovery.record["task_id"])
+    operation_id = application.request.operation_id
+    assert application.state is ApplicationState.STAGED_UNSAVED
+    assert commands.result_receipt(application.request.project_id, operation_id) is None
+    assert case.ctx.dirty and run.session.can_save and not run.session.project_saved
+
+    saved = commands.save(case.context)
+    assert saved.is_success, saved.diagnostics
+    support._settle(case.window)
+    assert not case.ctx.dirty and run.session.project_saved and not run.session.can_save
+    assert run.save_status == "项目已保存"
+    assert run.worker is None
+    assert not case.services.project_snapshots.list(case.context)
+
+    confirmed = ResultApplication.for_commands(run.recovery.store, commands).reconcile(operation_id)
+    assert confirmed.state is ApplicationState.COMMITTED
+    assert confirmed.receipt["entries"] == [
+        {"entry_key": candidate.entry_key.to_dict(), "translation": "AI result", "stage": 3}
+        for candidate in application.request.candidates
+    ]
 
 
 def test_result_review_checks_actual_current_then_restores_overwritten_text(real_task, qapp):
@@ -284,6 +329,7 @@ def test_repeated_overwrites_restore_the_most_recent_current_text(real_task, qap
     support._wait(qapp, lambda: not dialog.busy)
     dialog.review.resolve({key})
     support._wait(qapp, lambda: not dialog.busy)
+    assert current(case, key).translation == "AI result", dialog.review.error
     assert dialog.review.previous[key][0].translation == "manual two"
     dialog.review.resolve({key}, restore=True)
     support._wait(qapp, lambda: not dialog.busy)
@@ -326,6 +372,133 @@ def test_failed_commit_evidence_is_not_a_restore_event(real_task, qapp, monkeypa
     assert current(case, key).translation == "latest"
     assert "没有可恢复" in dialog.review.error
     dialog.close()
+
+
+@pytest.mark.parametrize("fault", ["evidence", "task"])
+def test_manual_merge_retries_recording_without_replaying_the_confirmation(real_task, qapp, monkeypatch, fault):
+    from transbridge.application.translation.task_merge_evidence import TaskMergeEvidenceStore
+
+    case = real_task
+    key = case.window.session.tasks[0].entries[0].identity
+    assert case.services.gui_project_commands.update_entry(key, case.context, translation="manual", stage=5).is_success
+    publish(case)
+    dialog = open_review(case)
+    support._wait(qapp, lambda: not dialog.busy)
+    review = dialog.review
+    attempts = []
+
+    if fault == "evidence":
+        retry_receipts = TaskMergeEvidenceStore.retry_receipts
+
+        def fail_once(writer):
+            if writer._pending_receipts and not attempts:
+                attempts.append(True)
+                raise PermissionError("confirmation record write failed")
+            return retry_receipts(writer)
+
+        monkeypatch.setattr(TaskMergeEvidenceStore, "retry_receipts", fail_once)
+    else:
+        save_results = review.store.save_results
+
+        def fail_once(*args):
+            if not attempts:
+                attempts.append(True)
+                raise PermissionError("confirmation record write failed")
+            return save_results(*args)
+
+        monkeypatch.setattr(review.store, "save_results", fail_once)
+
+    review.resolve({key})
+    support._wait(qapp, lambda: not dialog.busy)
+    assert "confirmation record write failed" in review.error
+    assert current(case, key).translation == "AI result"
+    active = case.services.project_lifecycle.active
+    before = active.variant.snapshot()
+    operations = tuple(item.request.operation_id for item in review.applications.decisions.list(review.task_id))
+
+    review.resolve({key})
+    support._wait(qapp, lambda: not dialog.busy)
+
+    assert not review.error
+    assert review.previous[key][0].translation == "manual"
+    assert case.services.project_lifecycle.active.variant.snapshot() == before
+    assert tuple(item.request.operation_id for item in review.applications.decisions.list(review.task_id)) == operations
+    assert len([item for item in review.previous[key] if item.translation == "manual"]) == 1
+    dialog.close()
+
+
+@pytest.mark.parametrize("close", ["window", "escape"])
+@pytest.mark.parametrize("fault", ["evidence", "task"])
+def test_review_close_waits_for_pending_confirmation_and_reopens_with_restore_evidence(
+    real_task, qapp, monkeypatch, close, fault
+):
+    from transbridge.application.translation.task_merge_evidence import TaskMergeEvidenceStore
+    from transbridge.ui.tools.ai_translator.task_registry import AiTaskRegistry
+
+    case = real_task
+    key = case.window.session.tasks[0].entries[0].identity
+    assert case.services.gui_project_commands.update_entry(key, case.context, translation="manual", stage=5).is_success
+    publish(case)
+    dialog = open_review(case)
+    support._wait(qapp, lambda: not dialog.busy)
+    review = dialog.review
+    registry = AiTaskRegistry(case.ctx, directory_provider=lambda: case.directory)
+    registry.windows[case.window.request.run_id] = case.window
+    retry_receipts = TaskMergeEvidenceStore.retry_receipts
+    faults = []
+
+    def close_dialog():
+        if close == "escape":
+            QTest.keyClick(dialog, Qt.Key.Key_Escape)
+        else:
+            dialog.close()
+
+    def operation_ids():
+        return tuple(item.request.operation_id for item in review.applications.decisions.list(review.task_id))
+
+    def fail_record():
+        faults.append(True)
+        raise PermissionError("confirmation record disk error")
+
+    def fail_receipt_write(writer):
+        if writer._pending_receipts:
+            fail_record()
+        return retry_receipts(writer)
+
+    initial_operations = set(operation_ids())
+    with monkeypatch.context() as patch:
+        if fault == "evidence":
+            patch.setattr(TaskMergeEvidenceStore, "retry_receipts", fail_receipt_write)
+        else:
+            patch.setattr(review.store, "save_results", lambda *_: fail_record())
+        review.resolve({key})
+        support._wait(qapp, lambda: not dialog.busy)
+        assert current(case, key).translation == "AI result"
+        variant = case.services.project_lifecycle.active.variant.snapshot()
+        completed_operations = operation_ids()
+        assert len(set(completed_operations) - initial_operations) == 1
+
+        close_dialog()
+        support._wait(qapp, lambda: not dialog.busy)
+        assert faults == [True, True]
+        assert dialog.isVisible() and not review.closed
+        assert "结果记录补记失败" in dialog.status.text()
+        assert "confirmation record disk error" in dialog.status.text()
+        assert registry.record_errors == (review.error,)
+
+    close_dialog()
+    support._wait(qapp, lambda: review.closed and not dialog.isVisible())
+    assert case.services.project_lifecycle.active.variant.snapshot() == variant
+    assert operation_ids() == completed_operations
+    assert not registry.record_errors
+
+    reopened = open_review(case)
+    try:
+        support._wait(qapp, lambda: not reopened.busy)
+        assert reopened.review.previous[key][0].translation == "manual"
+        assert current(case, key).translation == "AI result"
+    finally:
+        reopened.close()
 
 
 def test_result_review_keeps_evidence_io_off_gui(qapp, tmp_path, monkeypatch):
@@ -405,6 +578,7 @@ def test_explicit_history_continue_transfers_finished_run_lease_in_same_process(
             completed=False,
             project_saved=False,
             policy=window.session.policy,
+            task_store=case.ctx.task_store,
         )
         resumed.append(TaskRecoveryBinding(request, session))
 

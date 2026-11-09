@@ -114,7 +114,7 @@ def test_postprocess_results_preserve_concurrent_manual_edit_and_remerge_without
         app.esp_path = "switched.esp"
 
     manager = run(task, snapshot, monkeypatch, before_return=manual_edit)
-    assert manager.success
+    assert manager.success and manager.data["merge"], (manager.message, manager.data)
     assert manager.data["merge"]["applied_count"] == 1
     assert manager.data["merge"]["kept_current_count"] == 1
     assert current_texts(environment)[key] == "manual"
@@ -188,6 +188,7 @@ def test_keyed_last_stage_failure_preserves_other_validated_candidates(environme
         ),
     )
     manager = run(task, snapshot, monkeypatch, expected=("refinement", "arbitration"))
+    assert manager.data["merge"], (manager.message, manager.data)
     assert manager.data["success_count"] == 1 and manager.data["merge"]["applied_count"] == 1
     assert current_texts(environment)[key] == ""
 

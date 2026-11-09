@@ -8,6 +8,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
+from transbridge.application.contracts import DiagnosticSeverity
 from transbridge.application.projects import (
     ProjectProvisioningRequest,
     ProjectSourceRequest,
@@ -40,6 +41,13 @@ class GuidedProjectDraftState:
     diagnostic_code: str = ""
     diagnostic_message: str = ""
     additional_source_paths: tuple[str, ...] = ()
+    source_format_hint: str | None = None
+    import_translations: bool = False
+    translation_paths: tuple[str, ...] = ()
+    translation_format_hint: str | None = None
+    replace_existing: bool = False
+    strings_lang: str = "chinese"
+    completion_notes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.revision < 0:
@@ -53,7 +61,22 @@ class GuidedProjectDraftState:
 
     @property
     def can_submit(self) -> bool:
-        return bool(self.project_name.strip() and self.default_variant_name.strip())
+        if not self.project_name.strip() or not self.default_variant_name.strip():
+            return False
+        return not self.import_translations or bool(
+            self.source_paths
+            and self.translation_paths
+            and (
+                self.translation_format_hint != "strings-directory"
+                or len(self.translation_paths) == 1
+                and self.strings_lang.strip()
+            )
+        )
+
+    @property
+    def translation_path(self) -> str | None:
+        """Compatibility accessor for callers displaying one selected donor."""
+        return self.translation_paths[0] if self.translation_paths else None
 
     @property
     def source_paths(self) -> tuple[str, ...]:
@@ -65,9 +88,9 @@ class GuidedProjectDraftState:
         source_count = self.preview_source_count
         if source_count is None:
             source_count = len(self.source_paths) + len(self.migration_sources)
-        kind = "空工程" if self.source_path is None else f"插件 {Path(self.source_path).name}"
+        kind = "空工程" if self.source_path is None else f"文件 {Path(self.source_path).name}"
         if len(self.source_paths) > 1:
-            kind = f"{len(self.source_paths)} 个插件（导入同一个工程）"
+            kind = f"{len(self.source_paths)} 个文件（导入同一个工程）"
         summary = (
             f"将创建本地工程“{self.project_name or '未命名'}”、翻译版本"
             f"“{self.default_variant_name or '未命名'}”，来源：{kind}。"
@@ -134,9 +157,9 @@ class GuidedProjectCoordinator:
     def begin_sources(self, source_paths: tuple[str, ...]) -> GuidedProjectDraftState:
         self._invalidate_operation()
         self._discard_preview()
-        normalized = tuple(str(Path(path)) for path in source_paths)
+        normalized = _normalized_paths(source_paths)
         first = normalized[0] if normalized else None
-        suggested = "新工程" if first is None else Path(first).stem
+        suggested = _suggested_name(normalized)
         self._state = GuidedProjectDraftState(
             first,
             suggested,
@@ -145,6 +168,37 @@ class GuidedProjectCoordinator:
         )
         self._publish()
         return self._state
+
+    def set_source_paths(self, source_paths: tuple[str, ...]) -> bool:
+        paths = _normalized_paths(source_paths)
+        # Follow the automatic suggestion only until the user gives the project a name.
+        name = self._state.project_name
+        if name == _suggested_name(self._state.source_paths):
+            name = _suggested_name(paths)
+        return self._edit(
+            source_path=paths[0] if paths else None,
+            additional_source_paths=paths[1:],
+            project_name=name,
+        )
+
+    def set_source_format(self, value: str | None) -> bool:
+        return self._edit(source_format_hint=value)
+
+    def set_translation_options(
+        self, *, enabled, path=None, paths=None, format_hint, replace_existing, strings_lang
+    ) -> bool:
+        selected = paths if paths is not None else (() if not path else (path,))
+        unique = {}
+        for value in selected:
+            if str(value).strip():
+                unique.setdefault(str(Path(value)).casefold(), str(value).strip())
+        return self._edit(
+            import_translations=bool(enabled),
+            translation_paths=tuple(unique.values()),
+            translation_format_hint=format_hint,
+            replace_existing=bool(replace_existing),
+            strings_lang=strings_lang.strip(),
+        )
 
     def set_project_name(self, value: str) -> bool:
         return self._edit(project_name=value)
@@ -193,7 +247,7 @@ class GuidedProjectCoordinator:
         self._publish()
         accepted = self._dispatch(
             lambda: self._commands.prepare_create(request, self._context),
-            "正在创建本地翻译工程…" if commit_on_success else "正在检查插件并准备工程…",
+            "正在创建本地翻译工程…" if commit_on_success else "正在检查来源文件并准备工程…",
             lambda result: self._finish_prepare(generation, result, commit_on_success=commit_on_success),
             lambda message: self._finish_transport_error(generation, message),
         )
@@ -263,21 +317,36 @@ class GuidedProjectCoordinator:
             phase=GuidedDraftPhase.EDITING,
             diagnostic_code="",
             diagnostic_message="",
+            completion_notes=(),
             revision=self._state.revision + 1,
         )
         self._publish()
         return True
 
     def _request(self) -> ProjectProvisioningRequest:
-        source = None if self._state.source_path is None else ProjectSourceRequest(self._state.source_path)
+        options = {"require_complete": True}
+        if self._state.import_translations:
+            options["initial_translation"] = {
+                "locations": self._state.translation_paths,
+                "format_hint": self._state.translation_format_hint,
+                "replace_existing": self._state.replace_existing,
+                "strings_lang": self._state.strings_lang,
+            }
+        sources = tuple(
+            ProjectSourceRequest(path, self._state.source_format_hint, options=tuple(options.items()))
+            for path in self._state.source_paths
+        )
+        # Legacy programmatic migration_sources retain their registration semantics.
+        # The current form uses initial_translation only: it is folded into each
+        # primary source and must never become an extra editable source.
         migrations = tuple(ProjectSourceRequest(value) for value in self._state.migration_sources)
         return ProjectProvisioningRequest(
             project_name=self._state.project_name,
             default_variant_name=self._state.default_variant_name,
-            source=source,
+            source=sources[0] if sources else None,
             migration_sources=migrations,
             parse_options=self._state.parse_options,
-            additional_sources=tuple(ProjectSourceRequest(path) for path in self._state.additional_source_paths),
+            additional_sources=sources[1:],
         )
 
     def _finish_prepare(self, generation: int, result: object, *, commit_on_success: bool = False) -> None:
@@ -294,6 +363,11 @@ class GuidedProjectCoordinator:
             request_fingerprint=str(value["request_fingerprint"]),
             preview_entry_count=int(value.get("entry_count", 0)),
             preview_source_count=int(value.get("source_count", 0)),
+            completion_notes=tuple(
+                item["message"]
+                for item in value.get("diagnostics", ())
+                if item.get("code") == "INITIAL_TRANSLATION_NO_UPDATES"
+            ),
             phase=GuidedDraftPhase.PREPARED,
             in_flight=False,
             revision=self._state.revision + 1,
@@ -323,6 +397,12 @@ class GuidedProjectCoordinator:
             self._state,
             phase=GuidedDraftPhase.COMPLETED,
             in_flight=False,
+            completion_notes=self._state.completion_notes
+            + tuple(
+                diagnostic.message
+                for diagnostic in result.diagnostics
+                if diagnostic.severity is DiagnosticSeverity.WARNING
+            ),
             preview_token=None,
             request_fingerprint=None,
             diagnostic_code="",
@@ -379,6 +459,21 @@ class GuidedProjectCoordinator:
 
     def _publish(self) -> None:
         self._on_state(self._state)
+
+
+def _normalized_paths(paths):
+    unique = {}
+    for path in paths:
+        if str(path).strip():
+            normalized = str(Path(path))
+            unique.setdefault(normalized.casefold(), normalized)
+    return tuple(unique.values())
+
+
+def _suggested_name(paths):
+    if not paths:
+        return "新工程"
+    return Path(paths[0]).stem if len(paths) == 1 else "新翻译工程"
 
 
 __all__ = [

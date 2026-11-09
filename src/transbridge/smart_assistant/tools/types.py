@@ -324,7 +324,9 @@ class ExecutionContext:
         object.__setattr__(self, "_target_project_revision", getattr(app_ctx, "project_revision", None))
         object.__setattr__(self, "_target_variant_revision", getattr(app_ctx, "variant_revision", None))
         snapshot = getattr(getattr(app_ctx, "active_slot", None), "source_snapshot", None)
-        object.__setattr__(self, "_target_source_fingerprint", getattr(snapshot, "sha256", ""))
+        from transbridge.application.projects.source_content import translation_source_fingerprint
+
+        object.__setattr__(self, "_target_source_fingerprint", translation_source_fingerprint(snapshot))
         object.__setattr__(self, "_target_source_key", getattr(app_ctx, "active_key", None))
 
     # ── C10: 线程安全状态变更 ──────────────────────────────────

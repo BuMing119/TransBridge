@@ -21,6 +21,7 @@ from transbridge.application.translation.task_history import TaskHistoryStore
 from transbridge.application.translation.task_scope import SourceTask
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.persistence.task_store import TaskStore
 from transbridge.ui.tools.ai_translator import task_progress, task_run
 from transbridge.ui.tools.ai_translator.source_execution import SourceOutcome
 
@@ -181,7 +182,7 @@ class _Session:
 
     def observe_project_saved(self):
         if self.completed and self.external_project_saved and not self.project_saved:
-            self.project_saved = True
+            self.saved = self.project_saved = True
             return True
         return False
 
@@ -246,10 +247,12 @@ def make_window(qapp, monkeypatch, tmp_path):
     )
     windows = []
 
-    def create(*, polish=False, preview=False):
+    def create(*, polish=False, preview=False, independent_store=False):
         session = _Session(polish=polish)
         session.history_dir = tmp_path / f"history-{len(windows)}"
         session.project_dir = tmp_path / f"project-{len(windows)}"
+        if independent_store:
+            session.task_store = TaskStore(tmp_path / f"task-store-{len(windows)}")
         request = SimpleNamespace(
             run_id=f"test-{len(windows)}",
             config=SimpleNamespace(mixed_execution_order="sequential"),
@@ -291,6 +294,9 @@ def test_all_sources_commit_once_and_reports_run_off_gui_thread(qapp, make_windo
     worker.completed.emit(outcomes)
     _wait_reports(qapp, window)
     assert session.commits == 1 and notifications == [True]
+    assert not session.saved and window.save_button.isEnabled()
+    window.save_button.click()
+    _wait_reports(qapp, window)
     assert session.saved and not window.save_button.isEnabled()
     assert worker.deleted and window.run.worker is None
     record = TaskHistoryStore(session.history_dir).load(window.request.run_id)
@@ -307,6 +313,9 @@ def test_retry_only_failed_source_preserves_successful_detached_result(qapp, mak
     next(iter(second.collection)).translation = "失败插件部分输出"
     worker.publish((SourceOutcome(first), SourceOutcome(second, error="network")))
     _wait_reports(qapp, window)
+    assert not session.saved
+    window.save_button.click()
+    _wait_reports(qapp, window)
     assert session.commits == 1 and session.saved and window.retry_button.isEnabled()
     window.retry_button.click()
     _wait_until(lambda: not window.run.preparing)
@@ -315,6 +324,9 @@ def test_retry_only_failed_source_preserves_successful_detached_result(qapp, mak
     assert next(iter(retried.tasks[0].collection)).translation == "旧译文"
     worker.completed.emit((SourceOutcome(second, error="late error"),))
     retried.publish((SourceOutcome(retried.tasks[0]),))
+    _wait_reports(qapp, window)
+    assert not session.saved
+    window.save_button.click()
     _wait_reports(qapp, window)
     assert session.commits == 2 and session.saved
     window.run.apply_results()
@@ -655,6 +667,9 @@ def test_history_write_failure_can_retry_without_rerunning_or_unapplying(qapp, m
     assert session.commits == 1 and not session.discarded
     assert "disk full" in window.record_status.text()
     assert window.retry_record_button.isEnabled()
+    assert not session.saved
+    window.save_button.click()
+    _wait_reports(qapp, window)
     assert window.stop_button.isEnabled() and session.saved
     window.close()
     assert not window.run.cancelled
@@ -678,6 +693,9 @@ def test_closing_during_project_save_keeps_callback_and_result(qapp, make_window
     monkeypatch.setattr(session, "save_translation", delayed_save)
     worker = _start(window, session)
     worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
+    _wait_reports(qapp, window)
+    assert not session.saved and not callbacks
+    window.save_button.click()
     _wait_until(lambda: bool(callbacks))
     window.show()
     assert session.is_busy
@@ -696,21 +714,23 @@ def test_closing_during_project_save_keeps_callback_and_result(qapp, make_window
 def test_save_failure_offers_retry_without_losing_applied_result(qapp, make_window, monkeypatch):
     window, session, _ = make_window()
 
-    def fail_snapshot(*, on_success, on_error, background_validate=None):
-        session.project_saved = True
-        on_error("snapshot unavailable")
+    def fail_save(*, on_success, on_error, background_validate=None):
+        on_error("disk full")
 
-    monkeypatch.setattr(session, "save_translation", fail_snapshot)
+    monkeypatch.setattr(session, "save_translation", fail_save)
     worker = _start(window, session)
     worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
+    _wait_reports(qapp, window)
+    assert not session.saved
+    window.save_button.click()
     _wait_reports(qapp, window)
     assert window.save_button.text() == "保存项目"
     assert window.save_button.isEnabled()
     assert "项目保存失败" in window.save_status.text()
-    assert "snapshot unavailable" in window.save_status.text()
+    assert "disk full" in window.save_status.text()
     assert session.commits == 1 and not session.discarded
     record = TaskHistoryStore(session.history_dir).load(window.request.run_id)
-    assert record["project_saved"] and not record["snapshot_saved"]
+    assert record["applied"] and not record["project_saved"] and not record["snapshot_saved"]
 
 
 def test_close_and_reopen_remain_available_during_slow_history_write(qapp, make_window, monkeypatch):
@@ -728,7 +748,9 @@ def test_close_and_reopen_remain_available_during_slow_history_write(qapp, make_
     try:
         worker = _start(window, session)
         worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
-        _wait_until(lambda: session.completed and session.saved)
+        _wait_until(lambda: session.completed)
+        assert not session.saved
+        window.save_button.click()
         deadline = time.monotonic() + 2
         while not entered.is_set() and time.monotonic() < deadline:
             qapp.processEvents()
@@ -747,11 +769,14 @@ def test_close_and_reopen_remain_available_during_slow_history_write(qapp, make_
     assert TaskHistoryStore(session.history_dir).load(window.request.run_id)["state"] == "completed"
 
 
-def test_external_autosave_refreshes_task_history_and_preserves_save_action(qapp, make_window, monkeypatch):
+def test_external_project_save_refreshes_task_history_and_hides_save_action(qapp, make_window, monkeypatch):
     window, session, writes = make_window()
     monkeypatch.setattr(session, "save_translation", lambda **callbacks: callbacks["on_error"]("save unavailable"))
     worker = _start(window, session)
     worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
+    _wait_reports(qapp, window)
+    assert not session.saved
+    window.save_button.click()
     _wait_reports(qapp, window)
     assert "项目保存失败" in window.save_status.text()
     session.external_project_saved = True
@@ -760,10 +785,10 @@ def test_external_autosave_refreshes_task_history_and_preserves_save_action(qapp
     assert window.status.text() == "已完成"
     assert "项目已保存" in window.save_status.text()
     assert window.save_button.text() == "保存项目"
-    assert window.save_button.isEnabled() and not session.saved
+    assert window.save_button.isHidden() and session.saved
     record = TaskHistoryStore(session.history_dir).load(window.request.run_id)
     assert record["project_saved"] and not record["snapshot_saved"]
-    assert not record["saved"] and record["applied"]
+    assert record["saved"] and record["applied"]
     write_count = len(writes)
     session.project_saved_signal.emit()
     qapp.processEvents()
@@ -774,6 +799,9 @@ def test_dispose_disconnects_external_project_save_observer(qapp, make_window, m
     window, session, writes = make_window()
     worker = _start(window, session)
     worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
+    _wait_reports(qapp, window)
+    assert not session.saved
+    window.save_button.click()
     _wait_reports(qapp, window)
     observer = Mock(wraps=session.observe_project_saved)
     monkeypatch.setattr(session, "observe_project_saved", observer)

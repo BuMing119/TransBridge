@@ -20,7 +20,7 @@ from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from transbridge.ui.tools.ai_translator import source_execution, workflow_log_store
+from transbridge.paratranz.config_manager import ParatranzConfig
 from transbridge.ui.tools.ai_translator.source_execution import SourceExecutor
 from transbridge.ui.tools.ai_translator.source_reporting import build_source_snapshot
 from transbridge.ui.tools.ai_translator.task_consistency import TaskConsistency
@@ -126,14 +126,7 @@ def closure_run(tmp_path, monkeypatch):
         "transbridge.ui.tools.ai_translator.source_reference_review.create_llm_client", lambda _: provider
     )
     monkeypatch.setattr("transbridge.infra.llm_reasoning.with_reasoning_intent", lambda client, *_: client)
-    store_class = workflow_log_store.WorkflowLogStore
-
-    def make_store(path, **kwargs):
-        return store_class(path, log_base=tmp_path / "logs", **kwargs)
-
-    monkeypatch.setattr(source_execution, "WorkflowLogStore", make_store)
-    monkeypatch.setattr(workflow_log_store, "WorkflowLogStore", make_store)
-    monkeypatch.setattr("transbridge.ui.tools.ai_translator.source_reference_review.WorkflowLogStore", make_store)
+    monkeypatch.setattr(ParatranzConfig, "get_data_dir", lambda: str(tmp_path))
 
     def make_executor(run_id="shared-term-closure", *, enable_post_process=False):
         config = LLMConfig(

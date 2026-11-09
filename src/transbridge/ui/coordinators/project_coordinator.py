@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path as PathLib
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
@@ -21,6 +22,13 @@ class ProjectCoordinator:
     def __init__(self, host) -> None:
         self._host = host
 
+    def _prepare(self, name, *args):
+        opener = self._host.current_project_opener
+        prepare = getattr(opener, name)
+        if getattr(opener, "supports_paged_workbench", False):
+            return prepare(*args, paged=True)
+        return prepare(*args)
+
     def init_workspace(self, *, initial_project_path: str | None = None, restore_active: bool = True) -> None:
         """读取 workspace.json 和筛选设置，按启动意图打开或恢复工程。"""
         ws_path = workspace_path()
@@ -41,7 +49,8 @@ class ProjectCoordinator:
             if hasattr(self._host, "show_start_center_restoring"):
                 self._host.show_start_center_restoring()
             self._start_current_project_open(
-                lambda: self._host.current_project_opener.prepare_path(
+                lambda: self._prepare(
+                    "prepare_path",
                     initial_project_path,
                     self._host.runtime_context,
                 ),
@@ -60,7 +69,7 @@ class ProjectCoordinator:
         if hasattr(self._host, "show_start_center_restoring"):
             self._host.show_start_center_restoring()
         self._start_current_project_open(
-            lambda: self._host.current_project_opener.prepare_active(self._host.runtime_context),
+            lambda: self._prepare("prepare_active", self._host.runtime_context),
             dirty_decision=DirtyDecision.SAVE,
             success_verb="已恢复",
             show_error_dialog=False,
@@ -89,8 +98,6 @@ class ProjectCoordinator:
 
     def open_project(self):
         """弹出打开项目对话框。"""
-        from transbridge.persistence.current_project import PROJECT_FILE_FILTER
-
         initial_directory = (
             str(PERSISTENCE_ROOT)
             if self._host.current_project_opener is None
@@ -100,7 +107,7 @@ class ProjectCoordinator:
             self._host,
             "打开项目文件",
             initial_directory,
-            PROJECT_FILE_FILTER,
+            "TransBridge 项目 (project.sqlite3);;所有文件 (*)",
         )
         if not path:
             return
@@ -122,7 +129,7 @@ class ProjectCoordinator:
         if not accepted:
             return
         self._start_current_project_open(
-            lambda: self._host.current_project_opener.prepare_path(path, self._host.runtime_context),
+            lambda: self._prepare("prepare_path", path, self._host.runtime_context),
             dirty_decision=dirty_decision,
             success_verb="已打开",
             on_success=lambda _opened: self._show_workbench(),
@@ -165,7 +172,7 @@ class ProjectCoordinator:
             on_finished(ready)
 
         started = self._start_current_project_open(
-            lambda: self._host.current_project_opener.prepare_identity(context.project_id, context.variant_id, context),
+            lambda: self._prepare("prepare_identity", context.project_id, context.variant_id, context),
             dirty_decision=decision,
             success_verb="已打开",
             on_success=lambda _opened: finish(True),
@@ -174,6 +181,17 @@ class ProjectCoordinator:
         )
         if not started:
             finish(False)
+
+    def open_project_variant(self, variant_id, *, decision, display_name) -> bool:
+        """Switch through the same bounded Workbench installation as project open."""
+        project_id = self._host.context.active_project_id
+        context = replace(self._host.runtime_context, project_id=project_id, variant_id=variant_id)
+        return self._start_current_project_open(
+            lambda: self._prepare("prepare_identity", project_id, variant_id, context),
+            dirty_decision=decision,
+            success_verb=f"已切换至「{display_name}」",
+            request_context=context,
+        )
 
     def _start_current_project_open(
         self,
@@ -237,7 +255,14 @@ class ProjectCoordinator:
         return None
 
     def restore_active_sources(self) -> None:
-        """Rehydrate every source after a Variant change without reactivating it."""
+        """Rebuild the source view after an explicit saved version operation."""
+        if getattr(self._host.current_project_opener, "supports_paged_workbench", False):
+            self._start_current_project_open(
+                lambda: self._prepare("prepare_active", self._host.runtime_context),
+                dirty_decision=None,
+                success_verb="来源视图已更新",
+            )
+            return
         projection = self._host.app_runtime.use_cases.resolve("project_projection")
         expected = projection.snapshot()
         if expected is None:

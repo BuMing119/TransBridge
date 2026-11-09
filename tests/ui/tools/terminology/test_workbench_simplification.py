@@ -10,10 +10,8 @@ from transbridge.ui.tools.terminology.schemes_view import TerminologySchemesView
 from transbridge.ui.tools.terminology.view_models import TerminologyArea
 from transbridge.ui.workbench.terminology_profile_bar import TerminologyProfileBarState, TerminologyProfileChoice
 
-
-@pytest.fixture(name="workbench")
-def simplified_workbench(tmp_path, monkeypatch):
-    yield from workflow_tests.workbench.__wrapped__(tmp_path, monkeypatch)
+project_runtime = workflow_tests.project_runtime
+workbench = workflow_tests.workbench
 
 
 @pytest.mark.parametrize("page", [TerminologyArea.VERSIONS, TerminologyArea.REPORTS])

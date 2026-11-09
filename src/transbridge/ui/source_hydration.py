@@ -68,15 +68,15 @@ def reading_entries_from_hydration(source):
     return tuple(ReadingEntry(item.entry_key, item.context, item.metadata) for item in source.entries)
 
 
-def prepare_project_slots(hydrations, snapshot) -> tuple[tuple[str, CollectionSlot], ...]:
+def prepare_project_slots(hydrations, snapshot, *, existing_slots=()) -> tuple[tuple[str, CollectionSlot], ...]:
     """Build detached slots in a worker with one index of the whole Variant.
 
     Ownership transfers to the GUI when installed. The producing worker must
     not retain or mutate these collections after returning the bundle.
     """
     update = EntryProjectionUpdate(() if snapshot is None else snapshot.values.get("entries", ()))
-    slots = []
-    identities = set()
+    slots = list(existing_slots)
+    identities = {key for key, _ in slots}
     values = {} if snapshot is None else snapshot.values
     registered = authoritative_baseline_sources(
         tuple(values.get("sources", ())), tuple(values.get("source_relations", ()))

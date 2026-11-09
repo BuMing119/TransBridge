@@ -12,6 +12,7 @@ from transbridge.application.terminology.effective import EffectiveSnapshotStatu
 from transbridge.application.terminology.models import DecisionStatus, TermDecision, TermScope
 from transbridge.application.terminology_profiles import (
     InMemoryTerminologyProfileRepository,
+    TerminologyProfileImportPolicy,
     TerminologyProfileImportService,
     TerminologyProfileService,
     TerminologySourceEntry,
@@ -55,14 +56,14 @@ def _preview():
             TerminologySourceEntry("Term 0608", "冲突甲"),
             TerminologySourceEntry("Term 0608", "冲突乙"),
             TerminologySourceEntry("Term 0609", "范围候选"),
-            TerminologySourceEntry("Source Only", "不会导入的译名"),
+            TerminologySourceEntry("Source Only", "来源新增译名"),
         ),
     )
     base = EffectiveTerminologySnapshot(
         "p", "v", EffectiveSnapshotStatus.READY, version_id="base", content_digest="digest", decisions=tuple(decisions)
     )
     return TerminologyProfileImportService(TerminologyProfileService(InMemoryTerminologyProfileRepository())).preview(
-        "p", "v", base, source
+        "p", "v", base, source, policy=TerminologyProfileImportPolicy.USE_IMPORTED
     )
 
 
@@ -87,42 +88,49 @@ def test_import_preview_searches_after_row_500_and_preserves_creation_options():
     _filter(dialog, "source_conflict")
     assert dialog.filtered.rowCount() == 1
     assert dialog.filtered.index(0, 0).data() == "Term 0608"
+    assert dialog.filtered.index(0, 2).data() == "冲突乙"
     assert "冲突甲" in dialog.row_details.toPlainText()
     assert "冲突乙" in dialog.row_details.toPlainText()
-    assert "无法自动选择" in dialog.row_details.toPlainText()
+    assert "已按本次批量策略" in dialog.row_details.toPlainText()
     dialog.search_edit.clear()
     _filter(dialog, "all")
     assert dialog.filtered.rowCount() == 612
     assert dialog.profile_name == "手动填写的方案"
     assert dialog.select_after_create
     assert dialog.create_button.text() == "创建并选用"
-    dialog.table.setCurrentIndex(dialog.filtered.index(611, 0))
-    assert dialog.filtered.index(611, 0).data() == "Source Only"
+    last_row = dialog.filtered.rowCount() - 1
+    dialog.table.setCurrentIndex(dialog.filtered.index(last_row, 0))
+    assert dialog.table.currentIndex().row() == last_row
     dialog.table.setCurrentIndex(dialog.filtered.index(0, 0))
     assert dialog.table.currentIndex().row() == 0
     assert not dialog.model.flags(dialog.model.index(0, 0)) & Qt.ItemFlag.ItemIsEditable
     dialog.close()
 
 
-def test_diagnostic_filters_explain_scope_conflict_and_source_only_exclusion():
+def test_diagnostic_filters_separate_duplicate_translations_scopes_and_source_only_terms():
     dialog = TerminologySourceImportDialog(_preview(), "方案")
     _filter(dialog, "problems")
-    assert dialog.filtered.rowCount() == 4
-    _filter(dialog, "scope_ambiguous")
+    assert dialog.filtered.rowCount() == 1
+    assert dialog.filtered.index(0, 0).data() == "Term 0608"
+
+    dialog.search_edit.setText("Term 0609")
+    _filter(dialog, "all")
     assert dialog.filtered.rowCount() == 2
-    text = dialog.row_details.toPlainText()
-    assert "外部来源未指定适用范围，无法自动分配" in text
-    assert "整个工程" in text and "Last.esp" in text
-    assert "创建后管理译名方案并逐项调整" in text
+    assert {
+        (dialog.filtered.index(row, 2).data(), dialog.filtered.index(row, 3).data())
+        for row in range(dialog.filtered.rowCount())
+    } == {("范围候选", "整个工程"), ("插件默认", "插件：Last.esp")}
     dialog.search_edit.setText("Last.esp")
     wait_search(dialog.filtered.search)
-    assert dialog.filtered.rowCount() == 2  # Both rows describe the conflicting project/plugin scopes.
+    assert dialog.filtered.rowCount() == 1
+    assert dialog.filtered.index(0, 2).data() == "插件默认"
+
     dialog.search_edit.clear()
     _filter(dialog, "source_only")
     assert dialog.filtered.rowCount() == 1
-    assert dialog.filtered.index(0, 2).data() == "未导入"
-    assert "不会导入的译名" in dialog.row_details.toPlainText()
-    assert "不会写入译名方案" in dialog.row_details.toPlainText()
+    assert dialog.filtered.index(0, 2).data() == "来源新增译名"
+    assert dialog.filtered.index(0, 4).data() == "新增方案术语"
+    assert "仅在选用此方案时生效" in dialog.row_details.toPlainText()
     dialog.search_edit.setText("not present")
     wait_search(dialog.filtered.search)
     assert dialog.filtered.rowCount() == 0

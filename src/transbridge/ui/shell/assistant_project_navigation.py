@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import logging
-from pathlib import Path
 
 from transbridge.application.contracts import RequestContext
 from transbridge.application.projects.catalog import variant_catalog
+from transbridge.persistence.project_store.format import ProjectStoreError
 from transbridge.persistence.v2 import ProjectId, ProjectRef, VariantId, VariantRef
 from transbridge.persistence.v2.models import PersistenceV2Error
 
@@ -71,11 +71,11 @@ def session_project_labels(host, project_id: str | None, variant_id: str | None)
             return labels
         labels["variant_name"] = variant.name
         variant_ref = VariantRef(VariantId(variant_id), ref.identity)
-        if not Path(persistence.variants.path_for(variant_ref)).is_file():
-            labels["reason"] = "此对话绑定的版本文件已不存在。"
+        if not persistence.variants.exists(variant_ref):
+            labels["reason"] = "此对话绑定的版本已不存在。"
             return labels
         labels.update(available=True, reason=None)
-    except (OSError, KeyError, TypeError, ValueError, PersistenceV2Error) as exc:
+    except (OSError, KeyError, TypeError, ValueError, PersistenceV2Error, ProjectStoreError) as exc:
         logger.warning("Could not read assistant session Project metadata: %s", exc)
         labels["reason"] = "此对话绑定的工程记录不可用，请检查本地工程文件。"
     return labels

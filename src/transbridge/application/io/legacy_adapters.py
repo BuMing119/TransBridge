@@ -22,6 +22,7 @@ from transbridge.application.contracts import (
 from transbridge.converter.translation_entry import STAGE_TRANSLATED, TranslationEntry
 from transbridge.parser.eet_parser import EET_XmlParser
 from transbridge.parser.plugin.dialogue_order_binary import DialogueOrderCancelled
+from transbridge.parser.plugin.plugin_with_context import UnresolvedLocalizedStringsError
 from transbridge.parser.plugin_parser import PluginParser
 from transbridge.parser.xt import XT_XmlParser
 
@@ -393,6 +394,8 @@ class SsePluginAdapter(_LegacyFormatAdapter):
             )
             if parser.get_plugin() is None:
                 raise ValueError("plugin parser did not produce a source plugin")
+        except UnresolvedLocalizedStringsError as exc:
+            return self._failed_parse(request, Diagnostic("PLUGIN_LOCALIZED_INPUT_REQUIRED", str(exc)))
         except (OSError, ValueError) as exc:
             return self._failed_parse(
                 request,
@@ -451,6 +454,22 @@ class SsePluginAdapter(_LegacyFormatAdapter):
             )
             for entry in entries
         )
+        if options.get("capture_sst_export_facts", False):
+            from .plugin_sst_facts import capture_plugin_sst_facts
+            from .sst_export import SstExportCancelled
+
+            try:
+                sst_metadata, mapped = capture_plugin_sst_facts(
+                    parser.get_plugin(),
+                    parser.get_strings_lookup(),
+                    content,
+                    source_path.name,
+                    mapped,
+                    request.cancellation,
+                )
+            except SstExportCancelled:
+                return self._cancelled_parse(request)
+            snapshot = replace(snapshot, metadata=(*snapshot.metadata, sst_metadata))
         return ParseResult(
             OperationOutcome.COMPLETED,
             self.format_id,

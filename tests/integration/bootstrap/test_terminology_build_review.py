@@ -20,6 +20,7 @@ from transbridge.bootstrap.terminology_storage import (
 from transbridge.bootstrap.terminology_workloads import ProductionTerminologyCommands, PublishRunner
 from transbridge.persistence.terminology.codec import dumps, loads
 from transbridge.persistence.terminology.repository import SqliteTerminologyRepository
+from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
 pytestmark = pytest.mark.integration
 
@@ -31,10 +32,18 @@ class _Submit:
 
 
 class _Harness:
-    def __init__(self, repository, monkeypatch):
+    def __init__(self, repository, monkeypatch, *, project_id="project-1", variant_id="main"):
         self.repository = repository
         self.repositories = SimpleNamespace(for_project=lambda project_id: self.repository)
-        self.snapshot = _snapshot((_source("source-a"),))
+        snapshot = _snapshot((_source("source-a"),))
+        self.snapshot = replace(
+            snapshot,
+            project_id=project_id,
+            variant_id=variant_id,
+            variant_snapshot=replace(
+                snapshot.variant_snapshot, ref=VariantRef(VariantId(variant_id), ProjectId(project_id))
+            ),
+        )
         self.parser = _Parser({"source-a": (_entry("source-a", "one", "Dragon", "龙"),)})
         monkeypatch.setattr(
             "transbridge.bootstrap.terminology_build.TranslationIoRegisteredSourceParser", lambda io: self.parser
@@ -42,10 +51,11 @@ class _Harness:
         self.lifecycle = SimpleNamespace(
             active=SimpleNamespace(
                 project=SimpleNamespace(
-                    envelope=SimpleNamespace(identity="project-1", revision=self.snapshot.project_revision)
+                    envelope=SimpleNamespace(identity=project_id, revision=self.snapshot.project_revision)
                 ),
                 variant=SimpleNamespace(
-                    ref=SimpleNamespace(identity=SimpleNamespace(value="main")), revision=self.snapshot.variant_revision
+                    ref=SimpleNamespace(identity=SimpleNamespace(value=variant_id)),
+                    revision=self.snapshot.variant_revision,
                 ),
             )
         )
@@ -53,7 +63,7 @@ class _Harness:
         self.submit = _Submit()
         self.ids = SequenceIds()
         self.context = RequestContext(
-            "operator", project_id="project-1", variant_id="main", metadata=(("manual_actor_id", "operator"),)
+            "operator", project_id=project_id, variant_id=variant_id, metadata=(("manual_actor_id", "operator"),)
         )
         self.runtime = SimpleNamespace(
             progress=SimpleNamespace(update=lambda value: None), checkpoint=lambda: None, cancellation=None
@@ -69,7 +79,9 @@ class _Harness:
         )
 
     def capture_build_input(self, context, *, config):
-        baseline = RepositoryBaselines(self.repositories).capture_baseline("project-1", "main")
+        baseline = RepositoryBaselines(self.repositories).capture_baseline(
+            self.context.project_id, self.context.variant_id
+        )
         return OperationResult.completed(
             replace(
                 self.snapshot,
@@ -89,13 +101,13 @@ class _Harness:
             self.submit.request, self.runtime
         )
         assert self.commit.commit_if_current(self.submit.request.expected, execution.mutation).current
-        return self.repository.active_draft("project-1", "main")
+        return self.repository.active_draft(self.context.project_id, self.context.variant_id)
 
     def publish(self):
         self.commands.publish(self.context)
         execution = PublishRunner(self.repositories, self.state)(self.submit.request, self.runtime)
         assert self.commit.commit_if_current(self.submit.request.expected, execution.mutation).current
-        return self.repository.effective_version("project-1", "main")
+        return self.repository.effective_version(self.context.project_id, self.context.variant_id)
 
     def change_source(self):
         source = self.snapshot.sources[0]

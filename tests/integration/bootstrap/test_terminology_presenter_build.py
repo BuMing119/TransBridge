@@ -151,8 +151,10 @@ def test_failed_recapture_drops_old_snapshot_and_keeps_validation_context(workfl
         "诊断代码": "TERMINOLOGY_SOURCE_REQUIRED",
         "诊断信息": "source-a is no longer enabled",
         "source_id": "source-a",
+        "工程标识": harness.context.project_id,
+        "翻译版本标识": harness.context.variant_id,
     }
-    assert "登记并启用" in str(caught.value)
+    assert "添加并启用项目来源" in str(caught.value)
 
 
 def test_same_translation_confirms_a_review_required_term_and_can_publish(workflow):

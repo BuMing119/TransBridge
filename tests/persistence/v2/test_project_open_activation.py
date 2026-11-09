@@ -12,7 +12,6 @@ from transbridge.application.io import FormatId
 from transbridge.application.projects import DirtyDecision, ProjectProvisioningRequest, ProjectSourceRequest
 from transbridge.application.projects.transition_preparation import active_signature
 from transbridge.bootstrap.persistence import build_persistence_v2_services
-from transbridge.persistence.v2.schema import serialize_document
 
 
 @dataclass
@@ -30,7 +29,7 @@ class Opening:
 
     def persisted(self):
         root = Path(self.services.root)
-        paths = [*root.glob("projects/**/*.json"), root / "active-project.json", root / "project-catalog.json"]
+        paths = [*root.glob("project-store-v1/id-*/project.sqlite3"), root / "project-store-v1" / "active.json"]
         return {str(path.relative_to(root)): path.read_bytes() for path in paths if path.exists()}
 
 
@@ -89,7 +88,7 @@ def test_failed_view_preparation_restores_active_pointer_projection_and_all_base
         assert services.project_lifecycle.active is opening.old
         assert opening.persisted() == persisted
         assert snapshot.values["project_name"] == "Target"
-        assert all(baselines is prepared.baselines for _ref, baselines in _catalog(opening, prepared))
+        assert all(baselines is prepared.records.baselines for _ref, baselines in _catalog(opening, prepared))
         seen.append(snapshot)
         raise DomainError(ErrorCategory.INPUT, "PROJECT_VIEW_FAILED", "Cannot prepare detached project view.")
 
@@ -106,7 +105,7 @@ def test_failed_view_preparation_restores_active_pointer_projection_and_all_base
 def test_view_payload_is_completed_before_publication_and_returned_after_commit(opening):
     services = opening.services
     prepared = opening.prepare()
-    pointer = Path(services.root) / "active-project.json"
+    pointer = Path(services.root) / "project-store-v1" / "active.json"
     before_pointer = pointer.read_bytes()
     payload = {"prepared": True}
 
@@ -127,14 +126,14 @@ def test_view_payload_is_completed_before_publication_and_returned_after_commit(
     assert result.value["view_payload"] is payload
     assert services.project_lifecycle.active.project_ref == prepared.project_ref
     assert json.loads(pointer.read_bytes())["project_id"] == prepared.project_ref.identity.value
-    assert all(baselines is prepared.baselines for _ref, baselines in _catalog(opening, prepared))
+    assert all(baselines is prepared.records.baselines for _ref, baselines in _catalog(opening, prepared))
 
 
 def test_failed_open_does_not_overwrite_a_subsequently_replaced_baseline_registration(opening):
     services = opening.services
     prepared = opening.prepare()
-    newer_registration = tuple(list(prepared.baselines))
-    assert newer_registration is not prepared.baselines
+    newer_registration = tuple(list(prepared.records.baselines))
+    assert newer_registration is not prepared.records.baselines
     persisted = opening.persisted()
 
     def prepare_view(_snapshot):
@@ -182,28 +181,36 @@ def test_stale_user_decision_preserves_edits_made_while_sources_were_parsed(open
     _assert_catalog_identity(_catalog(opening, prepared), previous_catalog)
 
 
-def test_external_same_revision_write_during_view_preparation_is_not_overwritten(opening):
+def test_supported_write_during_view_preparation_is_not_overwritten(opening):
     services = opening.services
     prepared = opening.prepare()
-    variant_path = Path(services.variants.path_for(prepared.variant_ref))
     previous_catalog = _catalog(opening, prepared)
-    pointer = Path(services.root) / "active-project.json"
-    pointer_before = pointer.read_bytes()
+    pointer = Path(services.root) / "project-store-v1" / "active.json"
     projection = services.project_projection.snapshot()
-    changed_bytes = []
+    writer = build_persistence_v2_services(
+        services.root, id_factory=lambda: "writer", timestamp_factory=lambda: "2026-10-19T00:00:00+00:00"
+    )
+    try:
+        # Activate before recording the pointer so only the following data write
+        # competes with the prepared view.
+        assert writer.current_project_opener.open_path(opening.path, opening.context).is_success
+        pointer_before = pointer.read_bytes()
+        key = writer.project_lifecycle.active.variant.snapshot().entries[0].entry_key
 
-    def prepare_view(_snapshot):
-        document = json.loads(variant_path.read_bytes())
-        document["data"]["label_library"] = {"external": {"name": "External edit"}}
-        changed_bytes.append(serialize_document(document))
-        variant_path.write_bytes(changed_bytes[-1])
-        return {"ready": True}
+        def prepare_view(_snapshot):
+            assert writer.gui_project_commands.update_entry(key, opening.context, translation="External").is_success
+            assert writer.gui_project_commands.save(opening.context).is_success
+            return {"ready": True}
 
-    result = services.current_project_opener.activate(prepared, opening.context, prepare_view=prepare_view)
+        result = services.current_project_opener.activate(prepared, opening.context, prepare_view=prepare_view)
 
-    assert result.diagnostics[0].code == "PROJECT_ACTIVATION_STALE"
-    assert services.project_lifecycle.active is opening.old
-    assert services.project_projection.snapshot() is projection
-    assert variant_path.read_bytes() == changed_bytes[0]
-    assert pointer.read_bytes() == pointer_before
-    _assert_catalog_identity(_catalog(opening, prepared), previous_catalog)
+        assert not result.is_success
+        assert services.project_lifecycle.active is opening.old
+        assert services.project_projection.snapshot() is projection
+        assert services.variants.read_snapshot(prepared.variant_ref) == writer.variants.read_snapshot(
+            prepared.variant_ref
+        )
+        assert pointer.read_bytes() == pointer_before
+        _assert_catalog_identity(_catalog(opening, prepared), previous_catalog)
+    finally:
+        writer.close()

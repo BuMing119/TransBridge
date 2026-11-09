@@ -12,6 +12,7 @@ from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.config_manager import ParatranzConfig
 from transbridge.ui.project_labels import entry_label_key, exact_label_key
+from transbridge.ui.project_rows import ProjectRowsCollection
 from transbridge.ui.project_view_binding import ProjectViewBinding
 from transbridge.ui.projection_types import CollectionSlot
 
@@ -54,6 +55,7 @@ class AppContext(QObject):
         terminology_profile_service_factory=None,
         task_result_preferences_provider=None,
         project_catalog=None,
+        task_store=None,
     ):
         super().__init__(parent)
         self._config: ParatranzConfig = ParatranzConfig.create_or_load()
@@ -90,6 +92,7 @@ class AppContext(QObject):
         self._terminology_profile_service_factory = terminology_profile_service_factory
         self.task_result_preferences_provider = task_result_preferences_provider
         self.project_catalog = project_catalog
+        self.task_store = task_store
         self.__init_safe_mutate()
         self._project_view = ProjectViewBinding(self, project_projection)
         self._project_view.start()
@@ -144,6 +147,8 @@ class AppContext(QObject):
     @property
     def entry_labels(self) -> dict[str, set[str]]:
         collection = self.collection
+        if isinstance(collection, ProjectRowsCollection):
+            return collection.labels()
         if self._project_projection is not None and collection is not None:
             return {
                 entry_label_key(entry): set(self._entry_labels_exact.get(exact_label_key(entry.identity), ()))
@@ -530,7 +535,11 @@ class AppContext(QObject):
         if rejected is not None:
             return rejected
         collection = self.collection
-        if collection is None:
+        if isinstance(collection, ProjectRowsCollection):
+            exact_labels = collection.label_changes(
+                entry_labels, label_library, removing_library_labels=bool(self._label_library.keys() - label_library)
+            )
+        elif collection is None:
             exact_labels = entry_labels
         else:
             exact_labels = {}
@@ -542,7 +551,7 @@ class AppContext(QObject):
                 )
                 labels = next((entry_labels[key] for key in keys if key in entry_labels), ())
                 exact_labels[entry.identity] = set(labels)
-        expected = {}
+        expected = {"only_listed": True} if isinstance(collection, ProjectRowsCollection) else {}
         if expected_project_revision is not None:
             expected["expected_project_revision"] = expected_project_revision
         if expected_variant_revision is not None:

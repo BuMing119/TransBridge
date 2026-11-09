@@ -1,6 +1,6 @@
 """Safety boundaries and a small real coordinator run for the open benchmark."""
 
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 import json
 import os
 from pathlib import Path
@@ -92,87 +92,110 @@ def _saved_project(source, origin):
         )
         assert created.is_success, created.diagnostics
         active = services.project_lifecycle.active
-        return (
-            Path(services.projects.path_for(active.project_ref)),
-            active.project.envelope.data["sources"][0]["source_artifact_id"],
-        )
+        return Path(services.projects.path_for(active.project_ref))
     finally:
         services.close()
 
 
-def test_copy_saved_artifact_closure_is_read_only_and_opens_after_original_source_disappears(tmp_path, monkeypatch):
+def test_copy_saved_project_is_read_only_and_opens_without_original_source(tmp_path, monkeypatch):
     from transbridge.application.contracts import RequestContext
+    from transbridge.application.projects.working_copy import ProjectWorkingCopy
     from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
-    from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
+    from transbridge.persistence.project_store.repository import ProjectStore
 
     source, destination, origin = tmp_path / "input", tmp_path / "copy", tmp_path / "original.xml"
-    project, artifact_id = _saved_project(source, origin)
-    expected_records = {
-        Path("source_artifacts") / relative
-        for relative, _content in ProjectSourceArtifactStore(str(source)).iter_records(artifact_id)
-    }
-    unreferenced = source / "source_artifacts" / "blobs" / f"{'f' * 64}.bin"
-    unreferenced.write_bytes(b"unreferenced private content")
-    before = {path.relative_to(source): benchmark._digest(path) for path in source.rglob("*") if path.is_file()}
+    project = _saved_project(source, origin)
+    expected = ProjectStore(project)
+    variant_id = expected.summary().active_variant
+    working_copy = ProjectWorkingCopy(expected, variant_id)
+    key = expected.read_page(variant_id)[0].state.entry_key
+    working_copy.edit(key, translation="Edited before benchmark")
+    receipt_id = "benchmark-private-application"
+    working_copy.save(receipt_id)
+    assert expected.receipt(receipt_id) is not None
+    expected_rows = expected.read_page(variant_id)
+    unrelated = source / "credentials.json"
+    unrelated.write_text("private token", encoding="utf-8")
+    before = {path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()}
     origin.unlink()
     monkeypatch.setattr(
         TranslationIoProjectSourcePreparer,
         "prepare_source",
-        lambda *_args, **_kwargs: pytest.fail("Saved source copy must not parse live input"),
+        lambda *_args, **_kwargs: pytest.fail("Saved project copy must not parse live input"),
     )
     with monkeypatch.context() as copying:
-        copying.setattr(benchmark, "_services", lambda *_args: pytest.fail("Copy must not construct original services"))
-        copied, hashes = benchmark.copy_records(source, destination)
+        copying.setattr(benchmark, "_services", lambda *_args: pytest.fail("Copy must not open original services"))
+        copied, tracked = benchmark.copy_records(source, destination)
     assert copied == [destination / project.relative_to(source)]
-    assert {
-        path.relative_to(destination) for path in (destination / "source_artifacts").rglob("*") if path.is_file()
-    } == expected_records
-    assert all(path.is_relative_to(source) for path in hashes)
-    assert benchmark.verify_inputs(hashes)
-    assert before == {path.relative_to(source): benchmark._digest(path) for path in source.rglob("*") if path.is_file()}
+    assert not (destination / "credentials.json").exists()
+    assert all(path.is_relative_to(source) for path in tracked)
+    assert benchmark.verify_inputs(tracked)
     services = benchmark._services(destination)
     try:
         context = RequestContext("benchmark-copy", run_id="open")
         prepared = services.current_project_opener.prepare_path(copied[0], context)
         assert prepared.is_success, prepared.diagnostics
-        assert prepared.value.recovery is None
-        assert prepared.value.hydrations[0].entries
         assert services.current_project_opener.activate(prepared.value, context).is_success
+        persisted = ProjectStore(copied[0])
+        assert persisted.read_page(persisted.summary().active_variant) == expected_rows
+        assert persisted.receipt(receipt_id) is None
     finally:
         services.close()
-    assert before == {path.relative_to(source): benchmark._digest(path) for path in source.rglob("*") if path.is_file()}
-    original_blob = next(path for path in hashes if path.suffix == ".bin")
-    original_blob.write_bytes(b"changed externally after copy")
-    assert not benchmark.verify_inputs(hashes)
+    assert before == {path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()}
+    assert not (destination / "source_artifacts").exists()
 
 
-@pytest.mark.parametrize("damage", ["missing_manifest", "corrupt_manifest", "missing_blob", "corrupt_blob"])
-def test_copy_rejects_missing_or_corrupt_saved_artifact_dependencies_before_creating_destination(tmp_path, damage):
-    from transbridge.persistence.source_artifact_store import (
-        ProjectSourceArtifactStore,
-        SourceArtifactCorruptError,
-        SourceArtifactMissingError,
+def test_copy_preserves_the_selected_profile_for_the_copied_project(tmp_path):
+    from transbridge.application.contracts import RequestContext
+    from transbridge.application.projects import ProjectProvisioningRequest
+    from transbridge.application.terminology_profiles import (
+        ProfileTermMapping,
+        TerminologyProfileContent,
+        TerminologyProfileService,
     )
+    from transbridge.persistence.terminology.project_selection import ProjectTerminologySelection
+    from transbridge.persistence.terminology.repository import SqliteTerminologyRepository
 
-    source, destination = tmp_path / "input", tmp_path / "copy"
-    _project, artifact_id = _saved_project(source, tmp_path / "original.xml")
-    records = tuple(ProjectSourceArtifactStore(str(source)).iter_records(artifact_id))
-    relative = (
-        f"manifests/{artifact_id}.json"
-        if damage.endswith("manifest")
-        else next(path for path, _ in records if path.endswith(".bin"))
-    )
-    path = source / "source_artifacts" / relative
-    if damage.startswith("missing"):
-        path.unlink()
-    else:
-        path.write_bytes(b"corrupt saved artifact")
-    before = {path.relative_to(source): benchmark._digest(path) for path in source.rglob("*") if path.is_file()}
-    error = SourceArtifactMissingError if damage == "missing_manifest" else SourceArtifactCorruptError
-    with pytest.raises(error):
-        benchmark.copy_records(source, destination)
-    assert not destination.exists()
-    assert before == {path.relative_to(source): benchmark._digest(path) for path in source.rglob("*") if path.is_file()}
+    source, destination = tmp_path / "source", tmp_path / "copy"
+    context = RequestContext("benchmark-copy", run_id="profile")
+    services = benchmark._services(source)
+    try:
+        commands = services.gui_project_commands
+        created = commands.create_project(ProjectProvisioningRequest("With profile"), context)
+        assert created.is_success, created.diagnostics
+        project_id = created.value["project_id"]
+        with closing(SqliteTerminologyRepository.open(str(source), project_id)) as repository:
+            profiles = TerminologyProfileService(repository.localization_profiles)
+            content = TerminologyProfileContent((ProfileTermMapping("Sword", "剑"),))
+            profile = profiles.create_with_content(project_id, "Selected", content)
+            selected = profiles.publish(profile.profile_id, expected_draft_revision=0)
+            extra = profiles.create_with_content(project_id, "Unselected", content)
+            unselected = profiles.publish(extra.profile_id, expected_draft_revision=0)
+        variant = commands.save_profile_variant(
+            "Selected scheme", context, target_profile=selected, source_profile=None
+        )
+        assert variant.is_success, variant.diagnostics
+        variant_id = variant.value["id"]
+    finally:
+        services.close()
+    original = {path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()}
+
+    (copied,), tracked = benchmark.copy_records(source, destination)
+
+    copy = benchmark._services(destination)
+    try:
+        opened = copy.current_project_opener.open_path(copied, context)
+        assert opened.is_success, opened.diagnostics
+        assert opened.value["variant_id"] == variant_id
+        terminology = ProjectTerminologySelection(destination)
+        selection = terminology.selection(project_id, variant_id)
+        assert (selection.profile_id, selection.revision) == (selected.profile_id, selected.revision)
+        assert terminology.published_revision(project_id, selection.profile_id, selection.revision) == selected
+        assert terminology.published_revision(project_id, unselected.profile_id, unselected.revision) is None
+    finally:
+        copy.close()
+    assert benchmark.verify_inputs(tracked)
+    assert original == {path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()}
 
 
 def test_source_checkout_requires_a_src_directory(tmp_path):
@@ -182,9 +205,10 @@ def test_source_checkout_requires_a_src_directory(tmp_path):
     assert not output.exists()
 
 
-def test_small_real_coordinator_produces_cold_and_five_reload_measurements(tmp_path):
+@pytest.mark.parametrize("entries", [3, 150])
+def test_small_real_coordinator_produces_cold_and_five_reload_measurements(tmp_path, entries):
     output = tmp_path / "result.json"
-    status = benchmark.main(["--output", str(output), "--entries", "3"])
+    status = benchmark.main(["--output", str(output), "--entries", str(entries)])
     report = json.loads(output.read_text(encoding="utf-8"))
 
     assert status == 0, report
@@ -194,11 +218,12 @@ def test_small_real_coordinator_produces_cold_and_five_reload_measurements(tmp_p
     result = report["results"][0]
     assert len(result["samples"]) == 6
     assert result["samples"][0]["phase"] == "cold_open"
-    assert all(row["success"] and row["entries"] == 3 for row in result["samples"])
+    assert all(row["success"] and row["entries"] == entries for row in result["samples"])
     assert result["reload_metrics_ms"]["max_event_loop_gap_ms"]["median"] >= 0
     assert all(row["ms"]["all_rows_ready_ms"] is not None for row in result["samples"])
     assert all(row["ms"]["first_viewport_paint_processed_ms"] is not None for row in result["samples"])
     for row in result["samples"]:
+        assert row["ms"]["first_rows_ready_ms"] <= row["ms"]["all_rows_ready_ms"] <= row["ms"]["total_ms"]
         if row["table_mode"] == "virtual_model":
             assert row["ms"]["max_table_batch_ms"] is None
         else:
@@ -316,10 +341,10 @@ def test_real_data_option_runs_on_copy_and_preserves_all_original_files(tmp_path
 
 def test_activation_failure_never_becomes_successful_timing(tmp_path, monkeypatch):
     from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
-    from transbridge.persistence.current_project import CurrentProjectOpener
+    from transbridge.persistence.project_store.opening import StoredProjectOpener
 
     monkeypatch.setattr(
-        CurrentProjectOpener,
+        StoredProjectOpener,
         "activate",
         lambda *_args, **_kwargs: OperationResult.from_exception(
             DomainError(ErrorCategory.CONFLICT, "SYNTHETIC_CONFLICT", "private translation")

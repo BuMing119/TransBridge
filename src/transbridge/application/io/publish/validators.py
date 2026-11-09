@@ -21,6 +21,7 @@ from transbridge.application.io.contracts import (
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.io.ports import FormatAdapter
 from transbridge.application.io.source_preservation import source_entry_texts
+from transbridge.application.io.sst_adapter import SstAdapter
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY, StageOperation
 
 from .filesystem import PublishFilesystemPort
@@ -41,6 +42,8 @@ class FormatAdapterRenderer:
         self._adapter = adapter
 
     def render(self, request: WriteRequest, staging_path: str) -> OperationResult[tuple[str, ...]]:
+        if isinstance(self._adapter, SstAdapter):
+            return self._adapter.write(request, staging_path=staging_path)
         staged_request = replace(
             request,
             target=SourceDescriptor(

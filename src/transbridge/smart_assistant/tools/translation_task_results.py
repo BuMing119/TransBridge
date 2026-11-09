@@ -5,17 +5,17 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
 from threading import RLock
 from uuid import uuid4
 
 from transbridge.application.contracts import RequestContext
 from transbridge.application.preflight.inputs import SOURCE_CONTEXT_KNOWN
+from transbridge.application.sync.entry_upload_results import EntryUploadResultStore
+from transbridge.application.tasks.result_application import ResultApplication
 from transbridge.application.translation.result_merge import ResultConflictPolicy
 from transbridge.application.translation.task_config_snapshot import execution_signature, execution_snapshot
 from transbridge.application.translation.task_entry_results import TaskEntryResults
 from transbridge.application.translation.task_merge_evidence import TaskMergeEvidenceStore
-from transbridge.application.translation.task_recovery import TaskRecoveryStore
 from transbridge.application.translation.task_result_recovery import (
     load_recovery_results,
     save_recovery_results,
@@ -27,7 +27,6 @@ from transbridge.converter.translation_entry_collection import TranslationEntryC
 
 _RUN_LOCK = RLock()
 _PENDING = {}
-_LOCATIONS = {}
 _MERGE_PENDING = {}
 
 
@@ -49,8 +48,19 @@ def task_ports(ctx):
     if captured != identity:
         raise ValueError("工具调用对应的工程版本已切换，任务未启动。")
     context = replace(context, project_id=identity[0], variant_id=identity[1])
-    root = Path(commands.task_result_directory(context)) / "ai-task-recovery"
+    root = _result_location(app)
     return app, commands, context, identity, root
+
+
+def _result_location(app):
+    task_store = getattr(app, "task_store", None)
+    if task_store is None:
+        raise ValueError("独立任务存储服务不可用。")
+    return task_store
+
+
+def _recovery_view(location, context):
+    return location.recovery(owner_id=context.owner_id, session_id=context.session_id)
 
 
 def _authorized(record, context):
@@ -63,39 +73,32 @@ def _authorized(record, context):
 
 
 def load_task_result(ctx, result_id):
-    from .entry_task_results import EntryResultStore, pending_result
+    from .entry_task_results import pending_result
 
     app, context = _caller(ctx)
     entry_pending = pending_result(ctx, result_id)
     if entry_pending is not None:
         entry_pending.retry_save()
     with _RUN_LOCK:
-        location = _LOCATIONS.get(result_id)
         pending = _PENDING.get(result_id)
-    if location is not None:
-        root, owner_id, session_id = location
-        if (owner_id, session_id) != (context.owner_id, context.session_id):
-            raise ValueError("成果不属于当前调用者会话。")
-    else:
-        root = Path(app.project_commands.task_result_directory(context)) / "ai-task-recovery"
+    root = _result_location(app)
     if pending is not None and pending.persistence_error:
+        _authorized(pending.record, context)
         pending.retry_save()
-    store = TaskRecoveryStore(root)
+    store = _recovery_view(root, context)
     record = store.load(result_id)
     _authorized(record, context)
-    if record.get("result_kind"):
-        store = EntryResultStore(root)
-        if record["result_kind"] == "source":
-            from ._source_import import retry_source_receipt
+    if record.get("result_kind") == "source":
+        from ._source_import import retry_source_receipt
 
-            retry_source_receipt(store, record)
+        retry_source_receipt(store, record)
     with _RUN_LOCK:
         receipt = _MERGE_PENDING.get(result_id)
     if receipt is not None:
         evidence, summary, rows = receipt
         try:
             evidence.retry_receipts()
-            summary = {**summary, "receipt_saved": True}
+            summary = {**summary, "evidence_saved": True}
             store.save_results(result_id, rows)
             record.update(store.update_metadata(result_id, merge=summary, merge_error=""))
         except (OSError, ValueError):
@@ -108,15 +111,25 @@ def load_task_result(ctx, result_id):
 
 
 def result_view(ctx, result_id=None):
+    app, context = _caller(ctx)
+    root = _result_location(app)
+    upload_owner = {"owner_id": context.owner_id, "session_id": context.session_id}
+    uploads = EntryUploadResultStore(root.root)
+    if result_id and uploads.contains(result_id):
+        result = uploads.load(result_id, expected_owner=upload_owner)
+        project_id, _variant_id = result["target"]["project_identity"]
+        return {**result, "target_unavailable": not app.project_commands.project_exists(project_id), "mode": "upload"}
     if not result_id:
-        app, context = _caller(ctx)
-        root = Path(app.project_commands.task_result_directory(context)) / "ai-task-recovery"
         records = []
-        for record in TaskRecoveryStore(root).list_summaries():
+        availability = {}
+        for record in _recovery_view(root, context).list_summaries():
             try:
                 _authorized(record, context)
             except ValueError:
                 continue
+            project_id = record["project_id"]
+            if project_id not in availability and hasattr(app.project_commands, "project_exists"):
+                availability[project_id] = app.project_commands.project_exists(project_id)
             records.append({
                 "result_id": record["task_id"],
                 "state": record["state"],
@@ -124,9 +137,16 @@ def result_view(ctx, result_id=None):
                 "created_at": record["created_at"],
                 "merge": record.get("merge", {}),
                 "error": record.get("error", ""),
+                "target_unavailable": not availability.get(project_id, True),
             })
         with _RUN_LOCK:
             pending = tuple(_PENDING.values())
+        for upload in uploads.history(expected_owner=upload_owner):
+            records.append({
+                **upload,
+                "result_id": upload["task_id"],
+                "target_unavailable": not app.project_commands.project_exists(upload["project_id"]),
+            })
         indexed = {row["result_id"]: row for row in records}
         from .entry_task_results import pending_results
 
@@ -181,29 +201,49 @@ def result_view(ctx, result_id=None):
                 for key, row in pending.ledger.entries.items()
             ],
         }
+    app, _context = _caller(ctx)
+    rows = (payload or {}).get("rows", [])
+    service = ResultApplication.for_commands(store, app.project_commands)
+    applications = service.list(result_id) if service is not None else ()
+    target_unavailable = service is not None and not app.project_commands.project_exists(record["project_id"])
+    entries = record.get("entries")
+    if entries is None and record.get("result_kind"):
+        entries = [
+            {
+                "entry_key": row["entry_key"],
+                "original": row["before"]["original"],
+                "translation": row["text"],
+                "stage": row["stage"],
+            }
+            for row in rows
+        ]
     return {
         "result_id": result_id,
         "state": record["state"],
         "mode": record["mode"],
         "execution": record.get("entry_statuses", []),
-        "results": (payload or {}).get("rows", []),
+        "results": rows,
+        "target_unavailable": target_unavailable,
+        "applications": [
+            {"operation_id": item.request.operation_id, "state": item.state.value, "receipt": item.receipt}
+            for item in applications
+        ],
         "merge": record.get("merge", {}),
         "merge_error": record.get("merge_error", ""),
         "error": record.get("error", ""),
         **(
             {
-                "entries": record.get("entries", []),
+                "entries": entries or [],
                 "unmapped": record.get("unmapped", []),
                 "result_kind": record["result_kind"],
                 "parse_outcome": record.get("parse_outcome"),
                 "parse_diagnostics": record.get("parse_diagnostics", []),
                 "raw_entries": record.get("raw_entries", []),
-                "input_snapshot": record.get("input_snapshot") or record.get("prepared_source"),
             }
             if record.get("result_kind")
             else {}
         ),
-        "merge_evidence": TaskMergeEvidenceStore(store.root, result_id).load(),
+        "merge_evidence": TaskMergeEvidenceStore(store.run_directory(result_id), result_id).load(),
     }
 
 
@@ -239,8 +279,8 @@ class AssistantTaskResults:
         self.ctx = ctx
         self.app, self.commands, self.context, self.identity, root = task_ports(ctx)
         self.result_id = uuid4().hex
-        self.store = TaskRecoveryStore(root)
-        self.evidence = TaskMergeEvidenceStore(root, self.result_id)
+        self.store = _recovery_view(root, self.context)
+        self.evidence = TaskMergeEvidenceStore(self.store.run_directory(self.result_id), self.result_id)
         provider = getattr(self.app, "task_result_preferences_provider", None) or TaskResultPreferences
         self.policy = ResultConflictPolicy(provider().ai_policy)
         self.config = config.copy_for_execution() if hasattr(config, "copy_for_execution") else deepcopy(config)
@@ -309,7 +349,6 @@ class AssistantTaskResults:
             {
                 "key": source,
                 "label": source,
-                "esp_path": self.esp_path,
                 "translate_keys": [entry.identity.to_dict() for entry in self.task.translate_entries],
                 "polish_keys": [entry.identity.to_dict() for entry in self.task.polish_entries],
                 "postprocess_keys": [entry.identity.to_dict() for entry in self.task.postprocess_entries],
@@ -346,7 +385,6 @@ class AssistantTaskResults:
         self.pending_state, self.persistence_error = "preparing", ""
         self.pending_error = ""
         with _RUN_LOCK:
-            _LOCATIONS[self.result_id] = (root, self.context.owner_id, self.context.session_id)
             _PENDING[self.result_id] = self
         if not defer_persistence:
             self.prepare(acquire=False)

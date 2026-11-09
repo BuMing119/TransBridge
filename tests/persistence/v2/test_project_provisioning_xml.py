@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from uuid import uuid4
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -55,9 +56,19 @@ def test_xml_migration_creates_and_reopens_with_preserved_translation(tmp_path, 
         assert services.gui_project_commands.commit_create(str(prepared.value["token"]), context).is_success
         hydration = services.gui_project_commands.consume_create_hydration(str(prepared.value["project_id"]), context)
         assert hydration.is_success and hydration.value is not None
-        xml_source = next(item for item in hydration.value.sources if item.location == str(source.resolve()))
+        xml_source = next(
+            item for item in hydration.value.sources if item.source_snapshot.source.display_name == source.name
+        )
         assert xml_source.format_id is FormatId(f"xml.{kind}")
-        assert xml_source.source_snapshot.content == source_bytes
+        rebuilt = xml_source.source_snapshot.content
+        assert ET.tostring(ET.fromstring(rebuilt)) == ET.tostring(ET.fromstring(source_bytes))
+        if encoding == "utf-8-sig":
+            assert rebuilt.startswith(b"\xef\xbb\xbf")
+        elif encoding == "utf-16":
+            assert rebuilt.startswith((b"\xff\xfe", b"\xfe\xff"))
+        else:
+            assert rebuilt.decode("utf-8").startswith('<?xml version="1.0" encoding="utf-8"?>')
+        assert str(source) not in repr(xml_source)
         assert [(item.original, item.translation) for item in xml_source.entries] == [("Hello", "你好")]
         snapshot = services.project_lifecycle.active.variant.snapshot()
         translated = next(item for item in snapshot.entries if item.translation == "你好")
@@ -66,7 +77,7 @@ def test_xml_migration_creates_and_reopens_with_preserved_translation(tmp_path, 
     finally:
         services.close()
 
-    # Saved source artifacts, including their XML templates, must survive losing the input path.
+    # The stored native translation fields must survive losing the input path.
     source.unlink()
     restarted = _services(root)
     try:
@@ -103,8 +114,8 @@ def test_invalid_xml_migration_does_not_publish_a_project(tmp_path, content):
         assert not result.is_success
         assert str(source) in result.diagnostics[0].message
         assert services.project_lifecycle.active is None
-        assert not (root / "project-catalog.json").exists()
-        assert not (root / "active-project.json").exists()
+        assert not services.project_catalog.list_projects().projects
+        assert not services.current_project_opener.has_active_reference
         assert source.read_bytes() == content
     finally:
         services.close()

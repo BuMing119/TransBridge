@@ -46,7 +46,11 @@ def commit_reused_names(executor, tasks, groups, results, managers, *, wait):
                 )
             )
         run_id = source_run_id(executor.attempt_id or executor.request.run_id, task.key) + "-name-reuse"
-        root = Path(executor.config.get_ai_translator_dir(Path(source_terminology_path(task.esp_path, task.key)).stem))
+        root = getattr(executor.request, "recovery_directory", None)
+        if root is None:
+            root = Path(
+                executor.config.get_ai_translator_dir(Path(source_terminology_path(task.esp_path, task.key)).stem)
+            )
 
         def active():
             if not wait(executor):

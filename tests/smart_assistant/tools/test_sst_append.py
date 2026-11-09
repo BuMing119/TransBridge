@@ -8,8 +8,8 @@ from tests.contracts.io.test_sst_adapter import _record
 from tests.plugin_fixtures import write_plugin
 from tests.smart_assistant.tools.test_source_import_authority import project as project_fixture
 from transbridge.parser.xt.sst_codec import SstDocument
+from transbridge.persistence.task_store.recovery import RecoveryView
 from transbridge.smart_assistant.tools import _source_import
-from transbridge.smart_assistant.tools.entry_task_results import EntryResultStore
 from transbridge.smart_assistant.tools.tool_parser import _tool_parse_esp, _tool_parse_sst
 from transbridge.smart_assistant.tools.tool_translator import _tool_merge_task_result
 from transbridge.smart_assistant.tools.translation_task_results import load_task_result
@@ -55,9 +55,10 @@ def test_append_maps_translated_sst_to_authoritative_target_identity(project, ki
     assert project.services.project_lifecycle.active.variant.snapshot().entries[0].translation == "Imported"
     assert not project.ctx.authoritative_projection_diverged()
     _, record, payload = load_task_result(ctx, result.data["result_id"])
-    assert record["raw_entries"][0]["entry_key"] != record["entries"][0]["entry_key"]
+    assert "raw_entries" not in record and "input_snapshot" not in record
+    assert str(path) not in repr(record)
     assert payload["rows"][0]["entry_key"] == before[0].identity.to_dict()
-    assert record["input_snapshot"]
+    assert payload["rows"][0]["text"] == "Imported"
 
 
 @pytest.mark.parametrize("reason", ["original", "type", "form_id", "duplicate_source", "duplicate_target"])
@@ -75,7 +76,8 @@ def test_append_never_guesses_unmatched_or_ambiguous_records(project, reason):
     assert result.data["added_count"] == 0
     assert tuple(project.ctx.collection) == before
     _, saved, payload = load_task_result(ctx, result.data["result_id"])
-    assert len(saved["raw_entries"]) == len(saved["unmapped"]) == len(records)
+    assert len(saved["unmapped"]) == len(records)
+    assert "raw_entries" not in saved and "input_snapshot" not in saved
     assert not payload["rows"]
 
 
@@ -113,13 +115,13 @@ def test_append_rejects_parsed_entries_inconsistent_with_captured_snapshot(proje
 def test_append_saved_candidates_retry_without_reopening_sst(project, monkeypatch):
     ctx, before = _load(project, "plugin")
     path = _sst(project, "translated.sst", [_record(translation="Recovered")])
-    create = EntryResultStore.create
-    monkeypatch.setattr(EntryResultStore, "create", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
+    create = RecoveryView.create
+    monkeypatch.setattr(RecoveryView, "create", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
     result = _tool_parse_sst({"path": str(path), "action": "append"}, ctx)
     assert not result.success and result.partial
     assert tuple(project.ctx.collection) == before
     path.unlink()
-    monkeypatch.setattr(EntryResultStore, "create", create)
+    monkeypatch.setattr(RecoveryView, "create", create)
     merged = _tool_merge_task_result({"result_id": result.data["result_id"]}, ctx)
     assert merged.success, merged.message
     assert next(iter(project.ctx.collection)).translation == "Recovered"

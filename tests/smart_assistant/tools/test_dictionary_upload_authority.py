@@ -9,6 +9,7 @@ import pytest
 from tests.smart_assistant.tools.test_source_import_authority import load_source, project as project_fixture
 from transbridge.application.io import Stage
 from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError, ParaTranzEntry
+from transbridge.application.projects.source_content import translation_source_fingerprint
 from transbridge.smart_assistant.tools import _dictionary_application as dictionary_module
 from transbridge.smart_assistant.tools._project_tool_mutations import ProjectToolTarget
 from transbridge.smart_assistant.tools.tool_migrator import _tool_apply_dictionary
@@ -27,7 +28,7 @@ def _install_dictionary(project, monkeypatch, entry, **overrides):
         "source_locale": "en",
         "target_locale": "zh-CN",
         "source_namespace": entry.identity.namespace.value,
-        "source_fingerprint": project.ctx.active_slot.source_snapshot.sha256,
+        "source_fingerprint": translation_source_fingerprint(project.ctx.active_slot.source_snapshot),
         "enabled": True,
         "original": entry.original,
     }

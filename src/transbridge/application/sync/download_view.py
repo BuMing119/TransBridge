@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from .review_view import SyncReviewRow
 
 
+class RetryableDownloadSaveError(RuntimeError):
+    """A downloaded candidate is retained and only local publication needs retrying."""
+
+
 @dataclass(frozen=True, slots=True)
 class DownloadSourceOption:
     source_id: str

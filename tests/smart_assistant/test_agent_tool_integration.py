@@ -223,6 +223,7 @@ class TestFullWorkflowChain(unittest.TestCase):
         from pathlib import Path
         from tempfile import TemporaryDirectory
 
+        from transbridge.persistence.task_store import TaskStore
         from transbridge.smart_assistant.tools.tool_translator import (
             _tool_get_task_status,
             _tool_start_translation,
@@ -234,14 +235,14 @@ class TestFullWorkflowChain(unittest.TestCase):
         ec = ExecutionContext(app_context=self.ctx, task_manager=TaskManager())
         test_config = SimpleNamespace(api_key="test-key", term_priority=["dynamic"])
         with (
-            TemporaryDirectory(prefix=".tmp-at-", dir=".") as directory,
-            patch.object(self.ctx.project_commands, "task_result_directory", return_value=Path(directory)),
+            TemporaryDirectory(prefix="assistant-translation-") as directory,
             patch(
                 "transbridge.paratranz.config_manager.LLMConfig.load_from_file",
                 return_value=test_config,
             ),
             patch.object(TaskManager, "start_thread", return_value=None),
         ):
+            self.ctx.task_store = TaskStore(Path(directory) / "task-store-v1")
             result = _tool_start_translation({"mode": "translate"}, ec)
         self.assertTrue(result.success)
         task_id = result.data["task_id"]

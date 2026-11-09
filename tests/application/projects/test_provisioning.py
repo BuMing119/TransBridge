@@ -424,7 +424,14 @@ def test_multiple_original_sources_commit_together_and_hydrate_once() -> None:
 
     hydration = service.consume_hydration(prepared.value.project_id, _context())
     assert hydration.is_success and hydration.value is not None
-    assert [source.location for source in hydration.value.sources] == [source.location for source in request.sources]
+    assert [source.location for source in hydration.value.sources] == [
+        "project-source:first.esp",
+        "project-source:second.esm",
+        "project-source:third.esl",
+    ]
+    assert all(
+        not source.reference_location and source.source_snapshot.content is None for source in hydration.value.sources
+    )
     assert hydration.value.source is hydration.value.sources[0]
     assert len(sources.calls) == 3
     assert not service.consume_hydration(prepared.value.project_id, _context()).is_success

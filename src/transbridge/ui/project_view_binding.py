@@ -9,9 +9,10 @@ from threading import Condition
 from PyQt6.QtCore import QThread
 
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
-from transbridge.application.projections.models import copy_projection_value
+from transbridge.application.projections.models import DeferredProjectRows, copy_projection_value
 from transbridge.ui.entry_projection import prepare_projected_entries, sync_projected_entries
 from transbridge.ui.project_labels import project_entry_labels
+from transbridge.ui.project_rows import ProjectRowsCollection, sync_paged_collections
 from transbridge.ui.projection_consistency import PreparedProjectionConsistency, ProjectionConsistency
 from transbridge.ui.projection_types import CollectionSlot
 
@@ -36,6 +37,7 @@ class ProjectViewState:
     exact_labels: dict = field(default_factory=dict)
     snapshot: object = field(default=None, repr=False, compare=False)
     consistency: PreparedProjectionConsistency | None = field(default=None, repr=False, compare=False)
+    initial_source_key: str | None = None
 
     @classmethod
     def capture(cls, snapshot, previous_labels):
@@ -45,7 +47,10 @@ class ProjectViewState:
         binding = copy_projection_value(values.get("paratranz_binding"))
         if isinstance(binding, dict):
             int(binding["project_id"])
-        labels, exact = project_entry_labels(values.get("entries", ()), previous_labels)
+        rows = values.get("entries", ())
+        labels, exact = project_entry_labels(
+            rows.prepared() if isinstance(rows, DeferredProjectRows) else rows, previous_labels
+        )
         return cls(
             dirty=snapshot.dirty,
             revision=snapshot.revision,
@@ -171,7 +176,7 @@ class ProjectViewBinding:
         if QThread.currentThread() != self.context.thread():
             previous = self.state.snapshot
             prepared = None
-            if not self.installing and _same_entry_scope(previous, snapshot):
+            if not self.installing and not self._paged() and _same_entry_scope(previous, snapshot):
                 try:
                     prepared = prepare_projected_entries(tuple(self.context.slots.values()), previous, snapshot)
                 except Exception:
@@ -249,7 +254,11 @@ class ProjectViewBinding:
             self._pending = _UNSET
             self.installing = True
             context._slots = prepared_slots
-            context._active_key = next(reversed(prepared_slots), None)
+            context._active_key = (
+                next_state.initial_source_key
+                if next_state.initial_source_key in prepared_slots
+                else next(reversed(prepared_slots), None)
+            )
             self.failed = False
         try:
             self._apply_state(next_state)
@@ -304,7 +313,14 @@ class ProjectViewBinding:
         context, old = self.context, self.state
         entries_changed = False
         previous_collection = context.collection
-        if not self.installing and _same_entry_scope(old.snapshot, state.snapshot):
+        paged = self._paged()
+        if (
+            paged
+            and state.snapshot is not None
+            and (self.installing or _same_entry_scope(old.snapshot, state.snapshot))
+        ):
+            entries_changed = sync_paged_collections(paged, state.snapshot, None if self.installing else old.snapshot)
+        elif not self.installing and _same_entry_scope(old.snapshot, state.snapshot):
             applied = None
             if prepared is not None and prepared.matches(context.slots.values(), old.snapshot):
                 applied = prepared.apply()
@@ -319,7 +335,8 @@ class ProjectViewBinding:
             or context._entry_labels_exact != state.exact_labels
         )
         self.state = state
-        self._consistency.diverged(state.snapshot, tuple(context.slots.values()))
+        if not paged:
+            self._consistency.diverged(state.snapshot, tuple(context.slots.values()))
         context._label_library = state.label_library
         context._entry_labels = state.entry_labels
         context._entry_labels_exact = state.exact_labels
@@ -334,11 +351,22 @@ class ProjectViewBinding:
             context.variant_changed.emit(state.variant_id)
         if old.binding != state.binding:
             context.paratranz_binding_changed.emit(context.paratranz_binding)
-        if entries_changed and context.collection is not previous_collection:
+        if entries_changed and not self.installing and (paged or context.collection is not previous_collection):
             context.collection_changed.emit(context.collection)
+
+    def _paged(self):
+        return tuple(
+            slot.collection
+            for slot in self.context.slots.values()
+            if isinstance(slot.collection, ProjectRowsCollection)
+        )
 
     def diverged(self):
         if self.store is None:
+            return False
+        if self._paged():
+            # Paged collections create detached TranslationEntry read objects.
+            # Editable authority is the lifecycle's sparse patch.
             return False
         if QThread.currentThread() == self.context.thread():
             snapshot = self.state.snapshot if self.opening else self.store.snapshot()

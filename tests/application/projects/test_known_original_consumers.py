@@ -1,5 +1,5 @@
+from contextlib import contextmanager
 from dataclasses import replace
-import json
 from pathlib import Path
 
 import pytest
@@ -9,9 +9,7 @@ from tests.persistence.v2.test_saved_project_sources import CountingPreparer, _s
 from transbridge.application.contracts import RequestContext
 from transbridge.application.io import FormatId
 from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
-from transbridge.application.projects.entry_source_text import namespace_source_id
 from transbridge.application.translation.result_merge import ResultEntryChange, ResultEntryState
-from transbridge.persistence.project_source_inputs import load_project_source_inputs
 
 
 def _saved(root, *, qualified=True, extra=False):
@@ -51,114 +49,63 @@ def _saved(root, *, qualified=True, extra=False):
         services.close()
 
 
-def _lose_content_after_open(services, path, context, complete):
-    """Exercise consumers after an already-active source becomes unavailable."""
-    incomplete = path.read_bytes()
-    path.write_bytes(complete)
-    opened = services.current_project_opener.open_path(path, context)
-    assert opened.is_success, opened.diagnostics
-    path.write_bytes(incomplete)
-    active = services.project_lifecycle.active
-    record = services.projects.read_snapshot_record(active.project_ref)
-    inputs = load_project_source_inputs(
-        record.value, active.variant.snapshot(), services.current_project_opener._source_artifacts, context
-    )
-    services.baselines.replace_many(active.project_ref, (active.formal_variant_ref,), (), allow_empty=True)
-    services.project_lifecycle._active = replace(
-        active, project=record.value, source_project_hash=record.source_hash, missing_inputs=inputs.missing_inputs
-    )
+@contextmanager
+def _reopen(root, path, context):
+    preparer = CountingPreparer(forbidden=True)
+    services = _services(root / "store", preparer)
+    try:
+        opened = services.current_project_opener.open_path(path, context)
+        assert opened.is_success, opened.diagnostics
+        yield services
+        assert preparer.calls == 0
+    finally:
+        services.close()
 
 
-@pytest.mark.parametrize("kind", ["no_artifact", "unavailable_artifact", "unregistered"])
-@pytest.mark.parametrize("reference", ["", "present"])
-def test_original_qualified_saved_rows_support_upload_and_result_text_without_source_input(
-    tmp_path, monkeypatch, kind, reference
-):
-    source, project_path, context, complete = _saved(tmp_path)
-    document = json.loads(project_path.read_bytes())
-    if kind == "unregistered":
-        document["data"]["sources"] = []
+@pytest.mark.parametrize("qualified", [False, True])
+@pytest.mark.parametrize("input_state", ["deleted", "replaced"])
+def test_saved_rows_support_upload_and_result_text_without_source_input(tmp_path, monkeypatch, qualified, input_state):
+    source, path, context, database_bytes = _saved(tmp_path, qualified=qualified)
+    if input_state == "deleted":
+        source.unlink()
     else:
-        registered = document["data"]["sources"][0]
-        registered["location"] = str(source) if reference else ""
-        registered["legacy"]["path"] = registered["location"]
-        if kind == "no_artifact":
-            registered.pop("source_artifact_id")
-            registered["content_state"] = "missing"
-        else:
-            registered["source_artifact_id"] = "f" * 64
-    project_path.write_text(json.dumps(document), encoding="utf-8")
+        _plugin(source, [(0x900, "Replacement content")])
     open_file = Path.open
 
-    def deny_reference(path, *args, **kwargs):
-        assert path != source, "text consumers must not read an optional original file"
+    def deny_original(path, *args, **kwargs):
+        assert path != source, "saved translation consumers must not read a historical source file"
         return open_file(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "open", deny_reference)
-    preparer = CountingPreparer(forbidden=True)
-    services = _services(tmp_path / "store", preparer)
-    try:
-        _lose_content_after_open(services, project_path, context, complete)
+    monkeypatch.setattr(Path, "open", deny_original)
+    with _reopen(tmp_path, path, context) as services:
         active = services.project_lifecycle.active
         variant = active.variant.snapshot()
-        assert all(state.entry_key.original is not None for state in variant.entries)
+        assert all((state.entry_key.original is not None) == qualified for state in variant.entries)
         catalog = services.gui_project_commands.file_sources_catalog(context)
         assert catalog.is_success and len(catalog.value) == 1
-        selected_id = catalog.value[0].source_id
-        if kind == "unregistered":
-            assert selected_id == namespace_source_id(variant.entries[0].entry_key.namespace)
         captured = services.gui_project_commands.categorized_upload_snapshot(
-            context, endpoint="https://paratranz.cn", remote_project_id=42, source_ids=(selected_id,)
+            context, endpoint="https://paratranz.cn", remote_project_id=42, source_ids=(catalog.value[0].source_id,)
         )
         assert captured.is_success, captured.diagnostics
-        assert {entry.original for entry in captured.value.sources[0].entries} == {"First", "Second"}
-        assert all(
-            entry.translation == "Saved" and entry.context is None for entry in captured.value.sources[0].entries
-        )
+        entries = captured.value.sources[0].entries
+        assert {entry.original for entry in entries} == {"First", "Second"}
+        assert all(entry.translation == "Saved" and entry.context == "WEAP:FULL" for entry in entries)
         texts = services.gui_project_commands._categorized_uploads.result_source_texts(
             active.project, variant, {entry.entry_key for entry in variant.entries}, context
         )
-        assert texts == {state.entry_key: (state.entry_key.original, None, None) for state in variant.entries}
-        assert preparer.calls == 0
-    finally:
-        services.close()
+        assert set(texts) == {entry.identity for entry in entries}
+        for entry in entries:
+            original, source_context, locator = texts[entry.identity]
+            assert (original, source_context) == (entry.original, entry.context)
+            assert locator is not None
+        assert path.read_bytes() == database_bytes
 
 
-def test_bare_saved_keys_still_require_original_input(tmp_path):
-    _source, path, context, complete = _saved(tmp_path, qualified=False)
-    document = json.loads(path.read_bytes())
-    document["data"]["sources"][0].pop("source_artifact_id")
-    document["data"]["sources"][0]["content_state"] = "missing"
-    path.write_text(json.dumps(document), encoding="utf-8")
-    preparer = CountingPreparer(forbidden=True)
-    services = _services(tmp_path / "store", preparer)
-    try:
-        _lose_content_after_open(services, path, context, complete)
-        captured = services.gui_project_commands.categorized_upload_snapshot(
-            context, endpoint="https://paratranz.cn", remote_project_id=42
-        )
-        assert not captured.is_success
-        assert captured.diagnostics[0].code == "CATEGORIZED_SOURCE_BASELINE_AMBIGUOUS"
-        active = services.project_lifecycle.active
-        variant = active.variant.snapshot()
-        assert not services.gui_project_commands._categorized_uploads.result_source_texts(
-            active.project, variant, {state.entry_key for state in variant.entries}, context
-        )
-        assert preparer.calls == 0
-    finally:
-        services.close()
-
-
-def test_selected_known_source_is_not_blocked_by_an_unselected_unknown_source(tmp_path):
-    _source, path, context, complete = _saved(tmp_path, extra=True)
-    document = json.loads(path.read_bytes())
-    for registered in document["data"]["sources"]:
-        registered.pop("source_artifact_id")
-        registered["content_state"] = "missing"
-    path.write_text(json.dumps(document), encoding="utf-8")
-    services = _services(tmp_path / "store", CountingPreparer(forbidden=True))
-    try:
-        _lose_content_after_open(services, path, context, complete)
+def test_selected_source_remains_available_after_other_source_input_is_deleted(tmp_path):
+    source, path, context, _ = _saved(tmp_path, extra=True)
+    source.unlink()
+    source.with_name("unknown.esp").unlink()
+    with _reopen(tmp_path, path, context) as services:
         catalog = services.gui_project_commands.file_sources_catalog(context).value
         known = next(item for item in catalog if item.namespace.value == "source:known")
         captured = services.gui_project_commands.categorized_upload_snapshot(
@@ -166,28 +113,28 @@ def test_selected_known_source_is_not_blocked_by_an_unselected_unknown_source(tm
         )
         assert captured.is_success and len(captured.value.sources) == 1, captured.diagnostics
         assert {entry.original for entry in captured.value.sources[0].entries} == {"First", "Second"}
-    finally:
-        services.close()
 
 
-@pytest.mark.parametrize("required_metadata", [None, "context", "locator"])
-def test_known_original_result_merge_keeps_existing_context_and_locator_protection(tmp_path, required_metadata):
-    _source, path, context, complete = _saved(tmp_path)
-    document = json.loads(path.read_bytes())
-    document["data"]["sources"] = []
-    path.write_text(json.dumps(document), encoding="utf-8")
-    services = _services(tmp_path / "store", CountingPreparer(forbidden=True))
-    try:
-        _lose_content_after_open(services, path, context, complete)
+@pytest.mark.parametrize("changed_metadata", [None, "context", "locator"])
+def test_saved_original_result_merge_preserves_context_and_locator_conflict_protection(tmp_path, changed_metadata):
+    source, path, context, database_bytes = _saved(tmp_path)
+    source.unlink()
+    with _reopen(tmp_path, path, context) as services:
         active = services.project_lifecycle.active
-        entry = active.variant.snapshot().entries[0]
+        variant = active.variant.snapshot()
+        entry = variant.entries[0]
+        texts = services.gui_project_commands._categorized_uploads.result_source_texts(
+            active.project, variant, {entry.entry_key}, context
+        )
+        original, source_context, locator = texts[entry.entry_key]
+        assert source_context and locator
         base = ResultEntryState(
             entry.entry_key,
-            entry.entry_key.original,
+            original,
             entry.translation,
             entry.stage.value,
-            context="previous source context" if required_metadata == "context" else None,
-            source_locator="previous source locator" if required_metadata == "locator" else None,
+            context="previous source context" if changed_metadata == "context" else source_context,
+            source_locator="previous source locator" if changed_metadata == "locator" else locator,
         )
         result = services.gui_project_commands.merge_entry_states(
             (ResultEntryChange(base, replace(base, translation="New translation", stage=1)),),
@@ -195,10 +142,9 @@ def test_known_original_result_merge_keeps_existing_context_and_locator_protecti
             expected_variant_ref=active.formal_variant_ref,
         )
         assert result.is_success, result.diagnostics
-        if required_metadata is None:
+        if changed_metadata is None:
             assert len(result.value.applied) == 1 and not result.value.pending
         else:
             assert not result.value.applied
             assert result.value.pending[0].reason == "source_changed_or_missing"
-    finally:
-        services.close()
+        assert path.read_bytes() == database_bytes

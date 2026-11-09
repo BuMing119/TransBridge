@@ -15,7 +15,7 @@ from transbridge.application.capabilities import (
     CapabilityReport,
     CapabilityState,
 )
-from transbridge.application.contracts import ErrorCategory, OperationOutcome
+from transbridge.application.contracts import ErrorCategory, OperationOutcome, RequestContext
 from transbridge.bootstrap import RuntimePorts, bind_runtime, build_runtime
 
 
@@ -237,7 +237,13 @@ def test_legacy_tool_wrappers_reject_missing_injected_context() -> None:
         assert result.error_code == "RUNTIME_CONTEXT_REQUIRED"
 
     projected_context = ExecutionContext(app_context=object(), task_manager=object())
-    assert _tool_get_quality_report({}, projected_context).success is True
+    missing_scope = _tool_get_quality_report({}, projected_context)
+    assert not missing_scope.success
+    assert missing_scope.error_code == "TASK_RESULT_SCOPE_REQUIRED"
+    projected_context.request_context = RequestContext("bootstrap-report-test", session_id="report-scope")
+    scoped = _tool_get_quality_report({}, projected_context)
+    assert scoped.success
+    assert scoped.data == {"reports": []}
 
 
 def test_legacy_controller_modules_no_longer_construct_hidden_context() -> None:

@@ -10,9 +10,10 @@ from typing import Any, TypedDict
 from transbridge.application.terminology_profiles.models import TerminologyProfileSelection
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantRef
 from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
-from transbridge.persistence.v2.variant import SourceBaseline, VariantAggregate, VariantSnapshot
+from transbridge.persistence.v2.variant import SourceBaseline, VariantAggregate, VariantEntryState, VariantSnapshot
 
 from .source_inputs import MissingProjectSourceInput
+from .storage_contracts import ApplicationOutcome, ExtractedSource
 
 
 class DirtyDecision(StrEnum):
@@ -74,6 +75,7 @@ class ActiveProject:
     source_variant_hash: str | None = None
     source_variant_revision: int | None = None
     missing_inputs: tuple[MissingProjectSourceInput, ...] = ()
+    source_additions: tuple[ExtractedSource, ...] = ()
 
     def __post_init__(self) -> None:
         project_ref = self.project_ref
@@ -100,7 +102,7 @@ class ActiveProject:
             return True
         if self.variant is None:
             return False
-        return self.persisted_variant_revision != self.variant.revision
+        return self.persisted_variant_revision != self.variant.revision or bool(self.variant.pending_applications())
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -130,6 +132,9 @@ class LifecycleSave:
     variant: VariantSnapshot | None
     expected_persisted_project_revision: int
     expected_persisted_revision: int | None
+    entry_changes: tuple[VariantEntryState, ...] | None = None
+    source_additions: tuple[ExtractedSource, ...] = ()
+    applications: tuple[tuple[str, tuple[ApplicationOutcome, ...]], ...] = ()
 
     @classmethod
     def capture(cls, active: ActiveProject) -> LifecycleSave:
@@ -139,6 +144,9 @@ class LifecycleSave:
             None if active.variant is None else active.variant.snapshot(),
             active.persisted_project_revision,
             active.persisted_variant_revision,
+            None if active.variant is None else active.variant.changes_since(active.persisted_variant_revision),
+            active.source_additions,
+            () if active.variant is None else active.variant.pending_applications(),
         )
 
 

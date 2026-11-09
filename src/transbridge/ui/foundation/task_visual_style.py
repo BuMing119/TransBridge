@@ -134,6 +134,25 @@ QGroupBox[tbTaskPanel="true"]::title {{
     left: 10px;
     padding: 0 5px;
 }}
+QLabel#tbUpdateVersion {{
+    color: palette(text);
+    font-size: 26pt;
+    font-weight: 600;
+}}
+QLabel#tbUpdateBadge {{
+    color: palette(link);
+    background: palette(light);
+    border-radius: {radius}px;
+    padding: 6px 10px;
+}}
+QTextBrowser#tbUpdateNotes {{
+    color: palette(text);
+    background: palette(base);
+    border: 1px solid palette(mid);
+    border-radius: {radius_large}px;
+    selection-background-color: palette(highlight);
+    selection-color: palette(highlighted-text);
+}}
 """.strip()
 
 

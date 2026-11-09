@@ -13,7 +13,7 @@ from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import STAGE_HIDDEN, STAGE_LOCKED, TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from transbridge.paratranz.config_manager import ActionRule
+from transbridge.paratranz.config_manager import ActionRule, ParatranzConfig
 from transbridge.ui.tools.ai_translator import source_execution
 from transbridge.ui.tools.ai_translator.scope_presenter import TranslationScope
 from transbridge.ui.tools.ai_translator.source_execution import SourceExecutor, SourceOutcome
@@ -267,12 +267,7 @@ def test_worker_confirms_pause_only_when_admitted_calls_have_drained(resume):
 
 @pytest.fixture
 def make_executor(monkeypatch, tmp_path):
-    store_class = source_execution.WorkflowLogStore
-    monkeypatch.setattr(
-        source_execution,
-        "WorkflowLogStore",
-        lambda path, **kwargs: store_class(path, log_base=tmp_path, **kwargs),
-    )
+    monkeypatch.setattr(ParatranzConfig, "get_data_dir", lambda: str(tmp_path))
 
     def make(order="serial", budget=1):
         request = _request(order, budget)

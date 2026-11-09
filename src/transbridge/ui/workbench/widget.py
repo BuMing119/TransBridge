@@ -219,6 +219,10 @@ class WorkbenchWidget(QWidget):
                 lambda: self.open_tool(tool_id, task_runtime=task_runtime, settings_requested=settings_requested)
             ):
                 return
+            if not self._step2._paging.when_ready(
+                lambda: self.open_tool(tool_id, task_runtime=task_runtime, settings_requested=settings_requested)
+            ):
+                return
 
             from transbridge.ui.tools.ai_translator.ai_translator_window import AITranslatorWindow
 

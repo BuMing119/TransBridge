@@ -15,6 +15,7 @@ from transbridge.ui.foundation.components import (
     SemanticState,
     reserve_text_width,
 )
+from transbridge.ui.project_rows import ProjectRowsCollection
 
 from .controller import GuidanceController
 from .models import GuidanceContextIdentity, GuidanceKind, GuidanceProjection
@@ -161,10 +162,11 @@ class GuidanceBanner(QFrame):
 class GuidanceBinding(QObject):
     """Convert public AppContext events into monotonic guidance projections."""
 
-    def __init__(self, context, view: GuidanceBanner, dispatch, *, preferences=None, parent=None) -> None:
+    def __init__(self, context, view: GuidanceBanner, dispatch, *, preferences=None, paging=None, parent=None) -> None:
         super().__init__(parent)
         self._context = context
         self._view = view
+        self._paging = paging
         self._generation = 0
         self._revision = 0
         self._identity: GuidanceContextIdentity | None = None
@@ -183,6 +185,8 @@ class GuidanceBinding(QObject):
             context.dirty_changed,
         ):
             signal.connect(self.refresh)
+        if paging is not None:
+            paging.statistics_ready.connect(self.refresh)
         self.refresh()
 
     def refresh(self, *_args) -> None:
@@ -200,6 +204,8 @@ class GuidanceBinding(QObject):
         collection = self._context.collection
         if not self._context.project_name:
             kind = GuidanceKind.NO_PROJECT
+        elif isinstance(collection, ProjectRowsCollection):
+            kind = self._paged_kind(collection, identity)
         elif collection is None or len(collection) == 0:
             kind = GuidanceKind.EMPTY_PROJECT
         elif any(entry.stage == STAGE_QUESTIONABLE for entry in collection):
@@ -209,6 +215,24 @@ class GuidanceBinding(QObject):
         else:
             kind = GuidanceKind.PUBLISH_PENDING
         self._controller.project(GuidanceProjection(identity, self._generation, self._revision, kind))
+
+    def _paged_kind(self, collection, identity) -> GuidanceKind:
+        token = collection.token
+        if self._paging is None or (token.project_id.value, token.variant_id.value) != (
+            identity.project_id,
+            identity.version_id,
+        ):
+            return GuidanceKind.LOADING_CONTENT
+        counts = self._paging.current_stage_counts(collection)
+        if counts is None:
+            return GuidanceKind.LOADING_CONTENT
+        if not counts:
+            return GuidanceKind.EMPTY_PROJECT
+        if counts[STAGE_QUESTIONABLE]:
+            return GuidanceKind.REVIEW_PENDING
+        if counts[STAGE_UNTRANSLATED]:
+            return GuidanceKind.UNTRANSLATED
+        return GuidanceKind.PUBLISH_PENDING
 
     def close(self) -> None:
         self._controller.close()

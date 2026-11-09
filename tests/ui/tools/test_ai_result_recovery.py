@@ -111,10 +111,13 @@ def test_restore_pending_preview_never_starts_model_worker(qapp, make_window, tm
     assert all(row.report_details["review_status"] == "needs_review" for row in window.run.entries.entries.values())
 
 
-def test_restore_accepted_results_saves_without_model_worker(qapp, make_window, tmp_path):
+def test_restore_accepted_results_stages_and_saves_without_model_worker(qapp, make_window, tmp_path):
     window, session, _ = make_window()
     window.run.recovery.record = prepared(session, tmp_path, decision="accepted")
     window.run.result_flow.start(session.tasks)
+    support._wait_until(lambda: session.can_save)
+    assert not session.project_saved and session.commits == 1
+    window.run.save()
     support._wait_until(lambda: session.project_saved)
     support._wait_reports(qapp, window)
     assert window.run.worker is None and session.completed

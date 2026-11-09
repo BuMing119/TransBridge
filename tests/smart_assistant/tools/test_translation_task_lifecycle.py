@@ -15,6 +15,7 @@ from transbridge.application.translation.task_merge_evidence import TaskMergeEvi
 from transbridge.config.llm import LLMConfig
 from transbridge.config.task_results import TaskResultPreferences
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.persistence.task_store import TaskStore
 from transbridge.smart_assistant.tools.task_manager import TaskManager
 from transbridge.smart_assistant.tools.translation_task_merge import merge_saved_results
 from transbridge.smart_assistant.tools.translation_task_results import (
@@ -29,7 +30,7 @@ project = project_fixture
 
 
 @pytest.fixture
-def environment(project):
+def environment(project, tmp_path):
     services, sources, context, *_ = project
     context = replace(context, session_id="assistant-session")
     snapshot = sources.snapshot(context, endpoint="https://paratranz.cn", remote_project_id=42).value
@@ -41,6 +42,7 @@ def environment(project):
         active_version_identity=identity,
         project_commands=services.gui_project_commands,
         runtime_context=context,
+        task_store=TaskStore(tmp_path / "task-store-v1"),
         slots={},
         esp_path="fixed.esp",
         variant_revision=active.variant.revision,
@@ -145,10 +147,10 @@ def test_result_authorization_does_not_depend_on_task_manager(environment):
     succeed(task)
     task.persist(state="completed")
     app.runtime_context = replace(context, session_id="another-session")
-    with pytest.raises(ValueError, match="会话"):
+    with pytest.raises(ValueError, match="outside the caller's scope"):
         result_view(app, task.result_id)
     app.runtime_context = replace(context, owner_id="another-owner")
-    with pytest.raises(ValueError, match="会话"):
+    with pytest.raises(ValueError, match="outside the caller's scope"):
         load_task_result(app, task.result_id)
 
 
@@ -239,6 +241,7 @@ def test_denied_cancelled_execution_never_merges_but_preserves_saved_results(env
 
 
 def test_pending_merge_receipt_can_be_retried_without_reapplying(environment, monkeypatch):
+    _app, services, context = environment
     task = new_task(environment)
     succeed(task)
     task.persist(state="completed")
@@ -256,9 +259,14 @@ def test_pending_merge_receipt_can_be_retried_without_reapplying(environment, mo
     assert summary["applied_count"] == 2 and not summary["receipt_saved"] and "合入已完成" in warning
     monkeypatch.setattr(task_merge_evidence, "atomic_json", atomic)
     view = result_view(environment[0], task.result_id)
-    assert view["merge"]["receipt_saved"]
-    evidence = TaskMergeEvidenceStore(task.store.root, task.result_id).load()
+    assert view["merge"]["evidence_saved"]
+    assert [item["state"] for item in view["applications"]] == ["staged-unsaved"]
+    evidence = TaskMergeEvidenceStore(task.store.run_directory(task.result_id), task.result_id).load()
     assert len(evidence[0]["applied_keys"]) == 2
+    saved = services.gui_project_commands.save(context)
+    assert saved.is_success, saved.diagnostics
+    view = result_view(environment[0], task.result_id)
+    assert [item["state"] for item in view["applications"]] == ["committed"]
 
 
 def test_cancelled_translation_keeps_only_explicit_valid_partial_outcomes(environment, monkeypatch):

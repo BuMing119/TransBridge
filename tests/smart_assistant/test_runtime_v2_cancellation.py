@@ -40,9 +40,8 @@ def test_task_center_cancel_preserves_real_variant_and_saved_files(project, mana
     project.app.processEvents()
     active = project.services.project_lifecycle.active
     before = active.variant.snapshot()
-    variant_path = Path(project.services.variants.path_for(active.formal_variant_ref))
     project_path = Path(project.services.projects.path_for(active.project_ref))
-    saved_before = (project_path.read_bytes(), variant_path.read_bytes())
+    saved_before = project_path.read_bytes()
     entered = threading.Event()
     release = threading.Event()
 
@@ -68,10 +67,6 @@ def test_task_center_cancel_preserves_real_variant_and_saved_files(project, mana
         lambda **_kwargs: SimpleNamespace(load_all=lambda: None, match_terms=lambda _texts: {}),
     )
     monkeypatch.setattr("transbridge.paratranz.config_manager.ParatranzConfig.get_data_dir", lambda: str(project.root))
-    monkeypatch.setattr(
-        "transbridge.smart_assistant.tools.tool_proofreader._resolve_report_directory",
-        lambda _ctx: project.root / "reports",
-    )
     catalog = SimpleNamespace(list=lambda *_args, **_kwargs: ())
     runtime = SimpleNamespace(
         tasks=manager.runtime,
@@ -104,7 +99,7 @@ def test_task_center_cancel_preserves_real_variant_and_saved_files(project, mana
         assert not project.ctx.authoritative_projection_diverged()
         assert next(iter(project.ctx.collection)).translation == "before"
         assert commands.save(project.request).is_success
-        assert (project_path.read_bytes(), variant_path.read_bytes()) == saved_before
+        assert project_path.read_bytes() == saved_before
     finally:
         release.set()
         controller.close()

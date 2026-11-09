@@ -1,4 +1,4 @@
-"""A confirmed legacy mapping renews selection without changing accepted input."""
+"""Renewed input selection is bound to the accepted request and a new execution lease."""
 
 from copy import deepcopy
 from dataclasses import replace
@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.application.projects.test_source_update import _xml, project as project_fixture
+from tests.application.projects.test_source_update import project as project_fixture
 from transbridge.application.assistant_requests.admission import record_effect_outcome
 from transbridge.application.assistant_requests.models import (
     AssistantExecutionRef,
@@ -26,7 +26,6 @@ from transbridge.application.contracts import DomainError
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from transbridge.persistence.v2.variant import SourceFingerprint
 from transbridge.smart_assistant.request_execution import RequestExecutionGate
 from transbridge.smart_assistant.request_scope import apply_captured_scope, execution_version
 from transbridge.smart_assistant.tool_registry import ToolRegistry, ToolSpec
@@ -38,22 +37,10 @@ project = project_fixture
 @pytest.fixture
 def repaired(project, monkeypatch, request):
     selected_ids = getattr(request, "param", None)
-    services, _updates, context, source_path, project_path, source_id = project
+    services, _updates, context, _source_path, project_path, source_id = project
     active = services.project_lifecycle.active
-    snapshot = active.variant.snapshot()
-    old_keys = tuple(EntryKey(SourceNamespace.legacy(), f"old-{index}") for index in range(3))
-    legacy = replace(
-        snapshot,
-        source_fingerprints=(SourceFingerprint(SourceNamespace.legacy(), None),),
-        entries=tuple(replace(row, entry_key=key) for row, key in zip(snapshot.entries, old_keys, strict=True)),
-    )
-    services.variants.save(legacy.ref, legacy.to_dto())
-    for source in active.project.envelope.data["sources"]:
-        source.pop("source_artifact_id", None)
-        source["location"] = ""
-    services.projects.save(active.project_ref, active.project)
-    assert services.current_project_opener.open_path(project_path, context).is_success
     identity = (active.project_ref.identity.value, active.formal_variant_ref.identity.value)
+    old_keys = tuple(EntryKey(SourceNamespace("previous-source"), f"old-{index}") for index in range(3))
     context = replace(context, project_id=identity[0], variant_id=identity[1])
     assert services.gui_session_commands.create_and_activate("repair", context).is_success
     context = replace(
@@ -102,18 +89,12 @@ def repaired(project, monkeypatch, request):
     request = record_effect_outcome(request, "missing", status=EffectStatus.FAILED, receipt=receipt)
     service.transact(context, lambda state: state.update(requests=[request.to_dict()]))
     original_ingress = deepcopy(service.state(context)["ingress"])
-    replacement = source_path.with_name("chosen.xml")
-    _xml(replacement, [(9, "Chosen original"), (10, "Extra baseline row")])
-    supplements = services.project_source_supplements
-    prepared = supplements.prepare(project_path, source_id, SourceNamespace.legacy().value, str(replacement), context)
-    assert prepared.is_success, prepared.diagnostics
-    preview = prepared.value
-    mapped = preview.choices[0].key
-    mappings = {old_keys[0]: mapped, old_keys[1]: None, old_keys[2]: preview.choices[1].key}
-    assert supplements.remap(preview.token, mappings, context).is_success
-    assert supplements.commit(preview.token, context).is_success
     opened = services.current_project_opener.prepare_path(project_path, context)
+    assert opened.is_success, opened.diagnostics
     hydration = opened.value.hydrations[0]
+    assert len(hydration.entries) == 3
+    mapped = hydration.entries[0].entry_key
+    mappings = {old_keys[0]: mapped, old_keys[1]: None, old_keys[2]: hydration.entries[1].entry_key}
     collection = TranslationEntryCollection(
         TranslationEntry(
             item.legacy_id,
@@ -124,7 +105,7 @@ def repaired(project, monkeypatch, request):
             item.context,
             entry_key=item.entry_key,
         )
-        for item in hydration.entries
+        for item in hydration.entries[:2]
     )
     app = SimpleNamespace(collection=collection, active_version_identity=identity)
     service.scheduler.activate(context.session_id, "view")
@@ -156,7 +137,7 @@ def _prepare(case, **changes):
     )
 
 
-def test_real_legacy_supplement_reprepares_only_mapped_selection_under_a_new_lease(repaired):
+def test_reprepares_only_mapped_saved_entries_under_a_new_lease(repaired):
     case = repaired
     before = ExecutionContext(app_context=case.app)
     with pytest.raises(RequestError, match="REQUEST_SCOPE_MISMATCH"):

@@ -117,6 +117,10 @@ class EntryRefresh:
     def return_to_preview(self, key) -> None:
         """Restore keyboard focus without replacing filters, selection or scroll."""
         table = self.preview._table
+        if self.preview._paging.collection is not None:
+            self.preview._paging.locate(key)
+            table.setFocus(Qt.FocusReason.OtherFocusReason)
+            return
         for row, source_row in enumerate(table._display_order):
             if table.render_session.entries[source_row].identity == key:
                 auto_scroll = table.hasAutoScroll()

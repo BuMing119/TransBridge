@@ -78,7 +78,7 @@ def test_frozen_save_persists_latest_project_off_gui_without_history():
     assert harness.store.saved_revisions == [1]
     assert not harness.store.snapshots
     assert not harness.service.active.dirty
-    assert persistence.project_saved
+    assert not persistence.project_saved
 
 
 def test_frozen_save_guard_is_rechecked_after_waiting_for_lifecycle_lock():

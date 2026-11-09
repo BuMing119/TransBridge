@@ -122,9 +122,22 @@ class _FrozenArray:
         return len(self.values)
 
 
+class DeferredProjectRows:
+    """Retain complete read semantics and expose only prepared rows to the first screen."""
+
+    def __init__(self, entries) -> None:
+        self.entries = entries
+
+    def __iter__(self):
+        return (freeze_projection_value(item.to_dict()) for item in self.entries)
+
+    def prepared(self):
+        return tuple(freeze_projection_value(item.to_dict()) for item in self.entries.preview())
+
+
 def freeze_projection_value(value: Any) -> Any:
     """Freeze mutable JSON containers, preserving already immutable projection values."""
-    if isinstance(value, (_FrozenMapping, _FrozenArray)):
+    if isinstance(value, (_FrozenMapping, _FrozenArray, DeferredProjectRows)):
         return value
     if isinstance(value, Mapping):
         return _freeze_mapping(value)
@@ -147,6 +160,8 @@ def copy_projection_value(value: Any) -> Any:
         return _thaw_mapping(value)
     if isinstance(value, _FrozenArray):
         return [copy_projection_value(item) for item in value.values]
+    if isinstance(value, DeferredProjectRows):
+        return [copy_projection_value(item) for item in value]
     return value
 
 

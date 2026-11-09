@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,11 +17,10 @@ from transbridge.application.projects import ProjectProvisioningRequest, Project
 from transbridge.application.projects.source_content import authoritative_baseline_sources
 from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.converter.translation_entry import TranslationEntry
-from transbridge.persistence.current_project import CurrentProjectOpener
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
 from transbridge.persistence.v2 import ProjectId, ProjectRef, VariantId, VariantRef
 
-from .fakes import MemoryFilesystem
+from .test_workflow_closure_audit import _fail_active_preference
 
 
 class _Ids:
@@ -66,11 +63,11 @@ def test_bootstrap_provisions_empty_project_variant_catalog_pointer_and_projecti
     assert committed.is_success
     assert Path(services.projects.path_for(project_ref)).exists()
     assert Path(services.variants.path_for(variant_ref)).exists()
-    pointer = json.loads((tmp_path / "active-project.json").read_text(encoding="utf-8"))
-    catalog = json.loads((tmp_path / "project-catalog.json").read_text(encoding="utf-8"))
-    assert pointer["project_id"] == project_ref.identity.value
-    assert pointer["variant_id"] == variant_ref.identity.value
-    assert catalog["projects"][project_ref.identity.value]["name"] == "空工程"
+    assert services.current_project_opener.prepare_active(_context()).value.variant_ref == variant_ref
+    catalog = services.project_catalog.list_projects().projects
+    assert [(item.project_id, item.name, item.active) for item in catalog] == [
+        (project_ref.identity.value, "空工程", True)
+    ]
     assert (
         services.baselines.provide(
             services.project_lifecycle.active.project,
@@ -96,7 +93,7 @@ def test_bootstrap_provisions_empty_project_variant_catalog_pointer_and_projecti
         RequestContext("gui", run_id="restore"),
     )
     assert restored.is_success
-    assert restored.value is not None and restored.value.baselines == ()
+    assert restored.value is not None and restored.value.records.baselines == ()
     assert restarted.current_project_opener.activate(
         restored.value,
         RequestContext("gui", run_id="restore"),
@@ -108,69 +105,37 @@ def test_bootstrap_provisions_empty_project_variant_catalog_pointer_and_projecti
     assert duplicate.diagnostics[0].code == "PROJECT_NAME_EXISTS"
 
 
-def test_variant_publication_fault_removes_staged_project_and_keeps_pointer_absent() -> None:
-    root = os.path.abspath(os.path.join(os.sep, "transbridge-fr26-provisioning"))
-    filesystem = MemoryFilesystem()
+@pytest.mark.parametrize("failure", ["replace", "readback"])
+def test_active_preference_publication_failure_is_reported_on_new_project(tmp_path, monkeypatch, failure):
     services = build_persistence_v2_services(
-        root,
-        id_factory=_Ids(),
-        timestamp_factory=lambda: "2026-08-24T00:00:00+08:00",
-        filesystem=filesystem,
+        tmp_path, id_factory=_Ids(), timestamp_factory=lambda: "2026-08-24T00:00:00+08:00"
     )
-    prepared = services.gui_project_commands.prepare_create(
-        ProjectProvisioningRequest("故障工程"),
-        _context(),
-    )
-    assert prepared.value is not None
-    project_ref = ProjectRef(ProjectId(str(prepared.value["project_id"])))
-    variant_ref = VariantRef(VariantId(str(prepared.value["variant_id"])), project_ref.identity)
-    project_path = services.projects.path_for(project_ref)
-    variant_path = services.variants.path_for(variant_ref)
-    filesystem.fail_replace_destinations.add(variant_path)
+    try:
+        if failure == "replace":
+            _fail_active_preference(services, monkeypatch)
+        else:
+            read_bytes = services.filesystem.read_bytes
 
-    committed = services.gui_project_commands.commit_create(
-        str(prepared.value["token"]),
-        _context(),
-    )
+            def fail_preference_readback(path):
+                if Path(path) == Path(services.root) / "project-store-v1" / "active.json":
+                    raise OSError("injected active preference readback failure")
+                return read_bytes(path)
 
-    assert committed.diagnostics[0].code == "PROJECT_PROVISIONING_COMMIT_FAILED"
-    assert services.project_lifecycle.active is None
-    assert project_path not in filesystem.files
-    assert variant_path not in filesystem.files
-    assert os.path.join(root, "project-catalog.json") not in filesystem.files
-    assert os.path.join(root, "active-project.json") not in filesystem.files
+            monkeypatch.setattr(services.filesystem, "read_bytes", fail_preference_readback)
 
+        result = services.gui_project_commands.create_project(ProjectProvisioningRequest("工程"), _context())
 
-@pytest.mark.parametrize("fault_document", ["project-catalog.json", "active-project.json"])
-def test_document_publication_fault_compensates_created_records(fault_document: str) -> None:
-    root = os.path.abspath(os.path.join(os.sep, f"transbridge-fr26-{fault_document}"))
-    filesystem = MemoryFilesystem()
-    services = build_persistence_v2_services(
-        root,
-        id_factory=_Ids(),
-        timestamp_factory=lambda: "2026-08-24T00:00:00+08:00",
-        filesystem=filesystem,
-    )
-    prepared = services.gui_project_commands.prepare_create(
-        ProjectProvisioningRequest("补偿工程"),
-        _context(),
-    )
-    assert prepared.value is not None
-    project_ref = ProjectRef(ProjectId(str(prepared.value["project_id"])))
-    variant_ref = VariantRef(VariantId(str(prepared.value["variant_id"])), project_ref.identity)
-    filesystem.fail_replace_destinations.add(os.path.join(root, fault_document))
-
-    committed = services.gui_project_commands.commit_create(
-        str(prepared.value["token"]),
-        _context(),
-    )
-
-    assert committed.diagnostics[0].code == "PROJECT_PROVISIONING_COMMIT_FAILED"
-    assert services.project_lifecycle.active is None
-    assert services.projects.path_for(project_ref) not in filesystem.files
-    assert services.variants.path_for(variant_ref) not in filesystem.files
-    assert os.path.join(root, "project-catalog.json") not in filesystem.files
-    assert os.path.join(root, "active-project.json") not in filesystem.files
+        assert result.is_success
+        assert [item.code for item in result.diagnostics] == ["PROJECT_ACTIVE_PREFERENCE_WRITE_FAILED"]
+        assert "无法确认" in result.diagnostics[0].message
+        project = services.project_lifecycle.active.project_ref
+        assert Path(services.projects.path_for(project)).is_file()
+        restored = services.current_project_opener.prepare_active(_context())
+        assert restored.is_success is (failure == "readback")
+        if restored.is_success:
+            assert restored.value.project_ref == project
+    finally:
+        services.close()
 
 
 class _Io:
@@ -435,24 +400,19 @@ def test_plugin_pair_roundtrip_and_removal_keeps_source_files(tmp_path: Path, re
         id_factory=_Ids(),
         timestamp_factory=lambda: "2026-08-24T00:01:00+08:00",
     )
-    opener = CurrentProjectOpener(
-        str(tmp_path / "data"),
-        restarted.projects,
-        restarted.variants,
-        restarted.baselines,
-        restarted.gui_project_commands,
-    )
+    opener = restarted.current_project_opener
 
     restored = opener.prepare_active(RequestContext("gui", run_id="restore"))
 
     assert restored.is_success and restored.value is not None
     assert len(restored.value.sources) == 2
-    assert len(restored.value.baselines) == 1
-    assert restored.value.baselines[0].fingerprint == baseline.fingerprint
+    assert len(restored.value.records.baselines) == 1
+    assert restored.value.records.baselines[0].fingerprint == baseline.fingerprint
     assert opener.activate(restored.value, RequestContext("gui", run_id="restore")).is_success
 
     target = source if remove_target == "primary" else translated
-    removed = restarted.gui_project_commands.remove_source(str(target), _context())
+    source_id = next(item["source_id"] for item in restored.value.sources if item["display_name"] == target.name)
+    removed = restarted.gui_project_commands.remove_source(source_id, _context())
     assert removed.is_success, removed.diagnostics
     assert restarted.project_lifecycle.active.dirty
     assert restarted.gui_project_commands.save(_context()).is_success
@@ -476,7 +436,7 @@ def test_plugin_pair_roundtrip_and_removal_keeps_source_files(tmp_path: Path, re
         assert final.variant.snapshot().entries == ()
         assert final.variant.snapshot().source_fingerprints == ()
     else:
-        assert [item["location"] for item in final.project.envelope.data["sources"]] == [str(source.resolve())]
+        assert [item["display_name"] for item in final.project.envelope.data["sources"]] == [source.name]
         assert final.variant.snapshot().entries[0].translation == "已有译文"
         assert len(final.variant.snapshot().source_fingerprints) == 1
     assert source.read_bytes() == b"plugin-source"
@@ -500,7 +460,7 @@ def test_source_preparer_rejects_changed_expected_fingerprint(tmp_path: Path) ->
     assert error.value.code == "PROJECT_SOURCE_FINGERPRINT_MISMATCH"
 
 
-def test_folded_plugin_artifact_preserves_final_baseline_and_blank_variant_defaults_after_restart(tmp_path):
+def test_folded_plugin_source_preserves_final_baseline_and_blank_variant_defaults_after_restart(tmp_path):
     source = tmp_path / "source.esp"
     translated = tmp_path / "translated.esp"
     source.write_bytes(b"plugin-source")
@@ -541,7 +501,7 @@ def test_folded_plugin_artifact_preserves_final_baseline_and_blank_variant_defau
     try:
         prepared = restarted.current_project_opener.prepare_active(_context())
         assert prepared.is_success and prepared.value.recovery is None
-        assert prepared.value.baselines == (baseline,)
+        assert prepared.value.records.baselines == (baseline,)
         assert prepared.value.hydrations[0].entries[0].translation == "已有译文"
         assert restarted.current_project_opener.activate(prepared.value, _context()).is_success
         assert restarted.gui_project_commands.create_variant("After restart", _context()).is_success

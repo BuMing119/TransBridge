@@ -3,14 +3,19 @@ from dataclasses import replace
 import pytest
 
 from transbridge.application.contracts import OperationResult, RequestContext
-from transbridge.application.io import FormatId
+from transbridge.application.io import FormatId, SourceDescriptor, SourceSnapshot
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.projects.models import ActiveProject
-from transbridge.application.projects.provisioning import PreparedProjectSource, ProjectSourceRequest
+from transbridge.application.projects.provisioning import (
+    PreparedProjectSource,
+    PreparedSourceHydration,
+    ProjectSourceRequest,
+)
 from transbridge.application.projects.source_commands import (
     ProjectSourceMutationService,
     source_request_with_initial_entry_states,
 )
+from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.persistence.v2 import (
     ProjectDto,
     ProjectId,
@@ -40,6 +45,8 @@ class _Lifecycle:
         expected_project_revision,
         expected_variant_revision,
         before_publish,
+        source_additions=(),
+        source_removals=(),
     ):
         if self.active.project.envelope.revision != expected_project_revision:
             return OperationResult.failed(ValueError("stale project"), run_id=context.run_id)
@@ -61,6 +68,29 @@ class _Preparer:
         assert request.location == self.prepared.to_dict()["location"]
         self.last_request = request
         return self.prepared
+
+
+def _hydrate_fixture(descriptor, baseline):
+    location = descriptor["location"]
+    fingerprint = baseline.fingerprint.sha256
+    snapshot = SourceSnapshot(SourceDescriptor(location), FormatId.PLUGIN_SSE, fingerprint, 0, lease_id="test-input")
+    entries = tuple(
+        TranslationEntry(
+            state.entry_key.local_key,
+            state.entry_key.local_key,
+            "Original",
+            state.translation,
+            state.stage.value,
+            "NPC_:FULL",
+            entry_key=state.entry_key,
+        ).snapshot()
+        for state in baseline.entries
+    )
+    return PreparedProjectSource(
+        tuple(descriptor.items()),
+        baseline,
+        hydration=PreparedSourceHydration(location, fingerprint, FormatId.PLUGIN_SSE, snapshot, entries),
+    )
 
 
 def _setup(*, variant_count: int = 1):
@@ -92,15 +122,15 @@ def _setup(*, variant_count: int = 1):
         SourceFingerprint(namespace, "a" * 64),
         (VariantEntryState(EntryKey(namespace, "entry"), "译文", 1),),
     )
-    prepared = PreparedProjectSource(
-        (
-            ("source_id", namespace.value),
-            ("enabled", True),
-            ("format_id", FormatId.PLUGIN_SSE.value),
-            ("location", "D:/fixtures/plugin.esp"),
-            ("fingerprint", "a" * 64),
-            ("role", "primary"),
-        ),
+    prepared = _hydrate_fixture(
+        {
+            "source_id": namespace.value,
+            "enabled": True,
+            "format_id": FormatId.PLUGIN_SSE.value,
+            "location": "D:/fixtures/plugin.esp",
+            "fingerprint": "a" * 64,
+            "role": "primary",
+        },
         baseline,
     )
     registry = BaselineRegistry()
@@ -129,7 +159,7 @@ def test_add_and_remove_source_update_project_variant_and_baseline_together() ->
     assert len(lifecycle.active.project.envelope.data["sources"]) == 1
     assert len(registry.provide(lifecycle.active.project, variant_ref, context)) == 1
 
-    removed = service.remove_source("D:/fixtures/plugin.esp", context)
+    removed = service.remove_source(added.value.source_id, context)
 
     assert removed.is_success
     assert lifecycle.active.project.envelope.revision == 2
@@ -162,7 +192,7 @@ def test_new_registration_identity_depends_on_content_namespace_instead_of_refer
     original = second._preparer.prepared
     descriptor = original.to_dict()
     descriptor["location"] = "D:/other/reference.esp"
-    second._preparer.prepared = replace(original, descriptor=tuple(descriptor.items()))
+    second._preparer.prepared = _hydrate_fixture(descriptor, original.baseline)
 
     first_result = first.add_source(ProjectSourceRequest("D:/fixtures/plugin.esp", FormatId.PLUGIN_SSE), first_context)
     second_result = second.add_source(
@@ -186,7 +216,7 @@ def test_same_reference_with_new_content_preserves_existing_registration_identit
     baseline = SourceBaseline(
         SourceFingerprint(namespace, "b" * 64), (VariantEntryState(EntryKey(namespace, "other"), "另一译文", 1),)
     )
-    service._preparer.prepared = replace(original, descriptor=tuple(descriptor.items()), baseline=baseline)
+    service._preparer.prepared = _hydrate_fixture(descriptor, baseline)
 
     added = service.add_source(request, context)
 
@@ -195,7 +225,8 @@ def test_same_reference_with_new_content_preserves_existing_registration_identit
     assert len(sources) == 2
     assert sources[0]["source_id"] == "existing-saved-id"
     assert sources[1]["source_id"] == added.value.source_id
-    assert sources[0]["location"] == sources[1]["location"] == request.location
+    assert sources[0]["location"] == sources[1]["location"] == ""
+    assert request.location not in repr(sources)
 
 
 def test_add_source_applies_initial_import_states_in_the_same_authoritative_commit() -> None:
@@ -305,12 +336,13 @@ def test_first_gui_plugin_load_rebinds_legacy_initial_translations_to_verified_n
 def test_multi_variant_source_remove_fails_closed_before_breaking_other_variants() -> None:
     service, lifecycle, registry, project_ref, active_ref, context = _setup(variant_count=2)
     other_ref = VariantRef(VariantId("variant-2"), project_ref.identity)
-    assert service.add_source(ProjectSourceRequest("D:/fixtures/plugin.esp", FormatId.PLUGIN_SSE), context).is_success
+    added = service.add_source(ProjectSourceRequest("D:/fixtures/plugin.esp", FormatId.PLUGIN_SSE), context)
+    assert added.is_success, added.diagnostics
     before_project = lifecycle.active.project
     assert lifecycle.active.variant is not None
     before_variant = lifecycle.active.variant.snapshot()
 
-    removed = service.remove_source("D:/fixtures/plugin.esp", context)
+    removed = service.remove_source(added.value.source_id, context)
 
     assert not removed.is_success
     assert removed.diagnostics[0].code == "PROJECT_SOURCE_MULTI_VARIANT_MIGRATION_REQUIRED"

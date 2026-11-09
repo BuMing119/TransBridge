@@ -12,10 +12,8 @@ from tests.ui.tools.terminology import test_workflow_routes as workflow_tests
 from tests.ui.tools.terminology.test_workflow_routes import _wait
 from transbridge.ui.tools.terminology.asset_snapshot import WorkbenchAssets
 
-
-@pytest.fixture(name="workbench")
-def guidance_workbench(tmp_path, monkeypatch):
-    yield from workflow_tests.workbench.__wrapped__(tmp_path, monkeypatch)
+project_runtime = workflow_tests.project_runtime
+workbench = workflow_tests.workbench
 
 
 def _assets(*, draft=False, version=False, complete="full", freshness="current", review=0, conflicts=0):
@@ -86,7 +84,8 @@ def test_switching_content_explains_what_is_edited_and_when_it_takes_effect(work
     assert terms.content_context.isHidden()
     assert terms.workflow.title.text() == "正在编辑术语"
     assert "发布" in terms.workflow.detail.text()
-    assert harness.repository.effective_version("project-1", "main").ref == published.ref
+    project_id, variant_id = harness.context.project_id, harness.context.variant_id
+    assert harness.repository.effective_version(project_id, variant_id).ref == published.ref
     QTest.mouseClick(terms.effective_button, Qt.MouseButton.LeftButton)
     assert terms.content_context.isHidden()
     window.schemes_view.source_action.trigger()
@@ -118,8 +117,9 @@ def test_version_page_routes_to_the_blocking_step_without_building_or_publishing
         assert window.terms_view.build_details_button.isChecked()
     elif window._workflow.state.next_action == "review":
         assert window.draft_view.filters.search.text() == ""
-    assert harness.repository.active_draft("project-1", "main").ref == original.ref
-    assert harness.repository.effective_version("project-1", "main") is None
+    project_id, variant_id = harness.context.project_id, harness.context.variant_id
+    assert harness.repository.active_draft(project_id, variant_id).ref == original.ref
+    assert harness.repository.effective_version(project_id, variant_id) is None
     assert harness.submit.request is original_request
 
 
@@ -151,8 +151,9 @@ def test_saving_explains_the_publish_blocker_until_the_write_finishes(workbench,
         _wait(lambda: window._draft_writes.pending_count == 0)
     _wait(lambda: window.terms_view.workflow.publish_button.isEnabled())
     assert "正在保存" not in window.terms_view.workflow.title.text()
-    assert harness.repository.active_draft("project-1", "main").decisions[0].translation == "新译名"
-    assert harness.repository.effective_version("project-1", "main") is None
+    project_id, variant_id = harness.context.project_id, harness.context.variant_id
+    assert harness.repository.active_draft(project_id, variant_id).decisions[0].translation == "新译名"
+    assert harness.repository.effective_version(project_id, variant_id) is None
 
 
 @pytest.mark.parametrize("width", [920, 1180])

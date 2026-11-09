@@ -5,6 +5,7 @@ import zipfile
 
 import pytest
 
+from tests.ui.fixtures.project_runtime import write_legacy_project_package, write_project_package
 from transbridge.fileops.archive_policy import ArchiveBudget, ArchiveManifest, ArchiveMember, ArchiveMemberType
 from transbridge.ui.drop_router import (
     DropBudget,
@@ -52,10 +53,9 @@ def test_supported_file_signatures_only_propose_canonical_intents(
 
 
 def test_transbridge_archive_is_safely_inspected_and_only_proposed(tmp_path: Path) -> None:
-    archive_path = tmp_path / "Demo.transbridge"
-    with zipfile.ZipFile(archive_path, "w") as archive:
-        archive.writestr("project.json", "{}")
-        archive.writestr("variants/default.json", "{}")
+    archive_path = write_project_package(tmp_path)
+    before = set(tmp_path.rglob("*"))
+    payload = archive_path.read_bytes()
 
     result = DropRouter().resolve((archive_path,))
 
@@ -63,7 +63,21 @@ def test_transbridge_archive_is_safely_inspected_and_only_proposed(tmp_path: Pat
     assert result.items[0].kind is DropKind.PROJECT_ARCHIVE
     assert result.candidate is not None
     assert result.candidate.intent_id is IntentId.PROJECT_IMPORT
-    assert not (tmp_path / "project.json").exists(), "inspection must not extract the archive"
+    assert result.candidate.payload_mapping()["path"] == str(archive_path.resolve())
+    assert set(tmp_path.rglob("*")) == before
+    assert archive_path.read_bytes() == payload
+
+
+def test_legacy_transbridge_archive_is_rejected_without_extraction_or_rewrite(tmp_path: Path) -> None:
+    archive_path = write_legacy_project_package(tmp_path)
+    payload = archive_path.read_bytes()
+
+    result = DropRouter().resolve((archive_path,))
+
+    assert result.status is DropResolutionStatus.REJECTED and result.candidate is None
+    assert [item.code for item in result.diagnostics] == ["DROP_PROJECT_FORMAT_UNSUPPORTED"]
+    assert set(tmp_path.iterdir()) == {archive_path}
+    assert archive_path.read_bytes() == payload
 
 
 @pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16", "utf-16-be"])

@@ -4,12 +4,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QProxyStyle, QStyle, QStyleFactory
+from PyQt6.QtWidgets import QApplication, QProxyStyle, QStyle, QStyleFactory
 import pytest
 
 from tests.ui.responsive_layout_support import themed_layout_app as themed_layout_app
 from tests.ui.tools.ai_read_projection_support import wait_for
 from transbridge.ui.tools.ai_translator._llm_log_viewer import _LLMLogViewer
+
+_APP = QApplication.instance() or QApplication([])
 
 
 class _MenuPopupStyle(QProxyStyle):

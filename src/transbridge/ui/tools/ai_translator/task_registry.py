@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -11,13 +10,8 @@ from transbridge.ui.windowing import show_and_activate
 
 
 def project_directory(ctx, runtime=None, runtime_context=None):
-    if getattr(ctx, "project_opening", False):
-        return None
-    if runtime is not None and runtime_context is not None and "project_source_updates" in runtime.use_cases.names():
-        context = replace(runtime_context, project_id=ctx.active_project_id, variant_id=None)
-        path = runtime.use_cases.resolve("project_source_updates").active_project_path(context)
-        return Path(path).parent if path else None
-    return None
+    task_store = getattr(ctx, "task_store", None)
+    return None if task_store is None else task_store.root
 
 
 class AiTaskRegistry(QObject):
@@ -71,7 +65,10 @@ class AiTaskRegistry(QObject):
         from .task_recovery_prompt import load_selected_recovery, matches_version
 
         task_id, directory = summary["task_id"], self.directory_provider()
-        worker = ApiWorker(lambda: load_selected_recovery(Path(directory), summary), route_http_errors=False)
+        task_store = getattr(self.ctx, "task_store", None)
+        worker = ApiWorker(
+            lambda: load_selected_recovery(Path(directory), summary, task_store=task_store), route_http_errors=False
+        )
         self._recovery_workers[task_id] = worker
 
         def loaded(record):
@@ -242,11 +239,15 @@ class AiTaskRegistry(QObject):
             if message
         )
         return errors + tuple(
-            writer.error
+            message
             for owner in (*self.windows.values(), *self.history_windows)
             for dialog in getattr(owner, "_dialogs", ())
-            if (writer := getattr(getattr(dialog, "review", None), "evidence_writer", None)) is not None
-            and writer.error
+            if (review := getattr(dialog, "review", None)) is not None
+            and (
+                message := review.error
+                if getattr(review, "confirmation_finish_pending", False)
+                else getattr(getattr(review, "evidence_writer", None), "error", "")
+            )
         )
 
     def resume(self):

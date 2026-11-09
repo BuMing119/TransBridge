@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QFileDialog
 from transbridge.ui.coordinators.guided_project_coordinator import GuidedDraftPhase, GuidedProjectCoordinator
 from transbridge.ui.coordinators.project_creation_operation import ProjectCreationOperation
 from transbridge.ui.shell.action_catalog import IntentId
+from transbridge.ui.workbench.file_source_formats import FILE_FILTER_HINTS, FILE_SOURCE_FILTER
 
 from .project_window_launcher import launch_project_in_new_window
 from .start_center import StartCenterViewState, StartCenterWidget, StartDestinationState
@@ -69,6 +70,10 @@ class StartCenterController:
         view.variant_name_changed.connect(self.guided_project.set_variant_name)
         view.skip_empty_changed.connect(lambda value: self.guided_project.set_parse_option("skip_empty", value))
         view.choose_migration_requested.connect(self._choose_migrations)
+        view.add_sources_requested.connect(self._add_sources)
+        view.source_paths_changed.connect(self.guided_project.set_source_paths)
+        view.source_format_changed.connect(self.guided_project.set_source_format)
+        view.translation_options_changed.connect(lambda options: self.guided_project.set_translation_options(**options))
         view.prepare_requested.connect(self.guided_project.create)
 
     def show_restoring(self) -> None:
@@ -101,7 +106,7 @@ class StartCenterController:
         self._host.central_stack.setCurrentWidget(self._host.mode_tabs)
 
     def choose_source(self) -> None:
-        """Choose the plugin source inside the unified Project creation flow."""
+        """Choose file sources inside the unified Project creation flow."""
 
         self._choose_source()
 
@@ -169,14 +174,30 @@ class StartCenterController:
         )
 
     def _choose_source(self) -> None:
-        paths, _ = QFileDialog.getOpenFileNames(
+        paths, selected_filter = QFileDialog.getOpenFileNames(
             self._host,
-            "选择要翻译的插件（可多选）",
+            "选择来源文件（可多选）",
             "",
-            "Bethesda 插件 (*.esp *.esm *.esl);;所有文件 (*)",
+            FILE_SOURCE_FILTER,
         )
         if paths:
             self._begin_project(tuple(paths))
+            if self.guided_project is not None:
+                self.guided_project.set_source_format(FILE_FILTER_HINTS.get(selected_filter))
+
+    def _add_sources(self) -> None:
+        if self.guided_project is None or self.guided_project.state.in_flight:
+            return
+        paths, selected_filter = QFileDialog.getOpenFileNames(
+            self._host, "添加来源文件（可多选）", "", FILE_SOURCE_FILTER
+        )
+        if paths:
+            had_sources = bool(self.guided_project.state.source_paths)
+            self.guided_project.set_source_paths((*self.guided_project.state.source_paths, *paths))
+            # Appended files may use another format; a picker hint must not relabel
+            # the files already in the draft. Users can explicitly select a common
+            # format from the form after assembling their list.
+            self.guided_project.set_source_format(None if had_sources else FILE_FILTER_HINTS.get(selected_filter))
 
     def _begin_project(self, source_path: str | tuple[str, ...] | None) -> None:
         if self.guided_project is None:
@@ -197,25 +218,33 @@ class StartCenterController:
             self._host.central_stack.setCurrentWidget(self._view)
 
     def _choose_migrations(self) -> None:
-        if self.guided_project is None:
+        if self.guided_project is None or self.guided_project.state.in_flight:
             return
-        paths, _ = QFileDialog.getOpenFileNames(
-            self._host,
-            "选择已有译文",
-            "",
-            "支持的翻译来源 (*.xml *.eet *.json *.sst *.esp *.esm *.esl);;"
-            "ESP-ESM Translator EET (*.eet);;ESP-ESM Translator XML (*.xml);;xTranslator XML (*.xml);;"
-            "xTranslator SST (*.sst);;JSON (*.json);;所有文件 (*)",
-        )
+        state = self.guided_project.state
+        hint = state.translation_format_hint
+        if hint == "strings-directory":
+            path = QFileDialog.getExistingDirectory(self._host, "选择 Strings 目录", state.translation_path or "")
+            paths = (path,) if path else ()
+        else:
+            paths, selected_filter = QFileDialog.getOpenFileNames(
+                self._host, "选择已有译文（可多选）", state.translation_path or "", FILE_SOURCE_FILTER
+            )
+            hint = FILE_FILTER_HINTS.get(selected_filter)
         if paths:
-            self.guided_project.set_migration_sources(tuple(paths))
+            self.guided_project.set_translation_options(
+                enabled=True,
+                paths=tuple(paths),
+                format_hint=hint,
+                replace_existing=state.replace_existing,
+                strings_lang=state.strings_lang,
+            )
 
     def _on_created(self, _value: dict) -> None:
         if self.guided_project is None:
             return
         state = self.guided_project.state
         self.show_workbench()
-        self._host.show_message(f"本地工程“{state.project_name}”已创建")
+        self._host.show_message("\n".join((f"本地工程“{state.project_name}”已创建", *state.completion_notes)))
 
     def _render(
         self,

@@ -9,50 +9,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QKeyEvent
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import (
-    QCheckBox,
-    QFormLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QListWidget,
-    QListWidgetItem,
-    QPushButton,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
-from transbridge.ui.foundation.components import (
-    ComponentDensity,
-    ComponentKind,
-    ComponentStyle,
-    ElidedLabel,
-    SemanticState,
-    WrappingLabel,
-    make_primary_button,
-)
-from transbridge.ui.foundation.tabler_icons import tabler_icon
+from transbridge.ui.foundation.accessibility import configure_accessible_widget
 
 from .start_center_landing import StartCenterLanding
-
-
-def _configure_heading(label: QLabel, *, point_size: float, accessible_name: str) -> QLabel:
-    """Use scalable Qt font metrics while leaving all colour roles to QPalette."""
-
-    font = QFont(label.font())
-    font.setPointSizeF(point_size)
-    font.setWeight(QFont.Weight.DemiBold)
-    label.setFont(font)
-    ComponentStyle.apply_static(label, ComponentKind.LABEL)
-    configure_accessible_widget(label, name=accessible_name)
-    return label
 
 
 class StartDestinationState(StrEnum):
@@ -129,6 +97,10 @@ class StartCenterWidget(QWidget):
     variant_name_changed = pyqtSignal(str)
     skip_empty_changed = pyqtSignal(bool)
     choose_migration_requested = pyqtSignal()
+    add_sources_requested = pyqtSignal()
+    source_paths_changed = pyqtSignal(object)
+    source_format_changed = pyqtSignal(object)
+    translation_options_changed = pyqtSignal(object)
     prepare_requested = pyqtSignal()
     commit_requested = pyqtSignal()
     return_to_landing_requested = pyqtSignal()
@@ -191,92 +163,31 @@ class StartCenterWidget(QWidget):
         self._landing_page.set_project_opening(message)
 
     def _build_draft_page(self) -> QWidget:
-        page = QWidget(self)
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(32, 24, 32, 32)
-        layout.setSpacing(20)
+        from .project_creation_form import ProjectCreationForm
 
-        header = QHBoxLayout()
-        header.setSpacing(12)
-        self._draft_back = QPushButton(page)
-        self._draft_back.setObjectName("startCenterDraftBack")
-        self._draft_back.setIcon(tabler_icon(self._draft_back, "arrow-left", 20))
-        self._draft_back.setIconSize(QSize(20, 20))
-        self._draft_back.setFixedSize(40, 40)
-        self._draft_back.setFlat(True)
-        self._draft_back.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._draft_back.setToolTip("返回开始")
-        ComponentStyle.apply_static(self._draft_back, ComponentKind.BUTTON, ComponentDensity.COMPACT)
-        configure_accessible_widget(self._draft_back, name="返回开始中心", description="返回开始页面")
-        self._draft_back.clicked.connect(self.return_to_landing_requested)
-        header.addWidget(self._draft_back)
-        title = QLabel("创建本地翻译工程", page)
-        _configure_heading(title, point_size=16.0, accessible_name="创建本地翻译工程")
-        header.addWidget(title)
-        header.addStretch(1)
-        layout.addLayout(header)
-        form = QFormLayout()
-        self._source_label = WrappingLabel(parent=page)
-        self._source_list = QListWidget(page)
-        self._source_list.setAccessibleName("已选择的插件")
-        self._source_list.setMaximumHeight(144)
-        self._source_list.hide()
-        source_row = QVBoxLayout()
-        source_row.addWidget(self._source_label)
-        source_row.addWidget(self._source_list)
-        self._name_edit = QLineEdit(page)
-        self._name_edit.setAccessibleName("本地翻译工程名称")
-        ComponentStyle.apply_static(self._name_edit, ComponentKind.INPUT)
-        self._name_edit.textEdited.connect(self.project_name_changed)
-        self._name_edit.returnPressed.connect(self._activate_draft_primary)
-        self._variant_edit = QLineEdit(page)
-        self._variant_edit.setAccessibleName("默认翻译版本名称")
-        ComponentStyle.apply_static(self._variant_edit, ComponentKind.INPUT)
-        self._variant_edit.textEdited.connect(self.variant_name_changed)
-        self._variant_edit.returnPressed.connect(self._activate_draft_primary)
-        self._migration_label = ElidedLabel("不导入", page)
-        self._migration_label.setTextFormat(Qt.TextFormat.PlainText)
-        self._migration_label.setAccessibleName("已有译文来源")
-        self._migration_button = QPushButton("选择已有译文", page)
-        self._migration_button.setAccessibleName("选择已有译文来源")
-        self._migration_button.clicked.connect(self.choose_migration_requested)
-        migration_row = QHBoxLayout()
-        migration_row.addWidget(self._migration_label, 1)
-        migration_row.addWidget(self._migration_button)
-        form.addRow("插件", source_row)
-        form.addRow("工程名称", self._name_edit)
-        form.addRow("默认翻译版本", self._variant_edit)
-        form.addRow("已有译文", migration_row)
-        layout.addLayout(form)
-
-        advanced = QGroupBox("高级解析设置", page)
-        advanced.setCheckable(True)
-        advanced.setChecked(False)
-        advanced_layout = QVBoxLayout(advanced)
-        self._skip_empty = QCheckBox("忽略空源文本", advanced)
-        self._skip_empty.setAccessibleName("忽略空的源文本")
-        self._skip_empty.toggled.connect(self.skip_empty_changed)
-        advanced_layout.addWidget(self._skip_empty)
-        layout.addWidget(advanced)
-
-        self._draft_summary = WrappingLabel(parent=page)
-        self._draft_summary.setAccessibleName("工程创建方案摘要")
-        ComponentStyle.apply_static(self._draft_summary, ComponentKind.NOTIFICATION)
-        layout.addWidget(self._draft_summary)
-        self._draft_error = WrappingLabel(parent=page)
-        self._draft_error.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._draft_error.setAccessibleName("工程创建错误")
-        ComponentStyle.apply_static(self._draft_error, ComponentKind.NOTIFICATION)
-        layout.addWidget(self._draft_error)
-
-        actions = QHBoxLayout()
-        self._draft_primary = make_primary_button("", page)
-        self._draft_primary.setAccessibleName("确定创建本地翻译工程并开始翻译")
-        self._draft_primary.clicked.connect(self._emit_draft_primary)
-        actions.addStretch(1)
-        actions.addWidget(self._draft_primary)
-        layout.addLayout(actions)
-        layout.addStretch(1)
+        page = ProjectCreationForm(self)
+        page.back_requested.connect(self.return_to_landing_requested)
+        page.add_sources_requested.connect(self.add_sources_requested)
+        page.sources_changed.connect(self.source_paths_changed)
+        page.source_format_changed.connect(self.source_format_changed)
+        page.project_name_changed.connect(self.project_name_changed)
+        page.variant_name_changed.connect(self.variant_name_changed)
+        page.skip_empty_changed.connect(self.skip_empty_changed)
+        page.choose_translation_requested.connect(self.choose_migration_requested)
+        page.translation_options_changed.connect(self.translation_options_changed)
+        page.create_requested.connect(self.prepare_requested)
+        # Existing focused contracts and keyboard navigation keep these names.
+        self._draft_back = page.back
+        self._source_label = page.source_label
+        self._source_list = page.source_list
+        self._name_edit = page.name_edit
+        self._variant_edit = page.variant_edit
+        self._migration_label = page.translation_path
+        self._migration_button = page.translation_browse
+        self._skip_empty = page.skip_empty
+        self._draft_summary = page.summary
+        self._draft_error = page.error
+        self._draft_primary = page.primary
         return page
 
     def render(self, state: StartCenterViewState) -> None:
@@ -295,43 +206,8 @@ class StartCenterWidget(QWidget):
         previous_diagnostic = self._draft_error.text()
         self._draft_revision = state.revision
         self._pages.setCurrentWidget(self._draft_page)
-        paths = state.source_paths
-        multiple = len(paths) > 1
-        self._source_label.setText(
-            f"已选择 {len(paths)} 个插件" if multiple else (state.source_path or "无源文件（空工程）")
-        )
-        if paths != getattr(self, "_displayed_source_paths", ()):
-            self._source_list.clear()
-            for path in paths:
-                item = QListWidgetItem(Path(path).name, self._source_list)
-                item.setToolTip(path)
-                item.setData(Qt.ItemDataRole.AccessibleTextRole, path)
-            self._displayed_source_paths = paths
-        self._source_list.setVisible(multiple)
-        if self._name_edit.text() != state.project_name:
-            self._name_edit.setText(state.project_name)
-        if self._variant_edit.text() != state.default_variant_name:
-            self._variant_edit.setText(state.default_variant_name)
-        migrations = tuple(state.migration_sources)
-        self._migration_label.set_full_text("、".join(migrations) if migrations else "不导入")
-        self._migration_label.setToolTip("\n".join(migrations))
-        options = dict(state.parse_options)
-        self._skip_empty.setChecked(bool(options.get("skip_empty", False)))
-        self._draft_summary.setText(state.summary)
-        diagnostic = ""
-        if state.diagnostic_code:
-            diagnostic = f"{state.diagnostic_code}: {state.diagnostic_message}"
-        self._draft_error.setText(diagnostic)
-        update_accessible_state(self._draft_error, diagnostic or "当前没有工程创建错误")
-        ComponentStyle.apply_state(
-            self._draft_error,
-            SemanticState.ERROR if diagnostic else SemanticState.DEFAULT,
-        )
-        self._draft_primary.setText("确定")
-        ComponentStyle.apply_state(self._draft_primary, SemanticState.PRIMARY)
-        self._draft_primary.setEnabled(state.can_submit and not state.in_flight)
-        self._name_edit.setEnabled(not state.in_flight)
-        self._variant_edit.setEnabled(not state.in_flight)
+        self._draft_page.render(state)
+        diagnostic = self._draft_error.text()
         # Ordinary draft updates must preserve the user's editing focus.
         if diagnostic and (entering_draft or diagnostic != previous_diagnostic):
             self._draft_error.setFocus(Qt.FocusReason.OtherFocusReason)
@@ -350,7 +226,8 @@ class StartCenterWidget(QWidget):
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt override
         if event.key() == Qt.Key.Key_Escape and self._pages.currentWidget() is self._draft_page:
-            self.return_to_landing_requested.emit()
+            if self._draft_back.isEnabled():
+                self.return_to_landing_requested.emit()
             event.accept()
             return
         super().keyPressEvent(event)

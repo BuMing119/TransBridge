@@ -17,7 +17,7 @@ from transbridge.application.contracts import (
 )
 
 from .contracts import FormatId, SourceDescriptor, WriteRequest
-from .dsd_projection import restore_plugin_dsd_locators
+from .dsd_projection import restore_extracted_dsd_locator, restore_plugin_dsd_locators
 from .operation_write import HydratedWriteDraft, WritePreflightCheck, _operation_result, _translation_entries
 from .paratranz import ParatranzJsonAdapter
 from .publish import ConflictPolicy, FileFingerprint, OsPublishFilesystem, PublishCoordinator, PublishTarget
@@ -123,9 +123,10 @@ def _dsd_payload(source, entries):
 
         content = source.source_snapshot.content
         if content is None:
-            raise ValueError("DSD 来源缺少完整快照，请重新导入。")
-        parsed = parse_json_source(source.source_snapshot.source.uri, {"format": "dsd"}, content=content)
-        known = {(entry.key, entry.original): entry for entry in parsed.collection}
+            entries = tuple(restore_extracted_dsd_locator(entry) for entry in entries)
+        else:
+            parsed = parse_json_source(source.source_snapshot.source.uri, {"format": "dsd"}, content=content)
+            known = {(entry.key, entry.original): entry for entry in parsed.collection}
     result = []
     for entry in entries:
         if not entry.translation or entry.stage == -1:

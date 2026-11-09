@@ -20,7 +20,7 @@ from transbridge.application.contracts import (
 )
 from transbridge.application.io import FormatId, ParseRequest, SourceDescriptor, TranslationIoUseCase
 from transbridge.application.tasks import JobSpec, OwnerRef, TaskCenterAction, TaskCenterActionError
-from transbridge.application.translation.task_history import TaskHistoryStore
+from transbridge.application.tasks.history_service import TaskHistoryService
 from transbridge.bootstrap.composition import build_runtime
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui import context as context_module
@@ -60,7 +60,11 @@ def desktop(tmp_path, monkeypatch, qapp):
             FormatId.XML_EET,
         )
     )
-    context = context_module.AppContext()
+    task_store = runtime.use_cases.resolve("task_store")
+    context = context_module.AppContext(
+        project_commands=runtime.use_cases.resolve("gui_project_commands"),
+        task_store=task_store,
+    )
     context.add_slot(
         str(source),
         context_module.CollectionSlot(
@@ -87,6 +91,7 @@ def desktop(tmp_path, monkeypatch, qapp):
         "project_management_coordinator",
         "source_update_coordinator",
         "start_center_controller",
+        "update_controller",
         "operation_coordinator",
         "show_message",
         "show_about",
@@ -108,7 +113,7 @@ def desktop(tmp_path, monkeypatch, qapp):
         identity=identity,
         results=results,
         facade=facade,
-        directory=tmp_path / "project",
+        reports=task_store.history(owner_id="gui-owner", entrypoint="gui.operation-plan"),
         output=tmp_path / "retry.xml",
     )
     composition.close()
@@ -264,7 +269,7 @@ def test_shell_close_unregisters_production_navigation(desktop):
 
 def test_ai_result_selects_requested_persisted_record_and_recovery_opens_real_history(desktop):
     ref, _item = _record(desktop, kind="ai-polish")
-    store = TaskHistoryStore(desktop.directory / "ai-task-history")
+    store = desktop.reports
     store.save({"run_id": "newer-unrelated", "created_at": "2026-10-13T00:00:00Z", "state": "completed", "sources": []})
     store.save({"run_id": ref.run_id, "created_at": "2026-10-12T00:00:00Z", "state": "failed", "sources": []})
     panel = _panel(desktop, ref.run_id)
@@ -286,13 +291,15 @@ def test_ai_result_selects_requested_persisted_record_and_recovery_opens_real_hi
     assert registry.history_windows[-1].tasks.topLevelItemCount() == 2
 
 
-def test_ai_result_payload_lost_after_metadata_save_shows_actionable_error(desktop):
+def test_ai_result_read_failure_shows_actionable_error(desktop, monkeypatch):
     ref, _item = _record(desktop, kind="ai-polish")
-    store = TaskHistoryStore(desktop.directory / "ai-task-history")
-    payload = store.save({"run_id": ref.run_id, "created_at": "2026-10-12T00:00:00Z", "state": "failed", "sources": []})
-    # Remove only the test-created payload; its retained metadata reproduces
-    # an interrupted or externally removed feature history artifact.
-    payload.unlink()
+    desktop.reports.save({"run_id": ref.run_id, "created_at": "2026-10-12T00:00:00Z", "state": "failed", "sources": []})
+
+    def fail_load(_history, run_id):
+        assert run_id == ref.run_id
+        raise OSError("result storage unavailable")
+
+    monkeypatch.setattr(TaskHistoryService, "load", fail_load)
     panel = _panel(desktop, ref.run_id)
     panel._open_result.click()
     dialog = desktop.host.workbench.ai_tasks.history_windows[-1]

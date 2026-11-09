@@ -499,17 +499,19 @@ def test_saved_result_query_ignores_missing_selection_but_keeps_authorization(se
 
     from transbridge.converter.translation_entry import TranslationEntry
     from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-    from transbridge.smart_assistant.tools.entry_task_results import EntryResultStore
+    from transbridge.persistence.task_store import TaskStore
     from transbridge.smart_assistant.tools.tool_translator import _register_translator_tools
 
     service, context, gate, ctx, _ = setup
     collection = TranslationEntryCollection([TranslationEntry("a", "a", "Original", "Before", 1, "")])
     identity = ("project", "variant")
+    tasks = TaskStore(tmp_path / "task-store-v1")
     app = SimpleNamespace(
         collection=collection,
         active_key="original-source",
         active_version_identity=identity,
-        project_commands=SimpleNamespace(task_result_directory=lambda _: tmp_path / "results"),
+        project_commands=SimpleNamespace(project_exists=lambda _project_id: True, result_receipt=lambda *_args: None),
+        task_store=tasks,
     )
     ctx.app_context = app
     ctx.__post_init__()
@@ -518,10 +520,9 @@ def test_saved_result_query_ignores_missing_selection_but_keeps_authorization(se
         state["ingress"][0]["selection"] = {"active_version_identity": list(identity), "selected_entry_ids": ["a"]}
 
     service.transact(context, select_entries)
-    store = EntryResultStore(tmp_path / "results" / "ai-task-recovery")
-    result_id = uuid4().hex
-    store.create({
-        "task_id": result_id,
+    store = tasks.recovery()
+    result_ids = [uuid4().hex for _ in range(3)]
+    task_record = {
         "origin": "smart-assistant",
         "owner_id": context.owner_id,
         "session_id": context.session_id,
@@ -534,8 +535,19 @@ def test_saved_result_query_ignores_missing_selection_but_keeps_authorization(se
         "state": "completed",
         "created_at": "2026-10-26T00:00:00+00:00",
         "sources": [],
-        "candidate_rows": [{"text": "Saved result"}],
-    })
+        "candidate_rows": [
+            {
+                "entry_key": next(iter(collection)).identity.to_dict(),
+                "before": {"original": "Original", "translation": "Before", "stage": 1, "context": ""},
+                "text": "Saved result",
+                "stage": 1,
+                "decision": "pending",
+            }
+        ],
+    }
+    store.create({**task_record, "task_id": result_ids[0]})
+    store.create({**task_record, "task_id": result_ids[1], "owner_id": "another-owner"})
+    store.create({**task_record, "task_id": result_ids[2], "session_id": "another-session"})
     if change == "switch_source":
         app.collection = TranslationEntryCollection()
         app.active_key = "other-source"
@@ -545,15 +557,15 @@ def test_saved_result_query_ignores_missing_selection_but_keeps_authorization(se
     if ToolRegistry.get("get_task_result") is None:
         _register_translator_tools()
     read = ToolRegistry.get("get_task_result")
-    args = {"result_id": result_id}
 
-    def query():
+    def query(result_id):
+        args = {"result_id": result_id}
         if prepared:
             gate.prepare_steps([{"tool": read.name, "args": args}])
         return execute_with_guardrails(read, args, ctx, middlewares=[])
 
-    result = query()
-    assert result.success and result.data["results"] == [{"text": "Saved result"}]
+    result = query(result_ids[0])
+    assert result.success and [row["text"] for row in result.data["results"]] == ["Saved result"]
     for spec in (
         ToolSpec("request_test_read", "read", "read", {}, execute=lambda *_: pytest.fail("selection read ran")),
         register(lambda *_: pytest.fail("write ran")),
@@ -563,12 +575,10 @@ def test_saved_result_query_ignores_missing_selection_but_keeps_authorization(se
         if prepared:
             gate.prepare_steps([{"tool": spec.name, "args": {}}])
         assert execute_with_guardrails(spec, {}, ctx, middlewares=[]).error_code == "REQUEST_SCOPE_MISMATCH"
-    store.update(result_id, owner_id="another-owner")
-    assert query().error_code == "TASK_RESULT_UNAVAILABLE"
-    store.update(result_id, owner_id=context.owner_id, session_id="another-session")
-    assert query().error_code == "TASK_RESULT_UNAVAILABLE"
+    assert query(result_ids[1]).error_code == "TASK_RESULT_UNAVAILABLE"
+    assert query(result_ids[2]).error_code == "TASK_RESULT_UNAVAILABLE"
     service.scheduler.release(gate.admission)
-    assert query().error_code == "TURN_LEASE_STALE"
+    assert query(result_ids[0]).error_code == "TURN_LEASE_STALE"
 
 
 def test_tool_request_scope_contract_cannot_exempt_modifying_tools():

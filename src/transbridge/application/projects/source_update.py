@@ -11,9 +11,8 @@ from threading import RLock
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef
 from transbridge.persistence.v2.models import ProjectDto
-from transbridge.persistence.v2.schema import parse_json_bytes
 
-from .provisioning import ProjectSourceRequest
+from .provisioning import ProjectSourceRequest, translation_registry
 from .source_content import authoritative_baseline_sources, folded_plugin_pairs, source_content_identity
 from .source_input_publication import PreparedSourcePublication, publish_source_input
 from .source_registry import SourceRegistrySnapshot, migrate_legacy_source_registry
@@ -93,7 +92,8 @@ class ProjectSourceUpdateService:
                 matches = [item for item in variant.source_fingerprints if item.namespace == namespace]
                 if len(matches) != 1 or matches[0].sha256 != source.fingerprint:
                     raise ValueError("工程内翻译版本的来源不一致，无法统一更新。")
-            old, warnings = self._previous(source, context)
+            old = self._store.previous(ref, source)
+            warnings = ()
             keys = {
                 (item.entry_key.local_key, item.entry_key.original)
                 for variant in expected.variants
@@ -102,7 +102,7 @@ class ProjectSourceUpdateService:
             }
             changes = compare_source(keys, old, prepared)
             variants = tuple(migrate_variant(item, namespace, prepared, changes) for item in expected.variants)
-            project = _updated_project(expected.project, registry, source, prepared)
+            project = _updated_project(expected.project, registry, source, old, prepared)
             token = secrets.token_hex(24)
             preview = SourceUpdatePreview(
                 token,
@@ -167,11 +167,7 @@ class ProjectSourceUpdateService:
                 del self._pending[token]
 
     def _resolve(self, path, context):
-        selected = Path(path).resolve(strict=True)
-        document = parse_json_bytes(selected.read_bytes())
-        ref = ProjectRef(ProjectId(str(document["id"])))
-        if selected != Path(self._projects.path_for(ref)).resolve():
-            raise ValueError("只能更新当前数据目录中登记的工程。")
+        ref = self._store.resolve(path)
         self._check_context(ref, context)
         return ref
 
@@ -179,17 +175,6 @@ class ProjectSourceUpdateService:
     def _check_context(ref, context):
         if context.project_id is not None and context.project_id != ref.identity.value:
             raise DomainError(ErrorCategory.PERMISSION, "PROJECT_CONTEXT_MISMATCH", "更新目标与请求工程不一致。")
-
-    def _previous(self, source, context):
-        load_saved = getattr(self._preparer, "load_saved_source", None)
-        if source.source_artifact_id is not None and load_saved is not None:
-            try:
-                return load_saved(source.to_dict()), ()
-            except DomainError as exc:
-                if exc.category is not ErrorCategory.PREREQUISITE:
-                    raise
-                return None, ("旧来源成果不可用，已有译文将保留并标为待复核。",)
-        return None, ("旧来源成果未保存，无法核实原文和旧顺序；匹配的已有译文将保留并标为待复核。",)
 
 
 def _registry(project):
@@ -200,12 +185,14 @@ def _registry(project):
         return migrate_legacy_source_registry(project.envelope.identity, data.get("sources", ()))
 
 
-def _updated_project(project, registry, source, prepared):
+def _updated_project(project, registry, source, previous, prepared):
     registration = migrate_legacy_source_registry(project.envelope.identity, (prepared.to_dict(),)).sources[0]
+    old_name = previous.hydration.source_snapshot.source.display_name if previous.hydration is not None else None
+    custom_name = source.display_name if source.display_name != old_name else None
     updated = replace(
         registration,
         source_id=source.source_id,
-        display_name=source.display_name,
+        display_name=custom_name or registration.display_name,
         enabled=source.enabled,
         plugin_scope=source.plugin_scope,
     )
@@ -226,5 +213,7 @@ def _updated_project(project, registry, source, prepared):
         replace(item, folded_into_baseline=True) if item.from_source_id in folded_ids else item
         for item in registry.relations
     )
-    data.update(SourceRegistrySnapshot(tuple(sources), relations, registry.diagnostics).to_project_data())
+    data.update(
+        translation_registry(SourceRegistrySnapshot(tuple(sources), relations, registry.diagnostics)).to_project_data()
+    )
     return ProjectDto(replace(project.envelope, revision=project.envelope.revision + 1, data=data))

@@ -17,7 +17,7 @@ class TaskCompletion(QObject):
         self._timer.stop()
         self.pending = None
 
-    def applied(self, selected, *, prepared=False):
+    def applied(self, selected, *, prepared=False, target_inactive=False):
         run = self.run
         run.applying = False
         if selected:
@@ -29,22 +29,25 @@ class TaskCompletion(QObject):
         if run.cancelled or run.shutting_down:
             run._finish_cancelled()
             return
-        if run.entries.failed_keys:
+        failed = bool(run.entries.failed_keys)
+        if failed and not target_inactive:
             run.state, run.status = "partial", "处理结束 · 有失败条目"
         else:
             run.session.finish()
             pending = sum(row.merge_status == "pending" for row in run.entries.entries.values())
-            run.state, run.status = "completed", f"处理结束 · {pending} 条待合入" if pending else "处理结束"
+            run.state = "partial" if failed else "completed"
+            run.status = f"处理结束 · {pending} 条待合入" if pending else "处理结束"
             run.activity.finish(cancelled=False)
             run.runtime_binding.synchronize()
             if run.worker is None:
                 run._close_client()
+        if target_inactive:
+            run.status = "处理结束 · 成果已保留，等待原项目版本"
+        if run.session.can_save and not target_inactive:
+            run.save_status = "成果已应用，等待项目保存"
         run._record()
         run.changed.emit()
-        if run.session.can_save:
-            self.save()
-        else:
-            self.notify()
+        self.notify()
 
     def save(self):
         run = self.run
@@ -108,9 +111,11 @@ class TaskCompletion(QObject):
         summary = run.entries.index.summary
         saved = bool(getattr(run.session, "project_saved", False))
         if error:
-            title = "项目已保存，但快照创建失败" if saved else "项目保存失败"
+            title = "项目已保存，请检查任务成果" if saved else "项目保存失败"
         elif saved:
             title = "处理结束，成功结果已保存" if summary.failed or summary.unapplied else "任务已完成，项目已保存"
+        elif summary.applied:
+            title = "成果已应用，等待项目保存"
         else:
             title = "处理结束，没有应用新结果"
         review = run.entries.index.applied_review

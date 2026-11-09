@@ -98,8 +98,13 @@ class TaskResultDialog(QDialog):
         layout = QVBoxLayout(self)
         applied = "已应用到项目" if record.get("applied") else "未应用到项目"
         saved = "项目已保存" if record.get("project_saved", record.get("saved")) else "项目未保存"
+        if record.get("target_unavailable"):
+            saved = "原项目已删除"
         version = record.get("version_label") or record.get("variant_id", "")
-        self.project_status = QLabel(f"{applied} · {saved}")
+        label = record.get("application_label") or f"{applied} · {saved}"
+        if record.get("target_unavailable") and saved not in label:
+            label = f"{label} · {saved}"
+        self.project_status = QLabel(label)
         self.project_status.setWordWrap(True)
         configure_task_title(self.project_status, "section")
         layout.addWidget(self.project_status)

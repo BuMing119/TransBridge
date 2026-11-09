@@ -3,10 +3,10 @@
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
-from unittest.mock import patch
 
 from tests.conftest import MockAppContext
 from tests.smart_assistant.current_project_support import bind_current_project
+from transbridge.persistence.task_store import TaskStore
 
 
 def project_context(case, collection=None):
@@ -21,7 +21,7 @@ def project_context(case, collection=None):
     )
     directory = tempfile.TemporaryDirectory()
     case.addCleanup(directory.cleanup)
-    location = patch.object(context.project_commands, "task_result_directory", return_value=Path(directory.name))
-    location.start()
-    case.addCleanup(location.stop)
+    context.task_store = TaskStore(Path(directory.name) / "task-store-v1")
+    context.project_commands.project_exists = lambda project_id: project_id == case.project.project_ref.identity.value
+    context.project_commands.result_receipt = lambda _project_id, _operation_id: None
     return context

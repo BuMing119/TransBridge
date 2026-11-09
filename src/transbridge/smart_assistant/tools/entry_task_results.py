@@ -6,12 +6,13 @@ from datetime import UTC, datetime
 from threading import RLock
 from uuid import uuid4
 
+from transbridge.application.projects.source_content import translation_source_fingerprint
 from transbridge.application.translation.result_merge import ResultConflictPolicy, source_locator_signature
 from transbridge.application.translation.task_recovery import TaskRecoveryStore
 from transbridge.config.task_results import TaskResultPreferences
 
 from .base import ToolResult
-from .translation_task_results import _LOCATIONS, _RUN_LOCK, _authorized, task_ports
+from .translation_task_results import _authorized, _recovery_view, task_ports
 
 _PENDING = {}
 _LOCK = RLock()
@@ -31,7 +32,7 @@ class EntryTaskResults:
     def __init__(self, ctx, collection, *, kind, policy_section="ai_policy", inputs=None):
         self.ctx = ctx
         self.app, self.commands, self.context, self.identity, root = task_ports(ctx)
-        self.store = EntryResultStore(root)
+        self.store = _recovery_view(root, self.context)
         self.result_id = uuid4().hex
         self.base = {entry.identity: deepcopy(entry) for entry in collection or ()}
         provider = getattr(self.app, "task_result_preferences_provider", None) or TaskResultPreferences
@@ -55,18 +56,16 @@ class EntryTaskResults:
             "sources": [],
             "conflict_policy": self.policy.value,
             "fixed_inputs": inputs or {},
-            "baseline_entries": [entry.to_dict() for entry in self.base.values()],
             "source_key": self.source,
             "source_fingerprint": getattr(ctx, "_target_source_fingerprint", None)
-            or getattr(getattr(getattr(self.app, "active_slot", None), "source_snapshot", None), "sha256", ""),
+            or translation_source_fingerprint(getattr(getattr(self.app, "active_slot", None), "source_snapshot", None)),
             "candidate_rows": [],
             "entries": [],
             "unmapped": [],
         }
         self.prepared = False
         self.persistence_error = ""
-        with _RUN_LOCK:
-            _LOCATIONS[self.result_id] = (root, self.context.owner_id, self.context.session_id)
+        self.prepared_source = None
         with _LOCK:
             _PENDING[self.result_id] = self
 

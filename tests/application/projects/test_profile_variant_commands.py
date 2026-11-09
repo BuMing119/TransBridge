@@ -1,6 +1,8 @@
 """Real project saves keep naming-scheme text and SQLite associations together."""
 
-from dataclasses import replace
+from contextlib import closing
+from dataclasses import asdict, replace
+import json
 from pathlib import Path
 
 import pytest
@@ -13,12 +15,33 @@ from transbridge.application.projects import ProjectProvisioningRequest, Project
 from transbridge.application.terminology_profiles import (
     ProfileTermMapping,
     TerminologyProfileContent,
+    TerminologyProfileSelection,
     TerminologyProfileService,
 )
-from transbridge.persistence.v2.terminology_selection_participant import TerminologySelectionParticipant
+from transbridge.persistence.project_store.connection import project_connection
+from transbridge.persistence.terminology.project_selection import ProjectTerminologySelection
+from transbridge.persistence.terminology.repository import SqliteTerminologyRepository
 from transbridge.persistence.v2.variant import VariantSnapshot
 
 service_factory = service_factory_fixture
+
+
+def _profiles(services, project_id):
+    return closing(SqliteTerminologyRepository.open(services.root, project_id))
+
+
+def _select_fixture_revision(services, revision):
+    active = services.project_lifecycle.active
+    ref = active.formal_variant_ref
+    selection = TerminologyProfileSelection(
+        ref.project_id.value, ref.identity.value, revision.profile_id, revision.revision, "2026-10-07T12:00:00+08:00"
+    )
+    with project_connection(Path(services.projects.path_for(active.project_ref)), write=True) as connection:
+        changed = connection.execute(
+            "UPDATE variant SET terminology_selection = ? WHERE identity = ?",
+            (json.dumps(asdict(selection)), ref.identity.value),
+        )
+        assert changed.rowcount == 1
 
 
 @pytest.fixture
@@ -49,10 +72,10 @@ def scheme_project(service_factory, tmp_path):
     # baseline before tests compare byte-for-byte transaction preimages.
     services = _open_current(service_factory, context)
     active = services.project_lifecycle.active
-    participant = TerminologySelectionParticipant(tmp_path)
+    participant = ProjectTerminologySelection(tmp_path)
     project_id = active.project_ref.identity.value
-    with participant.repository(project_id) as repository:
-        profiles = TerminologyProfileService(repository)
+    with _profiles(services, project_id) as repository:
+        profiles = TerminologyProfileService(repository.localization_profiles)
         revisions = []
         for name, mappings in (
             ("A", (ProfileTermMapping("Whiterun", "雪漫"), ProfileTermMapping("Dragonborn", "龙裔"))),
@@ -60,7 +83,7 @@ def scheme_project(service_factory, tmp_path):
         ):
             profile = profiles.create_with_content(project_id, name, TerminologyProfileContent(mappings=mappings))
             revisions.append(profiles.publish(profile.profile_id, expected_draft_revision=0))
-        profiles.select(project_id, active.formal_variant_ref.identity.value, revisions[0].profile_id)
+    _select_fixture_revision(services, revisions[0])
     return services, context, participant, tuple(revisions), tuple(keys[original] for original in originals)
 
 
@@ -82,8 +105,7 @@ def _translations(services, ref=None):
 def test_new_variant_saves_full_partial_conversion_and_exact_association_without_changing_source(scheme_project):
     services, context, participant, (source, target), keys = scheme_project
     original = services.project_lifecycle.active
-    source_path = Path(services.variants.path_for(original.formal_variant_ref))
-    before = source_path.read_bytes()
+    before = services.variants.read_snapshot(original.formal_variant_ref)
     selection = participant.selection(original.project_ref.identity.value, original.formal_variant_ref.identity.value)
     source_states = {entry.entry_key: entry for entry in original.variant.snapshot().entries}
 
@@ -102,7 +124,7 @@ def test_new_variant_saves_full_partial_conversion_and_exact_association_without
         assert target_states[key] == source_states[key]
     assert target_states[keys[0]].revision == source_states[keys[0]].revision.next()
     assert target_states[keys[0]].stage == source_states[keys[0]].stage
-    assert source_path.read_bytes() == before
+    assert services.variants.read_snapshot(original.formal_variant_ref) == before
     assert (
         participant.selection(original.project_ref.identity.value, original.formal_variant_ref.identity.value)
         == selection
@@ -206,8 +228,8 @@ def test_publishing_new_revision_keeps_frozen_save_and_existing_target_pinned(sc
     original = services.project_lifecycle.active
     assert _save(scheme_project).is_success
     b_ref = services.project_lifecycle.active.formal_variant_ref
-    with participant.repository(original.project_ref.identity.value) as repository:
-        profiles = TerminologyProfileService(repository)
+    with _profiles(services, original.project_ref.identity.value) as repository:
+        profiles = TerminologyProfileService(repository.localization_profiles)
         draft = profiles.save_draft(
             target.profile_id,
             TerminologyProfileContent(mappings=(ProfileTermMapping("Whiterun", "白漫城"),)),
@@ -229,12 +251,9 @@ def test_publishing_new_revision_keeps_frozen_save_and_existing_target_pinned(sc
 
 
 def test_changed_actual_source_association_refuses_stale_preview(scheme_project):
-    services, _context, participant, (_source, target), _keys = scheme_project
+    services, _context, _participant, (_source, target), _keys = scheme_project
     active = services.project_lifecycle.active
-    with participant.repository(active.project_ref.identity.value) as repository:
-        TerminologyProfileService(repository).select(
-            active.project_ref.identity.value, active.formal_variant_ref.identity.value, target.profile_id
-        )
+    _select_fixture_revision(services, target)
     result = _save(scheme_project)
     assert not result.is_success
     assert result.diagnostics[0].code == "SOURCE_PROFILE_CHANGED"
@@ -258,11 +277,11 @@ def test_changed_frozen_base_refuses_save_to_default(scheme_project, field, valu
     "plugin,expected", [("Names.esp", "霜城和霜城欢迎龙裔。"), ("Other.esp", "白漫和白漫欢迎龙裔。")]
 )
 def test_save_uses_installed_entry_plugin_scope(scheme_project, plugin, expected):
-    services, context, participant, (source, target), keys = scheme_project
+    services, context, _participant, (source, target), keys = scheme_project
     active = services.project_lifecycle.active
     published = []
-    with participant.repository(active.project_ref.identity.value) as repository:
-        profiles = TerminologyProfileService(repository)
+    with _profiles(services, active.project_ref.identity.value) as repository:
+        profiles = TerminologyProfileService(repository.localization_profiles)
         for profile, project_text, scoped_text in ((source, "雪漫", "雪漫"), (target, "白漫", "霜城")):
             draft = profiles.save_draft(
                 profile.profile_id,
@@ -275,7 +294,7 @@ def test_save_uses_installed_entry_plugin_scope(scheme_project, plugin, expected
                 expected_revision=0,
             )
             published.append(profiles.publish(profile.profile_id, expected_draft_revision=draft.draft_revision))
-        profiles.select(active.project_ref.identity.value, active.formal_variant_ref.identity.value, source.profile_id)
+    _select_fixture_revision(services, published[0])
     result = services.gui_project_commands.save_profile_variant(
         "Scoped B", context, source_profile=published[0], target_profile=published[1]
     )

@@ -110,8 +110,10 @@ def test_assistant_polish_applies_each_accepted_original_result(monkeypatch):
 @pytest.mark.parametrize("with_ordinary", [False, True])
 @pytest.mark.parametrize("force_overwrite", [False, True])
 def test_assistant_upload_skips_original_matched_entries_before_remote_write(
-    monkeypatch, caplog, with_ordinary, force_overwrite, current_project_factory, tmp_path
+    caplog, with_ordinary, force_overwrite, current_project_factory, tmp_path
 ):
+    from transbridge.persistence.task_store import TaskStore
+
     entries = _entries()
     ordinary = TranslationEntry("normal", "normal", "plain", "translated", 1, "BOOK:FULL")
     collection = TranslationEntryCollection((*entries, ordinary) if with_ordinary else entries)
@@ -122,7 +124,7 @@ def test_assistant_upload_skips_original_matched_entries_before_remote_write(
         return replace(entry, remote_id=7)
 
     project = current_project_factory(collection)
-    monkeypatch.setattr(project.commands, "task_result_directory", lambda _context: tmp_path)
+    project.context.task_store = TaskStore(tmp_path / "task-store-v1")
     with caplog.at_level(logging.WARNING):
         result = upload_entries(
             {"force_overwrite": force_overwrite},

@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from transbridge.application.sync.download_view import RetryableDownloadSaveError
 from transbridge.ui.foundation.components import (
     ComponentKind,
     ComponentStyle,
@@ -65,6 +66,7 @@ class BatchDownloadDialog(QDialog):
         self._preview: DownloadPreview | None = None
         self._completed_label: str | None = None
         self._retry_available = False
+        self._retry_save = False
         self._decisions: tuple[tuple[str, str], ...] = ()
         self._worker = None
         self._cancel_event = Event()
@@ -212,11 +214,20 @@ class BatchDownloadDialog(QDialog):
             return
         sources, policy, decisions = self.selection(), self._policy.currentData(), self._decisions
         compare, apply = self._compare, self._apply
+        retry_save = self._retry_save
         self._preview = None
         self._retry_available = False
-        self._start_worker(
-            "run", lambda progress, cancel: run_download(sources, policy, decisions, compare, apply, progress, cancel)
-        )
+        self._retry_save = False
+
+        def run(progress, cancel):
+            try:
+                if retry_save:
+                    return apply(progress, cancel)
+                return run_download(sources, policy, decisions, compare, apply, progress, cancel)
+            except RetryableDownloadSaveError as error:
+                return error
+
+        self._start_worker("run", run)
 
     def _review(self) -> None:
         if self._worker is not None or self._preview is None or not self._preview.review_rows:
@@ -277,7 +288,14 @@ class BatchDownloadDialog(QDialog):
         self._progress.hide()
         phase, outcome = self._phase, self._outcome
         self._phase = ""
-        if self._cancel_event.is_set() and not isinstance(outcome, DownloadReceipt):
+        retry_save = isinstance(outcome, RetryableDownloadSaveError) and self._run_generation == self._generation
+        if isinstance(outcome, RetryableDownloadSaveError):
+            if retry_save:
+                self._retry_available = self._retry_save = True
+                self._set_status(str(outcome), SemanticState.ERROR)
+            else:
+                self._set_status("所选插件已变化，可按当前选择重新下载。", SemanticState.INFO)
+        elif self._cancel_event.is_set() and not isinstance(outcome, DownloadReceipt):
             self._set_status("已取消，本地译文未更改；本次选择已保留。", SemanticState.INFO)
         elif self._error is not None:
             self._retry_available = True
@@ -299,7 +317,7 @@ class BatchDownloadDialog(QDialog):
                 self._completed_label = None
                 self._retry_available = False
         self._outcome = None
-        if (
+        if not retry_save and (
             self._error is not None
             or self._cancel_event.is_set()
             or self._preview is None
@@ -313,6 +331,7 @@ class BatchDownloadDialog(QDialog):
             self._discard()
         self._preview = None
         self._decisions = ()
+        self._retry_save = False
 
     def _render_preview(self, preview: DownloadPreview) -> None:
         self._preview = preview

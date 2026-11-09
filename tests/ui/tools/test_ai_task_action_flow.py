@@ -37,6 +37,12 @@ def _dismiss_notice(window):
     return notices
 
 
+def _save_project(app, window):
+    _click(window.save_button)
+    _wait_reports(app, window)
+    return _dismiss_notice(window)
+
+
 def _schedule_preview_decision(monkeypatch, *, accept):
     original_exec = _PolishPreviewDialog.exec
     visited = []
@@ -70,12 +76,12 @@ def test_running_actions_logs_pause_and_cancel_follow_worker_lifecycle(layout_ap
     assert not window.retry_button.isVisible()
     assert not window.save_button.isVisible()
     assert not window.report_button.isVisible()
-    assert window.logs.isVisible()
+    assert not window.logs.isVisible()
     worker.log.emit("first", "开始翻译，共 2 条")
     _click(window.log_toggle)
-    assert not window.logs.isVisible() and "开始翻译" in window.logs.toPlainText()
-    _click(window.log_toggle)
     assert window.logs.isVisible() and "开始翻译" in window.logs.toPlainText()
+    _click(window.log_toggle)
+    assert not window.logs.isVisible() and "开始翻译" in window.logs.toPlainText()
     _click(window.pause_button)
     assert worker.is_paused and "继续处理" in window.next_step.text()
     worker.pause_state_changed.emit("paused")
@@ -106,10 +112,13 @@ def test_pending_confirmation_clicks_preview_then_completion_and_read_only_resul
     visited = _schedule_preview_decision(monkeypatch, accept=True)
     _click(window.preview_button)
     _wait_reports(layout_app, window)
-    assert len(visited) == 2 and session.commits == 1 and session.saved
+    assert len(visited) == 2 and session.commits == 1 and not session.saved
     notices = _dismiss_notice(window)
     assert len(notices) == 1 and notices[0].defaultButton().text() == "查看结果"
     assert window.isVisible() and not window.run.cancelled
+    assert _primary(window) == [window.save_button]
+    _save_project(layout_app, window)
+    assert session.saved and session.commits == 1
     assert _primary(window) == [window.report_button]
     assert not window.pause_button.isVisible() and not window.save_button.isVisible()
     assert not window.retry_button.isVisible() and not window.preview_button.isVisible()
@@ -139,7 +148,7 @@ def test_declining_confirmation_keeps_existing_cancel_boundary(layout_app, make_
 
 
 def test_partial_failure_retries_only_failed_entries_then_offers_result(layout_app, make_window):
-    window, session, _ = make_window()
+    window, session, _ = make_window(independent_store=True)
     worker = _start(window, session)
     first, second = session.tasks
     worker.publish((SourceOutcome(first), SourceOutcome(second, error="provider unavailable")))
@@ -148,6 +157,8 @@ def test_partial_failure_retries_only_failed_entries_then_offers_result(layout_a
     settle_layout(layout_app)
     notices = _dismiss_notice(window)
     assert notices[0].defaultButton().text() == "重试失败条目"
+    assert _primary(window) == [window.save_button] and not session.saved
+    _save_project(layout_app, window)
     assert _primary(window) == [window.retry_button]
     assert "已应用的结果会保留" in window.next_step.text()
     applied = set(session.applied_keys)
@@ -160,16 +171,16 @@ def test_partial_failure_retries_only_failed_entries_then_offers_result(layout_a
     retry_worker.publish(tuple(SourceOutcome(task) for task in retry_worker.tasks))
     _wait_reports(layout_app, window)
     _dismiss_notice(window)
+    assert _primary(window) == [window.save_button] and not session.saved
+    _save_project(layout_app, window)
     assert session.commits == 2 and _primary(window) == [window.report_button]
 
 
-@pytest.mark.parametrize("snapshot", [False, True])
-def test_save_failure_prioritizes_save_without_rerunning_or_reapplying(layout_app, make_window, monkeypatch, snapshot):
+def test_save_failure_prioritizes_save_without_rerunning_or_reapplying(layout_app, make_window, monkeypatch):
     window, session, _ = make_window()
     save = session.save_translation
 
     def fail_save(*, on_success, on_error, background_validate=None):
-        session.project_saved = snapshot
         on_error("test storage unavailable")
 
     monkeypatch.setattr(session, "save_translation", fail_save)
@@ -179,7 +190,9 @@ def test_save_failure_prioritizes_save_without_rerunning_or_reapplying(layout_ap
     _wait_reports(layout_app, window)
     window.show()
     settle_layout(layout_app)
-    notices = _dismiss_notice(window)
+    _dismiss_notice(window)
+    assert not session.saved
+    notices = _save_project(layout_app, window)
     assert notices[0].defaultButton().text() == "重试保存"
     assert _primary(window) == [window.save_button]
     assert "无需重新运行任务" in window.next_step.text()
@@ -208,6 +221,8 @@ def test_failed_application_offers_existing_success_without_rerunning(layout_app
     _click(window.preview_button)
     _wait_reports(layout_app, window)
     _dismiss_notice(window)
+    assert session.commits == 1 and not session.saved
+    _save_project(layout_app, window)
     assert session.commits == 1 and session.saved and window.run.worker is None
     assert _primary(window) == [window.report_button]
 
@@ -237,10 +252,18 @@ def test_closing_during_application_or_save_does_not_interrupt_completion(layout
     def delayed(*args, **callbacks):
         session.is_busy = True
         pending.append((args, callbacks))
+        window.run.changed.emit()
 
     monkeypatch.setattr(session, "apply_entries_async" if phase == "apply" else "save_translation", delayed)
     worker = _start(window, session)
     worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
+    if phase == "save":
+        _wait_reports(layout_app, window)
+        window.show()
+        settle_layout(layout_app)
+        _dismiss_notice(window)
+        assert not session.saved
+        _click(window.save_button)
     _wait_until(lambda: bool(pending))
     window.show()
     settle_layout(layout_app)
@@ -256,6 +279,9 @@ def test_closing_during_application_or_save_does_not_interrupt_completion(layout
     _dismiss_notice(window)
     window.show()
     settle_layout(layout_app)
+    if phase == "apply":
+        assert session.commits == 1 and not session.saved
+        _save_project(layout_app, window)
     assert session.saved and session.commits == 1
     assert _primary(window) == [window.report_button], {
         "primary_buttons": [button.text() for button in _primary(window)],
@@ -279,7 +305,9 @@ def test_record_failure_offers_record_retry_without_rerunning_completed_task(lay
     _wait_reports(layout_app, window)
     window.show()
     settle_layout(layout_app)
-    notices = _dismiss_notice(window)
+    _dismiss_notice(window)
+    assert not session.saved
+    notices = _save_project(layout_app, window)
     assert notices[0].defaultButton().text() == "重试保存任务记录"
     assert _primary(window) == [window.retry_record_button]
     assert window.report_button.isVisible() and window.report_button.isEnabled()
@@ -301,10 +329,11 @@ def test_actions_and_next_step_fit_narrow_window_with_large_text(layout_app, mak
     first, second = session.tasks
     worker.publish((SourceOutcome(first), SourceOutcome(second, error="provider unavailable")))
     _wait_reports(layout_app, window)
-    _dismiss_notice(window)
     window.resize(720, 680)
     window.show()
     settle_layout(layout_app)
+    _dismiss_notice(window)
+    _save_project(layout_app, window)
     assert window.width() == 720
     actions = [window.retry_button, window.save_button, window.report_button, window.stop_button]
     assert all(button.isVisible() and window.rect().contains(button.geometry()) for button in actions)

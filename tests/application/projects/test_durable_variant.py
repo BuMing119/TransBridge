@@ -6,6 +6,7 @@ import pytest
 from tests.application.projects.test_categorized_upload import project as project_fixture
 from transbridge.application.projects import EntryStatePatch
 from transbridge.application.tasks import TaskCancelled
+from transbridge.persistence.project_store import lifecycle as storage_lifecycle
 from transbridge.persistence.v2.ids import VariantId, VariantRef
 from transbridge.persistence.v2.variant import VariantSnapshot
 
@@ -107,17 +108,15 @@ def test_write_failure_preserves_memory_disk_projection_and_retries_without_reop
     disk_before = services.variants.read_snapshot(before.formal_variant_ref)
     project_before = services.projects.read_snapshot(before.project_ref)
     projection_before = services.project_projection.snapshot()
-    destination = services.variants.path_for(before.formal_variant_ref)
-    original_replace = services.filesystem.replace
+    write_variant = storage_lifecycle.write_variant
     patch = {second.entries[0].identity: EntryStatePatch("Downloaded", 5, ())}
 
-    def fail_variant(source, target):
-        if target == destination:
-            raise error
-        return original_replace(source, target)
+    def fail_variant(*args, **kwargs):
+        write_variant(*args, **kwargs)
+        raise error
 
     with monkeypatch.context() as injected:
-        injected.setattr(services.filesystem, "replace", fail_variant)
+        injected.setattr(storage_lifecycle, "write_variant", fail_variant)
         failed = save(project, patch)
 
     assert not failed.is_success
@@ -135,44 +134,35 @@ def test_write_failure_preserves_memory_disk_projection_and_retries_without_reop
     assert disk_state(services, before.formal_variant_ref) == services.project_lifecycle.active.variant.snapshot()
 
 
-@pytest.mark.parametrize("failure", ["write_response", "verification"])
-def test_completed_write_with_lost_response_is_verified_and_published_as_success(project, monkeypatch, failure):
+@pytest.mark.parametrize("boundary", ["_save", "commit"])
+def test_completed_write_with_lost_response_is_verified_and_published_as_success(project, monkeypatch, boundary):
     services, _service, _context, *_ = project
     source = sources(project)[0]
     calls = []
-    if failure == "write_response":
-        original = services.variants.save_if_revision
+    original = getattr(storage_lifecycle.ProjectLifecycleStore, boundary)
 
-        def lost_response(*args, **kwargs):
-            original(*args, **kwargs)
-            calls.append("persisted")
-            raise OSError("Lost acknowledgement after atomic replace")
+    def lost_response(*args, **kwargs):
+        original(*args, **kwargs)
+        calls.append(boundary)
+        raise OSError("Lost acknowledgement after SQLite commit")
 
-        monkeypatch.setattr(services.variants, "save_if_revision", lost_response)
-    else:
-        from transbridge.persistence.v2 import project_save_journal
-
-        def failed_verification(*args, **kwargs):
-            calls.append("verification")
-            raise OSError("Readback failed after atomic replace")
-
-        monkeypatch.setattr(project_save_journal, "_verify_saved_record", failed_verification)
+    monkeypatch.setattr(storage_lifecycle.ProjectLifecycleStore, boundary, lost_response)
 
     result = save(project, {source.entries[0].identity: EntryStatePatch("Already on disk", 3, ())})
 
     assert result.is_success, result.diagnostics
     active = services.project_lifecycle.active
-    assert calls == ["persisted" if failure == "write_response" else "verification"]
+    assert calls == [boundary]
     assert not active.dirty
     assert disk_state(services, active.formal_variant_ref) == active.variant.snapshot()
 
 
-def test_uncertain_completed_write_can_be_verified_on_retry_without_replaying_the_write(project, monkeypatch):
+def test_uncertain_completed_write_retries_verification_without_replaying_the_write(project, monkeypatch):
     services, _service, _context, *_ = project
     source = sources(project)[0]
     before = services.project_lifecycle.active
-    real_save = services.variants.save_if_revision
-    real_read = services.variants.read_snapshot
+    real_save = storage_lifecycle.ProjectLifecycleStore._save
+    verify_saved = storage_lifecycle.ProjectLifecycleStore.verify_saved
     writes, reads = [], []
 
     def lose_response(*args, **kwargs):
@@ -180,24 +170,20 @@ def test_uncertain_completed_write_can_be_verified_on_retry_without_replaying_th
         writes.append(result)
         raise OSError("Save acknowledgement lost")
 
-    def temporarily_unreadable(ref):
-        reads.append(ref)
+    def temporarily_unreadable(store, saved):
+        reads.append(saved.formal_variant_ref)
         if len(reads) == 1:
             raise OSError("Readback temporarily unavailable")
-        return real_read(ref)
+        return verify_saved(store, saved)
 
-    monkeypatch.setattr(services.variants, "save_if_revision", lose_response)
-    monkeypatch.setattr(services.variants, "read_snapshot", temporarily_unreadable)
+    monkeypatch.setattr(storage_lifecycle.ProjectLifecycleStore, "_save", lose_response)
+    monkeypatch.setattr(storage_lifecycle.ProjectLifecycleStore, "verify_saved", temporarily_unreadable)
     patches = {source.entries[0].identity: EntryStatePatch("Verified after retry", 3, ())}
-    first = save(project, patches)
+    result = save(project, patches)
 
-    assert not first.is_success
-    assert "未确认成功" in first.diagnostics[0].message
-    assert services.project_lifecycle.active is before
-    retried = save(project, patches)
-
-    assert retried.is_success, retried.diagnostics
+    assert result.is_success, result.diagnostics
     assert len(writes) == 1
+    assert reads == [before.formal_variant_ref, before.formal_variant_ref]
     after = services.project_lifecycle.active
     assert not after.dirty
     assert disk_state(services, after.formal_variant_ref) == after.variant.snapshot()
@@ -249,16 +235,14 @@ def test_both_pending_project_content_and_download_are_saved_as_one_recoverable_
     patch = {source.entries[0].identity: EntryStatePatch("Downloaded with source metadata", 3, ())}
 
     if fail_project_write:
-        original = services.filesystem.replace
-        project_path = services.projects.path_for(before.project_ref)
+        write_variant = storage_lifecycle.write_variant
 
-        def fail_project(source, destination):
-            if destination == project_path:
-                raise PermissionError("Project file is temporarily locked")
-            return original(source, destination)
+        def fail_project(*args, **kwargs):
+            write_variant(*args, **kwargs)
+            raise PermissionError("Project transaction is temporarily locked")
 
         with monkeypatch.context() as injected:
-            injected.setattr(services.filesystem, "replace", fail_project)
+            injected.setattr(storage_lifecycle, "write_variant", fail_project)
             failed = save(project, patch)
         assert not failed.is_success
         assert services.project_lifecycle.active is before

@@ -100,6 +100,7 @@ def launch(monkeypatch, qapp):
             self.spec = spec
             self.ctx = ctx
             self.project_dir = project_dir
+            self.task_store = getattr(ctx, "task_store", None)
             self.identity = ctx.active_version_identity
             from transbridge.application.translation.task_entry_results import TaskEntryResults
 
@@ -122,7 +123,10 @@ def launch(monkeypatch, qapp):
             QTimer.singleShot(0, deliver)
             return capture
 
-        def bind_run_identity(self, run_id):
+        def artifact_directory(self, run_id):
+            return self.task_store.run_directory(run_id) if self.task_store is not None else self.project_dir
+
+        def bind_run_identity(self, run_id, *, result_run_id=None):
             self.initial_entry_results.run_id = run_id
 
         def require_current(self):

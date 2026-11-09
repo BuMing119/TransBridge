@@ -61,6 +61,13 @@ class _ShortIds:
         return f"i{self._value}"
 
 
+def _create_project_context(app, name):
+    commands = app.use_cases.resolve("gui_project_commands")
+    result = commands.create_project(ProjectProvisioningRequest(name), app.context("operator"))
+    assert result.is_success, result.diagnostics
+    return app.context("operator", project_id=result.value["project_id"], variant_id=result.value["variant_id"])
+
+
 def test_composition_exposes_project_terminology_without_runtime_release_evidence(tmp_path):
     app = build_runtime(
         settings={
@@ -72,7 +79,7 @@ def test_composition_exposes_project_terminology_without_runtime_release_evidenc
         registry = app.use_cases.resolve("terminology_workloads")
         entrypoint = app.use_cases.resolve("terminology_tasks")
         repositories = app.use_cases.resolve("terminology_repository")
-        context = app.context("operator", project_id="project-1", variant_id="variant-1")
+        context = _create_project_context(app, "Terminology composition")
         services = TerminologyUiServices.from_runtime(app, context)
 
         assert isinstance(registry, TerminologyWorkloadRegistry)
@@ -89,7 +96,9 @@ def test_composition_exposes_project_terminology_without_runtime_release_evidenc
         )
         profile_factory = app.use_cases.resolve("terminology_profile_service_factory")
         assert profile_factory is app.use_cases.resolve("effective_terminology_factory")
-        assert profile_factory.profile_service_for("project-1") is profile_factory.profile_service_for("project-1")
+        assert profile_factory.profile_service_for(context.project_id) is profile_factory.profile_service_for(
+            context.project_id
+        )
         assert app.capabilities.report("terminology.analysis-report").state is CapabilityState.AVAILABLE
         assert "terminology_feature_gates" not in app.use_cases.names()
         assert "terminology_release_evidence_diagnostics" not in app.use_cases.names()
@@ -99,16 +108,19 @@ def test_composition_exposes_project_terminology_without_runtime_release_evidenc
 
 def test_project_terminology_sqlite_asset_reopens_after_runtime_restart(tmp_path):
     first = build_runtime(settings={"persistence_v2_root": tmp_path})
-    first_repository = first.use_cases.resolve("terminology_repository").for_project("project-1")
-    database_path = first_repository.path
-    first.close()
+    try:
+        context = _create_project_context(first, "Terminology restart")
+        first_repository = first.use_cases.resolve("terminology_repository").for_project(context.project_id)
+        database_path = first_repository.path
+    finally:
+        first.close()
 
     second = build_runtime(settings={"persistence_v2_root": tmp_path})
     try:
-        reopened = second.use_cases.resolve("terminology_repository").for_project("project-1")
+        reopened = second.use_cases.resolve("terminology_repository").for_project(context.project_id)
 
         assert reopened.path == database_path
-        assert reopened.list_versions("project-1", "variant-1").items == ()
+        assert reopened.list_versions(context.project_id, context.variant_id).items == ()
     finally:
         second.close()
 
@@ -260,7 +272,8 @@ def test_production_runtime_closes_build_decision_publish_history_restore_and_re
                 **available,
                 "source_id": "missing-source",
                 "location": "",
-                "source_artifact_id": "f" * 64,
+                "fingerprint": "f" * 64,
+                "legacy": {**available.get("legacy", {}), "namespace": "source:missing"},
             })
             config = {"source_ids": [available["source_id"]]}
             assert not services.build_inputs.capture_build_input(context, config={}).is_success

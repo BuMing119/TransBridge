@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 
+from transbridge.application.projects.source_content import translation_source_fingerprint
 from transbridge.translation_memory.contracts import TmMatchStatus, TranslationMemoryQuery
 from transbridge.translation_memory.manager import TranslationMemoryManager
 from transbridge.translation_memory.service import TranslationMemoryQueryService
@@ -19,7 +20,7 @@ def dictionary_scope(args, ctx, *, required: bool):
         fingerprint = ctx._target_source_fingerprint
     else:
         snapshot = getattr(getattr(ctx, "active_slot", None), "source_snapshot", None)
-        fingerprint = getattr(snapshot, "sha256", "")
+        fingerprint = translation_source_fingerprint(snapshot)
     if required and (not source or not target or not fingerprint):
         raise ValueError("请指定 source_locale 和 target_locale，并先解析可验证的来源快照；未知语言不会自动套用词典。")
     return str(source), str(target), fingerprint

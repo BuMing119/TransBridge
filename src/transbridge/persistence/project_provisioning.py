@@ -70,9 +70,16 @@ class TranslationIoProjectSourcePreparer:
         format_hint = request.format_hint or _infer_format(path)
         options = dict(common_options)
         options.update(request.options)
+        # These are preparation actions, not durable parser settings. In particular,
+        # retaining the donor path would reapply a mutable external file on reopen.
+        initial_translation = options.pop("initial_translation", None)
+        require_complete = bool(options.pop("require_complete", False))
         options.setdefault("skip_empty", False)
         if format_hint is FormatId.PLUGIN_SSE:
             options.setdefault("discover_sibling_strings", True)
+        parse_request_options = dict(options)
+        if format_hint is FormatId.PLUGIN_SSE:
+            parse_request_options["capture_sst_export_facts"] = True
         parsed = self._io.parse(
             ParseRequest(
                 SourceDescriptor(str(path), path.name, path.stat().st_size),
@@ -81,15 +88,19 @@ class TranslationIoProjectSourcePreparer:
                 source_namespace=SourceNamespace(options["source_namespace"])
                 if "source_namespace" in options
                 else None,
-                options=tuple(sorted(options.items())),
+                options=tuple(sorted(parse_request_options.items())),
             )
         )
         if parsed.format_id is FormatId.JSON_PARATRANZ:
             parsed = replace(parsed, entries=tuple(entry.to_translation_entry() for entry in parsed.entries))
-        allowed_partial = parsed.outcome is OperationOutcome.PARTIAL and (
-            all(item.code == "SOURCE_LOCATOR_CONFLICT" for item in parsed.diagnostics)
-            or parsed.format_id is FormatId.JSON_PARATRANZ
-            and options.get("invalid_record_policy", "partial") == "partial"
+        allowed_partial = (
+            not require_complete
+            and parsed.outcome is OperationOutcome.PARTIAL
+            and (
+                all(item.code == "SOURCE_LOCATOR_CONFLICT" for item in parsed.diagnostics)
+                or parsed.format_id is FormatId.JSON_PARATRANZ
+                and options.get("invalid_record_policy", "partial") == "partial"
+            )
         )
         if (parsed.outcome is not OperationOutcome.COMPLETED and not allowed_partial) or parsed.source_snapshot is None:
             code = parsed.diagnostics[0].code if parsed.diagnostics else "PROJECT_SOURCE_PARSE_FAILED"
@@ -106,6 +117,16 @@ class TranslationIoProjectSourcePreparer:
                 "工程来源内容与预期指纹不一致。",
             )
         _source_namespace(parsed)
+        if initial_translation is not None:
+            if role != "primary":
+                raise DomainError(
+                    ErrorCategory.INPUT,
+                    "INITIAL_TRANSLATION_PRIMARY_REQUIRED",
+                    "初始译文只能应用到主来源。",
+                )
+            from transbridge.application.io.initial_translation import apply_initial_translation
+
+            parsed = apply_initial_translation(parsed, path, initial_translation, context)
         diagnostics = tuple(replace(item, severity=DiagnosticSeverity.WARNING) for item in parsed.diagnostics)
         from transbridge.application.projects.prepared_source_results import prepare_parsed_source
 

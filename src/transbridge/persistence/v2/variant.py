@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import re
 from typing import Any
@@ -24,6 +24,7 @@ from transbridge.application.io.identity import (
 )
 from transbridge.application.io.stage_policy import Stage
 
+from .deferred_variant_rows import DeferredVariantRows
 from .ids import VariantRef
 from .models import SCHEMA_VERSION, SchemaEnvelope, VariantDto
 
@@ -134,7 +135,7 @@ class SourceBaseline:
 class VariantSnapshot:
     ref: VariantRef
     source_fingerprints: tuple[SourceFingerprint, ...]
-    entries: tuple[VariantEntryState, ...]
+    entries: tuple[VariantEntryState, ...] | DeferredVariantRows
     revision: int = 0
     label_library: tuple[tuple[str, Any], ...] = ()
 
@@ -145,22 +146,26 @@ class VariantSnapshot:
         namespace_set = set(namespaces)
         if len(namespace_set) != len(namespaces):
             raise ValueError("variant snapshot contains duplicate source namespaces")
-        keys = [entry.entry_key for entry in self.entries]
-        if len(set(keys)) != len(keys):
-            raise ValueError("variant snapshot contains duplicate EntryKeys")
-        if any(key.namespace not in namespace_set for key in keys):
-            raise ValueError("variant entry namespace is not declared by the snapshot")
+        if isinstance(self.entries, tuple):
+            keys = [entry.entry_key for entry in self.entries]
+            if len(set(keys)) != len(keys):
+                raise ValueError("variant snapshot contains duplicate EntryKeys")
+            if any(key.namespace not in namespace_set for key in keys):
+                raise ValueError("variant entry namespace is not declared by the snapshot")
+            object.__setattr__(self, "entries", tuple(sorted(self.entries, key=lambda x: x.entry_key)))
         frozen_library = tuple(sorted((str(key), _freeze_json(value)) for key, value in self.label_library))
         object.__setattr__(
             self, "source_fingerprints", tuple(sorted(self.source_fingerprints, key=lambda x: x.namespace))
         )
-        object.__setattr__(self, "entries", tuple(sorted(self.entries, key=lambda x: x.entry_key)))
         object.__setattr__(self, "label_library", frozen_library)
 
     def to_dto(self) -> VariantDto:
         translations: dict[str, str] = {}
         labels: dict[str, list[str]] = {}
-        for entry in self.entries:
+        states = (
+            self.entries if isinstance(self.entries, tuple) else tuple(sorted(self.entries, key=lambda e: e.entry_key))
+        )
+        for entry in states:
             compatibility_key = _compatibility_key(entry.entry_key)
             translations[compatibility_key] = entry.translation
             labels[compatibility_key] = list(entry.labels)
@@ -170,7 +175,7 @@ class VariantSnapshot:
             "labels": labels,
             "label_library": self.label_library_data(),
             "source_fingerprints": [item.to_dict() for item in self.source_fingerprints],
-            "entries": [entry.to_dict() for entry in self.entries],
+            "entries": [entry.to_dict() for entry in states],
             "snapshot_revision": self.revision,
         }
         return VariantDto(SchemaEnvelope(SCHEMA_VERSION, self.ref.kind, self.ref.identity.value, self.revision, data))
@@ -209,9 +214,12 @@ class VariantChangeSet:
     ref: VariantRef
     expected_revision: int
     source_fingerprints: tuple[SourceFingerprint, ...]
-    entries: tuple[VariantEntryState, ...]
+    entries: tuple[VariantEntryState, ...] | DeferredVariantRows
     label_library: tuple[tuple[str, Any], ...]
     run_id: str
+    operation_id: str | None = None
+    application_outcomes: tuple[tuple[EntryKey, str, str, int], ...] = ()
+    sparse_entries: tuple[VariantEntryState, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,13 +246,25 @@ class MaterializationResult:
 class VariantAggregate:
     """In-memory authority with one validation/commit boundary."""
 
-    def __init__(self, snapshot: VariantSnapshot) -> None:
+    def __init__(
+        self,
+        snapshot: VariantSnapshot,
+        *,
+        applications: Iterable[tuple[str, tuple[tuple[EntryKey, str, str, int], ...]]] = (),
+    ) -> None:
         self.ref = snapshot.ref
         self._revision = snapshot.revision
         self._fingerprints = snapshot.source_fingerprints
-        self._entries = {entry.entry_key: entry for entry in snapshot.entries}
+        self._entries = (
+            None
+            if isinstance(snapshot.entries, DeferredVariantRows)
+            else {entry.entry_key: entry for entry in snapshot.entries}
+        )
         self._label_library = snapshot.label_library
         self._snapshot = snapshot
+        self._base_revision = snapshot.revision
+        self._changes: dict[EntryKey, int] = {}
+        self._applications = dict(applications)
 
     @property
     def revision(self) -> int:
@@ -252,6 +272,87 @@ class VariantAggregate:
 
     def snapshot(self) -> VariantSnapshot:
         return self._snapshot
+
+    def changes_since(self, revision: int | None) -> tuple[VariantEntryState, ...] | None:
+        if revision is None or revision < self._base_revision:
+            return None
+        return tuple(
+            self._snapshot.entries.get(key) if self._entries is None else self._entries[key]
+            for key, changed in self._changes.items()
+            if changed > revision
+        )
+
+    def acknowledge_changes(
+        self, revision: int, project_revision: int, *, saved_snapshot: VariantSnapshot, applications=()
+    ) -> None:
+        self._changes = {key: changed for key, changed in self._changes.items() if changed > revision}
+        self._base_revision = max(self._base_revision, revision)
+        for operation_id, outcomes in applications:
+            if self._applications.get(operation_id) == outcomes:
+                self._applications.pop(operation_id)
+        if isinstance(saved_snapshot.entries, DeferredVariantRows) and isinstance(
+            self._snapshot.entries, DeferredVariantRows
+        ):
+            later = tuple(self._snapshot.entries.get(key) for key in self._changes)
+            base = saved_snapshot.entries.rebased(project_revision, revision)
+            self._snapshot = replace(self._snapshot, entries=base.patched(later))
+
+    def rebase_project_revision(self, project_revision: int, persisted_variant_revision: int) -> None:
+        if isinstance(self._snapshot.entries, DeferredVariantRows):
+            rows = self._snapshot.entries.rebased(project_revision, persisted_variant_revision, keep_changes=True)
+            self._snapshot = replace(self._snapshot, entries=rows)
+
+    def pending_applications(self) -> tuple[tuple[str, tuple[tuple[EntryKey, str, str, int], ...]], ...]:
+        return tuple(self._applications.items())
+
+    def rebase_committed_save(self, saved, project_revision, observed_revision, observed_entries, applications):
+        """Install a proven save while retaining edits made after it was prepared."""
+        later = self.changes_since(observed_revision)
+        if later is None:
+            raise ValueError("The working copy changed beyond the saved edit range")
+        entries = saved.entries
+        if isinstance(entries, DeferredVariantRows):
+            entries = entries.rebased(project_revision, saved.revision)
+            saved_states = {entry.entry_key: entry for entry in entries.get_many(row.entry_key for row in later)}
+        else:
+            saved_states = {entry.entry_key: entry for entry in entries}
+        observed = {entry.entry_key: entry for entry in observed_entries}
+        changes = []
+        for row in later:
+            persisted = saved_states.get(row.entry_key)
+            baseline = observed.get(row.entry_key)
+            combined = _retain_late_entry_fields(persisted, baseline, row) if persisted and baseline else row
+            if combined != persisted:
+                if persisted is not None and combined.revision <= persisted.revision:
+                    combined = replace(combined, revision=persisted.revision.next())
+                changes.append(combined)
+        if isinstance(entries, DeferredVariantRows):
+            entries = entries.patched(changes)
+        else:
+            saved_states.update((row.entry_key, row) for row in changes)
+            entries = tuple(saved_states.values())
+        dirty = bool(changes) or (
+            self._fingerprints != saved.source_fingerprints or self._label_library != saved.label_library
+        )
+        revision = max(self.revision, saved.revision + 1) if dirty else saved.revision
+        remaining = self._applications.copy()
+        for operation_id, outcomes in applications:
+            if remaining.get(operation_id) == outcomes:
+                remaining.pop(operation_id)
+        result = VariantAggregate(
+            VariantSnapshot(saved.ref, self._fingerprints, entries, revision, self._label_library),
+            applications=remaining.items(),
+        )
+        result._base_revision = saved.revision
+        result._changes = {row.entry_key: revision for row in changes}
+        return result
+
+    def fork(self) -> VariantAggregate:
+        copy = VariantAggregate(self._snapshot)
+        copy._base_revision = self._base_revision
+        copy._changes = dict(self._changes)
+        copy._applications = dict(self._applications)
+        return copy
 
     def commit(
         self,
@@ -271,21 +372,75 @@ class VariantAggregate:
         if context.variant_id is not None and context.variant_id != self.ref.identity.value:
             raise ValueError("request context targets a different Variant")
 
+        entries = change_set.entries
+        if isinstance(entries, DeferredVariantRows) and isinstance(self._snapshot.entries, DeferredVariantRows):
+            # An intervening save may acknowledge the same working revision and
+            # advance its pinned disk token while this change is being prepared.
+            current = self._snapshot.entries
+            entries = current.patched(change_set.sparse_entries) if change_set.sparse_entries else current
+        operation_id = change_set.operation_id
+        if operation_id is not None:
+            if (
+                operation_id in self._applications
+                and self._applications[operation_id] != change_set.application_outcomes
+            ):
+                raise ValueError("operation ID already identifies a different application")
+            if (
+                entries == self._snapshot.entries
+                and change_set.source_fingerprints == self._snapshot.source_fingerprints
+                and change_set.label_library == self._snapshot.label_library
+            ):
+                if before_commit is not None:
+                    before_commit(change_set)
+                self._applications[operation_id] = change_set.application_outcomes
+                return self._revision
+
         projected = VariantSnapshot(
             self.ref,
             change_set.source_fingerprints,
-            change_set.entries,
+            entries,
             self._revision + 1,
             change_set.label_library,
         )
         if before_commit is not None:
             before_commit(change_set)
         self._fingerprints = projected.source_fingerprints
-        self._entries = {entry.entry_key: entry for entry in projected.entries}
+        self._record_entries(projected, change_set.sparse_entries)
         self._label_library = projected.label_library
         self._revision = projected.revision
         self._snapshot = projected
+        if operation_id is not None:
+            self._applications[operation_id] = change_set.application_outcomes
         return self._revision
+
+    def _record_entries(self, projected, sparse):
+        if isinstance(projected.entries, DeferredVariantRows):
+            self._changes.update((entry.entry_key, projected.revision) for entry in sparse)
+            return
+        entries = {entry.entry_key: entry for entry in projected.entries}
+        previous = self._entries
+        if previous is None:
+            previous = {entry.entry_key: entry for entry in self._snapshot.entries}
+        if previous.keys() - entries.keys():
+            self._base_revision = projected.revision
+            self._changes.clear()
+        else:
+            self._changes.update({
+                key: projected.revision for key, entry in entries.items() if previous.get(key) != entry
+            })
+        self._entries = entries
+
+
+def _retain_late_entry_fields(persisted, observed, current):
+    changes = {
+        name: getattr(current, name)
+        for name in ("labels", "provenance", "tombstone", "inferred_fields", "external_refs")
+        if getattr(current, name) != getattr(observed, name)
+    }
+    # Treat an explicit translation/stage edit as one decision, including an empty translation.
+    if (current.translation, current.stage) != (observed.translation, observed.stage):
+        changes.update(translation=current.translation, stage=current.stage)
+    return replace(persisted, **changes)
 
 
 class VariantMaterializer:

@@ -28,7 +28,7 @@ class Remote:
 def test_upload_uses_fixed_payload_and_merges_refs_into_latest_local_state(
     current_project_factory, tmp_path, monkeypatch
 ):
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    context, project = _context(current_project_factory, tmp_path)
     entries = tuple(project.context.collection)
     unrelated = ExternalEntryRef("other", "scope", "new")
 
@@ -58,7 +58,7 @@ def test_upload_uses_fixed_payload_and_merges_refs_into_latest_local_state(
 
 
 def test_deleted_source_defers_association_and_retains_every_success(current_project_factory, tmp_path, monkeypatch):
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    context, project = _context(current_project_factory, tmp_path)
 
     def remove(_entry):
         if len(remote.sent) == 1:
@@ -82,7 +82,7 @@ def test_upload_associates_original_source_after_switching_visible_plugin(
     from transbridge.converter.translation_entry_collection import TranslationEntryCollection
     from transbridge.ui.context import CollectionSlot
 
-    _, project = _context(current_project_factory, tmp_path, monkeypatch)
+    _, project = _context(current_project_factory, tmp_path)
     rows = tuple(project.context.collection)
     source = project.context.active_slot
     source.collection = TranslationEntryCollection((rows[0],))
@@ -99,7 +99,7 @@ def test_upload_associates_original_source_after_switching_visible_plugin(
 
 
 def test_local_failure_can_recover_without_repeating_remote_effect(current_project_factory, tmp_path, monkeypatch):
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    context, project = _context(current_project_factory, tmp_path)
     real = project.commands.replace_entry_records
     monkeypatch.setattr(
         project.commands,
@@ -125,7 +125,7 @@ def test_local_failure_can_recover_without_repeating_remote_effect(current_proje
 
 
 def test_receipt_disk_failure_returns_complete_memory_receipt(current_project_factory, tmp_path, monkeypatch):
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    context, project = _context(current_project_factory, tmp_path)
     save = EntryUploadResultStore.save_receipt
 
     def fail_confirmed(self, record, receipt):
@@ -159,7 +159,7 @@ def test_receipt_disk_failure_returns_complete_memory_receipt(current_project_fa
 def test_undo_receipt_failure_does_not_misreport_successful_associations(
     current_project_factory, tmp_path, monkeypatch
 ):
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    context, project = _context(current_project_factory, tmp_path)
 
     def late_failure(_ctx, mutation):
         assert mutation().is_success
@@ -177,7 +177,7 @@ def test_undo_receipt_failure_does_not_misreport_successful_associations(
 
 
 def test_uncertain_request_is_retained_and_blocks_blind_resend(current_project_factory, tmp_path, monkeypatch):
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    context, project = _context(current_project_factory, tmp_path)
     calls = []
 
     def unknown(*args, **kwargs):
@@ -194,7 +194,7 @@ def test_uncertain_request_is_retained_and_blocks_blind_resend(current_project_f
 
 
 def test_unknown_remote_effect_is_not_scoped_to_local_variant(current_project_factory, tmp_path, monkeypatch):
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    context, project = _context(current_project_factory, tmp_path)
     calls = []
 
     def unknown(*args, **kwargs):
@@ -211,7 +211,7 @@ def test_unknown_remote_effect_is_not_scoped_to_local_variant(current_project_fa
 
 
 def test_in_flight_receipt_exists_before_remote_send(current_project_factory, tmp_path, monkeypatch):
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    context, project = _context(current_project_factory, tmp_path)
 
     def inspect(_entry):
         records = list((tmp_path / "entry-upload-results").glob("*/receipt-*.json"))
@@ -224,7 +224,7 @@ def test_in_flight_receipt_exists_before_remote_send(current_project_factory, tm
 def test_unknown_upload_blocks_new_session_without_exposing_other_receipt(
     current_project_factory, tmp_path, monkeypatch
 ):
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    context, project = _context(current_project_factory, tmp_path)
     context.request_context = replace(project.context.runtime_context, session_id="first-session")
     calls = []
 
@@ -246,7 +246,7 @@ def test_unknown_upload_blocks_new_session_without_exposing_other_receipt(
 
 
 def test_recovery_rejects_another_owner_or_session(current_project_factory, tmp_path, monkeypatch):
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    context, project = _context(current_project_factory, tmp_path)
     context.owner_id = "first-owner"
     context.request_context = replace(project.context.runtime_context, session_id="first-session")
     result = upload_entries({}, context, project.context.collection, Remote(), 7, None)
@@ -262,7 +262,7 @@ def test_recovery_rejects_another_owner_or_session(current_project_factory, tmp_
 def test_tool_freezes_one_config_for_client_and_receipt(current_project_factory, tmp_path, monkeypatch):
     from transbridge.smart_assistant.tools.tool_paratranz import _tool_upload_entries
 
-    context, project = _context(current_project_factory, tmp_path, monkeypatch)
+    context, project = _context(current_project_factory, tmp_path)
     original = SimpleNamespace(token="private-test", base_url="https://first.example/api", user_id=7, timeout=30)
     project.context.config = original
     configs = []

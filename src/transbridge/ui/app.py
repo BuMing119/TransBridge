@@ -142,6 +142,7 @@ def main(
             effective_terminology_factory=effective_terminology_factory,
             terminology_profile_service_factory=terminology_profile_service_factory,
             task_result_preferences_provider=app_runtime.use_cases.resolve("task_result_preferences").load,
+            task_store=app_runtime.use_cases.resolve("task_store"),
         )
         window = MainWindow(
             app_context=projection,

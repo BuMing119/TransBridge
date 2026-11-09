@@ -7,6 +7,7 @@ from operator import attrgetter
 
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
 from transbridge.application.translation.result_merge import ResultEntryState, merge_result_entries
+from transbridge.persistence.v2.deferred_variant_rows import DeferredVariantRows
 
 from .variant_commands import EntryStatePatch
 
@@ -33,6 +34,7 @@ class ProjectResultMergeService:
         policies=None,
         decision_states=None,
         clear_external_scope=None,
+        operation_id=None,
     ):
         candidates = tuple(candidates)
         base = {item.base.entry_key: item.base for item in candidates}
@@ -105,6 +107,29 @@ class ProjectResultMergeService:
                         for entry in plan.applied
                     }
                     commit_states = self._commit_records
+                operation = {}
+                if operation_id is not None:
+                    applied = {entry.entry_key for entry in plan.applied}
+                    unchanged = set(plan.unchanged_keys)
+                    kept = set(plan.kept_current_keys)
+                    operation = {
+                        "operation_id": operation_id,
+                        "application_outcomes": tuple(
+                            (
+                                key,
+                                "applied"
+                                if key in applied
+                                else "unchanged"
+                                if key in unchanged
+                                else "kept_current"
+                                if key in kept
+                                else "conflicted",
+                                value.translation,
+                                value.stage,
+                            )
+                            for key, value in incoming.items()
+                        ),
+                    }
                 result = commit_states(
                     states,
                     context,
@@ -113,6 +138,7 @@ class ProjectResultMergeService:
                     expected_variant_ref=expected_variant_ref,
                     commit_mutation=guarded,
                     persist=persist,
+                    **operation,
                 )
                 if result.is_success:
                     return OperationResult.completed(plan, diagnostics=result.diagnostics, run_id=context.run_id)
@@ -133,6 +159,8 @@ def _target_records(entries, keys):
     Sparse batches use indexed lookup. A dense batch walks the tuple once so a
     complete-source application does not regress to one binary search per row.
     """
+    if isinstance(entries, DeferredVariantRows):
+        return {entry.entry_key: entry for entry in entries.get_many(keys)}
     if len(keys) * max(1, len(entries).bit_length()) > len(entries):
         return {entry.entry_key: entry for entry in entries if entry.entry_key in keys}
     records = {}

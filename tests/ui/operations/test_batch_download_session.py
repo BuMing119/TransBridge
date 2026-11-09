@@ -1,6 +1,7 @@
 """Real project state and file reads through the multi-source GUI composition."""
 
 from dataclasses import replace
+from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 
@@ -16,6 +17,7 @@ from transbridge.application.tasks import JobState, OwnerRef, TaskCancelled
 from transbridge.paratranz.batch_download_snapshot import (
     BatchDownloadSnapshotReader,
 )
+from transbridge.persistence.task_store import TaskStore
 from transbridge.ui.operations.batch_download_session import BatchDownloadSession
 
 
@@ -80,15 +82,15 @@ class Gateway:
 
 @pytest.fixture
 def case(project):  # noqa: F811 - imported pytest fixture
-    services, source_service, request, *_ = project
+    services, source_service, request, first, second = project
     context = Context(services, request)
+    context.task_store = TaskStore(Path(services.root) / "task-store-v1")
     snapshot = source_service.snapshot(request, endpoint=context.target.endpoint, remote_project_id=42).value
-    registrations = {item["source_id"]: item for item in context.project_sources}
+    plugin_paths = {path.name: path for path in (first, second)}
+    source_paths = {source.source_id: plugin_paths[source.label] for source in snapshot.sources}
     # Exercise the slot fallback used by canonical source registrations.
     context.slots = {
-        source.source_id: SimpleNamespace(
-            collection=source.entries, label=source.label, esp_path=str(registrations[source.source_id]["location"])
-        )
+        source.source_id: SimpleNamespace(collection=source.entries, label=source.label, esp_path="")
         for source in snapshot.sources
     }
     gateway, membership = Gateway(), []
@@ -126,16 +128,20 @@ def case(project):  # noqa: F811 - imported pytest fixture
         ),
         service_factory=service_factory,
     )
-    return SimpleNamespace(
-        services=services,
-        context=context,
-        session=session,
-        runtime=runtime,
-        sources=snapshot.sources,
-        gateway=gateway,
-        membership=membership,
-        cancel=Event(),
-    )
+    try:
+        yield SimpleNamespace(
+            services=services,
+            context=context,
+            session=session,
+            runtime=runtime,
+            sources=snapshot.sources,
+            source_paths=source_paths,
+            gateway=gateway,
+            membership=membership,
+            cancel=Event(),
+        )
+    finally:
+        session.discard()
 
 
 def compare(case, sources=None, policy="keep_current", decisions=()):

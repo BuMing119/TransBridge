@@ -39,6 +39,7 @@ from transbridge.ui.workbench.labels_view import (
     LabelManagerDialog,
 )
 from transbridge.ui.workbench.progress_view import ProgressView
+from transbridge.ui.workbench.project_paging import WorkbenchProjectPaging
 from transbridge.ui.workbench.table_presenter import TablePresenter
 from transbridge.ui.workbench.terminology_preview import TerminologyPreviewCoordinator, preview_identity
 from transbridge.ui.workbench.translation_reset import TranslationResetAction
@@ -105,10 +106,17 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._terminology_preview = TerminologyPreviewCoordinator(
             self, identity=lambda: preview_identity(ctx, self._filter_scope)
         )
-        self._terminology_preview.changed.connect(self._populate_table)
+        self._terminology_preview.changed.connect(
+            lambda: (
+                self._paging.refresh_terminology_projection()
+                if self._paging.collection is not None
+                else self._populate_table()
+            )
+        )
         ctx.project_changed.connect(self._terminology_preview.invalidate_context)
         ctx.variant_changed.connect(self._terminology_preview.invalidate_context)
         self._entry_refresh = EntryRefresh(self)
+        self._paging = WorkbenchProjectPaging(self)
         ctx.collection_changed.connect(self.refresh)
         ctx.collection_list_changed.connect(self._update_workflow_actions)
         if getattr(ctx, "uses_authoritative_projection", False):
@@ -172,7 +180,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         )
         self._table_presenter = TablePresenter(self._table)
         self._table.doubleClicked.connect(self._on_double_clicked)
-        self._table.entry_edit_requested.connect(self.entry_edit_requested.emit)
+        self._table.entry_edit_requested.connect(lambda key: self._paging.open_entry(key))
         self._table.translation_edit_requested.connect(self._on_translation_edit_requested)
         self._table.selectionModel().selectionChanged.connect(self._on_table_selection_changed)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -226,6 +234,8 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
     def get_selected_entries(self) -> list[TranslationEntry]:
         """返回所有有标签的条目，供 AI 翻译浮窗使用。"""
+        if self._paging.collection is not None:
+            return list(self._paging.marked_entries())
         result = []
         id_to_entry = {entry_label_key(e): e for e in self._entries if e.id}
         for entry_id in self._entry_labels:
@@ -235,14 +245,21 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
     def selected_entry_ids(self) -> tuple[str, ...]:
         """Return stable IDs for the compatibility 'marked entries' selection."""
-        return tuple(entry_label_key(entry) for entry in self.get_selected_entries() if entry.id)
+        scope = self._paging.selected_entry_ids()
+        return (
+            tuple(entry_label_key(entry) for entry in self.get_selected_entries() if entry.id)
+            if scope is None
+            else scope
+        )
 
     def selected_row_entry_ids(self) -> tuple[str, ...]:
         """Return actual table-row selection without changing legacy marked-entry scope."""
-        return self._table.selected_entry_ids()
+        return self._paging.selected_row_entry_ids()
 
     def filtered_entries(self) -> tuple[TranslationEntry, ...]:
         """Return the full filtered projection, including offscreen rows."""
+        if self._paging.collection is not None:
+            return self._paging.filtered_entries()
         return self._render_entries
 
     def get_filtered_count(self) -> int:
@@ -273,6 +290,8 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         filter_scope = self._current_filter_scope(collection)
         content_changed = filter_scope != self._filter_scope
         self._filter_scope = filter_scope
+        if self._paging.refresh(collection):
+            return
         if not content_changed and self._entry_refresh.try_refresh(collection):
             return
         self._progress.setRange(0, 100)
@@ -332,7 +351,8 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     # ── 分类筛选标签 ────────────────────────────────────────────────────────
 
     def _build_category_tags(self):
-        self._filters_view.build_categories(self._entries)
+        stats = self._paging.statistics
+        self._filters_view.build_categories(self._entries, counts=None if stats is None else stats.categories)
 
     def _on_category_tag_clicked(self, category: str | None):
         self._filters_view.toggle_category(category)
@@ -342,7 +362,8 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     # STAGE_LABELS 从 translation_entry 导入，不再本地定义
 
     def _build_stage_tags(self):
-        self._filters_view.build_stages(self._entries)
+        stats = self._paging.statistics
+        self._filters_view.build_stages(self._entries, counts=None if stats is None else stats.stages)
 
     def _on_stage_tag_clicked(self, stage: int | None):
         self._filters_view.toggle_stage(stage)
@@ -365,10 +386,13 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             self._populate_table()
 
     def _build_label_tags(self):
+        stats = self._paging.statistics
         self._filters_view.build_labels(
             self._entries,
             self._label_library,
             self._entry_labels,
+            counts=None if stats is None else stats.labels,
+            labeled_count=None if stats is None else stats.labeled,
         )
         self._focus_labeled = self._filters_view.focus_labeled
 
@@ -380,6 +404,9 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
     def _on_filters_changed(self) -> None:
         self._focus_labeled = self._filters_view.focus_labeled
+        if self._paging.collection is not None:
+            self._paging.request_query()
+            return
         self._build_category_tags()
         self._build_stage_tags()
         self._build_label_tags()
@@ -394,8 +421,6 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._terminology_status.setVisible(bool(self._terminology_preview.message))
         self._filters_view.refresh_active_summary()
         self._filters_presenter.update(self._filters_view.state())
-        self._render_entries = tuple(self._filters_presenter.apply(self._entries, self._entry_labels))
-        self._filtered_total = len(self._render_entries)
         projection = getattr(self._ctx, "project_projection", None)
         snapshot = projection.snapshot() if projection is not None else None
         self._table.set_terminology_projection(
@@ -404,13 +429,24 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             pending=self._terminology_preview.pending,
             error=self._terminology_preview.error,
         )
-        session = self._table_presenter.render(
-            self._render_entries,
-            self._entry_labels,
-            self._label_library,
-            projection_revision=getattr(snapshot, "revision", None),
-            content_scope=self._filter_scope,
-        )
+        revision = getattr(snapshot, "revision", None)
+        if self._paging.collection is not None:
+            total, rows, scope = self._paging.table_range()
+            self._filtered_total = total
+            session = self._table_presenter.render_logical(
+                total, rows, self._entry_labels, self._label_library, projection_revision=revision, content_scope=scope
+            )
+            self._render_entries = session.entries
+        else:
+            self._render_entries = tuple(self._filters_presenter.apply(self._entries, self._entry_labels))
+            self._filtered_total = len(self._render_entries)
+            session = self._table_presenter.render(
+                self._render_entries,
+                self._entry_labels,
+                self._label_library,
+                projection_revision=revision,
+                content_scope=self._filter_scope,
+            )
         self._render_generation = session.generation
         if self._pending_locate_entry_id is not None:
             self._table.locate_entry(self._pending_locate_entry_id)
@@ -481,6 +517,8 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
     def editor_navigation_keys(self):
         """Return all filtered keys in display order, including offscreen rows."""
+        if self._paging.collection is not None:
+            return tuple(entry.identity for entry in self._paging.selection_entries())
         return self._entry_refresh.navigation_keys()
 
     def return_from_editor(self, key) -> None:
@@ -495,25 +533,31 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         row = self._table.rowAt(pos.y())
         if row < 0:
             return
-        menu = self._build_context_menu(row)
-        try:
-            menu.exec(self._table.viewport().mapToGlobal(pos))
-        finally:
-            menu.deleteLater()
+        point = self._table.viewport().mapToGlobal(pos)
+
+        def show():
+            menu = self._build_context_menu(row)
+            try:
+                menu.exec(point)
+            finally:
+                menu.deleteLater()
+
+        if not self._paging.selection_needs_query() or self._paging.when_ready(show):
+            show()
 
     def _build_context_menu(self, row: int):
         entry = self._table.entry_at_row(row)
         if not isinstance(entry, TranslationEntry) or not entry.id:
             return QMenu(self)
-        reset = TranslationResetAction(
-            self._ctx, entry, entries=self._entries, selected_ids=self.selected_row_entry_ids(), parent=self
-        )
         selected_ids = self.selected_row_entry_ids()
-        scope = resolve_entry_action_scope(entry, self._entries, selected_ids)
+        entries = self._paging.selection_entries()
+        reset = TranslationResetAction(self._ctx, entry, entries=entries, selected_ids=selected_ids, parent=self)
+        scope = resolve_entry_action_scope(entry, entries, selected_ids)
         target_entry_ids = tuple(entry_label_key(selected) for selected in scope if selected.id)
-        common_labels = set(self._entry_labels.get(target_entry_ids[0], ()))
+        labels = self._paging.selection_labels()
+        common_labels = set(labels.get(target_entry_ids[0], ()))
         for entry_id in target_entry_ids[1:]:
-            common_labels.intersection_update(self._entry_labels.get(entry_id, ()))
+            common_labels.intersection_update(labels.get(entry_id, ()))
         stages = {selected.stage for selected in scope}
         current_stage = next(iter(stages)) if len(stages) == 1 else None
 
@@ -542,7 +586,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
     def _on_label_toggle(self, entry_ids: tuple[str, ...], lid: str, checked: bool):
         entry_labels = self._labels_presenter.toggle_many(
-            self._entry_labels,
+            self._paging.selection_labels(),
             self._label_library,
             entry_ids,
             lid,
@@ -566,7 +610,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             self._ctx,
             entry,
             stage_val,
-            entries=self._entries,
+            entries=self._paging.selection_entries(),
             selected_ids=selected_ids,
             parent=self,
         )
@@ -629,7 +673,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         if not ok or not name.strip():
             return
         result = self._labels_presenter.create_many(
-            self._entry_labels,
+            self._paging.selection_labels(),
             self._label_library,
             entry_ids,
             name.strip(),
@@ -665,9 +709,10 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             self._populate_table()
 
     def _update_count_label(self):
-        labeled = sum(1 for ls in self._entry_labels.values() if ls)
+        stats = self._paging.statistics
+        labeled = sum(1 for ls in self._entry_labels.values() if ls) if stats is None else stats.labeled
         filtered = self._filtered_total
-        total = len(self._entries)
+        total = len(self._entries) if self._paging.collection is None else len(self._paging.collection)
 
         if filtered == total:
             self._count_lbl.setText(f"有标签 {labeled} 条 | 共 {total} 条")
@@ -680,6 +725,10 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._filters_view.apply_state(FilterState())
         self._focus_labeled = False
         self._filters_view.sync_focus_style()
+        if self._paging.collection is not None:
+            self._paging.request_query()
+            self._paging.locate(entry_id, select=True)
+            return
 
         # 更新标签UI
         self._build_category_tags()
@@ -694,6 +743,9 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     def closeEvent(self, event) -> None:
         """Release owned debounce and incremental-render callbacks before hide."""
         self._filters_view.search_timer.stop()
+        self._paging.close()
+        self._render_entries = ()
+        self._table_presenter.invalidate()
         self._terminology_preview.close()
         self._dialogue_reading_order.close()
         self._table.close_rendering()

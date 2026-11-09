@@ -77,10 +77,13 @@ def test_selected_result_failure_preserves_other_summaries_and_reports_error(set
     store.create(record("damaged", state="partial"))
     store.create(record("healthy", state="partial"))
     summaries = {value["task_id"]: value for value in read_recovery_records(store.root.parent)}
+    # Let initial discovery settle before testing the independent selection error.
+    wait_until(app, lambda: not registry.recovery.timer.isActive() and registry.recovery.worker is None)
     monkeypatch.setattr(task_result_recovery, "load_recovery_results", Mock(side_effect=ValueError("bad result")))
     assert registry.request_recovery(summaries["damaged"])
-    wait_until(app, lambda: not registry._recovery_workers)
+    wait_until(app, lambda: summaries["damaged"].get("recovery_error") == "bad result")
     assert "bad result" in registry.recovery_error
+    assert not registry.is_recovery_active("damaged")
     assert not summaries["damaged"]["supported"]
     assert summaries["healthy"]["supported"]
     assert store.load("damaged")["state"] == "partial"

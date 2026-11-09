@@ -12,9 +12,11 @@ import pytest
 
 from transbridge.application.contracts import DomainError
 from transbridge.application.projects import ProjectProvisioningRequest
+from transbridge.application.terminology_profiles import ProfileTermMapping, TerminologyProfileContent
 from transbridge.bootstrap import build_runtime
 from transbridge.bootstrap.adapters import DenyByDefaultSecurity, NullSecretStore, SystemClock
 from transbridge.bootstrap.runtime import RuntimePorts
+from transbridge.persistence.project_store.repository import ProjectStore
 
 
 @pytest.fixture
@@ -76,28 +78,25 @@ def test_failed_delete_restores_old_profile_service_and_connection_for_retry(run
     persistence, active, context, profiles, repository = _project(runtime, "recoverable")
     profile = profiles.create(context.project_id, "Existing profile")
     token = profiles.read_cache_token()
-    watched = (
-        Path(persistence.projects.path_for(active.project_ref)),
-        Path(persistence.variants.path_for(active.formal_variant_ref)),
-        Path(persistence.root) / "project-catalog.json",
-        Path(persistence.root) / "active-project.json",
-        repository.path,
-    )
+    database = Path(persistence.projects.path_for(active.project_ref))
+    before = ProjectStore(database).summary()
+    watched = (database.parent.parent / "active.json", repository.path)
     preimages = {path: path.read_bytes() for path in watched}
-    original_remove = persistence.filesystem.remove
-    removed = []
+    original_rename = Path.rename
+    attempted = []
 
-    def fail_project_remove(path, *, missing_ok=False):
-        if Path(path) == watched[0]:
-            raise OSError("injected project deletion failure")
-        original_remove(path, missing_ok=missing_ok)
-        removed.append(Path(path))
+    def fail_project_rename(path, target):
+        if path == database.parent:
+            attempted.append(path)
+            raise OSError("injected project directory rename failure")
+        return original_rename(path, target)
 
     with monkeypatch.context() as patch:
-        patch.setattr(persistence.filesystem, "remove", fail_project_remove)
+        patch.setattr(Path, "rename", fail_project_rename)
         result = persistence.project_management.delete(context.project_id, context, expected_name="recoverable")
     assert not result.is_success
-    assert repository.path in removed
+    assert attempted == [database.parent]
+    assert ProjectStore(database).summary() == before
     assert all(path.read_bytes() == data for path, data in preimages.items())
     assert profiles.read_cache_token() != token
     renamed = profiles.rename(profile.profile_id, "Still editable")
@@ -182,7 +181,15 @@ def test_incomplete_filesystem_rollback_never_recreates_an_empty_terminology_dat
 
 def test_reimport_same_project_identity_gets_fresh_services_without_reactivating_deleted_references(runtime, tmp_path):
     persistence, _, context, profiles, repository = _project(runtime, "archived")
-    profile = profiles.create(context.project_id, "Archived profile")
+    profile = profiles.create_with_content(
+        context.project_id, "Archived profile", TerminologyProfileContent((ProfileTermMapping("Sword", "剑"),))
+    )
+    published = profiles.publish(profile.profile_id, expected_draft_revision=0)
+    selected = persistence.gui_project_commands.save_profile_variant(
+        "Named version", context, target_profile=published, source_profile=None
+    )
+    assert selected.is_success, selected.diagnostics
+    context = runtime.context("gui", project_id=context.project_id, variant_id=selected.value["id"])
     bundle = tmp_path / "restore.transbridge"
     persistence.project_archive.export_project(str(bundle), context)
     assert persistence.project_management.delete(context.project_id, context, expected_name="archived").is_success
@@ -193,7 +200,7 @@ def test_reimport_same_project_identity_gets_fresh_services_without_reactivating
     restored_profiles = factory.profile_service_for(context.project_id)
     assert restored_repository is not repository
     assert restored_profiles is not profiles
-    assert restored_profiles.list_profiles(context.project_id) == (profile,)
+    assert restored_profiles.selected_revision(context.project_id, context.variant_id) == published
     with pytest.raises(sqlite3.ProgrammingError):
         profiles.list_profiles(context.project_id)
     with pytest.raises(sqlite3.ProgrammingError):

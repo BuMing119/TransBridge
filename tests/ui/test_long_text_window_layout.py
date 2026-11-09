@@ -3,7 +3,7 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
-from PyQt6.QtCore import QPoint
+from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtWidgets import QLabel
 import pytest
 
@@ -45,11 +45,23 @@ def test_draft_long_tokens_keep_full_text_and_window_resizable(layout_app, field
         changes = {field: value, "revision": 1}
         if field == "diagnostic_message":
             changes["diagnostic_code"] = "SOURCE_ERROR"
-        view.render_draft(replace(state, **changes))
+        updated = replace(state, **changes)
+        view.render_draft(updated)
         settle_layout(layout_app)
         assert view.width() == 850
         labels = (view._source_label, view._draft_summary, view._draft_error)
-        assert any(value in label.text() for label in labels)
+        if field == "source_path":
+            item = view._source_list.item(0)
+            assert item.toolTip() == value
+            assert item.data(Qt.ItemDataRole.AccessibleTextRole) == value
+        elif field in {"project_name", "default_variant_name"}:
+            editor = view._name_edit if field == "project_name" else view._variant_edit
+            assert editor.text() == value
+            assert editor.toolTip() == value
+            assert view._draft_summary.full_text == updated.summary
+            assert view._draft_summary.accessibleDescription() == updated.summary
+        else:
+            assert value in view._draft_error.text()
         _assert_resizable(layout_app, view, labels)
         view.render(StartCenterViewState(StartDestinationState.START_CENTER_USER_REQUESTED, 1))
         _assert_resizable(layout_app, view, ())

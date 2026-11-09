@@ -37,7 +37,7 @@ class _Context(QObject):
 
 
 class _Preview(QWidget):
-    def set_terminology_profile(self, _profile, *, base_snapshot=None) -> None:
+    def set_terminology_profile(self, _profile, *, base_snapshot=None, source_profile=None) -> None:
         pass
 
 
@@ -96,7 +96,8 @@ def test_visible_window_invalidates_immediately_and_reopen_uses_one_context(monk
         assert reopened._profile_controller.identity == next_identity
         reopened.schemes_view.scheme_combo.setCurrentIndex(1)
         wait_profile(profiles)
-        assert service.selected_revision(*next_identity).profile_id == profile_ids[next_identity[0]]
+        assert profiles.state.selected_profile_id == profile_ids[next_identity[0]]
+        assert service.selected_revision(*next_identity) is None
         assert service.selected_revision("project-a", "variant-a") is None
     launcher.close()
     bar.close()

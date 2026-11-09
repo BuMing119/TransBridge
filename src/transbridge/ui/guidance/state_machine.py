@@ -37,6 +37,12 @@ _TEMPLATES = {
         (GuidanceIntent(GuidanceIntentId.PROJECT_CREATE, "新建其他工程"),),
         ("选择 ESP、ESM 或 ESL，将它加载为当前工程的翻译内容。",),
     ),
+    GuidanceKind.LOADING_CONTENT: _StateTemplate(
+        "正在准备当前内容",
+        "词条统计就绪后会显示适合当前版本的下一步。",
+        GuidanceIntent(GuidanceIntentId.TRANSLATION_AI_RUN, "开始 AI 翻译", False, "正在准备当前内容。"),
+        (GuidanceIntent(GuidanceIntentId.TASK_OPEN_ACTIVITY, "查看相关任务与结果"),),
+    ),
     GuidanceKind.UNTRANSLATED: _StateTemplate(
         "开始翻译未完成的内容",
         "当前翻译内容中仍有尚未翻译的词条。",

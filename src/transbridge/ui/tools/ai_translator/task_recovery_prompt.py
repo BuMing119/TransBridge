@@ -37,7 +37,9 @@ def recovery_summary(record):
     return progress
 
 
-def read_recovery_records(directory, *, project_id=None, variant_id=None, states=None):
+def read_recovery_records(directory, *, project_id=None, variant_id=None, states=None, task_store=None):
+    if task_store is not None:
+        return task_store.recovery().list_summaries(project_id=project_id, variant_id=variant_id, states=states)
     from transbridge.application.translation.legacy_task_recovery import discover_legacy_records
     from transbridge.application.translation.task_recovery import TaskRecoveryStore
 
@@ -68,11 +70,16 @@ def read_recovery_records(directory, *, project_id=None, variant_id=None, states
     )
 
 
-def load_selected_recovery(directory, summary):
+def load_selected_recovery(directory, summary, *, task_store=None):
     from transbridge.application.translation.legacy_task_recovery import discover_legacy_records
     from transbridge.application.translation.task_recovery import TaskRecoveryStore
     from transbridge.application.translation.task_result_recovery import load_recovery_results
 
+    if task_store is not None:
+        store = task_store.recovery()
+        record = store.load(summary["task_id"])
+        record["results"] = load_recovery_results(store, record)
+        return record
     if summary.get("legacy"):
         records = discover_legacy_records(directory, task_id=summary["task_id"])
         if not records:
@@ -149,7 +156,7 @@ class TaskRecoveryDiscovery(QObject):
         self.schedule()
 
     def schedule(self, *_):
-        if not self.registry.shutting_down:
+        if not self.registry.shutting_down and getattr(self.registry.ctx, "task_store", None) is None:
             self.timer.start(0)
 
     def scope(self):
@@ -193,7 +200,11 @@ class TaskRecoveryDiscovery(QObject):
 
         def read():
             return read_recovery_records(
-                directory, project_id=identity[0], variant_id=identity[1], states=INTERRUPTED_STATES
+                directory,
+                project_id=identity[0],
+                variant_id=identity[1],
+                states=INTERRUPTED_STATES,
+                task_store=getattr(self.registry.ctx, "task_store", None),
             )
 
         def loaded(records):

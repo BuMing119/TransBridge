@@ -1,5 +1,5 @@
 from dataclasses import replace
-import json
+from pathlib import Path
 from uuid import uuid4
 
 from tests.application.projects.test_source_update import _xml
@@ -7,6 +7,8 @@ from transbridge.application.contracts import RequestContext
 from transbridge.application.io import FormatId
 from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
 from transbridge.bootstrap.persistence import build_persistence_v2_services
+from transbridge.persistence.project_store.connection import project_connection
+from transbridge.persistence.project_store.history import ProjectHistory
 from transbridge.persistence.v2 import VariantChangeSet
 
 
@@ -38,13 +40,14 @@ def test_snapshot_restores_complete_variant_and_survives_save_and_reopen(tmp_pat
     assert commands.save_snapshot("修改前", context).is_success
     snapshots = services.project_snapshots.list(context)
     assert len(snapshots) == 1
-    frozen = next((tmp_path / "snapshots").glob("*.json")).read_bytes()
+    history = ProjectHistory(services.projects)
+    frozen = history.load(snapshots[0].identity, active.formal_variant_ref)
     assert commands.replace_entry_states(
         {first.entry_key: ("改写", 1), second.entry_key: ("新增", 1)}, context
     ).is_success
     assert commands.save(context).is_success
     previous_revision = active.variant.revision
-    pointer = (tmp_path / "active-project.json").read_bytes()
+    pointer = (tmp_path / "project-store-v1" / "active.json").read_bytes()
 
     result = services.project_snapshots.restore(snapshots[0].identity, context)
 
@@ -57,8 +60,8 @@ def test_snapshot_restores_complete_variant_and_survives_save_and_reopen(tmp_pat
     assert restored.entries[1].translation == ""
     assert restored.to_dto().envelope.data["label_library"]["review"]["name"] == "已审核"
     assert services.project_lifecycle.active.dirty
-    assert (tmp_path / "active-project.json").read_bytes() == pointer
-    assert next((tmp_path / "snapshots").glob("*.json")).read_bytes() == frozen
+    assert (tmp_path / "project-store-v1" / "active.json").read_bytes() == pointer
+    assert history.load(snapshots[0].identity, active.formal_variant_ref) == frozen
     assert commands.save(context).is_success
     assert not services.project_lifecycle.active.dirty
     persisted = services.variants.read_snapshot(active.formal_variant_ref)
@@ -85,25 +88,24 @@ def test_snapshot_mismatch_or_corruption_never_changes_current_content(tmp_path)
     assert len(services.project_snapshots.list(context)) == 1
     assert not services.project_snapshots.restore(identity, wrong_context).is_success
     assert not services.project_snapshots.restore("../active-project", context).is_success
-    path = tmp_path / "snapshots" / f"{identity}.json"
-    document = json.loads(path.read_text(encoding="utf-8"))
-    document["variant"]["data"]["source_fingerprints"] = [{"namespace": "other", "sha256": "b" * 64}]
-    path.write_text(json.dumps(document), encoding="utf-8")
+    path = Path(services.projects.path_for(active.project_ref))
+    with project_connection(path, write=True) as connection:
+        connection.execute("UPDATE named_snapshot SET label_library = ? WHERE identity = ?", ("{", identity))
     assert not services.project_snapshots.restore(identity, context).is_success
     assert active.variant.snapshot() == before
 
 
-def test_unrelated_corrupt_snapshot_does_not_block_current_list_and_is_retained(tmp_path, caplog):
+def test_legacy_snapshot_file_is_ignored_and_kept(tmp_path):
     services = build_persistence_v2_services(tmp_path, id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now")
     context = RequestContext("gui", run_id="snapshot")
     assert services.gui_project_commands.create_project(ProjectProvisioningRequest("工程"), context).is_success
     assert services.gui_project_commands.save_snapshot("可用", context).is_success
     corrupt = tmp_path / "snapshots" / ("a" * 64 + ".json")
+    corrupt.parent.mkdir()
     corrupt.write_bytes(b"{invalid")
     snapshots = services.project_snapshots.list(context)
     assert [item.name for item in snapshots] == ["可用"]
     assert corrupt.read_bytes() == b"{invalid"
-    assert "保留原文件" in caplog.text
 
 
 def test_snapshot_delete_requires_current_owner_and_removes_only_selected_record(tmp_path):
@@ -118,9 +120,11 @@ def test_snapshot_delete_requires_current_owner_and_removes_only_selected_record
 
     wrong = services.project_snapshots.delete(selected.identity, replace(context, variant_id="different"))
     assert not wrong.is_success
-    assert (tmp_path / "snapshots" / f"{selected.identity}.json").exists()
+    assert {item.identity for item in services.project_snapshots.list(context)} == {
+        selected.identity,
+        retained.identity,
+    }
 
     result = services.project_snapshots.delete(selected.identity, context)
     assert result.is_success, result.diagnostics
-    assert not (tmp_path / "snapshots" / f"{selected.identity}.json").exists()
-    assert (tmp_path / "snapshots" / f"{retained.identity}.json").exists()
+    assert [item.identity for item in services.project_snapshots.list(context)] == [retained.identity]

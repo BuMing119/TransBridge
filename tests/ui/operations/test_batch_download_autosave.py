@@ -1,24 +1,22 @@
 """Download success means the current local Variant is durable and clean."""
 
-from pathlib import Path
-
 import pytest
 
 from tests.application.projects.test_categorized_upload import project as project
 from tests.ui.operations.test_batch_download_session import case as _case_fixture, compare, states
-from transbridge.persistence.v2 import VariantRepository
+from transbridge.persistence.project_store.lifecycle import ProjectLifecycleStore
 from transbridge.persistence.v2.variant import VariantSnapshot
 
 case = _case_fixture
 
 
-def disk_snapshot(case):
-    active = case.services.project_lifecycle.active
-    repository = VariantRepository(case.services.root, case.services.filesystem)
-    return VariantSnapshot.from_dto(repository.read_snapshot(active.formal_variant_ref), active.formal_variant_ref)
+def disk_snapshot(case, ref=None):
+    if ref is None:
+        ref = case.services.project_lifecycle.active.formal_variant_ref
+    return VariantSnapshot.from_dto(case.services.variants.read_snapshot(ref), ref)
 
 
-def test_download_automatically_saves_current_version_without_retaining_previous_content(case):
+def test_download_automatically_saves_current_version_without_creating_a_project_snapshot(case):
     key = case.sources[0].entries[0].identity
     assert case.context.project_commands.update_entry(
         key,
@@ -41,7 +39,10 @@ def test_download_automatically_saves_current_version_without_retaining_previous
     snapshots = case.services.project_snapshots.list(case.context.runtime_context)
     assert not snapshots
     assert case.session.plan is None
-    assert not list(Path(case.services.root).rglob("download-results"))
+    recovery = case.context.task_store.recovery()
+    (task,) = recovery.list_summaries()
+    assert task["state"] == "completed"
+    assert len(recovery.load_results(task["task_id"])["rows"]) == 2
     assert any("已更新并保存" in detail for detail in receipt.details)
 
 
@@ -58,22 +59,18 @@ def test_disk_failure_preserves_original_state_and_retries_same_download_and_rec
     before = active.variant.snapshot()
     persisted_before = disk_snapshot(case)
     projection_before = case.services.project_projection.snapshot()
-    variant_path = Path(case.services.variants.path_for(active.formal_variant_ref))
-    original_replace = case.services.filesystem.replace
     writes = []
 
-    def fail_version(source, destination):
-        if Path(destination) == variant_path:
-            writes.append(destination)
-            raise PermissionError("测试：当前版本文件暂时被占用")
-        return original_replace(source, destination)
+    def fail_version(_store, save):
+        writes.append(save.formal_variant_ref)
+        raise PermissionError("测试：当前版本文件暂时被占用")
 
     with monkeypatch.context() as patch:
-        patch.setattr(case.services.filesystem, "replace", fail_version)
+        patch.setattr(ProjectLifecycleStore, "_save", fail_version)
         with pytest.raises(RuntimeError, match="自动保存|保存失败"):
             case.session.apply(lambda *_: None, case.cancel)
 
-    assert writes
+    assert writes == [active.formal_variant_ref]
     assert case.services.project_lifecycle.active.variant.snapshot() == before
     assert case.services.project_lifecycle.active.dirty
     assert disk_snapshot(case) == persisted_before
@@ -82,13 +79,12 @@ def test_disk_failure_preserves_original_state_and_retries_same_download_and_rec
     assert not snapshots_before_retry
     reads_before_retry = tuple(case.gateway.calls)
 
-    compare(case)
     receipt = case.session.apply(lambda *_: None, case.cancel)
 
     assert receipt.updated == 2
     assert not case.services.project_lifecycle.active.dirty
     assert disk_snapshot(case) == case.services.project_lifecycle.active.variant.snapshot()
-    assert len(case.gateway.calls) > len(reads_before_retry)
+    assert tuple(case.gateway.calls) == reads_before_retry
     assert case.services.project_snapshots.list(case.context.runtime_context) == snapshots_before_retry
 
 

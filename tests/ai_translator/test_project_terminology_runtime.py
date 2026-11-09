@@ -180,22 +180,27 @@ def test_run_controller_archives_and_reuses_the_same_frozen_binding() -> None:
 
 
 def test_production_gate_freezes_actual_scheme_without_a_variant_base_version(tmp_path):
+    from tests.integration.bootstrap.test_terminology_task_wiring import _create_project_context
     from transbridge.application.terminology_profiles import ProfileTermMapping, TerminologyProfileContent
-    from transbridge.bootstrap.terminology import ProductionTerminologyComposition
-    from transbridge.bootstrap.terminology_storage import ProjectTerminologyRepositories
+    from transbridge.bootstrap import build_runtime
 
-    repositories = ProjectTerminologyRepositories(tmp_path)
-    composition = ProductionTerminologyComposition(repositories, None, None, None, None, None)
+    app = build_runtime(settings={"persistence_v2_root": tmp_path})
     try:
-        profiles = composition.profile_service_for("project-1")
+        context = _create_project_context(app, "AI terminology binding")
+        project_id = context.project_id
+        composition = app.use_cases.resolve("terminology_ui_services_factory")
+        commands = app.use_cases.resolve("gui_project_commands")
+        profiles = composition.profile_service_for(project_id)
         profile = profiles.create_with_content(
-            "project-1", "B", TerminologyProfileContent((ProfileTermMapping("Sword", "B之剑"),))
+            project_id, "B", TerminologyProfileContent((ProfileTermMapping("Sword", "B之剑"),))
         )
-        profiles.publish(profile.profile_id, expected_draft_revision=0)
-        profiles.select("project-1", "variant-b", profile.profile_id)
-        assert repositories.for_project("project-1").effective_version("project-1", "variant-b") is None
+        published = profiles.publish(profile.profile_id, expected_draft_revision=0)
+        saved = commands.save_profile_variant("B", context, target_profile=published, source_profile=None)
+        assert saved.is_success, saved.diagnostics
+        variant_id = saved.value["id"]
+        assert composition.repositories.for_project(project_id).effective_version(project_id, variant_id) is None
         owner = SimpleNamespace(
-            active_version_identity=("project-1", "variant-b"), effective_terminology_factory=composition
+            active_version_identity=(project_id, variant_id), effective_terminology_factory=composition
         )
         binding = freeze_project_terminology(owner)
         assert binding.snapshot_ref.status is EffectiveSnapshotStatus.READY
@@ -203,4 +208,4 @@ def test_production_gate_freezes_actual_scheme_without_a_variant_base_version(tm
         loaded = binding.adapter.load(binding.context, ())
         assert [(entry.term, entry.translation) for entry in loaded.entries] == [("Sword", "B之剑")]
     finally:
-        composition.close()
+        assert app.close().is_success

@@ -2,8 +2,8 @@
 
 Example: uv run python scripts/benchmark_project_open.py --output result.json
 Use --source-root for another checkout (only src/ is needed). Real projects are
-opt-in with --data-root; project/variant records and referenced source artifacts
-are copied. Records without saved source content use the normal recovery view.
+opt-in with --data-root; current project databases are copied through SQLite
+backup. Older checkouts can use their project records and saved source closure.
 Original input hashes are checked afterwards.
 No application configuration, credentials, network or LLM services are loaded.
 """
@@ -14,7 +14,6 @@ import argparse
 from contextlib import ExitStack
 from functools import wraps
 import gc
-import hashlib
 import json
 import logging
 import os
@@ -29,80 +28,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import uuid
 
-
-def _digest(path: Path) -> str:
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
-def copy_records(source: Path, destination: Path) -> tuple[list[Path], dict[Path, str]]:
-    """Copy records and their saved source closure without opening user services."""
-    source = source.resolve(strict=True)
-    destination = destination.resolve()
-    if destination.is_relative_to(source) or source.is_relative_to(destination):
-        raise ValueError("copy destination must be outside the source data tree")
-    if destination.exists():
-        raise FileExistsError("copy destination must be new")
-    records = sorted((source / "projects").glob("*.json"))
-    variants = sorted((source / "projects").glob("*/variants/*.json"))
-    if not records:
-        raise ValueError("source data contains no project records")
-    hashes = {}
-    copied_paths = [*records, *variants]
-    for path in copied_paths:
-        if path.is_symlink() or not path.resolve().is_relative_to(source):
-            raise ValueError("record links outside the source tree are unsupported")
-        hashes[path] = _digest(path)
-    artifact_ids = set()
-    # Legacy records still track live input content. Saved source references
-    # depend only on their immutable store closure, even if live paths are gone.
-    for record in records:
-        document = json.loads(record.read_text(encoding="utf-8"))
-        for item in document.get("data", {}).get("sources", ()):
-            artifact_id = item.get("source_artifact_id")
-            if artifact_id is not None:
-                if not isinstance(artifact_id, str):
-                    raise ValueError("source artifact identity must be a string")
-                artifact_ids.add(artifact_id)
-                continue
-            location = item.get("location") or item.get("path")
-            if location and Path(location).is_file():
-                path = Path(location).resolve()
-                hashes[path] = _digest(path)
-    if artifact_ids:
-        artifact_hashes = _artifact_record_hashes(source, artifact_ids)
-        hashes.update(artifact_hashes)
-        copied_paths.extend(artifact_hashes)
-    destination.mkdir()
-    for path in copied_paths:
-        target = destination / path.relative_to(source)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(path.read_bytes())
-        if _digest(target) != hashes[path]:
-            raise RuntimeError("input changed while copying project records")
-    return [destination / path.relative_to(source) for path in records], hashes
-
-
-def _artifact_record_hashes(source: Path, artifact_ids: set[str]) -> dict[Path, str]:
-    """Read and verify only formally referenced manifests and blob dependencies."""
-    from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
-
-    store = ProjectSourceArtifactStore(str(source))
-    hashes = {}
-    for artifact_id in sorted(artifact_ids):
-        for relative, content in store.iter_records(artifact_id):
-            path = source / "source_artifacts" / relative
-            if path.is_symlink() or not path.resolve().is_relative_to(source):
-                raise ValueError("artifact links outside the source tree are unsupported")
-            digest = hashlib.sha256(content).hexdigest()
-            if path in hashes and hashes[path] != digest:
-                raise RuntimeError("input changed while reading source artifact dependencies")
-            hashes[path] = digest
-    return hashes
-
-
-def verify_inputs(hashes: dict[Path, str]) -> bool:
-    return all(path.is_file() and _digest(path) == digest for path, digest in hashes.items())
+if __package__:
+    from .benchmark_project_inputs import _digest as _digest, copy_records, verify_inputs
+else:
+    from benchmark_project_inputs import _digest as _digest, copy_records, verify_inputs
 
 
 def _services(root: Path):
@@ -119,19 +48,7 @@ def create_fixture(root: Path, count: int) -> Path:
     """Build synthetic records with captured input for normal project opening."""
     from transbridge.application.contracts import RequestContext
     from transbridge.application.io import FormatId
-    from transbridge.application.projects import ProjectSourceRequest
-    from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
-    from transbridge.persistence.saved_project_sources import SavedProjectSourcePreparer
-    from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
-    from transbridge.persistence.v2 import (
-        ProjectDto,
-        ProjectId,
-        ProjectRef,
-        SchemaEnvelope,
-        VariantId,
-        VariantRef,
-        VariantSnapshot,
-    )
+    from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
 
     if count < 1:
         raise ValueError("entry count must be positive")
@@ -140,6 +57,7 @@ def create_fixture(root: Path, count: int) -> Path:
     source.write_text(
         json.dumps([
             {
+                "id": index + 1,
                 "key": f"entry-{index:06d}",
                 "original": f"Synthetic original {index}",
                 "translation": f"Synthetic translation {index}",
@@ -150,40 +68,17 @@ def create_fixture(root: Path, count: int) -> Path:
         ]),
         encoding="utf-8",
     )
-    prepared = SavedProjectSourcePreparer(
-        TranslationIoProjectSourcePreparer(), ProjectSourceArtifactStore(str(root))
-    ).prepare_source(
-        ProjectSourceRequest(str(source), format_hint=FormatId.JSON_PARATRANZ),
-        RequestContext("benchmark", run_id="fixture"),
-        role="primary",
-        common_options=(),
-    )
     services = _services(root)
     try:
-        project = ProjectRef(ProjectId("benchmark-project"))
-        variant = VariantRef(VariantId("benchmark-variant"), project.identity)
-        services.projects.save(
-            project,
-            ProjectDto(
-                SchemaEnvelope(
-                    2,
-                    project.kind,
-                    project.identity.value,
-                    0,
-                    {
-                        "name": "Synthetic benchmark",
-                        "sources": [prepared.to_dict()],
-                        "variant_ids": [variant.identity.value],
-                        "active_variant_id": variant.identity.value,
-                    },
-                )
+        result = services.gui_project_commands.create_project(
+            ProjectProvisioningRequest(
+                "Synthetic benchmark", source=ProjectSourceRequest(str(source), format_hint=FormatId.JSON_PARATRANZ)
             ),
+            RequestContext("benchmark", run_id="fixture"),
         )
-        services.variants.save(
-            variant,
-            VariantSnapshot(variant, (prepared.baseline.fingerprint,), prepared.baseline.entries, 0).to_dto(),
-        )
-        return Path(services.projects.path_for(project))
+        if not result.is_success:
+            raise RuntimeError("synthetic project provisioning failed")
+        return Path(services.projects.path_for(services.project_lifecycle.active.project_ref))
     finally:
         services.close()
 
@@ -238,23 +133,29 @@ class RenderObservation:
 
         class PaintObserver(QObject):
             def eventFilter(self, _watched, event):  # noqa: N802 - Qt override
-                if event.type() == QEvent.Type.Paint and measurements.render_generations and owner.row_count():
+                if event.type() == QEvent.Type.Paint and measurements.render_generations and owner.materialized_rows():
                     owner.paint_observed = True
                 return False
 
         self.paint_observer = PaintObserver(table.viewport())
         table.viewport().installEventFilter(self.paint_observer)
-        original_start = table.start_render
 
-        @wraps(original_start)
-        def start_render(*args, **kwargs):
-            measurements.render_generations += 1
-            result = original_start(*args, **kwargs)
-            self.record_rows()
-            return result
+        def watch_render(name):
+            original_start = getattr(table, name)
 
-        stack.enter_context(patch.object(table, "start_render", start_render))
-        measurements.wrap(stack, table, "start_render", "table_start_render_ms")
+            @wraps(original_start)
+            def start_render(*args, **kwargs):
+                measurements.render_generations += 1
+                result = original_start(*args, **kwargs)
+                self.record_rows()
+                return result
+
+            stack.enter_context(patch.object(table, name, start_render))
+            measurements.wrap(stack, table, name, "table_start_render_ms")
+
+        watch_render("start_render")
+        if hasattr(table, "start_logical_range"):
+            watch_render("start_logical_range")
         if self.mode == "item_batches":
             original_batch = table.append_batch
 
@@ -275,12 +176,22 @@ class RenderObservation:
     def row_count(self):
         return self.table.model().rowCount()
 
+    def materialized_rows(self):
+        if getattr(self.table.model(), "logical_count", None) is not None:
+            return len(self.table.render_session.entries)
+        return self.row_count()
+
     def record_rows(self):
         elapsed = (time.perf_counter() - self.measurements.started) * 1000
-        rows = self.row_count()
+        rows = self.materialized_rows()
         if rows and self.measurements.first_rows is None:
             self.measurements.first_rows = elapsed
-        if rows == len(self.table.render_session.entries) and self.measurements.finished_rows is None:
+        expected = (
+            self.row_count()
+            if getattr(self.table.model(), "logical_count", None) is not None
+            else len(self.table.render_session.entries)
+        )
+        if rows == expected and self.measurements.finished_rows is None:
             self.measurements.finished_rows = elapsed
 
     def process_events_completed(self):
@@ -415,6 +326,7 @@ def measure_project(app, root: Path, project: Path, repeats: int, timeout: float
                             and host.project_open_worker is None
                             and not preview._table.has_pending_batch
                             and rows_painted
+                            and (measurements.finished_rows is not None or host.render_observation.row_count() == 0)
                         ):
                             break
                         if time.perf_counter() - measurements.started > timeout:
@@ -457,6 +369,12 @@ def measure_project(app, root: Path, project: Path, repeats: int, timeout: float
                 time.sleep(0.005)
             app.processEvents()
             preview.close()
+            paging = getattr(preview, "_paging", None)
+            if paging is not None:
+                for worker in (paging.worker, paging._statistics_worker, getattr(paging, "_resident_worker", None)):
+                    if worker is not None:
+                        worker.wait()
+                app.processEvents()
             context.close_projection()
             host.close()
             services.close()

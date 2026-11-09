@@ -216,7 +216,9 @@ def _command(case, host, original, monkeypatch):
             project_commands=services.gui_project_commands,
             runtime_context=runtime,
         )
-        host.context.add_slot(str(source), CollectionSlot("Fixture", TranslationEntryCollection(())))
+        (registered,) = host.context.project_sources
+        source_id = registered["source_id"]
+        host.context.add_slot(source_id, CollectionSlot("Fixture", TranslationEntryCollection(()), source_id=source_id))
         return lambda: WorkbenchWidget._on_remove_slot(host), lambda: not host.context.slots
     if case == "step-remove":
         return lambda: step1.Step1SourceWidget._on_remove_slot(host), lambda: not host.context.slots

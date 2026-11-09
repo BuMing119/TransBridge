@@ -17,7 +17,7 @@ from transbridge.application.translation.ai_request_budget import AiRequestBudge
 from transbridge.application.translation.task_scope import SourceTask
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from transbridge.ui.tools.ai_translator import source_execution
+from transbridge.paratranz.config_manager import ParatranzConfig
 from transbridge.ui.tools.ai_translator.source_execution import SourceExecutor
 from transbridge.ui.tools.ai_translator.task_consistency import TaskConsistency
 
@@ -65,15 +65,10 @@ _TRANSLATIONS = {
 @pytest.fixture
 def term_write_run(tmp_path, monkeypatch):
     monkeypatch.setattr(LLMConfig, "get_ai_translator_dir", staticmethod(lambda _stem: str(tmp_path)))
+    monkeypatch.setattr(ParatranzConfig, "get_data_dir", lambda: str(tmp_path))
     provider = _Provider()
     monkeypatch.setattr("transbridge.infra.llm_client.create_llm_client", lambda _: provider)
     monkeypatch.setattr("transbridge.infra.llm_reasoning.with_reasoning_intent", lambda client, *_: client)
-    log_store = source_execution.WorkflowLogStore
-    monkeypatch.setattr(
-        source_execution,
-        "WorkflowLogStore",
-        lambda path, **kwargs: log_store(path, log_base=tmp_path / "logs", **kwargs),
-    )
 
     def run(source, *, parallel_mixed=False, json_alias=None):
         term_priority = ["dynamic"] if json_alias is None else list(json_alias)

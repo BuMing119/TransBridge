@@ -86,6 +86,8 @@ class TaskResultFlow:
         run.logged.emit("处理结束：" + run.entries.index.summary.counts_text)
         if run.cancelled or run.shutting_down:
             run._finish_cancelled()
+        elif not getattr(run.session, "target_active", True):
+            run.completion.applied((), prepared=True, target_inactive=True)
         elif run.request.spec.execution_profile.preview_enabled and run.entries.index.pending_preview:
             run.state, run.status = "pending_confirmation", "待确认"
             run._record()

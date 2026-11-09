@@ -51,15 +51,18 @@ def test_eet_append_commits_target_identity_and_captures_evidence(project, kind)
     assert after.translation == "你好"
     assert project.services.project_lifecycle.active.variant.snapshot().entries[0].translation == "你好"
     assert not project.ctx.authoritative_projection_diverged()
-    _, record, _ = load_task_result(ctx, result.data["result_id"])
-    assert record["input_snapshot"] and record["raw_entries"]
+    _, record, payload = load_task_result(ctx, result.data["result_id"])
+    assert "input_snapshot" not in record and "raw_entries" not in record
+    assert str(path) not in repr(record)
+    assert [row["text"] for row in payload["rows"]] == ["你好"]
 
 
 def test_binary_eet_source_is_registered_with_native_snapshot(project):
     _load(project, "eet", duplicate=True)
     slot = project.ctx.active_slot
     assert slot.format_id is FormatId.BINARY_EET
-    assert slot.eet_path.endswith("base.eet")
+    assert slot.source_snapshot.source.display_name == "base.eet"
+    assert slot.eet_path is None
     assert len(slot.collection) == 2
     assert slot.source_snapshot.content.startswith(b"EET_")
     assert project.services.gui_project_commands.save(project.request).is_success

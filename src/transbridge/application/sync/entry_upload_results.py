@@ -6,6 +6,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import shutil
 from threading import RLock
 from uuid import uuid4
 
@@ -96,6 +97,47 @@ class EntryUploadResultStore:
     def release_pending(self, result_id):
         with _PENDING_LOCK:
             _PENDING.pop(str(self.directory(result_id).resolve()), None)
+
+    def contains(self, result_id):
+        try:
+            return (self.directory(result_id) / "target.json").is_file()
+        except ValueError:
+            return False
+
+    def history(self, *, expected_owner=None):
+        records = []
+        for path in self.root.glob("*/target.json"):
+            header = json.loads(path.read_text(encoding="utf-8"))
+            target = header["target"]
+            if expected_owner is not None and any(target.get(name) != value for name, value in expected_owner.items()):
+                continue
+            summary = path.parent / "summary.json"
+            state = json.loads(summary.read_text(encoding="utf-8"))["state"] if summary.exists() else "running"
+            project_id, variant_id = target["project_identity"]
+            records.append({
+                "task_id": header["result_id"],
+                "created_at": header["created_at"],
+                "project_id": project_id,
+                "variant_id": variant_id,
+                "state": state,
+                "mode": "upload",
+                "supported": False,
+                "sources": [{"key": "paratranz-upload", "label": "ParaTranz 上传"}],
+                "result_kind": "upload",
+            })
+        return tuple(records)
+
+    def delete_completed(self, result_id):
+        record = self.load(result_id)
+        if record["state"] != "completed" or any(
+            row["outcome"] in {"in_flight", "unknown", "unverified"} for row in record["receipts"]
+        ):
+            raise ValueError("上传仍在执行、等待本地关联或需要先核对远端结果，暂不能删除回执。")
+        directory = self.directory(result_id)
+        if directory.is_symlink() or directory.resolve().parent != self.root.resolve():
+            raise ValueError("上传回执目录超出任务存储范围。")
+        shutil.rmtree(directory)
+        self.release_pending(result_id)
 
     def list_records(self, target):
         records = []

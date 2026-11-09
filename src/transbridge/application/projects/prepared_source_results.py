@@ -15,6 +15,24 @@ from .source_terminology_scope import scoped_source_entries
 
 def prepare_parsed_source(path, entries, snapshot, format_id, options=(), *, role="primary", diagnostics=()):
     entries = scoped_source_entries(entries, format_id, str(path))
+    if format_id in {FormatId.PLUGIN_SSE, FormatId.JSON_DSD}:
+        from transbridge.application.io.dsd_projection import DSD_LOCATOR_METADATA
+
+        entries = tuple(
+            replace(
+                entry,
+                metadata=(
+                    *entry.metadata,
+                    (
+                        DSD_LOCATOR_METADATA,
+                        (entry.form_id_with_plugin, entry.dsd_type, entry.dsd_index, entry.editor_id),
+                    ),
+                ),
+            )
+            if isinstance(entry, TranslationEntry) and entry.form_id_with_plugin and entry.dsd_type
+            else entry
+            for entry in entries
+        )
     namespaces = {entry.identity.namespace for entry in entries}
     if len(namespaces) > 1:
         raise ValueError("来源没有唯一的内容身份。")

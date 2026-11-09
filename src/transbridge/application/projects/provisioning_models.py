@@ -15,6 +15,7 @@ from transbridge.persistence.v2.models import ProjectDto
 from transbridge.persistence.v2.variant import SourceBaseline, VariantSnapshot
 
 from .models import ActiveProject
+from .storage_contracts import ExtractedSource
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,7 +142,10 @@ class PreparedSourceHydration:
             raise ValueError("hydration location must not be empty")
         if not _is_sha256(self.fingerprint):
             raise ValueError("hydration fingerprint must be a lowercase SHA-256 digest")
-        if self.source_snapshot.sha256 != self.fingerprint:
+        if self.source_snapshot.sha256 != self.fingerprint and (
+            not self.source_snapshot.source.uri.startswith("project-source:")
+            or dict(self.source_snapshot.metadata).get("translation_source_fingerprint") != self.fingerprint
+        ):
             raise ValueError("hydration snapshot fingerprint mismatch")
         if any(not isinstance(entry, EntrySnapshot) for entry in self.entries):
             raise TypeError("hydration entries must be immutable EntrySnapshot values")
@@ -182,6 +186,7 @@ class ProjectProvisioningCommit:
     variant: VariantSnapshot
     baselines: tuple[SourceBaseline, ...]
     project_name_key: str
+    extracted_sources: tuple[ExtractedSource, ...] = ()
 
     def __post_init__(self) -> None:
         if self.variant.ref.project_id.value != self.project.envelope.identity:

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from transbridge.application.io import EntryKey, FormatId
 from transbridge.application.projects import ProjectSourceRequest
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence.v2 import ProjectId, VariantId, VariantRef
+from transbridge.ui.project_rows import ProjectRowsCollection
 from transbridge.ui.project_view_binding import prepare_project_view
+from transbridge.ui.projection_consistency import PreparedProjectionConsistency
 from transbridge.ui.source_hydration import prepare_project_slots
 
 
@@ -72,12 +75,34 @@ class ProjectSourceAddOperation:
                 snapshot.values.get("variant_revision"),
             ) != (project_id, variant_id, result.value.project_revision, result.value.variant_revision):
                 raise RuntimeError("添加期间工程版本已发生变化。")
-            slots = (*old_slots, *prepare_project_slots((hydration,), snapshot))
-            required = {EntryKey.from_dict(entry["entry_key"]) for entry in snapshot.values.get("entries", ())}
-            visible = {entry.identity for _, slot in slots for entry in slot.collection}
-            if required != visible:
+            # The addition is in the working copy until Save. A fresh store
+            # reader would see only the old source registry.
+            existing_slots = tuple(
+                (
+                    key,
+                    replace(
+                        slot,
+                        collection=TranslationEntryCollection(slot.collection),
+                        source_snapshot=slot.collection.native_template(),
+                    )
+                    if isinstance(slot.collection, ProjectRowsCollection)
+                    else slot,
+                )
+                for key, slot in old_slots
+            )
+            slots = prepare_project_slots((hydration,), snapshot, existing_slots=existing_slots)
+            required = {
+                EntryKey.from_dict(entry["entry_key"])
+                for entry in snapshot.values.get("entries", ())
+                if not entry.get("tombstone", False)
+            }
+            if required != {entry.identity for _, slot in slots for entry in slot.collection}:
                 raise RuntimeError("添加后的工程来源未能完整加载。")
-            return AddedSourceView(snapshot, slots, prepare_project_view(snapshot))
+            evidence = PreparedProjectionConsistency(snapshot, (slot for _, slot in slots))
+            state = replace(
+                prepare_project_view(snapshot), initial_source_key=result.value.source_id, consistency=evidence
+            )
+            return AddedSourceView(snapshot, slots, state)
 
         def failed(message):
             if committed:

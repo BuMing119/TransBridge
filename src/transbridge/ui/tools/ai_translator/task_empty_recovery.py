@@ -9,6 +9,7 @@ from transbridge.application.translation.task_recovery import TaskRecoveryStore
 class EmptyRecoveryCompletion:
     directory: object
     selection: tuple
+    task_store: object | None = None
 
     def execute(self):
         return self.prepare().commit()
@@ -19,7 +20,11 @@ class EmptyRecoveryCompletion:
         if self.directory is None:
             raise ValueError("恢复任务的项目目录不可用。")
         selected, restart = self.selection
-        store = TaskRecoveryStore(self.directory / "ai-task-recovery")
+        store = (
+            self.task_store.recovery()
+            if self.task_store is not None
+            else TaskRecoveryStore(self.directory / "ai-task-recovery")
+        )
         record = store.load(selected["task_id"])
         if any(
             record.get(key) != selected.get(key)

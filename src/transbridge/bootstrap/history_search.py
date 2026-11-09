@@ -17,16 +17,13 @@ from transbridge.application.history_search import (
     ProviderResult,
     SourceRecord,
 )
-from transbridge.application.io import EntryKey, TranslationIoUseCase
 from transbridge.application.projects import variant_catalog
-from transbridge.application.projects.source_content import authoritative_baseline_sources
+from transbridge.application.projects.source_content import authoritative_baseline_sources, source_content_identity
 from transbridge.application.projects.source_registry import SourceRegistrySnapshot
 from transbridge.persistence.history_search import SqliteHistorySearchIndex
-from transbridge.persistence.saved_project_sources import load_saved_project_source
-from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
+from transbridge.persistence.project_store.format import ProjectStorageConflict
 from transbridge.persistence.terminology import SqliteTerminologyRepository, TerminologyPaths
-from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantId, VariantRef
-from transbridge.persistence.v2.variant import VariantSnapshot
+from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantId
 from transbridge.translation_memory.model import Dictionary
 
 
@@ -41,11 +38,9 @@ class ProductionHistorySearch:
 class ProjectVariantHistoryProvider:
     name = "Project/Variant"
 
-    def __init__(self, catalog, projects, variants, io: TranslationIoUseCase | None = None, *, artifacts=None) -> None:
+    def __init__(self, catalog, projects) -> None:
         self._catalog = catalog
         self._projects = projects
-        self._variants = variants
-        self._artifacts = artifacts
 
     def collect(self, cancellation) -> ProviderResult:
         records: list[SourceRecord] = []
@@ -68,36 +63,40 @@ class ProjectVariantHistoryProvider:
             try:
                 project_ref = ProjectRef(ProjectId(catalog_entry.project_id))
                 project = self._projects.read_snapshot(project_ref)
+                store = self._projects.store_for(project_ref.identity)
                 registry = SourceRegistrySnapshot.from_project_data(project.envelope.data)
-                originals, source_by_namespace, parse_diagnostics = self._originals(
-                    catalog_entry.project_id,
-                    registry,
-                    cancellation,
-                )
-                diagnostics.extend(parse_diagnostics)
+                baseline_ids = {
+                    item["source_id"]
+                    for item in authoritative_baseline_sources(
+                        tuple(source.to_dict() for source in registry.sources),
+                        tuple(relation.to_dict() for relation in registry.relations),
+                    )
+                }
+                source_by_namespace = {
+                    source_content_identity(source.to_dict()): source
+                    for source in registry.sources
+                    if source.enabled and source.source_id in baseline_ids
+                }
                 locales = _project_locales(project.envelope.data)
+                project_records = []
                 for descriptor in variant_catalog(project):
                     _raise_if_cancelled(cancellation)
-                    variant_ref = VariantRef(VariantId(descriptor.variant_id), project_ref.identity)
-                    snapshot = VariantSnapshot.from_dto(self._variants.read_snapshot(variant_ref), variant_ref)
-                    unmatched = 0
-                    for entry in snapshot.entries:
+                    variant_id = VariantId(descriptor.variant_id)
+                    token = store.read_token(variant_id)
+                    if token.project_revision != project.envelope.revision:
+                        raise ProjectStorageConflict("project changed while reading its history")
+                    for row in store.iter_entries(variant_id, token=token):
+                        _raise_if_cancelled(cancellation)
+                        entry = row.state
                         translation = entry.translation.strip()
-                        original = originals.get(entry.entry_key, entry.entry_key.original)
-                        if entry.tombstone or not translation:
-                            continue
-                        if original is None or not original.strip():
-                            unmatched += 1
+                        original = row.snapshot.original
+                        if entry.tombstone or not translation or not original.strip():
                             continue
                         registration = source_by_namespace.get(entry.entry_key.namespace.value)
-                        plugin_id = None if registration is None else registration.plugin_scope
-                        source_label = (
-                            registration.display_name
-                            or (Path(registration.location).name if registration.location else registration.source_id)
-                            if registration is not None
-                            else "未知来源"
-                        )
-                        records.append(
+                        if registration is None:
+                            continue
+                        source_label = registration.display_name or registration.source_id
+                        project_records.append(
                             SourceRecord(
                                 HistoryEntryKind.TRANSLATION,
                                 original,
@@ -110,7 +109,7 @@ class ProjectVariantHistoryProvider:
                                     project_name=catalog_entry.name,
                                     variant_id=descriptor.variant_id,
                                     variant_name=descriptor.name,
-                                    plugin_id=plugin_id or source_label,
+                                    plugin_id=registration.plugin_scope or source_label,
                                     details=(("entry_key", entry.entry_key.serialize()),),
                                 ),
                                 source_locale=locales[0],
@@ -118,55 +117,12 @@ class ProjectVariantHistoryProvider:
                                 status=entry.stage.name,
                             )
                         )
-                    if unmatched:
-                        diagnostics.append(
-                            HistoryDiagnostic(
-                                "HISTORY_ENTRY_UNMATCHED",
-                                f"{unmatched} 条已保存译文无法用完整 EntryKey 恢复原文，已跳过。",
-                                f"{catalog_entry.name} / {descriptor.name}",
-                            )
-                        )
+                records.extend(project_records)
             except Exception as exc:  # noqa: BLE001 - isolate one Project from all remaining sources
                 diagnostics.append(
                     HistoryDiagnostic("HISTORY_PROJECT_READ_FAILED", f"工程读取失败：{exc}", catalog_entry.name)
                 )
         return ProviderResult(tuple(records), tuple(diagnostics))
-
-    def _originals(self, project_id, registry, cancellation):
-        originals = {}
-        source_by_namespace = {}
-        diagnostics: list[HistoryDiagnostic] = []
-        baseline_ids = {
-            item["source_id"]
-            for item in authoritative_baseline_sources(
-                tuple(item.to_dict() for item in registry.sources),
-                tuple(item.to_dict() for item in registry.relations),
-            )
-        }
-        for registration in registry.sources:
-            _raise_if_cancelled(cancellation)
-            if not registration.enabled or registration.source_id not in baseline_ids:
-                continue
-            source_name = registration.display_name or (
-                Path(registration.location).name if registration.location else registration.source_id
-            )
-            try:
-                if self._artifacts is None or registration.source_artifact_id is None:
-                    raise ValueError("工程尚未保存来源内容，请补充来源文件。")
-                prepared = load_saved_project_source(self._artifacts, registration.to_dict(), ())
-                if prepared.hydration is None:
-                    raise ValueError("工程保存的来源内容不可用，请补充来源文件。")
-                for parsed in prepared.hydration.entries:
-                    key = getattr(parsed, "identity", None) or getattr(parsed, "entry_key", None)
-                    if not isinstance(key, EntryKey):
-                        continue
-                    originals[key] = parsed.original
-                    source_by_namespace[key.namespace.value] = registration
-            except Exception as exc:  # noqa: BLE001 - isolate one registered source
-                diagnostics.append(
-                    HistoryDiagnostic("HISTORY_SOURCE_PARSE_FAILED", f"来源无法恢复原文：{exc}", source_name)
-                )
-        return originals, source_by_namespace, tuple(diagnostics)
 
 
 class DictionaryHistoryProvider:
@@ -287,12 +243,7 @@ def build_production_history_search(
 ) -> ProductionHistorySearch:
     index = SqliteHistorySearchIndex(Path(persistence.root) / "history-search" / "history.sqlite3")
     providers = (
-        ProjectVariantHistoryProvider(
-            persistence.project_catalog,
-            persistence.projects,
-            persistence.variants,
-            artifacts=ProjectSourceArtifactStore(str(persistence.root)),
-        ),
+        ProjectVariantHistoryProvider(persistence.project_catalog, persistence.projects),
         DictionaryHistoryProvider(translation_memory_root),
         TerminologyHistoryProvider(persistence.root, persistence.project_catalog, persistence.projects),
     )

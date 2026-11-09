@@ -104,44 +104,51 @@ def test_variant_creation_rechecks_revision_at_publication_after_catalog_preflig
     assert persisted.envelope.data["name"] == "Renamed during creation"
 
 
-def test_failed_variant_creation_keeps_persisted_catalog_and_active_revision_consistent(service_factory, monkeypatch):
-    services, context = _new_project(service_factory)
-    active = services.project_lifecycle.active
-    project_path = Path(services.projects.path_for(active.project_ref))
-    before = project_path.read_bytes()
+def _fail_active_preference(services, monkeypatch):
     original_replace = services.filesystem.replace_durable
 
     def fail_active_pointer(source, destination):
-        if Path(destination).name == "active-project.json":
-            raise OSError("injected active pointer publication failure")
+        if Path(destination) == Path(services.root) / "project-store-v1" / "active.json":
+            raise OSError("injected active preference publication failure")
         return original_replace(source, destination)
 
     monkeypatch.setattr(services.filesystem, "replace_durable", fail_active_pointer)
+
+
+def test_open_does_not_silently_leave_previous_active_preference(service_factory, monkeypatch):
+    services, context = _new_project(service_factory)
+    previous = services.project_lifecycle.active
+    commands = services.gui_project_commands
+    assert commands.create_project(ProjectProvisioningRequest("Other"), context).is_success
+    other = services.project_lifecycle.active
+    _fail_active_preference(services, monkeypatch)
+
+    opened = services.current_project_opener.open_path(services.projects.path_for(previous.project_ref), context)
+
+    assert opened.is_success
+    assert [item.code for item in opened.diagnostics] == ["PROJECT_ACTIVE_PREFERENCE_WRITE_FAILED"]
+    assert services.project_lifecycle.active.project_ref == previous.project_ref
+    persisted = services.current_project_opener.prepare_active(context)
+    assert persisted.is_success, persisted.diagnostics
+    assert persisted.value.project_ref == other.project_ref
+
+
+def test_variant_write_failure_preserves_catalog_and_active_revision(service_factory, monkeypatch):
+    from transbridge.persistence.project_store import lifecycle as storage_lifecycle
+
+    services, context = _new_project(service_factory)
+    active = services.project_lifecycle.active
+    path = Path(services.projects.path_for(active.project_ref))
+    before = path.read_bytes()
+    original = storage_lifecycle._write_project
+
+    def fail_after_variant_was_staged(*args):
+        original(*args)
+        raise OSError("injected variant publication failure")
+
+    monkeypatch.setattr(storage_lifecycle, "_write_project", fail_after_variant_was_staged)
     result = services.gui_project_commands.create_variant("Must be rolled back", context)
 
     assert not result.is_success
     assert services.project_lifecycle.active is active
-    assert project_path.read_bytes() == before
-
-
-def test_failed_variant_switch_keeps_persisted_project_and_active_pointer_consistent(service_factory, monkeypatch):
-    services, context = _new_project(service_factory)
-    original = services.project_lifecycle.active.formal_variant_ref
-    created = services.gui_project_commands.create_variant("Branch", context)
-    assert created.is_success, created.diagnostics
-    active = services.project_lifecycle.active
-    project_path = Path(services.projects.path_for(active.project_ref))
-    before = project_path.read_bytes()
-    original_replace = services.filesystem.replace_durable
-
-    def fail_active_pointer(source, destination):
-        if Path(destination).name == "active-project.json":
-            raise OSError("injected active pointer publication failure")
-        return original_replace(source, destination)
-
-    monkeypatch.setattr(services.filesystem, "replace_durable", fail_active_pointer)
-    result = services.gui_project_commands.switch_v2(active.project_ref, original, context)
-
-    assert not result.is_success
-    assert services.project_lifecycle.active is active
-    assert project_path.read_bytes() == before
+    assert path.read_bytes() == before

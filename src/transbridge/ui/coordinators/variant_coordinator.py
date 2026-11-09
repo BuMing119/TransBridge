@@ -101,6 +101,13 @@ class VariantCoordinator:
                 )
                 return
             decision = DirtyDecision.DISCARD
+        opener = getattr(self._host, "current_project_opener", None)
+        if getattr(opener, "supports_paged_workbench", False):
+            if not self._host.project_coordinator.open_project_variant(
+                name, decision=decision, display_name=display_name
+            ):
+                self._host.workbench.project_bar.refresh()
+            return
         project_ref = ProjectRef(ProjectId(project_id))
         variant_ref = VariantRef(VariantId(name), project_ref.identity)
         started = self._host.start_foreground_task(

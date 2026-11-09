@@ -9,7 +9,7 @@ qapp = support.qapp
 make_window = support.make_window
 
 
-def test_completion_notice_waits_for_save_and_is_not_duplicated(qapp, make_window, monkeypatch):
+def test_staged_notice_precedes_explicit_save_and_saved_notice_is_not_duplicated(qapp, make_window, monkeypatch):
     window, session, _ = make_window()
     notices, callbacks = [], {}
     window.run.completion_notice.connect(notices.append)
@@ -22,18 +22,23 @@ def test_completion_notice_waits_for_save_and_is_not_duplicated(qapp, make_windo
     worker = support._start(window, session)
     outcomes = tuple(SourceOutcome(task) for task in session.tasks)
     worker.publish(outcomes)
+    support._wait_reports(qapp, window)
+    assert not callbacks and not session.project_saved and session.can_save
+    assert len(notices) == 1 and "等待项目保存" in notices[0]["title"]
+
+    window.save_button.click()
     support._wait_until(lambda: bool(callbacks))
-    assert not notices and session.is_busy
+    assert len(notices) == 1 and session.is_busy
     assert "正在保存" in window.save_status.text()
-    session.saved = session.project_saved = session.snapshot_saved = True
+    session.saved = session.project_saved = True
     session.is_busy = False
     callbacks["on_success"]({})
     support._wait_reports(qapp, window)
-    assert len(notices) == 1 and "项目已保存" in notices[0]["title"]
+    assert len(notices) == 2 and "项目已保存" in notices[1]["title"]
     worker.completed.emit(outcomes)
     window.run.completion.notify()
     support._wait_reports(qapp, window)
-    assert len(notices) == 1
+    assert len(notices) == 2
 
 
 def test_retry_discards_previous_attempt_pending_save_error(qapp, make_window, monkeypatch):
@@ -45,7 +50,8 @@ def test_retry_discards_previous_attempt_pending_save_error(qapp, make_window, m
     worker = support._start(window, session)
     worker.publish((SourceOutcome(session.tasks[0]), SourceOutcome(session.tasks[1], error="network")))
     support._wait_until(lambda: window.run.completion.pending is not None)
-    assert window.run.completion.pending is not None
+    window.run.save()
+    support._wait_until(lambda: window.run.completion.pending[1] == "disk full")
     window.run.retry()
     support._wait_until(lambda: window.run.worker is not None)
     assert window.run.completion.pending is None
@@ -86,5 +92,5 @@ def test_completion_dialog_offers_retry_for_failed_entries(qapp, make_window):
     support._wait_reports(qapp, window)
     dialog = window._dialogs[-1]
     assert isinstance(dialog, QMessageBox)
-    assert "成功结果已保存" in dialog.windowTitle()
+    assert "等待项目保存" in dialog.windowTitle()
     assert {button.text() for button in dialog.buttons()} == {"查看结果", "重试失败条目", "关闭提示"}

@@ -11,6 +11,7 @@ from transbridge.ui.project_labels import entry_label_key
 from transbridge.ui.source_input_state import original_known
 
 from .filters_presenter import entry_category
+from .resident_rows import ResidentTableRows
 from .table_presenter import RenderSession
 from .translation_cell_text import full_text_tooltip, translation_cell_text
 from .translation_table_columns import (
@@ -48,6 +49,9 @@ class TranslationTableModel(QAbstractTableModel):
         self._editing_allowed = True
         self.default_ranks = {}
         self._source_keys = ()
+        self.logical_count = None
+        self.logical_rows = {}
+        self._logical_overrides = {}
 
     def install(self, session, order, entry_labels, label_library, *, source_keys=None) -> bool:
         """Install data and report whether existing Qt indexes were invalidated."""
@@ -58,7 +62,11 @@ class TranslationTableModel(QAbstractTableModel):
             current_keys = tuple(self._source_keys[row] for row in self.order)
             incoming_keys = tuple(source_keys[row] for row in order)
             same_rows = bool(current_keys) and current_keys == incoming_keys
-        same_scope = session.content_scope is not None and session.content_scope == self.session.content_scope
+        same_scope = (
+            self.logical_count is None
+            and session.content_scope is not None
+            and session.content_scope == self.session.content_scope
+        )
         same_editability = self._editing_allowed == (self.profile_label is None)
         self._editing_allowed = self.profile_label is None
         self._source_keys = source_keys
@@ -71,10 +79,50 @@ class TranslationTableModel(QAbstractTableModel):
             return False
         self.beginResetModel()
         self._generation += 1
+        self.logical_count, self.logical_rows = None, {}
+        self._logical_overrides.clear()
         self.session, self.order = session, order
         self.entry_labels, self.label_library = entry_labels, label_library
         self.endResetModel()
         return True
+
+    def install_logical(self, session, total, rows, entry_labels, label_library, *, editing_row=None):
+        """Update cached cells without invalidating indexes within the same logical range."""
+        reset = self.logical_count != total or self.session.content_scope != session.content_scope
+        before = self.logical_rows
+        pinned = None if editing_row is None or reset else self.entry_at_row(editing_row)
+        if reset:
+            self.beginResetModel()
+            self._generation += 1
+        self.logical_count, self.logical_rows = total, rows
+        self._logical_overrides = {} if pinned is None else {editing_row: pinned}
+        self.session, self.order, self._source_keys = session, (), ()
+        self.entry_labels, self.label_library = entry_labels, label_library
+        self._editing_allowed = self.profile_label is None
+        if reset:
+            self.endResetModel()
+        elif isinstance(before, ResidentTableRows) or isinstance(rows, ResidentTableRows):
+            for first, last in (
+                ((0, total - 1),)
+                if editing_row is None
+                else (
+                    (0, editing_row - 1),
+                    (editing_row + 1, total - 1),
+                )
+            ):
+                if first <= last:
+                    self.dataChanged.emit(self.index(first, 0), self.index(last, NUM_COLUMNS - 1), [])
+        else:
+            changed = sorted((before.keys() | rows.keys()) - {editing_row})
+            if changed:
+                first = previous = changed[0]
+                for row in changed[1:]:
+                    if row != previous + 1:
+                        self.dataChanged.emit(self.index(first, 0), self.index(previous, NUM_COLUMNS - 1), [])
+                        first = row
+                    previous = row
+                self.dataChanged.emit(self.index(first, 0), self.index(previous, NUM_COLUMNS - 1), [])
+        return reset
 
     def replace_session(self, session):
         """Replace equal-sized source data without invalidating persistent indexes."""
@@ -90,13 +138,13 @@ class TranslationTableModel(QAbstractTableModel):
         self.pending, self.error = pending, error
 
     def rowCount(self, parent=QModelIndex()):  # noqa: N802 - Qt override
-        return 0 if parent.isValid() else len(self.order)
+        return 0 if parent.isValid() else self.logical_count if self.logical_count is not None else len(self.order)
 
     def columnCount(self, parent=QModelIndex()):  # noqa: N802 - Qt override
         return 0 if parent.isValid() else NUM_COLUMNS
 
     def index(self, row, column, parent=QModelIndex()):
-        if parent.isValid() or not 0 <= row < len(self.order) or not 0 <= column < NUM_COLUMNS:
+        if parent.isValid() or not 0 <= row < self.rowCount() or not 0 <= column < NUM_COLUMNS:
             return QModelIndex()
         return self.createIndex(row, column, self._generation)
 
@@ -104,6 +152,8 @@ class TranslationTableModel(QAbstractTableModel):
         return index.isValid() and index.model() is self and index.internalId() == self._generation
 
     def entry_at_row(self, row):
+        if self.logical_count is not None:
+            return self._logical_overrides.get(row) or self.logical_rows.get(row)
         return self.session.entries[self.order[row]] if 0 <= row < len(self.order) else None
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802 - Qt override
@@ -127,10 +177,14 @@ class TranslationTableModel(QAbstractTableModel):
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not self._owns_index(index) or not 0 <= index.column() < NUM_COLUMNS:
             return None
+        column = index.column()
+        if self.logical_count is not None and column == COL_INDEX and role == Qt.ItemDataRole.DisplayRole:
+            return str(index.row() + 1)
         entry = self.entry_at_row(index.row())
         if entry is None:
+            if self.logical_count is not None and column == COL_ORIGINAL and role == Qt.ItemDataRole.DisplayRole:
+                return "正在加载…"
             return None
-        column = index.column()
         if role == Qt.ItemDataRole.UserRole:
             return entry
         if role == Qt.ItemDataRole.CheckStateRole and column == COL_CHECK:
@@ -178,9 +232,11 @@ class TranslationTableModel(QAbstractTableModel):
         return f"{entry_category(entry)} · {STAGE_LABELS.get(entry.stage, f'状态 {entry.stage}')}{derived}"
 
     def flags(self, index):
-        if not self._owns_index(index) or self.entry_at_row(index.row()) is None:
+        if not self._owns_index(index):
             return Qt.ItemFlag.NoItemFlags
         flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        if self.entry_at_row(index.row()) is None:
+            return flags if self.logical_count is not None else Qt.ItemFlag.NoItemFlags
         if index.column() == COL_CHECK:
             flags |= Qt.ItemFlag.ItemIsUserCheckable
         elif index.column() == COL_TRANSLATION and self.profile_label is None:
@@ -202,6 +258,11 @@ class TranslationTableModel(QAbstractTableModel):
         return False
 
     def update_entry(self, row, entry):
+        if self.logical_count is not None:
+            if self.entry_at_row(row) is not None:
+                self._logical_overrides[row] = entry
+                self.dataChanged.emit(self.index(row, 0), self.index(row, NUM_COLUMNS - 1), [])
+            return
         if not 0 <= row < len(self.order):
             return
         source_row = self.order[row]

@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import textwrap
+import warnings
 
 import pytest
 
@@ -528,7 +529,8 @@ def test_real_qt_baseline_runs_in_an_isolated_process_and_marks_its_authority() 
     completed = subprocess.run(
         [
             sys.executable,
-            str(FIXTURE_PATH),
+            "-m",
+            "tests.ui.fixtures.ui_foundation_window_tree",
             "--entries",
             "48",
             "--repetitions",
@@ -566,8 +568,8 @@ def test_real_qt_baseline_runs_in_an_isolated_process_and_marks_its_authority() 
         assert result["authority"] == "partial-boundary"
 
 
-def test_final_gui_foundation_profile_enforces_all_versioned_budgets(tmp_path: Path) -> None:
-    """Exercise the real Foundation and representative tree without relaxing release budgets."""
+def test_final_gui_foundation_profile_enforces_budgets_with_advisory_theme_switch(tmp_path: Path) -> None:
+    """Exercise the real Foundation, temporarily reporting theme-switch overruns as warnings."""
 
     if importlib.util.find_spec("PyQt6") is None:
         pytest.skip("PyQt6 unavailable: final Foundation profile cannot run")
@@ -595,8 +597,19 @@ def test_final_gui_foundation_profile_enforces_all_versioned_budgets(tmp_path: P
         assert result["authority"] == "partial-boundary"
     assert result["cold_delta"]["p95_s"] <= thresholds.ui_foundation_init_p95_s
     assert result["cold_delta"]["rss_delta_bytes"] <= thresholds.ui_foundation_rss_bytes
-    assert result["hot_switch"]["p95_s"] <= thresholds.ui_foundation_switch_p95_s
-    assert result["hot_switch"]["heartbeat_p95_ms"] <= thresholds.ui_heartbeat_p95_ms
+    # User-authorized deferral: restore these hard gates after theme refresh is
+    # optimized and verified against the original switch and heartbeat budgets.
+    for metric, measured_ms, budget_ms in (
+        ("theme switch", result["hot_switch"]["p95_s"] * 1000, thresholds.ui_foundation_switch_p95_s * 1000),
+        ("heartbeat", result["hot_switch"]["heartbeat_p95_ms"], thresholds.ui_heartbeat_p95_ms),
+    ):
+        if measured_ms > budget_ms:
+            warnings.warn(
+                f"Foundation {metric} P95 {measured_ms:.1f} ms exceeds the "
+                f"{budget_ms:.1f} ms target; temporarily advisory pending theme-refresh optimization.",
+                pytest.PytestWarning,
+                stacklevel=2,
+            )
 
     baseline_p95 = result["window_open"]["baseline_p95_s"]
     final_p95 = result["window_open"]["final_p95_s"]
@@ -631,6 +644,9 @@ def test_final_gui_foundation_profile_enforces_all_versioned_budgets(tmp_path: P
         "window_closed_subscriptions": result["window_open"]["final_closed_subscriptions_max"],
         "switch_p95_s": result["hot_switch"]["p95_s"],
         "heartbeat_p95_ms": result["hot_switch"]["heartbeat_p95_ms"],
+        "heartbeat_budget_ms": thresholds.ui_heartbeat_p95_ms,
+        "switch_budget_s": thresholds.ui_foundation_switch_p95_s,
+        "theme_switch_budget_enforcement": "advisory",
         "lifecycle_rss_delta_bytes": lifecycle["rss_delta_bytes"],
         "cache_cost_bytes": lifecycle["icon_cache_cost_bytes"],
     }

@@ -29,9 +29,12 @@ class ProjectSnapshotPort(Protocol):
 
 
 class ProjectSnapshotCommands:
-    def __init__(self, lifecycle: ProjectLifecycleService, repository: ProjectSnapshotPort) -> None:
+    def __init__(
+        self, lifecycle: ProjectLifecycleService, repository: ProjectSnapshotPort, *, source_restore=None
+    ) -> None:
         self._lifecycle = lifecycle
         self._repository = repository
+        self._source_restore = source_restore
 
     def list(self, context: RequestContext) -> tuple[ProjectSnapshotInfo, ...]:
         active = self._active(context)
@@ -44,7 +47,11 @@ class ProjectSnapshotCommands:
             current = active.variant.snapshot()
             project_revision = active.project.envelope.revision
             snapshot = self._repository.load(identity, current.ref)
-            if snapshot.source_fingerprints != current.source_fingerprints:
+            if snapshot.source_fingerprints != current.source_fingerprints or (
+                self._source_restore is not None and self._source_restore.required(identity, current.ref)
+            ):
+                if self._source_restore is not None:
+                    return self._source_restore.restore(identity, active, snapshot, context)
                 raise ValueError("快照源文件与当前版本不同；请先恢复匹配的源文件")
             current_entries = {entry.entry_key: entry for entry in current.entries}
             if set(current_entries) != {entry.entry_key for entry in snapshot.entries}:

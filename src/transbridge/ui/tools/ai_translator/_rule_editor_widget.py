@@ -10,7 +10,7 @@ from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QHBoxLayout,
+    QGridLayout,
     QHeaderView,
     QLabel,
     QPushButton,
@@ -101,24 +101,26 @@ class _RuleEditorWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         # 工具栏
-        toolbar = QHBoxLayout()
-        toolbar.addWidget(QLabel("动作分配规则（从上到下按优先级匹配）:"))
-        toolbar.addStretch()
+        title = QLabel("动作分配规则（从上到下按优先级匹配）:")
+        title.setWordWrap(True)
+        layout.addWidget(title)
+        toolbar = QGridLayout()
+        toolbar.setColumnStretch(3, 1)
         self._btn_add = QPushButton("＋ 添加")
         self._btn_add.clicked.connect(self._on_add)
-        toolbar.addWidget(self._btn_add)
+        toolbar.addWidget(self._btn_add, 0, 0)
         self._btn_up = QPushButton("↑")
         self._btn_up.clicked.connect(self._on_move_up)
-        toolbar.addWidget(self._btn_up)
+        toolbar.addWidget(self._btn_up, 0, 1)
         self._btn_down = QPushButton("↓")
         self._btn_down.clicked.connect(self._on_move_down)
-        toolbar.addWidget(self._btn_down)
+        toolbar.addWidget(self._btn_down, 0, 2)
         self._btn_delete = QPushButton("删除")
         self._btn_delete.clicked.connect(self._on_delete)
-        toolbar.addWidget(self._btn_delete)
+        toolbar.addWidget(self._btn_delete, 1, 0)
         self._btn_reset = QPushButton("重置默认")
         self._btn_reset.clicked.connect(self.reset_to_default)
-        toolbar.addWidget(self._btn_reset)
+        toolbar.addWidget(self._btn_reset, 1, 1, 1, 2)
         layout.addLayout(toolbar)
 
         # 表格

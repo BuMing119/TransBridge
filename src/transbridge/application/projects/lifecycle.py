@@ -22,6 +22,7 @@ from transbridge.application.contracts import (
     OperationResult,
     RequestContext,
 )
+from transbridge.persistence.v2.ids import VariantRef
 from transbridge.persistence.v2.variant import VariantChangeSet, VariantSnapshot
 
 from .models import (
@@ -43,6 +44,7 @@ from .ports import (
     NullLifecycleLeasePort,
 )
 from .provisioning import ProjectProvisioningCommit
+from .save_changes import acknowledge_saved_changes, rebase_committed_variant_save
 from .save_result import active_save_result, translations_were_saved
 from .source_inputs import MissingProjectSourceInput
 from .transition_preparation import (
@@ -76,6 +78,8 @@ class ProjectLifecycleService:
         self._exports: dict[str, ExportRevisionLease] = {}
         self._issued_tokens: set[str] = set()
         self._lock = RLock()
+        self._save_in_flight = False
+        self._pending_variant_check: tuple[VariantRef, Callable[[RequestContext], OperationResult]] | None = None
 
     @property
     def generation(self) -> int:
@@ -94,6 +98,21 @@ class ProjectLifecycleService:
             if active is None or active.variant is None:
                 return None
             return active.variant.snapshot(), active.project.envelope.revision
+
+    def defer_variant_save_check(
+        self, variant_ref: VariantRef, check: Callable[[RequestContext], OperationResult]
+    ) -> None:
+        with self._lock:
+            self._pending_variant_check = variant_ref, check
+
+    def _check_pending_variant_save(self, active: ActiveProject, context: RequestContext) -> OperationResult | None:
+        pending = self._pending_variant_check
+        if pending is None or pending[0] != active.formal_variant_ref:
+            return None
+        result = pending[1](context)
+        if result.is_success and self._pending_variant_check is pending:
+            self._pending_variant_check = None
+        return result
 
     def prepare_transition(
         self,
@@ -220,7 +239,7 @@ class ProjectLifecycleService:
             try:
                 uow = self._unit_of_work.begin()
                 uow.stage_activate(activation)
-                uow.commit()
+                diagnostics = list(uow.commit() or ())
             except Exception as exc:  # noqa: BLE001 - rollback is part of the application contract
                 _rollback(uow)
                 self._safe_release(prepared.leases)
@@ -229,6 +248,9 @@ class ProjectLifecycleService:
             activated = prepared.candidate
             if activated is not None and activated.variant is not None:
                 assert activation.candidate_variant is not None
+                activated.variant.rebase_project_revision(
+                    activation.candidate_project.envelope.revision, activation.candidate_variant.revision
+                )
                 activated = replace(
                     activated,
                     persisted_project_revision=activation.candidate_project.envelope.revision,
@@ -242,7 +264,6 @@ class ProjectLifecycleService:
                 )
             self._active = activated
             self._generation += 1
-            diagnostics: list[Diagnostic] = []
             release_error = self._safe_release(() if old is None else old.leases)
             if release_error:
                 diagnostics.append(
@@ -364,7 +385,7 @@ class ProjectLifecycleService:
             try:
                 uow = self._unit_of_work.begin()
                 uow.stage_provisioning(provisioning)
-                uow.commit()
+                diagnostics = list(uow.commit() or ())
             except Exception as exc:  # noqa: BLE001 - rollback is part of the application contract
                 _rollback(uow)
                 return _from_exception(exc, "PROJECT_PROVISIONING_COMMIT_FAILED", context)
@@ -375,7 +396,6 @@ class ProjectLifecycleService:
                 persisted_variant_revision=provisioning.variant.revision,
             )
             self._generation += 1
-            diagnostics: list[Diagnostic] = []
             if old is not None and self._safe_release(old.leases):
                 diagnostics.append(
                     Diagnostic(
@@ -459,34 +479,40 @@ class ProjectLifecycleService:
                     ErrorCategory.CONFLICT,
                     context,
                 )
+            if active is not None:
+                checked = self._check_pending_variant_save(active, context)
+                if checked is not None and not checked.is_success:
+                    return checked
+                active = self._active
             if active is None or not active.dirty:
                 return active_save_result(active, context)
-            uow = None
-            save = LifecycleSave.capture(active)
-            try:
-                uow = self._unit_of_work.begin()
-                uow.stage_save(save)
-                uow.commit()
-            except Exception as exc:  # noqa: BLE001
-                _rollback(uow)
-                return _from_exception(exc, "ACTIVE_SAVE_FAILED", context)
-            saved_variant_revision = None if save.variant is None else save.variant.revision
-            self._active = replace(
-                active,
-                persisted_project_revision=save.project.envelope.revision,
-                persisted_variant_revision=saved_variant_revision,
-            )
-            revision_changed = active.project.envelope.revision != save.project.envelope.revision
-            if active.variant is not None and save.variant is not None:
-                revision_changed = revision_changed or active.variant.revision != save.variant.revision
-            if revision_changed:
+            if self._save_in_flight:
                 return _failed(
-                    "ACTIVE_SAVE_REVISION_CHANGED",
-                    "The active Project or Variant changed while its snapshot was being saved; retry is required.",
-                    ErrorCategory.CONFLICT,
-                    context,
+                    "ACTIVE_SAVE_IN_PROGRESS", "A save is already in progress.", ErrorCategory.CONFLICT, context
                 )
-            return active_save_result(self._active, context)
+            save = LifecycleSave.capture(active)
+            self._save_in_flight = True
+        uow = None
+        try:
+            uow = self._unit_of_work.begin()
+            uow.stage_save(save)
+            uow.commit()
+        except Exception as exc:  # noqa: BLE001
+            _rollback(uow)
+            with self._lock:
+                self._save_in_flight = False
+            return _from_exception(exc, "ACTIVE_SAVE_FAILED", context)
+        with self._lock:
+            self._save_in_flight = False
+            current = self._active
+            if (
+                current is not None
+                and current.project_ref == active.project_ref
+                and current.formal_variant_ref == active.formal_variant_ref
+            ):
+                self._active = acknowledge_saved_changes(current, save)
+                return active_save_result(self._active, context)
+            return active_save_result(acknowledge_saved_changes(active, save), context)
 
     def commit_active_variant(
         self,
@@ -598,6 +624,7 @@ class ProjectLifecycleService:
         expected_generation: int | None = None,
         commit_mutation: Callable[[Callable[[], None]], None] | None = None,
         missing_inputs: tuple[MissingProjectSourceInput, ...] | None = None,
+        source_additions=(),
     ) -> OperationResult[dict[str, Any]]:
         """Atomically replace active Project and Variant working-copy snapshots."""
 
@@ -673,9 +700,24 @@ class ProjectLifecycleService:
                     context,
                 )
             if (
+                project.envelope.revision != active.project.envelope.revision
+                or variant.source_fingerprints != active.variant.snapshot().source_fingerprints
+            ):
+                checked = self._check_pending_variant_save(active, context)
+                if checked is not None and not checked.is_success:
+                    return checked
+                if self._active is not active:
+                    return _failed(
+                        "SOURCE_UPDATE_STALE",
+                        "已确认先前保存的下载成果；请按最新工程状态重试来源变更。",
+                        ErrorCategory.CONFLICT,
+                        context,
+                    )
+            if (
                 project.envelope.revision == expected_project_revision
                 and variant.revision == expected_variant_revision
                 and not (persisted and active.dirty)
+                and before_publish is None
                 and (missing_inputs is None or missing_inputs == active.missing_inputs)
             ):
                 if commit_mutation is not None:
@@ -703,12 +745,15 @@ class ProjectLifecycleService:
                 candidate = replace(
                     active,
                     project=project,
-                    variant=VariantAggregate(variant),
+                    variant=VariantAggregate(
+                        variant, applications=() if persisted else active.variant.pending_applications()
+                    ),
                     persisted_project_revision=project.envelope.revision
                     if persisted
                     else active.persisted_project_revision,
                     persisted_variant_revision=variant.revision if persisted else active.persisted_variant_revision,
                     missing_inputs=active.missing_inputs if missing_inputs is None else tuple(missing_inputs),
+                    source_additions=() if persisted else (*active.source_additions, *source_additions),
                 )
             except Exception as exc:  # noqa: BLE001
                 return _from_exception(exc, "ACTIVE_CONTENT_CHANGE_FAILED", context)
@@ -724,29 +769,26 @@ class ProjectLifecycleService:
             except Exception as exc:  # noqa: BLE001
                 return _from_exception(exc, "ACTIVE_CONTENT_CHANGE_FAILED", context)
 
-            diagnostics: list[Diagnostic] = []
-            event = LifecycleEvent(
-                "active-project-content-updated",
-                self._generation,
-                old.summary(),
-                self._active.summary(),
-            )
-            if self._event_publisher is not None:
-                try:
-                    self._event_publisher(event)
-                except Exception:  # noqa: BLE001 - committed working copy remains authoritative
-                    diagnostics.append(
-                        Diagnostic(
-                            "PROJECTION_EVENT_FAILED",
-                            "The Project content command committed, but a projection callback failed.",
-                            DiagnosticSeverity.WARNING,
-                        )
+            return self._content_updated(old, context)
+
+    def _content_updated(self, old: ActiveProject, context: RequestContext) -> OperationResult[dict[str, Any]]:
+        assert self._active is not None
+        diagnostics: list[Diagnostic] = []
+        event = LifecycleEvent(
+            "active-project-content-updated", self._generation, old.summary(), self._active.summary()
+        )
+        if self._event_publisher is not None:
+            try:
+                self._event_publisher(event)
+            except Exception:  # noqa: BLE001 - committed working copy remains authoritative
+                diagnostics.append(
+                    Diagnostic(
+                        "PROJECTION_EVENT_FAILED",
+                        "The Project content command committed, but a projection callback failed.",
+                        DiagnosticSeverity.WARNING,
                     )
-            return OperationResult.completed(
-                self._active.summary(),
-                diagnostics=tuple(diagnostics),
-                run_id=context.run_id,
-            )
+                )
+        return OperationResult.completed(self._active.summary(), diagnostics=tuple(diagnostics), run_id=context.run_id)
 
     def commit_detached_content(self, project_ref, expected_generation: int, publish: Callable[[], None]) -> None:
         """Serialize an inactive Project mutation against activation and prepared transitions."""
@@ -757,6 +799,60 @@ class ProjectLifecycleService:
                 raise DomainError(ErrorCategory.CONFLICT, "SOURCE_UPDATE_STALE", "预览后工程状态已变化，请重新预览。")
             publish()
             self._generation += 1
+
+    def reconcile_variant_save(
+        self,
+        save: LifecycleSave,
+        observed_revision: int,
+        observed_entries,
+        context: RequestContext,
+        *,
+        verify,
+        commit_mutation,
+    ) -> OperationResult[dict[str, Any]]:
+        """Publish a previously committed save under the active-target and cancellation guards."""
+        assert save.variant is not None
+        with self._lock:
+            active = self._active
+            if active is None or active.formal_variant_ref != save.formal_variant_ref or active.variant is None:
+                return _failed(
+                    "ACTIVE_SAVE_TARGET_CHANGED", "已保存成果的原工程版本不再活动。", ErrorCategory.CONFLICT, context
+                )
+            if (
+                active.persisted_variant_revision is not None
+                and active.persisted_variant_revision >= save.variant.revision
+                and active.persisted_project_revision >= save.project.envelope.revision
+                and (
+                    active.persisted_variant_revision != save.expected_persisted_revision
+                    or active.persisted_project_revision != save.expected_persisted_project_revision
+                )
+            ):
+                return OperationResult.completed(active.summary(), run_id=context.run_id)
+            if self._save_in_flight or (
+                active.persisted_project_revision != save.expected_persisted_project_revision
+                or active.persisted_variant_revision != save.expected_persisted_revision
+            ):
+                return _failed(
+                    "ACTIVE_SAVE_TARGET_CHANGED",
+                    "当前工程版本的保存基准已变化，请重新打开后核对已保存成果。",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+
+            def publish() -> None:
+                verify()
+                self._active = rebase_committed_variant_save(active, save, observed_revision, observed_entries)
+                self._generation += 1
+
+            try:
+                publish() if commit_mutation is None else commit_mutation(publish)
+            except Exception as exc:  # noqa: BLE001 - map verification and commit guard failures
+                return _from_exception(exc, "ACTIVE_CONTENT_CHANGE_FAILED", context)
+            if self._active is active:
+                return _failed(
+                    "ACTIVE_CONTENT_NOT_AUTHORIZED", "本次保存确认未获执行。", ErrorCategory.PERMISSION, context
+                )
+            return self._content_updated(active, context)
 
     def commit_project_update(
         self,
@@ -819,6 +915,8 @@ class ProjectLifecycleService:
                 return _from_exception(exc, "PROJECT_UPDATE_COMMIT_FAILED", context)
 
             old = active
+            if active.variant is not None and active.persisted_variant_revision is not None:
+                active.variant.rebase_project_revision(project.envelope.revision, active.persisted_variant_revision)
             self._active = replace(
                 active,
                 project=project,

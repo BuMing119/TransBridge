@@ -25,6 +25,10 @@ from .item import (
 from .plugin_string_with_context import PluginStringWithContext
 
 
+class UnresolvedLocalizedStringsError(ValueError):
+    """The plugin refers to text missing from the operation's localized inputs."""
+
+
 class _UnresolvedStrings:
     """Retain the first missing locator and a bounded DEBUG-only sample."""
 
@@ -499,7 +503,7 @@ class SSEPluginWithContext(SSEPlugin):
         unresolved = self._unresolved_strings
         if unresolved is not None and unresolved.first is not None:
             string_id, record_type, subrecord_type, formid = unresolved.first
-            raise ValueError(
+            raise UnresolvedLocalizedStringsError(
                 f"Plugin {self.plugin_name} has {unresolved.count} unresolved localized string reference(s); "
                 f"first missing ID {string_id:#010x} in {record_type} {subrecord_type} ({formid}). "
                 "Provide the matching language Strings files or BSA containing this ID."

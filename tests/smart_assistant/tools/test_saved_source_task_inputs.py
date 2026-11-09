@@ -14,6 +14,7 @@ from transbridge.application.translation.task_result_recovery import restore_rec
 from transbridge.config.llm import LLMConfig
 from transbridge.config.task_results import TaskResultPreferences
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.persistence.task_store import TaskStore
 from transbridge.smart_assistant.tools.translation_task_results import (
     AssistantTaskResults,
     load_task_result,
@@ -24,10 +25,8 @@ from transbridge.ui.tools.ai_translator.source_terms import source_terminology_p
 
 @pytest.fixture
 def saved_only(tmp_path):
-    _source, project_path, context = _saved(tmp_path)
-    document = json.loads(project_path.read_bytes())
-    document["data"]["sources"] = []
-    project_path.write_text(json.dumps(document), encoding="utf-8")
+    source, project_path, context, _database = _saved(tmp_path)
+    source.unlink()
     services = _services(tmp_path / "store", CountingPreparer(forbidden=True))
     try:
         assert services.current_project_opener.open_path(project_path, context).is_success
@@ -40,6 +39,7 @@ def saved_only(tmp_path):
             active_version_identity=(active.project_ref.identity.value, active.formal_variant_ref.identity.value),
             project_commands=services.gui_project_commands,
             runtime_context=context,
+            task_store=TaskStore(tmp_path / "task-store-v1"),
             slots={key: slot},
             active_slot=slot,
             active_key=key,
@@ -159,16 +159,14 @@ def test_filtered_captured_collection_keeps_its_source_identity_after_active_sou
     assert task.report_context.active_slot.source_snapshot.source.display_name == "Captured.esp"
 
 
-def test_postprocess_dispatch_keeps_saved_report_name_and_worker_directory(saved_only, tmp_path, monkeypatch):
+def test_postprocess_dispatch_keeps_report_in_run_and_lists_it_without_active_project(saved_only, monkeypatch):
     from transbridge.smart_assistant.tools._postprocess_tool_runtime import PostprocessToolRequest
     from transbridge.smart_assistant.tools.postprocess_task_run import launch_postprocess_task
-    from transbridge.smart_assistant.tools.tool_proofreader import ProofreaderController, _resolve_report_directory
+    from transbridge.smart_assistant.tools.tool_proofreader import ProofreaderController
 
     app, _services_value = saved_only
     source = SimpleNamespace(display_name="SavedPlugin.esp", uri="old/SavedPlugin.esp")
     app.active_slot.source_snapshot = SimpleNamespace(source=source)
-    lookup = SimpleNamespace(esp_path="", active_slot=SimpleNamespace(source_snapshot=SimpleNamespace(source=source)))
-    monkeypatch.setattr(LLMConfig, "get_ai_translator_dir", lambda name: str(tmp_path / "reports" / name))
     request = PostprocessToolRequest(
         tuple(app.collection),
         LLMConfig(api_key="fixture", term_priority=[]),
@@ -194,27 +192,22 @@ def test_postprocess_dispatch_keeps_saved_report_name_and_worker_directory(saved
     )
     directories = []
 
-    def report_directory(context):
-        directory = _resolve_report_directory(context)
-        directories.append(directory)
-        return directory
-
     def execute(task, _request, directory, *_args):
-        target = directory()
-        target.mkdir(parents=True)
-        (target / "postprocess-report-fixture.xlsx").write_bytes(b"report fixture")
+        directories.append(directory)
+        assert task.report_context.active_slot.source_snapshot.source.display_name == "SavedPlugin.esp"
+        directory.mkdir(parents=True)
+        (directory / "postprocess-report-fixture.xlsx").write_bytes(b"report fixture")
         task.persist(state="completed")
 
     monkeypatch.setattr("transbridge.smart_assistant.tools.postprocess_task_run.execute_task", execute)
-    launched = launch_postprocess_task(
-        {}, app, report_directory=report_directory, report_callback=lambda *_args: None, manager=manager
-    )
+    launched = launch_postprocess_task({}, app, report_callback=lambda *_args: None, manager=manager)
     assert launched.success and directories == []
     app.active_slot.source_snapshot = SimpleNamespace(source=SimpleNamespace(display_name="Other.esp"))
     app.esp_path = "later.esp"
     workers[0]()
-    assert directories == [_resolve_report_directory(lookup)]
-    listed = ProofreaderController().list_quality_reports({}, lookup)
+    assert directories == [app.task_store.run_directory(launched.data["result_id"]) / "reports"]
+    app.active_version_identity = None
+    listed = ProofreaderController().list_quality_reports({}, app)
     assert [item["name"] for item in listed.data["files"]] == ["postprocess-report-fixture.xlsx"]
 
 
@@ -257,6 +250,7 @@ def test_real_saved_hydration_with_empty_context_keeps_the_known_context_guard(t
             active_version_identity=(active.project_ref.identity.value, active.formal_variant_ref.identity.value),
             project_commands=services.gui_project_commands,
             runtime_context=context,
+            task_store=TaskStore(tmp_path / "task-store-v1"),
             slots={"ready": slot},
             active_slot=slot,
             active_key="ready",

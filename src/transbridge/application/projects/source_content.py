@@ -33,6 +33,12 @@ def source_content_identity(source: Mapping[str, Any]) -> str | None:
     return normalized or None
 
 
+def translation_source_fingerprint(snapshot) -> str:
+    """Use the captured source identity for a reconstructed export template."""
+    metadata = dict(getattr(snapshot, "metadata", ()) or ())
+    return metadata.get("translation_source_fingerprint") or getattr(snapshot, "sha256", "")
+
+
 def folded_plugin_pairs(
     sources: tuple[dict[str, Any], ...],
     relations: tuple[dict[str, Any], ...] = (),

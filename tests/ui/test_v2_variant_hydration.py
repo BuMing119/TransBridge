@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 import pytest
 
 from transbridge.application.contracts import RequestContext
@@ -123,8 +123,8 @@ def test_real_cold_start_and_variant_combo_rehydrate_eet_and_allow_save(window_c
         assert slot.source_snapshot is not None
         window.context.activate_slot(location)
         table = window.workbench.preview._table
-        _until(lambda: table.rowCount() == 1 and table.model().index(0, COL_TRANSLATION).isValid())
-        assert table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "Variant B"
+        _until(lambda: table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "Variant B")
+        assert table.rowCount() == 1
     saved = []
     assert window.save_current_project_async(on_finished=saved.append)
     _until(lambda: bool(saved))
@@ -154,31 +154,37 @@ def test_missing_reference_does_not_prevent_restoring_selected_variant(window_ca
     assert case.services.project_lifecycle.active.variant.snapshot().entries[0].translation == "Variant B"
 
 
-def test_late_hydration_cannot_replace_a_newer_variant_and_save_waits_for_hydration(window_case, monkeypatch):
+def test_prepared_variant_switch_rejects_newer_active_edits_and_blocks_save_while_loading(window_case, monkeypatch):
     case = window_case
     started, release = Event(), Event()
     opener = case.window.current_project_opener
-    prepare = opener.prepare_active
+    prepare = opener.prepare_identity
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda _host, _title, message: warnings.append(message))
 
-    def blocked(context):
-        result = prepare(context)
+    def blocked(*args, **kwargs):
+        result = prepare(*args, **kwargs)
         started.set()
         assert release.wait(5)
         return result
 
-    monkeypatch.setattr(opener, "prepare_active", blocked)
+    monkeypatch.setattr(opener, "prepare_identity", blocked)
     combo = case.window.workbench.project_bar._variant_combo
     combo.setCurrentIndex(combo.findData(case.second.identity.value))
     _until(started.is_set)
     assert not case.window.save_current_project_async()
     assert not case.window.workbench.isEnabled()
     active = case.services.project_lifecycle.active
+    (entry,) = active.variant.snapshot().entries
     try:
-        assert case.window.project_commands.switch_v2(active.project_ref, case.first, case.context).is_success
+        edited = case.window.project_commands.update_entry(entry.entry_key, case.context, translation="Newer edit")
+        assert edited.is_success, edited.diagnostics
     finally:
         release.set()
-    _until(lambda: case.window.foreground_worker is None)
+    _until(lambda: case.window.project_open_worker is None)
 
     assert case.window.context.active_variant_id == case.first.identity.value
-    assert not case.window.context.slots
-    assert case.services.project_lifecycle.active.variant.snapshot().entries[0].translation == "Variant A"
+    assert case.window.context.dirty
+    assert next(iter(case.window.context.collection)).translation == "Newer edit"
+    assert case.services.project_lifecycle.active.variant.snapshot().entries[0].translation == "Newer edit"
+    assert warnings

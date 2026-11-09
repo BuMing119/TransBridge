@@ -60,20 +60,25 @@ def start(project, host, paths, **options):
 @pytest.mark.parametrize("kind", FORMATS)
 def test_open_save_and_restore_all_formats_without_original(project, host, kind):
     path = source_file(project.root, kind)
-    content = path.read_bytes()
     start(project, host, [path])
     wait(project, lambda: not host.opener._running)
     assert len(project.ctx.slots) == 1, host.messages
     slot = project.ctx.active_slot
     assert slot.format_id.value == kind
-    assert slot.source_snapshot.content == content
+    assert slot.source_snapshot.format_id.value == kind
     assert not project.ctx.authoritative_projection_diverged()
     assert project.services.gui_project_commands.save(project.request).is_success
     path.unlink()
     restored = project.services.current_project_opener.prepare_active(project.request)
     assert restored.is_success and restored.value.recovery is None, restored.diagnostics
-    assert restored.value.hydrations[0].source_snapshot.content == content
-    assert [e.translation for e in restored.value.hydrations[0].entries] == [e.translation for e in slot.collection]
+    (hydration,) = restored.value.hydrations
+    assert hydration.format_id.value == kind
+    assert hydration.source_snapshot.sha256 == slot.source_snapshot.sha256
+    if kind == "plugin.sse":
+        assert hydration.source_snapshot.content is None
+    assert [(entry.entry_key, entry.original, entry.translation, entry.stage) for entry in hydration.entries] == [
+        (entry.identity, entry.original, entry.translation, entry.stage) for entry in slot.collection
+    ]
 
 
 def test_batch_retains_successes_and_reports_corrupt_and_duplicate_files(project, host):

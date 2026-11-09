@@ -1,25 +1,22 @@
 from dataclasses import replace
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QComboBox, QDialog, QFileDialog, QInputDialog, QLabel
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QComboBox, QFileDialog, QLabel
 import pytest
 
+from tests.plugin_fixtures import write_plugin
 from tests.ui.test_project_creation_reuse import _until, shared_plugin_window as shared_plugin_fixture
 from tests.ui.test_project_source_hydration import _snapshot, _source
-from tests.ui.test_v2_variant_hydration import window_case as variant_window_fixture
 from transbridge.application.io import FormatId
 from transbridge.application.io.identity import EntryKey, SourceNamespace
-from transbridge.application.projects import ProjectSourceRequest
 from transbridge.application.projects.source_supplement_models import (
     SourceSupplementChoice,
     SourceSupplementPreview,
     SourceSupplementRow,
 )
 from transbridge.ui.source_hydration import prepare_project_slots
-from transbridge.ui.source_input_batch_dialog import SourceInputBatchDialog
 from transbridge.ui.source_input_state import SourceInputScope, missing_source_keys, original_known
 from transbridge.ui.source_supplement_dialog import SourceSupplementDialog
 from transbridge.ui.tools.ai_translator._window_actions import missing_original_source_keys
@@ -30,8 +27,6 @@ from transbridge.ui.workbench.translation_model import TranslationTableModel
 from transbridge.ui.workbench.translation_table_columns import COL_ORIGINAL, COL_TRANSLATION
 
 shared_plugin_window = shared_plugin_fixture
-window_case = variant_window_fixture
-_BATCH_OPEN = SourceInputBatchDialog.open
 
 
 def test_saved_rows_keep_exact_translation_identity_and_known_original_without_snapshot():
@@ -133,233 +128,184 @@ def test_correspondence_preview_uses_one_selector_for_large_inputs(shared_plugin
         dialog.close()
 
 
-def _open_without_artifact(case, source_index=None):
-    active = case.services.project_lifecycle.active
-    path = Path(case.services.projects.path_for(active.project_ref))
-    document = json.loads(path.read_bytes())
-    if source_index is None:
-        source_index = next(
-            index
-            for index, source in enumerate(document["data"]["sources"])
-            if Path(source.get("location") or source.get("legacy", {}).get("path", "")) == case.plugin
-        )
-    document["data"]["sources"][source_index]["source_artifact_id"] = "f" * 64
-    document["data"]["sources"][source_index]["location"] = ""
-    path.write_text(json.dumps(document), encoding="utf-8")
-    case.window.project_coordinator.open_project_path(str(path))
-    _until(lambda: case.window.project_open_worker is None)
-    return path
-
-
-def _drive_batch_list(monkeypatch, *, cancel=False):
-    opened = []
-
-    def show(dialog):
-        opened.append(dialog)
-        _BATCH_OPEN(dialog)
-        QTimer.singleShot(
-            0, dialog.reject if cancel else lambda: dialog.source_requested.emit(dialog.model.needs[0].key)
-        )
-
-    monkeypatch.setattr(SourceInputBatchDialog, "open", show)
-    return opened
-
-
-def test_real_missing_input_edit_save_cancel_map_reopen_and_resume_write(shared_plugin_window, monkeypatch):
+@pytest.mark.parametrize("selection", ["cancel", "matching", "wrong", "unreadable"])
+def test_plugin_write_binds_only_the_current_operation(shared_plugin_window, monkeypatch, selection):
     case = shared_plugin_window
-    window = case.window
-    active = case.services.project_lifecycle.active
-    variant_path = Path(case.services.variants.path_for(active.formal_variant_ref))
-    variant = json.loads(variant_path.read_bytes())
-    orphan = {**variant["data"]["entries"][0], "translation": "Unmatched saved translation"}
-    orphan["entry_key"] = {**orphan["entry_key"], "local_key": "old-unmatched-key"}
-    variant["data"]["entries"].append(orphan)
-    variant_path.write_text(json.dumps(variant), encoding="utf-8")
-    _open_without_artifact(case)
-    slot = window.context.active_slot
-    assert slot.source_snapshot is None and window.context.collection
-    assert window.workbench.isEnabled() and not window.context.project_view_failed
-    entry = next(iter(slot.collection))
-    assert window.context.update_projected_entry(entry.identity, translation="Edited without original").is_success
-    saved = []
-    assert window.save_current_project_async(on_finished=saved.append)
-    _until(lambda: bool(saved))
-    assert saved == [True] and next(iter(window.context.collection)).translation == "Edited without original"
-    monkeypatch.setattr(QInputDialog, "getItem", lambda _p, _t, _l, items, *_args: (items[0], True))
-    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_args, **_kwargs: ("", ""))
-    opened = _drive_batch_list(monkeypatch, cancel=True)
-    facade = window.operation_plan_facade
-    assert facade.begin_write(window.context) is None
-    _until(lambda: opened and window.source_input_coordinator._batch.dialog is None)
-    assert not window.source_input_coordinator._busy and window.workbench.isEnabled()
-    assert next(iter(window.context.collection)).translation == "Edited without original"
+    context = case.window.context
+    facade = case.window.operation_plan_facade
+    before = case.services.project_lifecycle.active.variant.snapshot()
+    source_id = context.active_key
+    original_slot = context.active_slot
+    expected = case.plugin.read_bytes()
+    assert original_slot.source_snapshot.content is None
+    selected_dir = case.root / "selected"
+    selected_dir.mkdir()
+    selected = case.plugin.rename(selected_dir / case.plugin.name)
+    if selection == "wrong":
+        write_plugin(selected, [(0x900, "Other", "Other original")])
+    if selection == "unreadable":
+        resolve = Path.resolve
 
-    service = window.app_runtime.use_cases.resolve("project_source_supplements")
-    previews = []
-    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_args, **_kwargs: (str(case.plugin), ""))
-    _drive_batch_list(monkeypatch)
+        def resolve_selected(path, *args, **kwargs):
+            if path == selected:
+                raise PermissionError(path)
+            return resolve(path, *args, **kwargs)
 
-    def cancel_mapping(dialog):
-        previews.append(dialog)
-        return QDialog.DialogCode.Rejected
-
-    monkeypatch.setattr(SourceSupplementDialog, "exec", cancel_mapping)
-    facade.begin_write(window.context)
-    _until(lambda: bool(previews) and not window.source_input_coordinator._busy)
-    assert not service._pending and window.workbench.isEnabled()
-    assert next(iter(window.context.collection)).translation == "Edited without original"
-    assert window.context.active_slot.source_snapshot is None
-    window.source_input_coordinator._batch.dialog.reject()
-
-    def confirm_mapping(dialog):
-        previews.append(dialog)
-        dialog.selector.setCurrentIndex(0)
-        dialog.selector.setCurrentIndex(1)
-        assert any("不纳入此次依赖输入" in label.text() for label in dialog.findChildren(QLabel))
-        return QDialog.DialogCode.Accepted
-
-    monkeypatch.setattr(SourceSupplementDialog, "exec", confirm_mapping)
-    facade.begin_write(window.context)
-    _until(lambda: window.context.active_slot.source_snapshot is not None and not window.source_input_coordinator._busy)
-    batch = window.source_input_coordinator._batch
-    batch.dialog.continued.emit(tuple(need.key for need in batch._needs() if need.ready))
-    _until(lambda: facade.active_plan_count == 1 and window.project_open_worker is None)
-    assert not service._pending and window.context.active_slot.source_snapshot is not None
-    assert next(iter(window.context.collection)).translation == "Edited without original"
-    assert len(window.context.slots) == 2
-    retained = next(slot for slot in window.context.slots.values() if slot.source_snapshot is None)
-    assert next(iter(retained.collection)).translation == "Unmatched saved translation"
-    assert not window.context.authoritative_projection_diverged()
-    dialog = next(iter(facade._coordinator._owned_windows.values()))
-    try:
-        assert not dialog._confirm_button.isEnabled()
-        dialog._field_edits["target_path"].setText(str(case.root / "chosen-output.esp"))
-        dialog._request_preflight()
-        _until(lambda: not facade._coordinator._preflight_workers and dialog._preflight is not None)
-        assert dialog._preflight.ready, dialog._checks.text()
-        assert not (case.root / "chosen-output.esp").exists()
-    finally:
-        dialog.close()
-
-
-@pytest.mark.parametrize("window_case", [2], indirect=True)
-def test_good_source_action_and_variant_restore_keep_missing_source_editable(window_case, monkeypatch):
-    case = window_case
-    window = case.window
-    _open_without_artifact(case, 1)
-    ready = next(key for key, slot in window.context.slots.items() if slot.source_snapshot is not None)
-    missing = next(key for key, slot in window.context.slots.items() if slot.source_snapshot is None)
-    window.context.activate_slot(ready)
-    monkeypatch.setattr(QInputDialog, "getItem", lambda *_: pytest.fail("Ready source must not trigger repair"))
-    dialog = window.operation_plan_facade.begin_write(window.context)
-    assert dialog is not None
-    dialog.close()
-    assert next(iter(window.context.slots[missing].collection)).translation == "Variant A"
-    window.workbench.project_bar._variant_combo.setCurrentIndex(
-        window.workbench.project_bar._variant_combo.findData(case.second.identity.value)
+        monkeypatch.setattr(Path, "resolve", resolve_selected)
+    prompts, resumed, messages = [], [], []
+    monkeypatch.setattr(case.window, "show_message", lambda text, **_: messages.append(text))
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda _host, title, *_: (prompts.append(title) or ("" if selection == "cancel" else str(selected)), ""),
     )
-    _until(lambda: window.foreground_worker is None and len(window.context.slots) == 2)
-    assert any(slot.source_snapshot is None for slot in window.context.slots.values())
-    assert all(next(iter(slot.collection)).translation == "Variant B" for slot in window.context.slots.values())
+    monkeypatch.setattr(facade._coordinator, "begin_write", lambda scope, **_: resumed.append(scope))
+
+    facade.begin_write(context, output_format=FormatId.PLUGIN_SSE.value)
+    _until(lambda: case.window.foreground_worker is None)
+
+    assert len(prompts) == 1
+    assert context.active_slot is original_slot and original_slot.source_snapshot.content is None
+    assert case.services.project_lifecycle.active.variant.snapshot() == before
+    if selection == "matching":
+        (scope,) = resumed
+        assert tuple(scope.slots) == (source_id,)
+        assert scope.slots[source_id].source_snapshot.content == expected
+    else:
+        assert not resumed
+        if selection in {"wrong", "unreadable"}:
+            assert messages
+            if selection == "unreadable":
+                assert any("无权读取工程来源文件" in message for message in messages)
+        else:
+            assert not messages
 
 
-def test_legacy_group_explicitly_selects_existing_source_and_maps_saved_translation(shared_plugin_window, monkeypatch):
+@pytest.mark.parametrize("shared_plugin_window", ["multiple"], indirect=True)
+@pytest.mark.parametrize("cancel_second", [False, True])
+def test_batch_plugin_inputs_cover_both_sources_or_cancel_without_binding(
+    shared_plugin_window, monkeypatch, cancel_second
+):
     case = shared_plugin_window
-    window = case.window
-    active = case.services.project_lifecycle.active
-    variant_path = Path(case.services.variants.path_for(active.formal_variant_ref))
-    variant = json.loads(variant_path.read_bytes())
-    variant["data"]["entries"][0]["entry_key"] = {"namespace": "legacy:v1", "local_key": "legacy-unknown-id"}
-    variant["data"]["source_fingerprints"] = [{"namespace": "legacy:v1", "sha256": None}]
-    variant_path.write_text(json.dumps(variant), encoding="utf-8")
-    _open_without_artifact(case)
-    assert window.context.active_slot.source_id is None
+    context = case.window.context
+    facade = case.window.operation_plan_facade
+    sources = tuple(context.slots)
+    assert len(sources) == 2
+    paths = {path.name: path for path in (case.plugin, case.other_plugin)}
+    selection = iter(paths[slot.label] for slot in context.slots.values())
+    chosen, resumed = [], []
+    before = case.services.project_lifecycle.active.variant.snapshot()
+
+    def choose(*_):
+        path = next(selection)
+        chosen.append(path)
+        return ("" if cancel_second and len(chosen) == 2 else str(path)), ""
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", choose)
+    monkeypatch.setattr(facade._coordinator, "begin_write", lambda scope, **options: resumed.append((scope, options)))
+
+    facade.begin_write(context, batch=True, output_format=FormatId.PLUGIN_SSE.value)
+    _until(lambda: case.window.foreground_worker is None)
+
+    assert set(chosen) == set(paths.values())
+    assert tuple(context.slots) == sources
+    assert all(slot.source_snapshot.content is None for slot in context.slots.values())
+    assert case.services.project_lifecycle.active.variant.snapshot() == before
+    if cancel_second:
+        assert not resumed
+    else:
+        ((scope, options),) = resumed
+        assert options["batch"] is True
+        assert tuple(scope.slots) == sources
+        assert [slot.source_snapshot.content for slot in scope.slots.values()] == [path.read_bytes() for path in chosen]
+
+
+@pytest.mark.parametrize("output,suffix", [("json.paratranz", ".json"), ("json.dsd", ".json"), ("sst.ssu9", ".sst")])
+def test_generic_export_offers_output_format_without_the_original_plugin(
+    shared_plugin_window, monkeypatch, output, suffix
+):
+    case = shared_plugin_window
+    facade = case.window.operation_plan_facade
+    initial_windows = facade.active_plan_count
+    case.plugin.unlink()
+    target = case.root / f"out{suffix}"
+    prompts = []
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda _host, title, *_: (prompts.append(title) or "", ""))
+
+    try:
+        case.window.operation_coordinator.write()
+        assert prompts == [], "Format selection must precede a plugin picker"
+        assert facade.active_plan_count == initial_windows + 1
+        (dialog,) = facade._coordinator._owned_windows.values()
+        formats = dialog._field_edits["output_format"]
+        index = formats.findData(output)
+        assert index >= 0
+        formats.setCurrentIndex(index)
+        dialog._field_edits["target_path"].setText(str(target))
+        dialog._confirm_button.click()
+        _until(lambda: dialog._checks.property("tbStatusId") == "completed")
+        assert target.stat().st_size > 0
+        assert not prompts
+    finally:
+        for dialog in tuple(facade._coordinator._owned_windows.values()):
+            dialog.close()
+
+
+def test_generic_native_export_prompts_only_on_submit_and_can_retry_after_cancel(shared_plugin_window, monkeypatch):
+    case = shared_plugin_window
+    target = case.root / "out.esp"
+    original = case.plugin.read_bytes()
+    selections = iter(("", str(case.plugin)))
     prompts = []
 
-    def choose(_parent, title, _label, items, *_args):
-        prompts.append((title, items))
-        return items[0], True
+    def choose(_host, title, *_args):
+        prompts.append(title)
+        return next(selections), ""
 
-    monkeypatch.setattr(QInputDialog, "getItem", choose)
-    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_args, **_kwargs: (str(case.plugin), ""))
-
-    def map_legacy(dialog):
-        assert dialog.mapping_model.rows[0].matched_key is None
-        dialog.selector.setCurrentIndex(1)
-        return QDialog.DialogCode.Accepted
-
-    monkeypatch.setattr(SourceSupplementDialog, "exec", map_legacy)
-    _drive_batch_list(monkeypatch)
-    facade = window.operation_plan_facade
-    facade.begin_write(window.context)
-    _until(lambda: window.context.active_slot.source_snapshot is not None and not window.source_input_coordinator._busy)
-    batch = window.source_input_coordinator._batch
-    batch.dialog.continued.emit(tuple(need.key for need in batch._needs() if need.ready))
-    _until(lambda: facade.active_plan_count == 1)
-    dialog = next(iter(facade._coordinator._owned_windows.values()))
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", choose)
+    facade = case.window.operation_plan_facade
+    case.window.operation_coordinator.write()
+    (dialog,) = facade._coordinator._owned_windows.values()
     try:
-        assert any(title == "选择译文所属来源" and "作为独立来源补充" in items for title, items in prompts)
-        assert len(window.context.project_sources) == 1
-        assert next(iter(window.context.collection)).translation == "Project A translation"
-        assert window.context.active_slot.source_snapshot is not None
-        assert not case.services.project_lifecycle.active.missing_inputs
+        assert not prompts
+        dialog._field_edits["target_path"].setText(str(target))
+        dialog._confirm_button.click()
+        assert len(prompts) == 1
+        assert dialog.isVisible() and dialog._confirm_button.isEnabled()
+        assert not target.exists()
+
+        dialog._confirm_button.click()
+        _until(lambda: dialog._checks.property("tbStatusId") == "completed")
+        assert target.stat().st_size > 0
+        assert len(prompts) == 2
+        assert case.plugin.read_bytes() == original
+        assert case.window.context.active_slot.source_snapshot.content is None
     finally:
         dialog.close()
 
 
-@pytest.mark.parametrize("stored_ready", ["empty", "partial", "tombstone"])
-def test_sparse_ready_source_and_missing_saved_rows_share_one_editable_authority(shared_plugin_window, stored_ready):
+@pytest.mark.parametrize("shared_plugin_window", ["multiple"], indirect=True)
+def test_generic_batch_json_exports_each_source_without_plugin_inputs(shared_plugin_window, monkeypatch):
     case = shared_plugin_window
-    window = case.window
-    source = case.root / "Ready.xml"
-    raw = Path("tests/contracts/io/fixtures/eet-small.xml").read_text(encoding="utf-8")
-    element = raw[raw.index("  <ESP>") : raw.index("  </ESP>") + len("  </ESP>")]
-    second = (
-        element
-        .replace("00000001", "00000002")
-        .replace("GreetingTopic", "OtherTopic")
-        .replace("Hello, traveler.", "Another actual original")
-    )
-    source.write_text(raw.replace("</DocumentElement>", f"{second}\n</DocumentElement>"), encoding="utf-8")
-    added = case.services.gui_project_commands.add_source(
-        ProjectSourceRequest(str(source), FormatId.XML_EET, options=(("source_namespace", "ready:sparse"),)),
-        case.request,
-    )
-    assert added.is_success, added.diagnostics
-    assert case.services.gui_project_commands.save(case.request).is_success
-    active = case.services.project_lifecycle.active
-    variant_path = Path(case.services.variants.path_for(active.formal_variant_ref))
-    variant = json.loads(variant_path.read_bytes())
-    missing_rows = [row for row in variant["data"]["entries"] if row["entry_key"]["namespace"] != "ready:sparse"]
-    ready_rows = [row for row in variant["data"]["entries"] if row["entry_key"]["namespace"] == "ready:sparse"]
-    assert len(ready_rows) == 2 and len(missing_rows) == 1
-    retained = [] if stored_ready == "empty" else ready_rows[:1]
-    if retained:
-        retained[0]["translation"] = "Sparse saved translation"
-        retained[0]["tombstone"] = stored_ready == "tombstone"
-    variant["data"]["entries"] = [*missing_rows, *retained]
-    variant_path.write_text(json.dumps(variant), encoding="utf-8")
-    _open_without_artifact(case)
-    authority = case.services.project_lifecycle.active.variant.snapshot()
-    if retained:
-        state = next(row for row in authority.entries if row.entry_key == EntryKey.from_dict(retained[0]["entry_key"]))
-        assert state.translation == "Sparse saved translation" and state.tombstone == (stored_ready == "tombstone")
-    visible = {entry.identity for slot in window.context.slots.values() for entry in slot.collection}
-    assert visible == {row.entry_key for row in authority.entries if not row.tombstone}
-    assert len(authority.entries) == 3 and len(visible) == (2 if stored_ready == "tombstone" else 3)
-    ready = next(slot for slot in window.context.slots.values() if slot.source_snapshot is not None)
-    assert {entry.original for entry in ready.collection} <= {"Hello, traveler.", "Another actual original"}
-    assert all(original_known(entry) for entry in ready.collection)
-    missing = next(slot for slot in window.context.slots.values() if slot.source_snapshot is None)
-    assert next(iter(missing.collection)).translation == "Project A translation"
-    assert not original_known(next(iter(missing.collection)))
-    assert not window.context.authoritative_projection_diverged()
-    target = next(iter(ready.collection))
-    assert window.context.update_projected_entry(target.identity, translation="Edited actual source row").is_success
-    saved = []
-    assert window.save_current_project_async(on_finished=saved.append)
-    _until(lambda: bool(saved))
-    assert saved == [True]
-    persisted = json.loads(variant_path.read_bytes())["data"]["entries"]
-    assert {EntryKey.from_dict(row["entry_key"]) for row in persisted} == {row.entry_key for row in authority.entries}
-    assert sum(bool(row.get("tombstone")) for row in persisted) == (stored_ready == "tombstone")
+    case.plugin.unlink()
+    case.other_plugin.unlink()
+    output = case.root / "exports"
+    output.mkdir()
+    prompts = []
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_: (prompts.append(True) or "", ""))
+
+    facade = case.window.operation_plan_facade
+    case.window.operation_coordinator.batch_write()
+    (dialog,) = facade._coordinator._owned_windows.values()
+    try:
+        formats = dialog._field_edits["output_format"]
+        index = formats.findData("json.paratranz")
+        assert index >= 0
+        formats.setCurrentIndex(index)
+        dialog._field_edits["output_directory"].setText(str(output))
+        dialog._confirm_button.click()
+        _until(lambda: dialog._checks.property("tbStatusId") == "completed")
+        assert {path.name for path in output.glob("*.json")} == {"A.json", "B.json"}
+        assert not prompts
+    finally:
+        dialog.close()

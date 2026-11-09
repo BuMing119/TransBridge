@@ -221,24 +221,19 @@ def test_explicit_startup_project_takes_precedence_over_active_reference(monkeyp
 
 
 def test_current_parse_dialog_cancel_has_no_worker_or_message(monkeypatch) -> None:
-    from transbridge.ui.workbench._parse_config_dialog import ParseConfigDialog
+    from transbridge.ui.context import AppContext
+    from transbridge.ui.workbench.open_file_dialog import OpenFileDialog
 
-    monkeypatch.setattr(
-        ParseConfigDialog,
-        "exec",
-        lambda _dialog: ParseConfigDialog.DialogCode.Rejected,
-    )
-    monkeypatch.setattr(
-        ParseConfigDialog,
-        "get_config",
-        lambda _dialog: (_ for _ in ()).throw(AssertionError("cancel read config")),
-    )
+    monkeypatch.setattr("transbridge.ui.context.ParatranzConfig.create_or_load", lambda: SimpleNamespace(token=""))
     messages: list[str] = []
     host = QMainWindow()
+    host.context = AppContext()  # type: ignore[attr-defined]
     host.show_message = messages.append  # type: ignore[attr-defined]
     host.workers = []  # type: ignore[attr-defined]
 
-    ParseCoordinator(host).parse_plugin()
+    dialog = ParseCoordinator(host).parse_plugin()
+    assert isinstance(dialog, OpenFileDialog)
+    dialog.reject()
 
     assert host.workers == []
     assert messages == []

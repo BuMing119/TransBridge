@@ -5,8 +5,11 @@ from __future__ import annotations
 from dataclasses import asdict
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 from threading import RLock
+
+from transbridge.application.io.publish.filesystem import OsPublishFilesystem
 
 from .result_merge import ResultMergePlan
 from .task_history import atomic_json
@@ -16,7 +19,7 @@ class TaskMergeEvidenceStore:
     """Append immutable merge generations without rewriting full project history."""
 
     def __init__(self, root: Path, task_id: str):
-        self.root = Path(root) / "merge-evidence"
+        self.root = _evidence_path(Path(root) / "merge-evidence")
         self._task_token = sha256(task_id.encode()).hexdigest()[:16]
         self.task_id = task_id
         self._lock = RLock()
@@ -48,7 +51,7 @@ class TaskMergeEvidenceStore:
             ],
         }
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False)
-        path = self.root / f"{self._task_token}-{sha256(encoded.encode()).hexdigest()[:32]}.json"
+        path = _evidence_path(self.root / f"{self._task_token}-{sha256(encoded.encode()).hexdigest()[:32]}.json")
         with self._lock:
             if path.exists():
                 try:
@@ -91,7 +94,7 @@ class TaskMergeEvidenceStore:
             receipt["sha256"] = sha256(
                 json.dumps(receipt, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()
             ).hexdigest()
-            receipt_path = path.with_suffix(".applied.json")
+            receipt_path = _evidence_path(path.with_suffix(".applied.json"))
             with self._lock:
                 self._pending_receipts[receipt_path] = receipt
                 self.retry_receipts()
@@ -112,13 +115,17 @@ class TaskMergeEvidenceStore:
         records = []
 
         def presentation_order(path):
-            receipt = path.with_suffix(".applied.json")
+            receipt = _evidence_path(path.with_suffix(".applied.json"))
             # Reusing identical pre-write content creates a new successful
             # overwrite event when its actual receipt is published again.
             return (receipt.stat().st_mtime_ns if receipt.exists() else path.stat().st_mtime_ns, path.name)
 
         paths = sorted(
-            (path for path in self.root.glob(f"{self._task_token}-*.json") if not path.name.endswith(".applied.json")),
+            (
+                _evidence_path(path)
+                for path in self.root.glob(f"{self._task_token}-*.json")
+                if not path.name.endswith(".applied.json")
+            ),
             key=presentation_order,
         )
         for path in paths:
@@ -127,7 +134,7 @@ class TaskMergeEvidenceStore:
             expected = f"{self._task_token}-{sha256(encoded.encode()).hexdigest()[:32]}.json"
             if payload.get("schema") != 1 or payload.get("task_id") != self.task_id or path.name != expected:
                 raise ValueError(f"合入恢复证据损坏，原文件已保留：{path.name}")
-            receipt_path = path.with_suffix(".applied.json")
+            receipt_path = _evidence_path(path.with_suffix(".applied.json"))
             applied = []
             if receipt_path.exists():
                 receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -145,3 +152,7 @@ class TaskMergeEvidenceStore:
             payload["applied_keys"] = applied
             records.append(payload)
         return tuple(records)
+
+
+def _evidence_path(path: Path) -> Path:
+    return Path(OsPublishFilesystem().canonicalize(str(path))) if os.name == "nt" else path

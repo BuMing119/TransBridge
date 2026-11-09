@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import logging
 import os
 from pathlib import Path
 
@@ -24,54 +23,41 @@ from transbridge.application.projects import (
 from transbridge.application.projects.durable_variant import DurableVariantCommitService
 from transbridge.application.projects.profile_entry_inputs import ProfileEntryInputReader
 from transbridge.application.projects.snapshots import ProjectSnapshotCommands
-from transbridge.application.projects.source_supplement import ProjectSourceSupplementService
 from transbridge.application.projects.source_update import ProjectSourceUpdateService
 from transbridge.application.sessions import GuiSessionCommandFacade, SessionLifecycleService
-from transbridge.persistence.current_project import CurrentProjectOpener
-from transbridge.persistence.project_archive import ProjectArchiveService
-from transbridge.persistence.project_catalog import V2ProjectCatalog
-from transbridge.persistence.project_catalog_repair import (
-    ProjectCatalogRepairReport,
-    ProjectCatalogRepairService,
-    ProjectCatalogRepairStatus,
-)
-from transbridge.persistence.project_content_migration import ProjectContentMigration
-from transbridge.persistence.project_lifecycle_loader import V2ProjectCandidateLoader
 from transbridge.persistence.project_lifecycle_uow import RepositoryLifecycleUnitOfWorkFactory
-from transbridge.persistence.project_management import ProjectManagementStore
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
-from transbridge.persistence.project_snapshots import ProjectSnapshotRepository
-from transbridge.persistence.saved_project_sources import SavedProjectSourcePreparer
+from transbridge.persistence.project_store.archive import ProjectPackage
+from transbridge.persistence.project_store.baselines import ProjectBaselineRegistry
+from transbridge.persistence.project_store.catalog import ActiveProjectPreference, ProjectCatalog, ProjectDeletionStore
+from transbridge.persistence.project_store.historical_restore import HistoricalSourceRestore
+from transbridge.persistence.project_store.history import ProjectHistory
+from transbridge.persistence.project_store.lifecycle import ProjectLifecycleStore
+from transbridge.persistence.project_store.opening import StoredProjectOpener
+from transbridge.persistence.project_store.records import CandidateLoader, WorkspaceProjects, WorkspaceVariants
+from transbridge.persistence.project_store.source_reads import ProjectSourceReads
+from transbridge.persistence.project_store.source_updates import ProjectSourceRevisionStore
 from transbridge.persistence.session_lifecycle import (
     SessionUnitOfWorkFactory,
     V2SessionSnapshotRepository,
 )
-from transbridge.persistence.source_artifact_store import ProjectSourceArtifactStore
-from transbridge.persistence.source_update_store import ProjectSourceUpdateStore
+from transbridge.persistence.terminology.project_selection import ProjectTerminologySelection
 from transbridge.persistence.v2 import (
     OsPersistenceFilesystem,
     PersistenceFilesystemPort,
-    ProjectRepository,
     SessionRepository,
-    VariantRepository,
 )
 from transbridge.persistence.v2.baselines import BaselineRegistry
-from transbridge.persistence.v2.lifecycle_transactions import (
-    ProjectLifecycleTransactionStore,
-    SessionLifecycleTransactionStore,
-)
+from transbridge.persistence.v2.lifecycle_transactions import SessionLifecycleTransactionStore
 from transbridge.persistence.v2.session_catalog import SessionCatalogRepository
-from transbridge.persistence.v2.terminology_selection_participant import TerminologySelectionParticipant
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
 class PersistenceV2Services:
     root: str
     filesystem: PersistenceFilesystemPort
-    projects: ProjectRepository
-    variants: VariantRepository
+    projects: WorkspaceProjects
+    variants: WorkspaceVariants
     sessions: SessionRepository
     session_catalog: SessionCatalogRepository
     baselines: BaselineRegistry
@@ -79,14 +65,12 @@ class PersistenceV2Services:
     project_management: ProjectManagementCommands
     project_provisioning: ProjectProvisioningService
     project_remote_bindings: ProjectRemoteBindingService
-    project_catalog: V2ProjectCatalog
-    project_catalog_repair_report: ProjectCatalogRepairReport
+    project_catalog: ProjectCatalog
     gui_project_commands: GuiProjectCommandFacade
-    current_project_opener: CurrentProjectOpener
+    current_project_opener: StoredProjectOpener
     project_snapshots: ProjectSnapshotCommands
-    project_archive: ProjectArchiveService
+    project_archive: ProjectPackage
     project_source_updates: ProjectSourceUpdateService
-    project_source_supplements: ProjectSourceSupplementService
     session_lifecycle: SessionLifecycleService
     gui_session_commands: GuiSessionCommandFacade
     project_projection: ProjectionStore
@@ -110,52 +94,21 @@ def build_persistence_v2_services(
 ) -> PersistenceV2Services:
     resolved_root = str(Path(root).resolve(strict=False))
     adapter = filesystem or OsPersistenceFilesystem()
-    projects = ProjectRepository(resolved_root, adapter)
-    variants = VariantRepository(resolved_root, adapter)
+    projects = WorkspaceProjects(resolved_root)
+    variants = WorkspaceVariants(projects)
     sessions = SessionRepository(resolved_root, adapter)
     session_catalog = SessionCatalogRepository(resolved_root, adapter)
-    baselines = BaselineRegistry()
-    # Recover all Project publication protocols before catalog reads/repair.
-    project_store = ProjectLifecycleTransactionStore(resolved_root, adapter, projects, variants, baselines)
-    source_update_store = ProjectSourceUpdateStore(resolved_root, adapter, projects, variants)
-    project_catalog_repair = ProjectCatalogRepairService(resolved_root, adapter, projects)
-    project_catalog_repair_report = project_catalog_repair.repair_if_missing()
-    if project_catalog_repair_report.status is ProjectCatalogRepairStatus.REBUILT:
-        logger.info(
-            "Rebuilt missing Project catalog from %d verified records; skipped=%d",
-            project_catalog_repair_report.recovered_count,
-            project_catalog_repair_report.skipped_count,
-        )
-    if project_catalog_repair_report.diagnostics:
-        logger.warning(
-            "Project catalog startup repair diagnostics: status=%s recovered=%d skipped=%d diagnostics=%s",
-            project_catalog_repair_report.status.value,
-            project_catalog_repair_report.recovered_count,
-            project_catalog_repair_report.skipped_count,
-            tuple(diagnostic.code for diagnostic in project_catalog_repair_report.diagnostics),
-        )
+    baselines = ProjectBaselineRegistry(projects)
+    active_project = ActiveProjectPreference(resolved_root, adapter)
+    project_catalog = ProjectCatalog(projects, active_project)
+    project_store = ProjectLifecycleStore(projects, variants, project_catalog, active_project, baselines)
+    source_update_store = ProjectSourceRevisionStore(projects)
 
     project_projection = ProjectionStore()
     project_publisher = ProjectProjectionPublisher(project_projection)
     project_uow = RepositoryLifecycleUnitOfWorkFactory(project_store, id_factory)
-    source_artifacts = ProjectSourceArtifactStore(resolved_root, adapter)
-    resolved_source_preparer = SavedProjectSourcePreparer(
-        source_preparer or TranslationIoProjectSourcePreparer(), source_artifacts
-    )
-    content_migration = ProjectContentMigration(
-        resolved_root, adapter, source_update_store, resolved_source_preparer, source_artifacts
-    )
-    from transbridge.persistence.project_source_inputs import load_project_source_inputs
-
-    project_loader = V2ProjectCandidateLoader(
-        projects,
-        variants,
-        baselines.provide,
-        source_inputs_loader=lambda project, snapshot, context: load_project_source_inputs(
-            project, snapshot, source_artifacts, context
-        ),
-        repair_missing_sources=content_migration.repair,
-    )
+    resolved_source_preparer = source_preparer or TranslationIoProjectSourcePreparer()
+    project_loader = CandidateLoader(projects.candidate)
     project_lifecycle = ProjectLifecycleService(
         project_loader,
         project_uow,
@@ -163,27 +116,15 @@ def build_persistence_v2_services(
         event_publisher=project_publisher,
     )
     project_publisher.bind(project_lifecycle)
-    project_management_store = ProjectManagementStore(
-        resolved_root,
-        adapter,
-        projects,
-        variants,
-        token_factory=id_factory,
-    )
+    project_management_store = ProjectDeletionStore(projects, active_project)
     project_management = ProjectManagementCommands(project_lifecycle, project_management_store, baselines)
-    snapshot_repository = ProjectSnapshotRepository(resolved_root, adapter)
-    project_snapshots = ProjectSnapshotCommands(project_lifecycle, snapshot_repository)
-    project_archive = ProjectArchiveService(
-        resolved_root,
-        adapter,
-        projects,
-        variants,
+    snapshot_repository = ProjectHistory(projects)
+    project_snapshots = ProjectSnapshotCommands(
         project_lifecycle,
         snapshot_repository,
-        id_factory=id_factory,
-        source_preparer=resolved_source_preparer,
-        source_artifact_store=source_artifacts,
+        source_restore=HistoricalSourceRestore(projects, project_lifecycle, baselines),
     )
+    project_archive = ProjectPackage(projects, project_catalog, project_lifecycle)
     project_provisioning = ProjectProvisioningService(
         project_lifecycle,
         resolved_source_preparer,
@@ -203,11 +144,7 @@ def build_persistence_v2_services(
         baselines,
         resolved_source_preparer,
     )
-    project_source_supplements = ProjectSourceSupplementService(
-        project_lifecycle, projects, source_update_store, baselines, resolved_source_preparer
-    )
     project_remote_bindings = ProjectRemoteBindingService(project_lifecycle)
-    project_catalog = V2ProjectCatalog(resolved_root, adapter, projects)
     from transbridge.application.projects.categorized_upload import ProjectCategorizedUploadService
 
     gui_project_commands = GuiProjectCommandFacade(
@@ -219,23 +156,23 @@ def build_persistence_v2_services(
         id_factory=id_factory,
         provisioning=project_provisioning,
         source_mutations=project_source_mutations,
-        categorized_uploads=ProjectCategorizedUploadService(project_lifecycle, baselines, resolved_source_preparer),
-        durable_variant_commits=DurableVariantCommitService(
-            project_lifecycle, project_uow, projects=projects, variants=variants
+        categorized_uploads=ProjectCategorizedUploadService(
+            project_lifecycle,
+            baselines,
+            resolved_source_preparer,
+            stored_sources=ProjectSourceReads(projects, project_lifecycle),
         ),
-        profile_variants=TerminologySelectionParticipant(resolved_root),
-        profile_entry_inputs=ProfileEntryInputReader(resolved_source_preparer).read,
+        durable_variant_commits=DurableVariantCommitService(
+            project_lifecycle,
+            project_uow,
+            projects=projects,
+            saved_candidate_verifier=lambda save: project_store.verify_saved(save),
+        ),
+        profile_variants=ProjectTerminologySelection(resolved_root),
+        profile_entry_inputs=ProfileEntryInputReader(projects).read,
     )
-    current_project_opener = CurrentProjectOpener(
-        resolved_root,
-        projects,
-        variants,
-        baselines,
-        gui_project_commands,
-        prepare_projection=project_publisher.prepare,
-        source_artifacts=source_artifacts,
-        discard_prepared_projection=project_publisher.discard_prepared,
-        content_migration=content_migration,
+    current_project_opener = StoredProjectOpener(
+        projects, active_project, project_loader, baselines, gui_project_commands, project_publisher
     )
 
     session_projection = ProjectionStore()
@@ -283,13 +220,11 @@ def build_persistence_v2_services(
         project_provisioning=project_provisioning,
         project_remote_bindings=project_remote_bindings,
         project_catalog=project_catalog,
-        project_catalog_repair_report=project_catalog_repair_report,
         gui_project_commands=gui_project_commands,
         current_project_opener=current_project_opener,
         project_snapshots=project_snapshots,
         project_archive=project_archive,
         project_source_updates=project_source_updates,
-        project_source_supplements=project_source_supplements,
         session_lifecycle=session_lifecycle,
         gui_session_commands=gui_session_commands,
         project_projection=project_projection,

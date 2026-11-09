@@ -5,8 +5,10 @@ from __future__ import annotations
 from hashlib import sha256
 import logging
 
+from transbridge.application.contracts import OperationResult
 from transbridge.application.sync.local_candidate import RemoteSourceIndex, build_local_candidate
 from transbridge.application.sync.models import SyncAction
+from transbridge.application.tasks.result_application import prior_merge_plan
 from transbridge.application.translation.result_merge import (
     ResultConflictPolicy,
     ResultEntryChange,
@@ -15,7 +17,7 @@ from transbridge.application.translation.result_merge import (
 )
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
-from .download_view import DownloadPreview, DownloadReceipt
+from .download_view import DownloadPreview, DownloadReceipt, RetryableDownloadSaveError
 from .review_view import SyncReviewCandidate, SyncReviewRow
 
 _logger = logging.getLogger(__name__)
@@ -58,6 +60,28 @@ def publish_results(session, task_context, commit, progress, cancel, cancellatio
     progress(0, 1, "正在合入并保存已确定的译文…")
     policies, reviewed = merge_options(session, candidates)
     commands = session.context.project_commands
+    task = session.task_results
+    application = task.prepare(candidates, session.merge_policy, policies) if task is not None and candidates else None
+    if application is not None and (prior := prior_merge_plan(application)) is not None:
+        reconciled = commands.reconcile_variant_save(
+            application.request.operation_id, application.receipt, task_context, commit_mutation=guarded
+        )
+        if not reconciled.is_success:
+            if any(item.code == "DURABLE_VARIANT_RECONCILIATION_STALE" for item in reconciled.diagnostics):
+                raise RuntimeError("；".join(item.message for item in reconciled.diagnostics))
+            return _receipt(session, candidates, reconciled, progress)
+        try:
+            task.finish_reconciled(application)
+        except (OSError, ValueError) as exc:
+            _logger.warning("Reconciled project download, but task completion metadata failed: %s", exc)
+        return _receipt(
+            session,
+            candidates,
+            OperationResult.completed(prior, diagnostics=reconciled.diagnostics),
+            progress,
+            confirmed=len(prior.unchanged_keys),
+        )
+    operation = {"operation_id": application.request.operation_id} if application is not None else {}
     result = commands.merge_entry_states(
         candidates,
         task_context,
@@ -70,7 +94,13 @@ def publish_results(session, task_context, commit, progress, cancel, cancellatio
         clear_external_scope=("paratranz", f"project:{session.target.project_id}"),
         persist=True,
         commit_mutation=guarded,
+        **operation,
     )
+    if result.is_success and task is not None:
+        try:
+            task.finish(application, result.value)
+        except (OSError, ValueError) as exc:
+            _logger.warning("Project download was saved, but task acknowledgement failed: %s", exc)
     return _receipt(session, candidates, result, progress)
 
 
@@ -108,10 +138,15 @@ def preview_entry_states(snapshot, registrations, keys):
     }
 
 
-def _receipt(session, candidates, result, progress):
+def _receipt(session, candidates, result, progress, *, confirmed=0):
     if not result.is_success:
         detail = "；".join(item.message for item in result.diagnostics)
-        raise RuntimeError(f"合入或保存失败，请重新下载后重试。{detail}")
+        message = f"合入或保存失败，请重试保存已下载的成果。{detail}"
+        if session.task_results is not None and any(
+            item.retryable and item.code == "DURABLE_VARIANT_SAVE_FAILED" for item in result.diagnostics
+        ):
+            raise RetryableDownloadSaveError(message)
+        raise RuntimeError(message)
     plan = result.value
     session.merge_result = plan
     warnings = [item.message for item in result.diagnostics]
@@ -126,7 +161,7 @@ def _receipt(session, candidates, result, progress):
         session.details,
         rows,
         False,
-        "已保存可合入译文；分歧可在本轮确认，关闭后需重新下载。",
+        "已保存可合入译文；任务记录保留本轮尚未合入的成果。",
         source_ids=session.source_ids,
         policy=session.merge_policy.value,
     )
@@ -135,9 +170,10 @@ def _receipt(session, candidates, result, progress):
         progress(1, 1, "已保存当前版本。")
     except Exception:
         _logger.exception("Download committed but progress presentation failed")
+    detail = f"已确认先前保存的 {confirmed} 条译文。" if confirmed else f"已更新并保存 {count} 条译文。"
     return DownloadReceipt(
         count,
-        (*session.details, f"已更新并保存 {count} 条译文。", *warnings),
+        (*session.details, detail, *warnings),
         bool(rows),
         preview if rows else None,
         session._retryable,

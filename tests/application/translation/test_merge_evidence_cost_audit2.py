@@ -97,3 +97,15 @@ def test_receipt_disk_failure_retains_retry_without_rebuilding_evidence(tmp_path
     writer.retry_receipts()
     assert not writer.error
     assert writer.load()[0]["applied_keys"] == [candidates[0].base.entry_key.to_dict()]
+
+
+def test_merge_receipts_round_trip_in_deep_task_directories(tmp_path):
+    root = tmp_path / ("data-" + "a" * 80) / ("run-" + "b" * 60) / "ai-task-recovery"
+    writer = TaskMergeEvidenceStore(root, "task")
+    candidates, plan, policy = changes()
+    path = writer.save(candidates, plan, policy)
+    assert len(str(root / "merge-evidence" / path.with_suffix(".applied.json").name)) > 260
+    assert writer.acknowledge(candidates, plan, policy), writer.error
+    evidence = TaskMergeEvidenceStore(root, "task").load()
+    assert evidence[0]["applied_keys"] == [candidates[0].base.entry_key.to_dict()]
+    assert evidence[0]["conflicts"][0]["current"]["translation"] == "manual"

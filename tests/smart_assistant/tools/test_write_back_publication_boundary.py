@@ -46,7 +46,7 @@ def _finish(manager, started, expected):
         QTest.qWait(5)
     _APP.processEvents()
     assert not handle._thread.is_alive()
-    assert manager.get_status(started.data["task_id"])["status"] == expected
+    assert manager.get_status(started.data["task_id"])["status"] == expected, (handle.message, handle.result)
     assert handle.notified
     return handle
 
@@ -89,7 +89,7 @@ def test_invalid_source_snapshot_rejects_before_task_registration(plugin_case, m
     )
     result = tool_writer._tool_write_back({"target": "esp", "path": str(case.output)}, case.context)
     assert not result.success
-    assert result.error_code == ("SOURCE_SNAPSHOT_BOUND" if mutation == "content" else "SOURCE_SNAPSHOT_REQUIRED")
+    assert result.error_code == ("WRITE_PLUGIN_INPUT_REQUIRED" if mutation == "content" else "SOURCE_SNAPSHOT_REQUIRED")
     assert not manager.list_all()
     assert not case.output.exists()
 

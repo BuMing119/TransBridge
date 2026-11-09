@@ -47,8 +47,8 @@ def test_short_start_center_keeps_window_size_and_bottom_actions_reachable(layou
         view.close()
 
 
-@pytest.mark.parametrize("path_count", [1, 4])
-def test_long_migration_paths_do_not_grow_or_lock_window_width(layout_app, path_count):
+@pytest.mark.parametrize("path_length", [20, 80])
+def test_long_translation_path_does_not_grow_or_lock_window_width(layout_app, path_length):
     view = StartCenterWidget()
     state = GuidedProjectDraftState("D:/mods/Base.esm", "Base")
     view.render_draft(state)
@@ -56,8 +56,8 @@ def test_long_migration_paths_do_not_grow_or_lock_window_width(layout_app, path_
     view.show()
     try:
         settle_layout(layout_app)
-        paths = tuple("D:/" + "很长的译文目录/" * 20 + f"Plugin-{i}.esm" for i in range(path_count))
-        view.render_draft(replace(state, migration_sources=paths, revision=1))
+        path = "D:/" + "很长的译文目录/" * path_length + "Plugin.esm"
+        view.render_draft(replace(state, import_translations=True, translation_paths=(path,), revision=1))
         settle_layout(layout_app)
         assert view.width() == 850
         for width in (1200, 720, 850):
@@ -66,9 +66,8 @@ def test_long_migration_paths_do_not_grow_or_lock_window_width(layout_app, path_
             assert view.width() == width
             button = view._migration_button
             assert view.rect().contains(button.rect().translated(button.mapTo(view, QPoint())))
-        assert view._migration_label.toolTip() == "\n".join(paths)
-        assert view._migration_label.accessibleDescription() == "、".join(paths)
-        assert view._migration_label.text() != "、".join(paths)
+        assert view._migration_label.toolTip() == path
+        assert view._migration_label.text() == path
 
         view.render(StartCenterViewState(StartDestinationState.START_CENTER_USER_REQUESTED, revision=1))
         view.resize(720, 750)
@@ -77,7 +76,7 @@ def test_long_migration_paths_do_not_grow_or_lock_window_width(layout_app, path_
 
         view.render_draft(replace(state, revision=2))
         settle_layout(layout_app)
-        assert view._migration_label.text() == "不导入"
+        assert view._migration_label.text() == ""
         assert view._migration_label.toolTip() == ""
     finally:
         view.close()

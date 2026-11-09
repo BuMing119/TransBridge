@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from transbridge.application.contracts import RequestContext
 from transbridge.application.projects import ProjectCatalogQuery
 from transbridge.bootstrap import build_runtime
 from transbridge.bootstrap.persistence import build_persistence_v2_services
-from transbridge.persistence.project_catalog_repair import (
-    ProjectCatalogRepairStatus,
-)
-from transbridge.persistence.v2 import OsPersistenceFilesystem, ProjectId, ProjectRef, ProjectRepository
+from transbridge.persistence.project_store.paths import project_path
+from transbridge.persistence.project_store.repository import ProjectStore
+from transbridge.persistence.v2 import OsPersistenceFilesystem, ProjectId, ProjectRef, ProjectRepository, VariantId
 from transbridge.persistence.v2.schema import serialize_document
 
 
@@ -47,12 +47,11 @@ def test_runtime_registers_project_catalog_use_case(tmp_path: Path) -> None:
     assert isinstance(project_catalog, ProjectCatalogQuery)
     assert project_catalog is runtime.use_cases.resolve("persistence_v2").project_catalog
     assert "project_catalog_repair" not in runtime.use_cases.names()
-    assert runtime.use_cases.resolve("project_catalog_repair_report").status is ProjectCatalogRepairStatus.NO_PROJECTS
     assert project_catalog.list_projects().projects == ()
     assert runtime.close().is_success
 
 
-def test_bootstrap_rebuilds_a_missing_catalog_before_the_first_query(tmp_path: Path) -> None:
+def test_bootstrap_discovers_current_project_without_repairing_legacy_catalog(tmp_path: Path) -> None:
     filesystem = OsPersistenceFilesystem()
     repository = ProjectRepository(str(tmp_path), filesystem)
     first = ProjectRef(ProjectId("project-a"))
@@ -61,10 +60,15 @@ def test_bootstrap_rebuilds_a_missing_catalog_before_the_first_query(tmp_path: P
         path = Path(repository.path_for(ref))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(_project_document(ref.identity.value, name))
-    (tmp_path / "active-project.json").write_text(
+    pointer = tmp_path / "active-project.json"
+    pointer.write_text(
         '{"schema_version":1,"project_id":"project-a","variant_id":null}',
         encoding="utf-8",
     )
+    old_paths = (Path(repository.path_for(first)), Path(repository.path_for(second)), pointer)
+    original = {path: path.read_bytes() for path in old_paths}
+    new_project = ProjectId("current-project")
+    ProjectStore(project_path(tmp_path, new_project)).create(new_project, "当前工程", VariantId("main"), "默认")
 
     services = build_persistence_v2_services(
         tmp_path,
@@ -72,11 +76,14 @@ def test_bootstrap_rebuilds_a_missing_catalog_before_the_first_query(tmp_path: P
         timestamp_factory=lambda: "2026-08-25T00:00:00+08:00",
         filesystem=filesystem,
     )
-    snapshot = services.project_catalog.list_projects()
-
-    assert services.project_catalog_repair_report.status is ProjectCatalogRepairStatus.REBUILT
-    assert services.project_catalog_repair_report.recovered_count == 2
-    assert [project.project_id for project in snapshot.projects] == ["project-a", "project-b"]
-    assert snapshot.projects[0].active
-    assert (tmp_path / "project-catalog.json").exists()
-    services.close()
+    try:
+        (current,) = services.project_catalog.list_projects().projects
+        assert current.project_id == new_project.value
+        assert not current.active
+        prepared = services.current_project_opener.prepare_active(RequestContext("gui"))
+        assert not prepared.is_success
+        assert prepared.diagnostics[0].code == "ACTIVE_PROJECT_REQUIRED"
+    finally:
+        services.close()
+    assert not (tmp_path / "project-catalog.json").exists()
+    assert {path: path.read_bytes() for path in old_paths} == original

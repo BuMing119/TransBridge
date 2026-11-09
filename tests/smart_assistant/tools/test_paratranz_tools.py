@@ -197,11 +197,12 @@ class TestUploadEntries(unittest.TestCase):
         from tempfile import TemporaryDirectory
 
         from tests.smart_assistant.current_project_support import bind_current_project
+        from transbridge.persistence.task_store import TaskStore
 
         bind_current_project(self, make_test_collection(3))
-        temporary = TemporaryDirectory(prefix=".tmp-au-", dir=Path.cwd())
+        temporary = TemporaryDirectory(prefix="assistant-upload-")
         self.addCleanup(temporary.cleanup)
-        self.ctx.project_commands.task_result_directory = lambda _context: Path(temporary.name)
+        self.ctx.task_store = TaskStore(Path(temporary.name) / "task-store-v1")
         mock_client = MagicMock()
 
         def uploaded(project_id, entry, **kwargs):
@@ -231,15 +232,9 @@ class TestDownloadEntries(unittest.TestCase):
         from transbridge.smart_assistant.tools.tool_paratranz import _tool_download_entries
 
         self.func = _tool_download_entries
-        from pathlib import Path
-        from tempfile import TemporaryDirectory
-
         from tests.smart_assistant.current_project_support import bind_current_project
 
         bind_current_project(self, make_test_collection(3))
-        temporary = TemporaryDirectory(prefix=".tmp-ad-", dir=Path.cwd())
-        self.addCleanup(temporary.cleanup)
-        self.ctx.project_commands.task_result_directory = lambda _context: Path(temporary.name)
 
     def test_download_no_project_id(self):
         r = self.func({}, self.ctx)

@@ -2,14 +2,13 @@
 
 from dataclasses import dataclass
 
-from transbridge.application.contracts import DomainError, OperationResult
+from transbridge.application.contracts import OperationResult
 from transbridge.application.io.identity import SourceNamespace
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef
 from transbridge.persistence.v2.models import ProjectDto
 
 from .provisioning import ProjectSourceRequest
-from .source_content import authoritative_baseline_sources, source_content_identity
-from .source_inputs import missing_inputs_for
+from .source_content import source_content_identity
 from .source_update_models import SourceUpdateResult
 
 
@@ -43,9 +42,10 @@ def publish_source_input(candidate, token, context, *, lifecycle, store, baselin
                 candidate.project,
                 candidate.variants,
                 token,
+                source=refreshed,
+                replaces_namespace=candidate.old_namespace,
                 backup_metadata={
                     "source": candidate.preview.source_name,
-                    "replacement": candidate.preview.replacement_path,
                 },
             )
         )
@@ -72,9 +72,6 @@ def publish_source_input(candidate, token, context, *, lifecycle, store, baselin
                 ref, tuple(item.ref for item in candidate.variants), (*new_baselines, refreshed.baseline)
             )
 
-        missing = candidate.missing_inputs
-        if missing is None:
-            missing = _missing_after_publication(candidate.project, variant, preparer)
         result = lifecycle.commit_active_content(
             candidate.project,
             variant,
@@ -84,7 +81,7 @@ def publish_source_input(candidate, token, context, *, lifecycle, store, baselin
             expected_generation=candidate.generation,
             before_publish=publish_active,
             persisted=True,
-            missing_inputs=missing,
+            missing_inputs=(),
         )
         if not result.is_success:
             return result
@@ -93,21 +90,3 @@ def publish_source_input(candidate, token, context, *, lifecycle, store, baselin
         for variant in candidate.variants:
             baselines.remove(ref, variant.ref)
     return OperationResult.completed(SourceUpdateResult(candidate.path, backup[0]), run_id=context.run_id)
-
-
-def _missing_after_publication(project, variant, preparer):
-    hydrations, diagnostics = [], {}
-    load_saved = getattr(preparer, "load_saved_source", None)
-    sources = authoritative_baseline_sources(
-        tuple(project.envelope.data.get("sources", ())), tuple(project.envelope.data.get("source_relations", ()))
-    )
-    for source in sources:
-        if not source.get("source_artifact_id") or load_saved is None:
-            continue
-        try:
-            prepared = load_saved(source)
-            if prepared.hydration is not None:
-                hydrations.append(prepared.hydration)
-        except (OSError, DomainError) as exc:
-            diagnostics[source["source_id"]] = OperationResult.from_exception(exc).diagnostics[0]
-    return missing_inputs_for(project, variant, tuple(hydrations), diagnostics)

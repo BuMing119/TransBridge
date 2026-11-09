@@ -121,7 +121,7 @@ class SstAdapter:
             return OperationResult.cancelled(run_id=request.context.run_id)
         return OperationResult.completed(run_id=request.context.run_id)
 
-    def write(self, request: WriteRequest) -> OperationResult[tuple[str, ...]]:
+    def write(self, request: WriteRequest, *, staging_path: str | None = None) -> OperationResult[tuple[str, ...]]:
         if _cancelled(request.cancellation):
             return OperationResult.cancelled(run_id=request.context.run_id)
         try:
@@ -131,7 +131,7 @@ class SstAdapter:
                 raise ValueError("SST 序列化后完整字段验证失败。")
             if _cancelled(request.cancellation):
                 return OperationResult.cancelled(run_id=request.context.run_id)
-            target = _local_path(request.target.uri)
+            target = _local_path(request.target.uri if staging_path is None else staging_path)
             target.parent.mkdir(parents=True, exist_ok=True)
             if not _write_atomic(target, content, request.cancellation):
                 return OperationResult.cancelled(run_id=request.context.run_id)
@@ -159,12 +159,29 @@ class SstAdapter:
 
             if self.format_id is not FormatId.SST_SSU9:
                 raise _SstWriteError("FORMAT_MISMATCH", "插件导出 SST 只支持 SSU9。")
-            target_path = os.path.normcase(str(_local_path(request.target.uri).resolve()))
-            source_path = os.path.normcase(str(_local_path(snapshot.source.uri).resolve()))
-            if target_path == source_path:
-                raise _SstWriteError(
-                    "SST_TARGET_IS_SOURCE_PLUGIN", "SST 导出不得覆盖原插件文件，请选择新的 .sst 文件。"
-                )
+            target_path = _local_path(request.target.uri).resolve()
+            saved_project_source = (
+                snapshot.content is None
+                and snapshot.lease_id == "project-translation-content"
+                and snapshot.source.uri.startswith("project-source:")
+            )
+            if not saved_project_source:
+                source_path = _local_path(snapshot.source.uri).resolve()
+                if os.path.normcase(str(target_path)) == os.path.normcase(str(source_path)):
+                    raise _SstWriteError(
+                        "SST_TARGET_IS_SOURCE_PLUGIN", "SST 导出不得覆盖原插件文件，请选择新的 .sst 文件。"
+                    )
+            if target_path.suffix.lower() != ".sst":
+                raise _SstWriteError("SST_TARGET_EXTENSION", "SST 输出路径必须使用 .sst 扩展名。")
+            # Saved project rows carry no historical path. Protect the chosen
+            # target itself, including renamed or hard-linked plugin files.
+            if target_path.is_file():
+                with target_path.open("rb") as stream:
+                    target_is_plugin = stream.read(4) == b"TES4"
+            else:
+                target_is_plugin = False
+            if target_is_plugin:
+                raise _SstWriteError("SST_TARGET_IS_SOURCE_PLUGIN", "SST 导出不得覆盖插件文件，请选择新的 .sst 文件。")
             return build_sst_from_plugin(request)
         if snapshot is None or snapshot.content is None or snapshot.format_id != self.format_id:
             raise _SstWriteError("SOURCE_SNAPSHOT_REQUIRED", "SST 写回需要完整的原格式来源快照。")
