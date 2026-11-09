@@ -44,6 +44,8 @@ def _compile(tmp_path: Path, app_id: str, target: Path, *, legacy: bool) -> Path
     (payload / "_internal").mkdir(parents=True)
     (payload / "TransBridge.exe").write_bytes(name.encode())
     (payload / "_internal" / f"{name}.dll").write_bytes(name.encode())
+    (payload / "_internal" / "MSVCP140.dll").write_bytes(b"do not distribute this runtime")
+    (payload / "_internal" / "VCRUNTIME140_1.dll").write_bytes(b"do not distribute this runtime")
     script_dir = tmp_path / "installer"
     script_dir.mkdir(exist_ok=True)
     (tmp_path / "LICENSE").write_text("Installer test fixture", encoding="utf-8")
@@ -119,6 +121,8 @@ def test_install_upgrade_and_uninstall_preserve_data(tmp_path: Path, upgrade: bo
         assert (target / "LICENSE.txt").read_text(encoding="utf-8") == "Installer test fixture"
         assert (target / "NOTICE.txt").read_text(encoding="utf-8") == "Installer notice fixture"
         assert (target / "_internal/current.dll").read_bytes() == b"current"
+        assert not (target / "_internal/MSVCP140.dll").exists()
+        assert not (target / "_internal/VCRUNTIME140_1.dll").exists()
         assert not (target / "_internal/legacy.dll").exists()
         assert not (target / "_internal/obsolete.dll").exists()
         assert not (target / "_internal/external-link").exists()
