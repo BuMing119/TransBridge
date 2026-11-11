@@ -87,10 +87,11 @@ def test_cancelled_download_ignores_late_result_then_allows_retry(flow):
     assert controller._worker is not worker
 
 
-def test_download_completion_waits_for_install_click_and_cancelled_exit_restores_window(flow, monkeypatch):
+def test_update_click_installs_after_worker_finishes_and_cancelled_exit_requires_new_click(flow, monkeypatch):
     host, controller, dialog = flow
     close_requests = []
     monkeypatch.setattr(host, "close", lambda: close_requests.append(True))
+    assert dialog.primary_button.text() == "更新并重启"
     dialog.primary_button.click()
     worker = controller._worker
     installer = Path("verified-installer.exe")
@@ -100,11 +101,6 @@ def test_download_completion_waits_for_install_click_and_cancelled_exit_restores
     dialog.primary_button.click()
     assert close_requests == []
     worker.finished.emit()
-    dialog.secondary_button.click()
-    assert not dialog.isVisible()
-    controller.check_manually()
-    assert controller._dialog is dialog and dialog.state == UpdateState.READY
-    dialog.primary_button.click()
     assert close_requests == [True]
     assert controller._pending_installer == installer
     assert controller._installation_scheduled
@@ -113,6 +109,35 @@ def test_download_completion_waits_for_install_click_and_cancelled_exit_restores
     assert controller._pending_installer is None
     assert not controller._installation_scheduled
     assert dialog.isVisible() and dialog.state == UpdateState.READY
+    _APP.processEvents()
+    assert close_requests == [True]
+    dialog.secondary_button.click()
+    controller.check_manually()
+    assert controller._dialog is dialog and dialog.state == UpdateState.READY
+    dialog.primary_button.click()
+    assert close_requests == [True, True]
+
+
+@pytest.mark.parametrize("interruption", ["cancel", "close", "error", "host_close"])
+def test_interruption_after_result_prevents_automatic_install(flow, monkeypatch, interruption):
+    host, controller, dialog = flow
+    closed = []
+    monkeypatch.setattr(host, "close", lambda: closed.append(True))
+    dialog.primary_button.click()
+    worker = controller._worker
+    worker.result.emit(Path("verified-installer.exe"))
+    if interruption == "cancel":
+        dialog.secondary_button.click()
+    elif interruption == "close":
+        dialog.close()
+    elif interruption == "error":
+        worker.error.emit("下载收尾失败")
+    else:
+        host.close_pending = True
+        controller.prepare_for_close()
+    worker.finished.emit()
+    assert not closed and not controller._installation_scheduled
+    assert controller._downloaded_installer is None
 
 
 def test_close_during_download_cancels_without_reopening_on_completion(flow):
@@ -153,9 +178,13 @@ def test_other_main_window_prevents_install_but_keeps_ready_package(flow, monkey
         worker = controller._worker
         worker.result.emit(Path("verified-installer.exe"))
         worker.finished.emit()
-        dialog.primary_button.click()
         assert not closed and not controller._installation_scheduled
         assert dialog.state == UpdateState.READY
         assert "其他 TransBridge 主窗口" in dialog.status_detail.text()
+        peer.close()
+        _APP.processEvents()
+        assert not closed
+        dialog.primary_button.click()
+        assert closed == [True]
     finally:
         peer.close()

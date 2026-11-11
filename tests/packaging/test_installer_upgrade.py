@@ -38,11 +38,11 @@ def _run(command: list[str], *, check: bool = True) -> subprocess.CompletedProce
     return result
 
 
-def _compile(tmp_path: Path, app_id: str, target: Path, *, legacy: bool) -> Path:
+def _compile(tmp_path: Path, app_id: str, target: Path, *, legacy: bool, application: Path | None = None) -> Path:
     name = "legacy" if legacy else "current"
     payload = tmp_path / f"payload-{name}"
     (payload / "_internal").mkdir(parents=True)
-    (payload / "TransBridge.exe").write_bytes(name.encode())
+    (payload / "TransBridge.exe").write_bytes(application.read_bytes() if application else name.encode())
     (payload / "_internal" / f"{name}.dll").write_bytes(name.encode())
     (payload / "_internal" / "MSVCP140.dll").write_bytes(b"do not distribute this runtime")
     (payload / "_internal" / "VCRUNTIME140_1.dll").write_bytes(b"do not distribute this runtime")
@@ -61,6 +61,7 @@ def _compile(tmp_path: Path, app_id: str, target: Path, *, legacy: bool) -> Path
     script = script.replace(APP_ID, app_id)
     script = script.replace("PrivilegesRequired=admin", "PrivilegesRequired=lowest")
     script = script.replace("DefaultDirName={autopf}\\{#AppName}", f"DefaultDirName={target}")
+    script = script.replace("DefaultGroupName={#AppName}", f"DefaultGroupName=TransBridge-Test-{uuid.uuid4()}")
     script = script.replace("Compression=lzma2/ultra64", "Compression=none")
     if legacy:
         # Emulate the previous uninstaller's dangerous install-directory data cleanup.

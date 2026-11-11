@@ -1,5 +1,7 @@
 # 变更日志索引
 
+- 2026-11-11：[S03 一键更新、自动安装与重启](app-update/story-03/2026-11-11-001-automatic-install-and-restart.md) — 一次点击后下载、保存退出、自动安装并重新打开；70 项聚焦回归与 3 项实际隔离安装测试通过，扩大 151 通过/1 项既有环境版本失败，Ruff/格式通过，未发布。
+
 - 2026-11-11：[S2 恢复检查点短名称临时文件](ai-task-recovery/story-02/2026-11-11-001-short-checkpoint-temporaries.md) — 缩短后处理与候选提交头的原子保存路径，保持旧记录读取并补齐句柄失败清理；42 项回归及 Ruff/格式检查通过，未在报错电脑或发行包复验。
 
 - 2026-11-11：[S31 压缩包原始词条后缀兼容](paratranz-categorized-upload/story-31/2026-11-11-002-raw-json-suffix-compatibility.md) — 保留追加 `.json` 优先，兼容无歧义的原文件名并报告尝试路径；84 项回归及 Ruff/格式检查通过，真实压缩包待复验。

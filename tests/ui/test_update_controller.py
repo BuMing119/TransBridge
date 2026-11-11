@@ -5,6 +5,7 @@ from __future__ import annotations
 from hashlib import sha256
 import os
 from pathlib import Path
+import sys
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -175,11 +176,11 @@ def test_cancelled_close_clears_pending_install(tmp_path: Path, monkeypatch) -> 
     host.close()
 
 
-def test_installer_is_rechecked_before_launch(tmp_path: Path, monkeypatch) -> None:
+def test_handoff_receives_expected_digest_and_original_application(tmp_path: Path, monkeypatch) -> None:
     host = QMainWindow()
     controller = UpdateController(host)
     installer = tmp_path / "TransBridge_v0.2.1.10_Setup.exe"
-    installer.write_bytes(b"tampered")
+    installer.write_bytes(b"installer")
     controller._release = _release(b"installer")
     controller._pending_installer = installer
     launched = []
@@ -190,9 +191,34 @@ def test_installer_is_rechecked_before_launch(tmp_path: Path, monkeypatch) -> No
 
     controller._launch_pending_installer()
 
-    assert launched == []
-    installer.write_bytes(b"installer")
+    assert launched == [
+        (
+            (installer,),
+            {"sha256": controller._release.sha256, "previous_pid": os.getpid(), "application": Path(sys.executable)},
+        )
+    ]
+    host.close()
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_handoff_failure_is_visible_and_saved(tmp_path: Path, monkeypatch, missing):
+    host = QMainWindow()
+    controller = UpdateController(host)
+    installer = tmp_path / "Setup.exe"
+    if not missing:
+        installer.write_bytes(b"installer")
+    controller._release = _release(b"installer")
     controller._pending_installer = installer
+
+    def cannot_launch(*_args, **_kwargs):
+        raise OSError("PowerShell unavailable")
+
+    monkeypatch.setattr("transbridge.ui.shell.update_controller.launch_after_exit", cannot_launch)
+    shown = []
+    monkeypatch.setattr("transbridge.ui.shell.update_controller.QMessageBox.warning", lambda *args: shown.append(args))
     controller._launch_pending_installer()
-    assert launched == [((installer,), {"sha256": controller._release.sha256, "previous_pid": os.getpid()})]
+    assert len(shown) == 1
+    assert "无法启动更新安装程序" in shown[0][2]
+    assert (tmp_path / "last-update-error.txt").read_text(encoding="utf-8") == shown[0][2]
+    assert controller._pending_installer is None
     host.close()

@@ -120,14 +120,16 @@ class UpdateDialog(QDialog):
         status_layout.addWidget(self.status_detail)
         status_layout.addWidget(self.progress)
         layout.addWidget(status_panel)
-        self.install_hint = self._label("下载完成后再确认安装，可继续使用主界面。", "tbTaskHint")
+        self.install_hint = self._label(
+            "点击更新后，下载完成将自动保存工作、安装并重新打开软件。Windows 可能要求管理员权限。", "tbTaskHint"
+        )
         layout.addWidget(self.install_hint)
         actions = QHBoxLayout()
         actions.addStretch(1)
         self.secondary_button = QPushButton("稍后", self)
         ComponentStyle.apply_static(self.secondary_button, ComponentKind.BUTTON)
         self.secondary_button.clicked.connect(self._secondary_action)
-        self.primary_button = make_primary_button("下载更新", self)
+        self.primary_button = make_primary_button("更新并重启", self)
         self.primary_button.clicked.connect(self._primary_action)
         self.primary_button.setDefault(True)
         actions.addWidget(self.secondary_button)
@@ -174,7 +176,7 @@ class UpdateDialog(QDialog):
     def show_downloading(self) -> None:
         self.progress.show()
         self.progress.setRange(0, 0)
-        self.install_hint.setText("下载完成后再确认安装，可继续使用主界面。")
+        self.install_hint.setText("下载完成将自动保存工作、安装并重新打开软件。下载期间可继续使用主界面。")
         self._set_state(UpdateState.DOWNLOADING, "正在连接下载…", "正在获取安装包，请稍候。", "正在下载…")
 
     def set_download_progress(self, done: int, total: int) -> None:
@@ -188,19 +190,21 @@ class UpdateDialog(QDialog):
 
     def show_cancelled(self) -> None:
         self.progress.hide()
-        self._set_state(UpdateState.CANCELLED, "下载已取消", "可以稍后重新下载此版本。", "重新下载")
+        self._set_state(UpdateState.CANCELLED, "下载已取消", "可以稍后重新更新此版本。", "重试更新")
 
     def show_error(self, message: str) -> None:
         self.progress.hide()
-        self._set_state(UpdateState.ERROR, "下载未完成", message, "重试下载")
+        self._set_state(UpdateState.ERROR, "下载未完成", message, "重试更新")
 
     def show_ready(self, message: str = "安装包已下载并通过校验。") -> None:
         self.progress.hide()
-        self.install_hint.setText("点击“保存并安装”将保存工作并退出，然后启动安装程序。Windows 可能要求管理员权限。")
-        self._set_state(UpdateState.READY, "可以安装了", message, "保存并安装")
+        self.install_hint.setText("将保存工作并退出，自动安装后重新打开软件。Windows 可能要求管理员权限。")
+        self._set_state(UpdateState.READY, "可以安装了", message, "保存并重启")
 
     def show_installing(self) -> None:
-        self._set_state(UpdateState.INSTALLING, "正在保存并退出…", "关闭完成后将启动安装程序。", "正在退出…")
+        self._set_state(
+            UpdateState.INSTALLING, "正在保存并退出…", "关闭完成后自动安装，成功后重新打开软件。", "正在退出…"
+        )
 
     def _primary_action(self) -> None:
         if not self.primary_button.isEnabled():

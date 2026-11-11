@@ -68,7 +68,7 @@ def test_versions_and_full_markdown_remain_visible_during_download(dialog):
     assert not dialog.primary_button.isEnabled()
 
 
-def test_install_requires_explicit_action_after_worker_finishes(dialog):
+def test_ready_state_allows_manual_resume_only_after_worker_finishes(dialog):
     installed = []
     dialog.install_requested.connect(lambda: installed.append(True))
     dialog.set_transfer_active(True)
@@ -78,7 +78,7 @@ def test_install_requires_explicit_action_after_worker_finishes(dialog):
     dialog.primary_button.click()
     assert not installed
     dialog.set_transfer_active(False)
-    assert dialog.primary_button.text() == "保存并安装"
+    assert dialog.primary_button.text() == "保存并重启"
     assert "保存工作并退出" in dialog.install_hint.text()
     dialog.primary_button.click()
     assert installed == [True]
@@ -104,7 +104,7 @@ def test_cancel_and_window_close_request_cancellation_once(dialog, close_action)
     dialog.set_transfer_active(False)
     dialog.show_cancelled()
     assert dialog.primary_button.isEnabled()
-    assert dialog.primary_button.text() == "重新下载"
+    assert dialog.primary_button.text() == "重试更新"
 
 
 def test_release_links_only_open_web_urls_and_images_are_not_loaded(dialog, monkeypatch):

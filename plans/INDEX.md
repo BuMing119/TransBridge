@@ -8,7 +8,7 @@
 
 - [project-storage-redesign](project-storage-redesign/plan.md)：FR32/S01～S10 本地实现与相关回归完成；[工作台完整滚动与当前来源驻留](../docs/changelogs/project-storage-redesign/story-04/2026-11-09-002-resident-workbench-source.md)已验证。项目 SQLite、独立任务、不保存插件/路径、旧格式拒绝。100k/80 来源首屏中位 103ms、单条保存 80ms；三项既有失败、全范围成本和冷缓存限制见[实施记录](../docs/changelogs/project-storage-redesign/story-01-to-10/2026-11-09-001-translation-project-store.md)（2026-11-09）。
 
-- [app-update](app-update/plan.md)：Windows 安装版检查公开 GitHub Releases、下载校验与安全关闭后启动现有安装器；本地实现及相关验证完成，本轮不发布 Release。
+- [app-update](app-update/plan.md)：S01～S03 本地完成；一键下载、保存退出、自动安装与重启，70 项聚焦回归、3 项实际隔离安装通过；扩大 151 通过/1 项既有环境版本失败，Ruff/格式通过，见 [S03 增量](../docs/changelogs/app-update/story-03/2026-11-11-001-automatic-install-and-restart.md)（2026-11-11）。
 
 - [file-io-dialogs](file-io-dialogs/plan.md)：S01～S05 本地完成；独立导入/导出、固定布局打开文件与多格式建项，建项支持多译文文件自动匹配及冲突保护。S05 最终联合 240 通过/7 项既有失败排除，全库 Ruff 通过；旧存储测试差异和此前验证见计划及记录。
 

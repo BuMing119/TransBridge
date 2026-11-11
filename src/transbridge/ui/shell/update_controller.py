@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 from pathlib import Path
@@ -181,6 +180,7 @@ class UpdateController(QObject):
             self._dialog.set_download_progress(done, total)
 
     def _on_download_error(self, message: str) -> None:
+        self._downloaded_installer = None
         if self._dialog is not None:
             if self._cancel_download.is_set():
                 self._dialog.show_cancelled()
@@ -249,21 +249,22 @@ class UpdateController(QObject):
             release = self._release
             if release is None or not installer.is_file():
                 raise OSError("The verified installer is no longer available")
-            with installer.open("rb") as stream:
-                if hashlib.file_digest(stream, "sha256").hexdigest().lower() != release.sha256.lower():
-                    raise OSError("The downloaded installer changed after verification")
             # Qt has accepted close, but app.py still owns runtime cleanup.
-            launch_after_exit(installer, sha256=release.sha256, previous_pid=os.getpid())
-        except OSError:
+            # Recheck the large installer in the helper, outside the GUI thread.
+            launch_after_exit(
+                installer, sha256=release.sha256, previous_pid=os.getpid(), application=Path(sys.executable)
+            )
+        except (OSError, ValueError) as exc:
             logger.exception("Could not launch verified update installer: %s", installer)
+            message = f"无法启动更新安装程序：{exc}。请重新检查更新或手动运行已下载的安装包。"
             try:
-                (installer.parent / "last-update-error.txt").write_text(
-                    "无法启动更新安装程序；请重新检查更新或手动运行已下载的安装包。", encoding="utf-8"
-                )
+                (installer.parent / "last-update-error.txt").write_text(message, encoding="utf-8")
             except OSError:
                 logger.exception("Could not record update launch failure")
+            QMessageBox.warning(self._host, "更新未完成", message)
 
     def _release_worker(self, worker: ApiWorker) -> None:
+        install_ready = False
         if self._worker is worker:
             self._worker = None
             if self._download_active:
@@ -275,9 +276,15 @@ class UpdateController(QObject):
                         self._dialog.show_cancelled()
                     elif self._dialog.state in {UpdateState.DOWNLOADING, UpdateState.CANCELLING}:
                         self._dialog.show_error("下载未完成，请重试。")
+                    else:
+                        install_ready = (
+                            self._dialog.state == UpdateState.READY and self._downloaded_installer is not None
+                        )
             if self._navigation is not None:
                 self._navigation.set_update_checking(False)
         worker.deleteLater()
+        if install_ready:
+            self._install_downloaded()
 
     def _show_info(self, message: str) -> None:
         QMessageBox.information(self._host, "检查更新", message)
