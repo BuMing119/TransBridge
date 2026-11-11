@@ -1,5 +1,7 @@
 # 变更日志索引
 
+- 2026-11-11：[S2 恢复检查点短名称临时文件](ai-task-recovery/story-02/2026-11-11-001-short-checkpoint-temporaries.md) — 缩短后处理与候选提交头的原子保存路径，保持旧记录读取并补齐句柄失败清理；42 项回归及 Ruff/格式检查通过，未在报错电脑或发行包复验。
+
 - 2026-11-11：[S31 压缩包原始词条后缀兼容](paratranz-categorized-upload/story-31/2026-11-11-002-raw-json-suffix-compatibility.md) — 保留追加 `.json` 优先，兼容无歧义的原文件名并报告尝试路径；84 项回归及 Ruff/格式检查通过，真实压缩包待复验。
 
 - 2026-11-10 [v0.2.1.10 GPLv3 与 Windows 发布记录](release-hardening-v2/story-05-clean-release-qa/2026-11-10-003-gpl-windows-release.md) — 记录许可切换、系统 VC 运行库检查、安装器验证和 Latest 回读。发布页自定义附件只保留安装程序，项目源码使用 GitHub 自动归档。

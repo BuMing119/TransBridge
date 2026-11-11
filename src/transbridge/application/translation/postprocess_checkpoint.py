@@ -14,7 +14,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import secrets
+import tempfile
 import threading
 from typing import Any, Protocol
 
@@ -250,7 +250,6 @@ class FilesystemPostProcessCheckpointPort:
             if current is not None and checkpoint.revision <= current.revision:
                 raise ValueError("post-process checkpoint revision did not advance")
             target = self._path(checkpoint.run_id)
-            temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
             payload = json.dumps(
                 checkpoint.to_dict(),
                 ensure_ascii=False,
@@ -258,7 +257,9 @@ class FilesystemPostProcessCheckpointPort:
                 separators=(",", ":"),
                 allow_nan=False,
             ).encode("utf-8")
-            descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            # Do not extend the durable filename beyond Windows' legacy path limit.
+            descriptor, name = tempfile.mkstemp(prefix=".post-", suffix=".tmp", dir=target.parent)
+            temporary = Path(name)
             try:
                 with os.fdopen(descriptor, "wb", closefd=True) as stream:
                     descriptor = -1

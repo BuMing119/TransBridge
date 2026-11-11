@@ -8,7 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import secrets
+import tempfile
 
 
 def encode(value: dict) -> bytes:
@@ -116,10 +116,12 @@ def write_record(path: Path, record: dict, *, offset: int = 0, previous: str = "
 
 def publish_head(target: Path, head: dict) -> None:
     payload = encode(head)
-    temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
+    # Keep the atomic staging name short even when the durable filename is long.
+    descriptor, name = tempfile.mkstemp(prefix=".head-", suffix=".tmp", dir=target.parent)
+    temporary = Path(name)
     try:
-        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
@@ -128,6 +130,8 @@ def publish_head(target: Path, head: dict) -> None:
         os.replace(temporary, target)
         fsync_directory(target.parent)
     finally:
+        if descriptor >= 0:
+            os.close(descriptor)
         temporary.unlink(missing_ok=True)
 
 

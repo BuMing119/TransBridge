@@ -43,4 +43,4 @@
 
 2069 项相关回归、95 项最后完整性矩阵通过（集合有重叠）；全库 Ruff 与格式检查通过。2 万条结果离线基准：保存 0.52 秒、恢复 2.73 秒，Qt 最大心跳间隔 157ms。旧任务只读发现及候选核验通过，没有调用真实 LLM 或应用用户译文。
 
-实现范围、逐文件变化、已排除测试及兼容限制见 [增量记录](../../docs/changelogs/ai-task-recovery/story-01-to-05/2026-10-24-001-full-task-recovery.md)。原生崩溃原因不属于本轮修复承诺。
+实现范围、逐文件变化、已排除测试及兼容限制见 [增量记录](../../docs/changelogs/ai-task-recovery/story-01-to-05/2026-10-24-001-full-task-recovery.md)；S2 原子保存的临时路径补修见 [2026-11-11 增量](../../docs/changelogs/ai-task-recovery/story-02/2026-11-11-001-short-checkpoint-temporaries.md)。原生崩溃原因不属于本轮修复承诺。
