@@ -1,6 +1,6 @@
 [project]
 name = "transbridge"
-version = "0.2.1.10"
+version = "0.2.1.11"
 description = "TransBridge is a translation file conversion tool designed to seamlessly transfer translation files between Xtranslator, ESP-ESM Translator, and ParaTranz."
 readme = "README.md"
 license = "GPL-3.0-only"
