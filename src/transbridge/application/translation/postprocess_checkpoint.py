@@ -19,6 +19,7 @@ import threading
 from typing import Any, Protocol
 
 from transbridge.application.io import EntryKey, EntryRevision
+from transbridge.filesystem_paths import native_path
 
 from .workload_models import canonical_hash
 
@@ -227,7 +228,7 @@ class FilesystemPostProcessCheckpointPort:
     """Atomic same-directory checkpoint storage; legacy unversioned files rejected."""
 
     def __init__(self, root: str | Path) -> None:
-        self._root = Path(root)
+        self._root = native_path(root)
         self._lock = threading.Lock()
 
     def load(self, run_id: str) -> PostProcessCheckpoint | None:
@@ -276,7 +277,7 @@ class FilesystemPostProcessCheckpointPort:
 
     def _path(self, run_id: str) -> Path:
         digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()
-        return self._root / f"postprocess-{digest}.json"
+        return native_path(self._root / f"postprocess-{digest}.json")
 
 
 def _fsync_directory(path: Path) -> None:

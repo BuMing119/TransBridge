@@ -8,6 +8,7 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import sqlite3
 
+from transbridge.filesystem_paths import native_path, sqlite_uri
 from transbridge.persistence.v2.filesystem import OsPersistenceFilesystem
 from transbridge.persistence.v2.session_write_lease import persistence_write_lease
 
@@ -27,6 +28,7 @@ from .schema import SCHEMA
 def project_connection(
     path: Path, *, write: bool = False, create: bool = False, check_schema: bool = True
 ) -> Iterator[sqlite3.Connection]:
+    path = native_path(path)
     lease = project_mutation_lease(path) if write else nullcontext()
     with lease, _project_connection(path, write=write, create=create, check_schema=check_schema) as connection:
         yield connection
@@ -47,9 +49,7 @@ def _project_connection(path: Path, *, write: bool, create: bool, check_schema: 
         raise UnsupportedProjectFormat("project database is missing")
     mode = "rwc" if create else "rw" if write else "ro"
     try:
-        connection = sqlite3.connect(
-            f"{path.resolve().as_uri()}?mode={mode}", uri=True, timeout=2, isolation_level=None
-        )
+        connection = sqlite3.connect(sqlite_uri(path, mode=mode), uri=True, timeout=2, isolation_level=None)
     except sqlite3.Error as exc:
         raise ProjectStoreError(f"Cannot open project database: {exc}") from exc
     try:

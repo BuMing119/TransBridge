@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 import sqlite3
 
+from transbridge.filesystem_paths import native_path, sqlite_uri
+
 from .schema import APPLICATION_ID, SCHEMA, VERSION
 
 
@@ -21,6 +23,7 @@ def encode(value):
 
 @contextmanager
 def transaction(path: Path, *, write=False):
+    path = native_path(path)
     if not write and not path.exists():
         yield None
         return
@@ -29,9 +32,7 @@ def transaction(path: Path, *, write=False):
     mode = "rwc" if write else "ro"
     connection = None
     try:
-        connection = sqlite3.connect(
-            f"{path.resolve().as_uri()}?mode={mode}", uri=True, timeout=2, isolation_level=None
-        )
+        connection = sqlite3.connect(sqlite_uri(path, mode=mode), uri=True, timeout=2, isolation_level=None)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA trusted_schema = OFF")

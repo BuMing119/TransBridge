@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+import logging
 import math
 import time
 from typing import Any, Protocol
@@ -27,7 +28,7 @@ from transbridge.application.contracts import (
     OperationResult,
 )
 from transbridge.application.io import EntryKey, EntryRevision, StageOperation, StagePolicyPort
-from transbridge.application.security import project_business_data
+from transbridge.application.security import diagnostic_exception_text, project_business_data
 
 from .postprocess_checkpoint import (
     PostProcessCheckpoint,
@@ -35,6 +36,8 @@ from .postprocess_checkpoint import (
     checkpoint_entry_from_candidate,
 )
 from .workload_models import TranslationInput, canonical_hash, translation_input_fingerprint
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_report_value(value: object) -> Any:
@@ -339,6 +342,38 @@ class PostProcessWorkload:
 
         outcomes: list[PostProcessStageOutcome] = []
         checkpoint_complete = True
+
+        def persist(
+            result: PostProcessRunResult | None,
+            completed: list[PostProcessStageOutcome],
+            checkpoint_candidates: tuple[PostProcessCandidate, ...],
+        ) -> PostProcessRunResult | None:
+            try:
+                self._persist(run_id, owner_id, input_fingerprint, completed, checkpoint_candidates)
+            except Exception as exc:
+                logger.exception("Cannot save post-processing checkpoint for %s", run_id)
+                diagnostic = Diagnostic(
+                    "POSTPROCESS_CHECKPOINT_SAVE_FAILED",
+                    f"无法保存后处理断点：{diagnostic_exception_text(exc) or type(exc).__name__}",
+                    category=ErrorCategory.INTERNAL,
+                    retryable=True,
+                    details=(("error_type", type(exc).__name__),),
+                )
+                prior = result.report_snapshot.diagnostics if result is not None else tuple(diagnostics)
+                cancelled = result is not None and result.operation_result.outcome is OperationOutcome.CANCELLED
+                return self._result(
+                    OperationOutcome.CANCELLED if cancelled else OperationOutcome.FAILED,
+                    run_id,
+                    entries,
+                    current,
+                    outcomes,
+                    (*prior, diagnostic),
+                    conflicts=conflicts,
+                    stage_failed=True,
+                    run_spec_summary=run_spec_summary,
+                )
+            return result
+
         resume_index = self._resume_index(resume_after_phase)
         for index, stage in enumerate(self._stages):
             if resume_index is not None and index <= resume_index:
@@ -363,18 +398,20 @@ class PostProcessWorkload:
                     run_spec_summary=run_spec_summary,
                 )
                 if checkpoint_complete:
-                    self._persist(run_id, owner_id, input_fingerprint, outcomes, current)
+                    return persist(result, outcomes, current) or result
                 return result
             started = time.perf_counter()
             before_stage = current
             try:
                 stage_outcome = stage(current)
             except Exception as exc:
+                phase = self._stage_names[index]
+                logger.exception("Post-processing stage %s failed", phase)
                 diagnostic = Diagnostic(
                     "POSTPROCESS_STAGE_FAILED",
-                    "A post-processing stage failed.",
+                    f"后处理阶段 {phase} 失败：{diagnostic_exception_text(exc) or type(exc).__name__}",
                     category=ErrorCategory.INTERNAL,
-                    details=(("error_type", type(exc).__name__),),
+                    details=(("phase", phase), ("error_type", type(exc).__name__)),
                 )
                 result = self._result(
                     OperationOutcome.FAILED,
@@ -387,7 +424,7 @@ class PostProcessWorkload:
                     run_spec_summary=run_spec_summary,
                 )
                 if checkpoint_complete:
-                    self._persist(run_id, owner_id, input_fingerprint, outcomes, before_stage)
+                    return persist(result, outcomes, before_stage) or result
                 return result
             duration_ms = int((time.perf_counter() - started) * 1000)
             if stage_outcome.candidates and any(item.run_id != run_id for item in stage_outcome.candidates):
@@ -415,16 +452,20 @@ class PostProcessWorkload:
                     run_spec_summary=run_spec_summary,
                 )
                 if checkpoint_complete:
-                    self._persist(run_id, owner_id, input_fingerprint, outcomes[:-1], before_stage)
+                    return persist(result, outcomes[:-1], before_stage) or result
                 return result
             if incomplete:
                 # Keep valid per-entry results flowing through later stages, but
                 # never persist a completed prefix beyond a retryable gap.
                 if checkpoint_complete:
-                    self._persist(run_id, owner_id, input_fingerprint, outcomes[:-1], before_stage)
+                    failure = persist(None, outcomes[:-1], before_stage)
+                    if failure is not None:
+                        return failure
                 checkpoint_complete = False
             elif checkpoint_complete:
-                self._persist(run_id, owner_id, input_fingerprint, outcomes, current)
+                failure = persist(None, outcomes, current)
+                if failure is not None:
+                    return failure
 
         result = self._result(
             OperationOutcome.PARTIAL if conflicts else OperationOutcome.COMPLETED,
@@ -437,7 +478,7 @@ class PostProcessWorkload:
             run_spec_summary=run_spec_summary,
         )
         if checkpoint_complete:
-            self._persist(run_id, owner_id, input_fingerprint, outcomes, current)
+            return persist(result, outcomes, current) or result
         return result
 
     def _resume_index(self, resume_after_phase: str | None) -> int | None:

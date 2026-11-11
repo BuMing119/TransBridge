@@ -8,6 +8,8 @@ import logging
 from pathlib import Path
 import secrets
 
+from transbridge.filesystem_paths import native_path
+
 from . import candidate_checkpoint_journal as journal
 from .candidate_checkpoint import TranslationCheckpoint
 from .workload_models import CandidateTranslation, TranslationBatchOutcome
@@ -303,7 +305,7 @@ class CandidateCheckpointStore:
         }
 
     def _replace(self, target: Path, state: _State, old: _Cached | None) -> None:
-        path = target.with_name(f"{target.stem}-{secrets.token_hex(16)}.jsonl")
+        path = native_path(target.with_name(f"{target.stem}-{secrets.token_hex(16)}.jsonl"))
         published = False
         try:
             payload = state.snapshot().to_dict()

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 from transbridge.application.contracts import Diagnostic, ErrorCategory, OperationOutcome
 from transbridge.application.io import (
     EntryKey,
@@ -123,6 +125,29 @@ def test_stage_exception_keeps_a_read_only_terminal_snapshot_outside_operation_v
     assert terminal.report_snapshot.input_count == 1
     assert terminal.report_snapshot.candidates[0].text == "draft"
     assert any(d.code == "POSTPROCESS_STAGE_FAILED" for d in terminal.report_snapshot.diagnostics)
+
+
+def test_stage_exception_reports_phase_and_safe_error_and_logs_original_cause(caplog) -> None:
+    def explodes(candidates):
+        try:
+            raise sqlite3.OperationalError("unable to open database file")
+        except sqlite3.Error as exc:
+            raise RuntimeError(
+                "无法保存校对断点 checkpoint.sqlite3: unable to open database file; api_key=fixture-secret"
+            ) from exc
+
+    terminal = PostProcessWorkload(
+        (explodes,), stage_policy=StagePolicy(), stage_names=("proofread",)
+    ).run_with_snapshot("failed-checkpoint", (_entry("one"),))
+
+    diagnostic = terminal.report_snapshot.diagnostics[0]
+    assert diagnostic.code == "POSTPROCESS_STAGE_FAILED"
+    assert dict(diagnostic.details) == {"phase": "proofread", "error_type": "RuntimeError"}
+    assert "proofread" in diagnostic.message
+    assert "checkpoint.sqlite3: unable to open database file" in diagnostic.message
+    assert "fixture-secret" not in str(terminal.report_snapshot.to_dict())
+    record = next(record for record in caplog.records if record.exc_info)
+    assert isinstance(record.exc_info[1].__cause__, sqlite3.OperationalError)
 
 
 def test_cancel_is_typed_cancelled_and_persists_progress() -> None:

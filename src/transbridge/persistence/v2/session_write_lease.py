@@ -9,6 +9,8 @@ import hashlib
 import os
 from threading import local
 
+from transbridge.filesystem_paths import native_path
+
 from .filesystem import OsPersistenceFilesystem, PersistenceFilesystemPort, RepositoryPaths
 from .models import ReadOnlyWriteRefused
 
@@ -37,7 +39,7 @@ def persistence_write_lease(
         yield
         return
     paths = RepositoryPaths(root, filesystem)
-    path = paths.guard(os.path.join(paths.root, ".leases", f"{identity}.lock"))
+    path = str(native_path(paths.guard(os.path.join(paths.root, ".leases", f"{identity}.lock"))))
     lease_key = os.path.normcase(path)
     held = getattr(_HELD, "paths", None)
     if held is None:

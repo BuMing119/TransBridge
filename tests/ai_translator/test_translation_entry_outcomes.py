@@ -147,7 +147,8 @@ def test_translation_retains_questionable_reason_only_after_successful_postproce
     assert ("PROOFREAD_SYNTAX_REVIEW_REQUIRED" in result.reason) is committed
 
 
-def test_namespace_separates_identical_ids_and_scoped_postprocess_failures():
+@pytest.mark.parametrize("incomplete", [False, True])
+def test_namespace_separates_identical_ids_and_scoped_postprocess_failures(incomplete):
     first, second = _entry(), _entry("source:b")
     first_snapshot = _postprocess(first)
     second_snapshot = _postprocess(second)
@@ -157,7 +158,7 @@ def test_namespace_separates_identical_ids_and_scoped_postprocess_failures():
         candidates=candidates,
         input_count=2,
         accepted_count=2,
-        stage_outcomes=(PostProcessStageOutcome("proofread", candidates),),
+        stage_outcomes=() if incomplete else (PostProcessStageOutcome("proofread", candidates),),
         diagnostics=(
             Diagnostic(
                 "CALL_FAILED",
@@ -180,8 +181,10 @@ def test_namespace_separates_identical_ids_and_scoped_postprocess_failures():
         required_phases=("proofread",),
         post_process_snapshot=snapshot,
     )
-    assert results[first.identity].status == "succeeded"
+    assert results[first.identity].status == ("failed" if incomplete else "succeeded")
+    assert results[first.identity].reason == ("后处理未完成" if incomplete else "")
     assert results[second.identity].status == "failed"
+    assert results[second.identity].reason == "CALL_FAILED: provider failed"
 
 
 def test_cancel_preserves_failed_and_not_started_distinction():

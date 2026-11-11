@@ -142,10 +142,7 @@ def _post_process_failures(
     snapshot: ReportSnapshot | None,
     commit_result: OperationResult[dict] | None,
 ) -> dict[EntryKey, str]:
-    if phases is None or snapshot is None:
-        return dict.fromkeys(keys, "后处理未完成")
-    completed = tuple(stage.phase for stage in snapshot.stage_outcomes)
-    if completed != phases:
+    if snapshot is None:
         return dict.fromkeys(keys, "后处理未完成")
     failures = {}
     for diagnostic in snapshot.diagnostics:
@@ -166,6 +163,11 @@ def _post_process_failures(
             )
             for key in keys & affected:
                 failures.setdefault(key, f"{diagnostic.code}: {diagnostic.message}")
+    completed = tuple(stage.phase for stage in snapshot.stage_outcomes)
+    if phases is None or completed != phases:
+        for key in keys:
+            failures.setdefault(key, "后处理未完成")
+        return failures
     candidates = {item.entry_key: item for item in snapshot.candidates}
     traversed = set(keys)
     for stage in snapshot.stage_outcomes:

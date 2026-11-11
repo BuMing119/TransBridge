@@ -22,6 +22,7 @@ from transbridge.application.projects.storage_contracts import (
     SourceInfo,
     StoredEntry,
 )
+from transbridge.filesystem_paths import native_path
 from transbridge.persistence.v2.ids import ProjectId, VariantId
 
 from . import reads
@@ -198,6 +199,7 @@ def publish_project[T](
     *,
     publication: AbstractContextManager[None] | None = None,
 ) -> T:
+    path = native_path(path)
     if path.exists():
         raise ProjectStorageConflict("project database already exists")
     try:

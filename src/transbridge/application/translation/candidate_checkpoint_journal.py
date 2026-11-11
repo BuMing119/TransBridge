@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import tempfile
 
+from transbridge.filesystem_paths import native_path
+
 
 def encode(value: dict) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
@@ -69,7 +71,7 @@ def journal_path(target: Path, head: dict) -> Path:
     token = name[len(prefix) : -6]
     if len(token) != 32 or any(char not in "0123456789abcdef" for char in token):
         raise ValueError("translation checkpoint journal identity is invalid")
-    return target.parent / name
+    return native_path(target.parent / name)
 
 
 def read_records(target: Path, head: dict):

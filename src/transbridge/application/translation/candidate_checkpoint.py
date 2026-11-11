@@ -9,6 +9,8 @@ from pathlib import Path
 import threading
 from typing import TYPE_CHECKING, Any, Protocol
 
+from transbridge.filesystem_paths import native_path
+
 from .workload_models import CandidateTranslation, TranslationBatchOutcome
 
 if TYPE_CHECKING:
@@ -194,7 +196,7 @@ class FilesystemTranslationCheckpointPort:
 
     def _path(self, run_id: str) -> Path:
         digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()
-        return self._root / f"translation-{digest}.json"
+        return native_path(self._root / f"translation-{digest}.json")
 
 
 def _string(value: Any, name: str) -> str:

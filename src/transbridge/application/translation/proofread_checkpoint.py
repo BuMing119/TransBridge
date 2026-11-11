@@ -15,6 +15,7 @@ import threading
 import uuid
 
 from transbridge.converter.translation_entry import STAGE_QUESTIONABLE
+from transbridge.filesystem_paths import native_path, sqlite_uri
 
 from .postprocess import PostProcessCandidate
 from .proofread_advisory import has_review_evidence, prepare_review_candidate
@@ -105,7 +106,9 @@ class ProofreadCheckpoint:
             if not isinstance(task_id, str) or not task_id.strip():
                 raise ValueError("proofread checkpoint task_id must be a non-empty string")
             directory = directory / "tasks" / _digest(task_id)
-        self.path = directory / f"{scope}.sqlite3"
+        # Use the established extended-path handling for SQLite and Python's
+        # exists/mkdir/backup operations without changing persisted identities.
+        self.path = native_path(directory / f"{scope}.sqlite3")
         self.reuse = reuse
         self._write_lock = threading.Lock()
         self._invalid_payloads = False
@@ -115,7 +118,7 @@ class ProofreadCheckpoint:
         if not self.path.exists():
             return 0
         try:
-            with closing(sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True)) as db:
+            with closing(sqlite3.connect(sqlite_uri(self.path, mode="ro"), uri=True)) as db:
                 _check_schema(db)
                 return db.execute(
                     "SELECT COUNT(*) FROM candidates WHERE CASE WHEN json_valid(payload) THEN "
@@ -139,7 +142,7 @@ class ProofreadCheckpoint:
         if not self.path.exists():
             return {}
         try:
-            with closing(sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True)) as db:
+            with closing(sqlite3.connect(sqlite_uri(self.path, mode="ro"), uri=True)) as db:
                 _check_schema(db)
                 rows = {}
                 for key, payload in db.execute("SELECT input, payload FROM candidates"):
@@ -172,7 +175,10 @@ class ProofreadCheckpoint:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 if self._invalid_payloads:
                     backup = self.path.with_name(f"corrupt-{uuid.uuid4().hex}.sqlite3")
-                    with closing(sqlite3.connect(self.path)) as source, closing(sqlite3.connect(backup)) as destination:
+                    with (
+                        closing(sqlite3.connect(sqlite_uri(self.path, mode="ro"), uri=True)) as source,
+                        closing(sqlite3.connect(sqlite_uri(backup), uri=True)) as destination,
+                    ):
                         source.backup(destination)
                     self._invalid_payloads = False
                     logger.warning("Preserved invalid proofread candidates in %s", backup)
@@ -194,7 +200,7 @@ class ProofreadCheckpoint:
             raise RuntimeError(f"无法保存校对断点 {self.path}：{exc}") from exc
 
     def _write_rows(self, rows: list[tuple[str, dict]]) -> None:
-        with closing(sqlite3.connect(self.path, timeout=30)) as db, db:
+        with closing(sqlite3.connect(sqlite_uri(self.path), uri=True, timeout=30)) as db, db:
             _check_schema(db, allow_empty=True)
             db.execute("CREATE TABLE IF NOT EXISTS candidates (input TEXT PRIMARY KEY, payload TEXT NOT NULL)")
             db.executemany(

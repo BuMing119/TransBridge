@@ -321,7 +321,8 @@ def test_failed_postprocess_stage_does_not_publish_initial_translation(monkeypat
     assert entry.translation == "translated:normal"  # Isolated draft only.
     assert result.entry_outcomes[entry.identity].status == "failed"
     assert result.entry_outcomes[entry.identity].text == ""
-    assert result.entry_outcomes[entry.identity].reason == "后处理未完成"
+    assert "POSTPROCESS_STAGE_FAILED" in result.entry_outcomes[entry.identity].reason
+    assert "proofread unavailable" in result.entry_outcomes[entry.identity].reason
 
 
 def test_cancelled_translation_has_no_successful_commit_evidence(monkeypatch) -> None:

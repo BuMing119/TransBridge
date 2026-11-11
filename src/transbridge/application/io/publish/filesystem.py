@@ -9,6 +9,8 @@ from pathlib import Path
 import stat
 from typing import Protocol, runtime_checkable
 
+from transbridge.filesystem_paths import native_path
+
 from .models import FileFingerprint
 
 
@@ -47,18 +49,7 @@ class OsPublishFilesystem:
     """Local-filesystem implementation; never falls back to delete then rename."""
 
     def canonicalize(self, path: str) -> str:
-        resolved = os.path.abspath(path)
-        if os.name != "nt":
-            return os.path.realpath(resolved)
-        if resolved.startswith("\\\\?\\"):
-            return os.path.realpath(resolved)
-        if len(resolved) < 240:
-            return os.path.realpath(resolved)
-        if resolved.startswith("\\\\"):
-            resolved = "\\\\?\\UNC\\" + resolved[2:]
-        else:
-            resolved = "\\\\?\\" + resolved
-        return os.path.realpath(resolved)
+        return str(native_path(path))
 
     def exists(self, path: str) -> bool:
         return Path(path).exists()
