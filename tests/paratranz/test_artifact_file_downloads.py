@@ -99,6 +99,71 @@ def test_archive_and_file_paths_produce_equal_complete_snapshots(monkeypatch):
     assert direct.fetch(7, (scope("a"),)) == zipped
 
 
+@pytest.mark.parametrize("path", ["a.esp/书籍/书籍_书名.json", "a.esp/书籍/书籍_书名.json.json"])
+@pytest.mark.parametrize("append_json", [True, False])
+def test_raw_json_suffix_variants_match_direct_snapshots(monkeypatch, path, append_json):
+    extra = {path: 50, path.replace("a.esp/", "other.esp/"): 60}
+    reader, _, api, _ = setup_reader(49, extra=extra)
+    if not append_json:
+        rows = api.payloads.pop(path)
+        api.extra = [("raw/" + path, json.dumps(rows, ensure_ascii=False))]
+
+    zipped = reader.fetch(7, (scope("a"),))
+
+    assert not zipped[0].error and len(zipped[0].entries) == 50
+    assert path in zipped[0].paths
+    assert path.replace("a.esp/", "other.esp/") not in zipped[0].paths
+    assert not api.destination.parent.exists()
+    monkeypatch.setattr("transbridge.paratranz.batch_download_snapshot.ARTIFACT_FILE_THRESHOLD", 1000)
+    direct, _, _, _ = setup_reader(49, extra=extra)
+    assert direct.fetch(7, (scope("a"),)) == zipped
+
+
+def test_appended_json_member_keeps_precedence_over_unchanged_name(monkeypatch):
+    reader, _, api, _ = setup_reader(50)
+    api.extra = [("raw/a.esp/category-0.json", "[]")]
+
+    zipped = reader.fetch(7, (scope("a"),))
+
+    monkeypatch.setattr("transbridge.paratranz.batch_download_snapshot.ARTIFACT_FILE_THRESHOLD", 1000)
+    direct, _, _, _ = setup_reader(50)
+    assert direct.fetch(7, (scope("a"),)) == zipped
+    assert not api.destination.parent.exists()
+
+
+@pytest.mark.parametrize("select_other", [True, False])
+def test_unchanged_member_cannot_belong_to_another_inventory_file(select_other):
+    path = "a.esp/书籍_书名.json"
+    reader, backend, api, _ = setup_reader(0, extra={path: 1, path + ".json": 2})
+    del api.payloads[path + ".json"]
+    artifact = reader.artifact_factory(object())
+    try:
+        with pytest.raises(ValueError, match="归属不明确"):
+            artifact.prepare(7, backend.inventory, {1, 2} if select_other else {2})
+        assert not artifact._files
+    finally:
+        artifact.close()
+    assert not api.destination.parent.exists()
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["utf8/a.esp/category-49.json", "raw/other.esp/category-49.json", "raw/category-49.json"],
+)
+def test_missing_raw_member_never_uses_formatted_or_unrelated_json(name):
+    reader, _, api, _ = setup_reader(50)
+    rows = api.payloads.pop("a.esp/category-49.json")
+    api.extra = [(name, json.dumps(rows))]
+    received = []
+
+    with pytest.raises(ValueError, match="缺少所选文件") as caught:
+        reader.fetch(7, (scope("a"),), on_source=lambda *args: received.append(args))
+
+    assert "raw/a.esp/category-49.json.json" in str(caught.value)
+    assert "raw/a.esp/category-49.json" in str(caught.value)
+    assert not received and not api.destination.parent.exists()
+
+
 def test_legacy_numeric_partitions_and_nested_paths_match_full_paths():
     reader, backend, api, _ = setup_reader(0)
     paths = {f"a_{i}.json": i for i in range(1, 50)}

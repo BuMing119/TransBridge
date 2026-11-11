@@ -1,5 +1,7 @@
 # 变更日志索引
 
+- 2026-11-11：[S31 压缩包原始词条后缀兼容](paratranz-categorized-upload/story-31/2026-11-11-002-raw-json-suffix-compatibility.md) — 保留追加 `.json` 优先，兼容无歧义的原文件名并报告尝试路径；84 项回归及 Ruff/格式检查通过，真实压缩包待复验。
+
 - 2026-11-10 [v0.2.1.10 GPLv3 与 Windows 发布记录](release-hardening-v2/story-05-clean-release-qa/2026-11-10-003-gpl-windows-release.md) — 记录许可切换、系统 VC 运行库检查、安装器验证和 Latest 回读。发布页自定义附件只保留安装程序，项目源码使用 GitHub 自动归档。
 
 - 2026-11-09：[S04 已保存译文自动刷新工作台](project-storage-redesign/story-04/2026-11-09-003-saved-workbench-refresh.md) — ParaTranz 合入保存后同步分页、完整列表、筛选与统计，覆盖乱序通知和其他成果应用入口。274 项相关回归、3 项规模测试及 Ruff 检查通过。

@@ -1,6 +1,6 @@
 # 项目多插件分类上传
 
-状态：S31 达到 50 文件生成新压缩包下载已实现并完成本地验证（2026-11-03）：新增 40 项通过，扩大 661 通过、1 跳过、1 既有夹具失败已用原下载模块复现；全库 Ruff/格式通过，见 [S31 增量](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-03-001-fresh-archive-download.md)。S30 并发、S29 节奏、S28 阅读布局、S27 共享下载及 S26 补传合同保持。
+状态：S31 达到 50 文件生成新压缩包下载已实现并完成本地验证（2026-11-03）：新增 40 项通过，扩大 661 通过、1 跳过、1 既有夹具失败已用原下载模块复现；全库 Ruff/格式通过，见 [S31 增量](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-03-001-fresh-archive-download.md)及 [2026-11-11 后缀兼容补修](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-11-002-raw-json-suffix-compatibility.md)。S30 并发、S29 节奏、S28 阅读布局、S27 共享下载及 S26 补传合同保持。
 
 ## 当前目标与约束
 

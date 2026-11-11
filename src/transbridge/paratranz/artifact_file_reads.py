@@ -34,10 +34,7 @@ class ArtifactFileReads:
         try:
             with ZipFile(target) as archive:
                 members = _members(archive)
-                expected = {file_id: f"raw/{path}.json" for file_id, path in selected.items()}
-                missing = [selected[file_id] for file_id, name in expected.items() if name not in members]
-                if missing:
-                    raise ValueError(f"新压缩包缺少所选文件的完整词条：{missing[0]}；本轮未采用压缩包。")
+                expected = _selected_members(members, inventory, selected)
                 if sum(members[name].file_size for name in expected.values()) > _MAX_SELECTED_BYTES:
                     raise ValueError("压缩包所选文件解压内容超过 512 MiB 上限。")
                 for file_id, name in expected.items():
@@ -83,6 +80,31 @@ class ArtifactFileReads:
         if self._temporary is not None:
             self._temporary.cleanup()
             self._temporary = None
+
+
+def _selected_members(members, inventory, selected):
+    """Prefer ParaTranz's appended suffix; accept unchanged JSON names only when unambiguous."""
+    result = {}
+    for file_id, path in selected.items():
+        appended = f"raw/{path}.json"
+        if appended in members:
+            result[file_id] = appended
+            continue
+        candidates = [appended]
+        if path.endswith(".json"):
+            unchanged = f"raw/{path}"
+            candidates.append(unchanged)
+            if unchanged in members:
+                # The same member may be another file's normal appended-suffix export,
+                # including an inventory file outside this selection.
+                if path[:-5] in inventory:
+                    raise ValueError(f"压缩包原始词条文件归属不明确：{unchanged}；本轮未采用压缩包。")
+                result[file_id] = unchanged
+                continue
+        raise ValueError(
+            f"新压缩包缺少所选文件的原始词条文件：{path}（已查找：{'、'.join(candidates)}）；本轮未采用压缩包。"
+        )
+    return result
 
 
 def _members(archive):
