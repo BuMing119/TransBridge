@@ -28,7 +28,7 @@ description: 为 TransBridge 验证发行候选包、制作 Windows 安装包、
 
 ## 发行附件与对应源码
 
-- 自定义附件默认只有 Windows 安装包。项目源码与构建脚本使用 GitHub 按标签自动生成的 `Source code (zip)` 和 `Source code (tar.gz)`，核对其对应候选提交。额外源码 ZIP、完整 Qt 归档、第三方源码下载清单和测试证据均按用户单独授权的范围处理。
+- 自定义附件默认只有 Windows 安装包。项目源码与构建脚本使用 GitHub 按标签自动生成的 `Source code (zip)` 和 `Source code (tar.gz)`，核对其对应候选提交。第三方源码下载清单（包括 TXT）不作为 Release 附件上传。额外源码 ZIP、完整 Qt 归档和测试证据须经用户单独授权。
 - 依据安装包实际分发的组件与锁定版本安排第三方对应源码。发布前核对所需的源码、补丁和构建材料，并通过已确认的发布文案或其他可从二进制下载位置找到的公开入口提供。选择外部托管时核对精确版本、免费可下载性和持续供给方式，保留可补供的材料。尚未安排公开入口时标为发布阻断。[GitHub 自动源码归档](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases) · [GPLv3 第 6(d) 条](https://www.gnu.org/licenses/gpl.en.html) · [Qt 开源许可 FAQ](https://www.qt.io/faq/qt-open-source-licensing)
 
 ## GitHub Release 流程
