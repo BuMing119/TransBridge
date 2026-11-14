@@ -9,6 +9,10 @@ description: 为明确的功能、修复或重构编写可执行的实现计划�
 
 把已明确的需求和架构约束转成开发者可直接执行、可验证的计划。
 
+## PyQt 辅助技能
+
+任务涉及 Qt Widgets 界面时，先读取并遵循 [PyQt 技能协作规则](../bm-dev/references/pyqt-skills.md)，按当前阶段自动配合使用 `pyqt-widgets` 和 `pyqt-styling`；无需用户再次点名，无关任务不加载。
+
 ## Codex 执行约定
 
 - 先读取相关需求、ADR、现有 plan、代码入口、测试和 Git 状态。计划必须描述当前仓库，而不是想象中的目录。

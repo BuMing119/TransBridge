@@ -9,6 +9,10 @@ description: 为新系统、跨模块改动、技术选型、目录重构、数�
 
 基于真实仓库约束形成可执行、可追溯的系统级决策。
 
+## PyQt 辅助技能
+
+任务涉及 Qt Widgets 界面时，先读取并遵循 [PyQt 技能协作规则](../bm-dev/references/pyqt-skills.md)，按当前阶段自动配合使用 `pyqt-widgets` 和 `pyqt-styling`；无需用户再次点名，无关任务不加载。
+
 ## Codex 执行约定
 
 - 先检查 README、依赖清单、入口、模块边界、相关需求、现有 ADR 和测试；不要套用其他项目的目录或技术栈。

@@ -9,6 +9,10 @@ description: 在当前仓库实现功能、修复缺陷或执行已确认的 BM 
 
 在保护用户现有改动的前提下完成可验证的代码变更。
 
+## PyQt 辅助技能
+
+任务涉及 Qt Widgets 界面时，先读取并遵循 [PyQt 技能协作规则](references/pyqt-skills.md)，按当前阶段自动配合使用 `pyqt-widgets` 和 `pyqt-styling`；无需用户再次点名，无关任务不加载。
+
 ## 模式选择
 
 - 计划模式：用户指定 feature，或能唯一匹配 plans/<feature>/plan.md。把 plan、已展开 story 和 ADR 作为约束与验收依据。

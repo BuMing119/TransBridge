@@ -9,6 +9,10 @@ description: 在同一个 Codex 任务中持续推进需求分析、架构、规
 
 在当前 Codex 任务中从现状持续执行到可交付结果，减少不必要的停顿和重复确认。
 
+## PyQt 辅助技能
+
+任务涉及 Qt Widgets 界面时，先读取并遵循 [PyQt 技能协作规则](../bm-dev/references/pyqt-skills.md)，按当前阶段自动配合使用 `pyqt-widgets` 和 `pyqt-styling`；无需用户再次点名，无关任务不加载。
+
 ## Codex 原生编排
 
 Codex 没有通用的 Skill(...) 调用工具。不要输出伪调用，也不要要求用户逐个重新输入命令。需要进入某阶段时：

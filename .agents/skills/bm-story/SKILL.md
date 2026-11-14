@@ -9,6 +9,10 @@ description: 将已存在 plan 中的单个复杂 Story 展开为交接级实施
 
 在不改变 Story 产品边界和验收标准的前提下，补齐实现所需细节。
 
+## PyQt 辅助技能
+
+任务涉及 Qt Widgets 界面时，先读取并遵循 [PyQt 技能协作规则](../bm-dev/references/pyqt-skills.md)，按当前阶段自动配合使用 `pyqt-widgets` 和 `pyqt-styling`；无需用户再次点名，无关任务不加载。
+
 ## Codex 执行约定
 
 - 先读取目标 plan、相关 ADR、依赖 Story、当前代码和测试。文档必须基于现有符号和路径。

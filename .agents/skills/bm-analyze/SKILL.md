@@ -9,6 +9,10 @@ description: 分析新功能、需求变更或模糊想法，结合现有仓库�
 
 把用户意图转成可验证的需求，不提前决定实现方案。
 
+## PyQt 辅助技能
+
+任务涉及 Qt Widgets 界面时，先读取并遵循 [PyQt 技能协作规则](../bm-dev/references/pyqt-skills.md)，按当前阶段自动配合使用 `pyqt-widgets` 和 `pyqt-styling`；无需用户再次点名，无关任务不加载。
+
 ## Codex 执行约定
 
 - 先读取仓库事实，再提出问题。优先检查 README、现有需求、相关代码、测试和 Git 差异。

@@ -26,10 +26,10 @@ description: 为 TransBridge 验证发行候选包、制作 Windows 安装包、
 - 根据 `docs/更新日志.md` 和上一个正式发布标签到目标提交的实际差异起草 GitHub Release 标题和正文。首次发布按实际交付范围整理。正文包含发布声明和面向用户的更新说明，按需写清功能变化、修复、升级注意事项与已知问题。桌面更新器会显示 Release 正文。用户另行要求更新公告时，一并列出目标渠道和公告全文。
 - 完成已获授权的发布准备后，向用户展示版本、标题和将公开的完整文案，请用户明确确认。发布指令本身只授权发布动作。用户已明确同意本次使用的全文时，直接沿用。确认后若修改标题、正文或公告内容，展示修订稿并重新确认。等待确认期间，保留本地结果或已获授权的 GitHub 草稿。
 
-## 发行附件与对应源码
+## 发行附件与依赖记录
 
-- 自定义附件默认只有 Windows 安装包。项目源码与构建脚本使用 GitHub 按标签自动生成的 `Source code (zip)` 和 `Source code (tar.gz)`，核对其对应候选提交。第三方源码下载清单（包括 TXT）不作为 Release 附件上传。额外源码 ZIP、完整 Qt 归档和测试证据须经用户单独授权。
-- 依据安装包实际分发的组件与锁定版本安排第三方对应源码。发布前核对所需的源码、补丁和构建材料，并通过已确认的发布文案或其他可从二进制下载位置找到的公开入口提供。选择外部托管时核对精确版本、免费可下载性和持续供给方式，保留可补供的材料。尚未安排公开入口时标为发布阻断。[GitHub 自动源码归档](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases) · [GPLv3 第 6(d) 条](https://www.gnu.org/licenses/gpl.en.html) · [Qt 开源许可 FAQ](https://www.qt.io/faq/qt-open-source-licensing)
+- 自定义附件默认只有 Windows 安装包。项目源码、构建脚本和 uv 环境定义随 GitHub 按标签自动生成的 `Source code (zip)` 和 `Source code (tar.gz)` 公开，核对归档对应候选提交。[GitHub 自动源码归档](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
+- 依赖记录使用发布标签下公开的 `pyproject.toml` 和 `uv.lock`，核对二者与构建所用文件一致。第三方源码归档（包括 Qt 源码归档）和下载清单不作为 Release 附件，发版无需另写第三方源码章节或设置独立入口。额外测试证据须经用户单独授权。
 
 ## GitHub Release 流程
 

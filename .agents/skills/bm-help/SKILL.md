@@ -23,6 +23,8 @@ description: 解释当前可用的 BM 系列 skill、推荐适合用户场景的
 
 ## 常用入口
 
+涉及 Qt Widgets 界面时，BM 的分析、架构、规划、Story、开发、QA 和自动驾驶入口会按需读取 `pyqt-widgets`（控件、布局、交互）及 `pyqt-styling`（QSS、主题），无需用户额外点名。串行开发与批量 Story 沿用基础技能的规则；缺少辅助技能时会说明并继续使用项目现有模式。迁移 BM 技能集时保留 `bm-dev/references/pyqt-skills.md` 及相对目录结构；辅助技能需在目标环境可用。
+
 - bm-init：创建或检查 BM 配置和文档目录。
 - bm-analyze：澄清需求并可沉淀 requirements。
 - bm-arch：处理跨模块设计、技术选型和 ADR。
