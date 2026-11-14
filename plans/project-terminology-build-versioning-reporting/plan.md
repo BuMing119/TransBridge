@@ -1,5 +1,42 @@
 # 项目全来源术语构建、版本管理与统一报告计划
 
+## S17：冲突审核主从界面（2026-11-13）
+
+- 后续补记：直接“排除此术语”复用 IGNORE 草稿决定，成功后前进、失败留在当前项、可撤销；高级插件特例保留在其他译名流程内，展开后滚动至可见区域。13 项控件与协调器本轮复验通过，见 [S17～18 补记](../../docs/changelogs/project-terminology-build-versioning-reporting/story-17-to-18-followups/2026-11-13-001-exclusion-cache-backfill.md)。
+
+- 状态：用户确认 demo 后实现、回归及实际 Qt 截图检查已完成；详见 [S17 增量记录](../../docs/changelogs/project-terminology-build-versioning-reporting/story-17/2026-11-13-001-in-place-conflict-review.md)。
+- 目标：左侧待处理／已处理／无需处理队列，右侧直接选择译名、浏览对应原文译文；默认不代选。保存后继续当前位置；支持安全撤销上次决定。
+- 实施：独立 `ConflictReviewPane` 与协调器，复用分页模型、AsyncActionRunner、DraftWriteQueue、来源统计和导出；应用层增加处理状态及稳定 ID 起点筛选、受预期版本保护的撤销。旧大表证据面板退出主流程。
+- 验收：真实 SQLite 状态筛选先于分页；保存与撤销保留人工决定保护；失败保留输入；迟到结果不覆盖新选择；隐藏界面不读详情；小屏窗口和长文本可滚动；导出完整数据不受筛选影响。
+- 验证顺序：控件与后端聚焦回归 → 工作台/保存/导出集成 → Qt 截图检查 → 全仓 Ruff 与增量记录。保持现有保存格式，不修改 LLM 策略或用户术语数据。
+
+## S18：清理当前项目提取缓存（2026-11-13 补记）
+
+- 状态：本对话已实现；本轮补齐文档、聚焦验证及增量记录，阶段完成。
+- 验收：提取设置内后台清理当前项目 extraction 缓存，覆盖项目各翻译版本；保留 draft、决定、version、build、parse 和其他项目缓存。显示数量、空结果、失败；当前窗口任务活动时禁止清理。
+- 落点：`extraction_cache_actions.py` → presenter → `ProductionTerminologyCommands.clear_extraction_cache` → 项目仓储 `cache.clear("extraction")`；复用仓储锁，不新建缓存系统或格式。
+- 验证：缓存真实仓储隔离和 UI 后台/错误/任务守卫共 4 项通过。清理缓存与丢弃结果分别说明，不宣称后者会禁止抽取复用；无数据迁移。
+
+## S16：术语交互读取性能修复（2026-11-13）
+
+- 统一退出策略：术语抽取、冲突判断与自动翻译复用公共 BatchExecutor；停止排队请求、取消模型调用后等待活动请求释放资源，再完成退出。删除独立可放弃请求池；保留取消时去除三秒轮询、SQLite 查询中途取消与保存保护。98 项联合回归通过，见 [统一执行器记录](../../docs/changelogs/project-terminology-build-versioning-reporting/story-16/2026-11-13-003-shared-batch-lifetime.md)。远端不响应取消时仍需等待请求结束，真实打包软件整体退出耗时未测。
+
+- 状态：实现、聚焦 QA、五轮性能复测与增量记录已完成。页面资产读取 4.53 秒 → 0.26 秒，五万条 Qt 首屏 9.17 秒 → 0.87 秒；详见 [S16 增量](../../docs/changelogs/project-terminology-build-versioning-reporting/story-16/2026-11-13-001-read-performance.md)。
+- 目标：工作台状态不反复解码完整构建；冲突列表按页读取、单组证据按需读取；降低普通列表首次投影成本。
+- 实施：复用既有 SQLite 索引、后台读取与取消机制；新增职责明确的摘要/冲突读取切片，避免继续扩张仓储主类。保持已有数据格式、人工决定与过期保护。
+- 验收：状态/分页/单组详情不得读取无关证据；界面隐藏时不加载全量证据；草稿覆盖、方案选择、跨连接更新与取消保持正确。聚焦回归、全仓 Ruff、同一合成数据五轮复测。
+- 范围外：调整 LLM 并发与模型参数、更换数据库、清除用户数据。未运行真实模型性能测试。
+- 阶段计划：定位与基线、摘要/冲突/列表读取实现、功能与性能复验、增量记录均已完成。大型草稿写入及全量快照仍有成本，未宣称 S12 正式性能收口完成。
+
+## S15：LLM 真假冲突判断（2026-11-13）
+
+- 状态：分析、计划、开发、QA 与增量记录本地完成。相关后端/集成/UI 回归、全仓 Ruff 和格式检查通过；真实模型质量及打包未验证。见 [S15 增量记录](../../docs/changelogs/project-terminology-build-versioning-reporting/story-15/2026-11-13-001-false-conflict-judgment.md)。 后续整组请求及 50 路并发见 [S15 第三次增量](../../docs/changelogs/project-terminology-build-versioning-reporting/story-15/2026-11-13-003-whole-conflict-concurrency.md)。
+- 目标：抽取之后独立判断同原名不同译名是同一术语的正常表达差异、真实冲突还是无法确定；复用抽取缓存也执行此阶段。正常差异归并为一个既有候选代表术语，原词条译文不修改，保留全部证据和判断理由，允许人工覆盖；真实冲突与不确定项继续待处理。
+- 非目标：不增加多义语境术语库，不修改翻译消费契约，不以次数或机械去后缀代替模型判断，不清除用户已有数据。
+- 实施：独立应用判断契约与结构化 LLM 适配；生产捕获冻结配置、构建后台在全局归并后判断，结果纳入冻结内容身份；领域采用 equivalent 状态，默认列表不显示但可查看；沿用原草稿与发布守卫、证据分页及 JSON/CSV 导出。
+- 约束：仅 LLM 模式执行；少数译名全部去重记录及多数代表样本按完整冲突组一次入模，不按 token 合批预算拆分或截断。不同冲突组并发上限为 50，复用 LimitedLLMClient、AiRequestBudget 和既有取消机制；模型判定正常表达差异才自动归并。证据缺失、格式错误或请求失败保留待处理，并区分未执行/失败与模型真实结论、统计实际请求次数；取消不提交结果。人工决定优先，新构建重新判断，不复用旧判定。
+- 验收：假模型验证同一术语/真实冲突/不确定、缓存命中仍调用判断、失败与取消、草稿和发布、SQLite 往返、默认过滤与理由展示。相关回归、Ruff 与格式检查；不调用真实付费模型、不打包发布。
+
 - **状态**：草稿
 - **日期**：2026-08-28
 - **Feature slug**：`project-terminology-build-versioning-reporting`
@@ -7,6 +44,41 @@
 - **架构**：[ADR-034](../../docs/adr/034-project-terminology-build-versioning-reporting.md)（提议）、ADR-016、ADR-017、ADR-018、ADR-019、ADR-027
 - **前置 Plan**：`platform-contract-foundation-v2`、`translation-io-kernel-v2`、`project-session-persistence-v2`、`unified-task-translation-runtime-v2`、`terminology-format-compatibility`、`existing-translation-terminology`
 - **2026-08-28 收口状态**：S00～S11 的生产组合、GUI 闭环、SQLite、effective 翻译消费和自动化正确性验证已实现；S12 未完成，因为最终工作树尚无全套重测，正式 bundle 的内存与 changelog SHALL 仍失败，compare 快路及 query/history 修复也尚未形成新的聚合证据。
+
+## S13：项目术语 LLM 生产接入（2026-11-13，草稿）
+
+- 重抽标识修复已完成：冻结结果键区分输入与实际内容，允许相同输入产生不同结果，保留旧历史；44 项相关回归通过。见 [构建标识修复](../../docs/changelogs/project-terminology-build-versioning-reporting/story-13/2026-11-13-003-build-result-identity.md)。
+
+- 任务进度：规划、实现、QA、增量记录本地完成；接入阶段联合回归 725 项通过，用户确认的“只复核差异”策略另经 105 项相关回归验证，全仓 Ruff/格式/diff 检查通过。真实模型质量与安装包发布未执行。沿用 ADR-034，不变更其提议状态。见 [最新 S13 增量](../../docs/changelogs/project-terminology-build-versioning-reporting/story-13/2026-11-13-002-review-only-differences.md)。
+- 修复前缺口：生产 `BuildRunner` 未注入模型，`build()` 默认关闭 LLM；已有候选默认采用，UI 的“提取”没有明确执行方式。现已按以下步骤接通。
+- 目标：GUI 可选择规则整理或规则＋LLM；从已有双语正文抽取术语，真实模型状态、批次进度和部分失败可见；通过校验且无差异的术语默认采用，只复核异译与和已有决定不一致的项，发布后生效。
+- 非目标：不翻译只有原文的词条，不改写项目译文，不同步外部服务，不修改模型配置或依赖。
+- 实现步骤：①以暂态抽取执行端口冻结配置和提示词，将非秘密语义纳入已有构建配置身份；②复用模型客户端、结构化输出、token 分批与请求预算，以有界后台批次执行并隔离取消/迟到结果；③复用项目 SQLite extraction cache，只保存成功批次，重试复用成功部分，支持强制重抽；④无差异候选默认采用，只复核差异，保留人工决定；⑤UI 传递模式和刷新策略，展示模型、真实执行状态和诊断。
+- 文件落点：`bootstrap/terminology_extraction.py` 负责生产捕获/适配器注入；独立模型适配与批次执行模块避免扩张既有 translator；`application/terminology/{input_capture,extraction,build_drafts}.py` 负责端口与审核语义；既有 build runner、SQLite cache 和 terminology UI 做局部接线。
+- 验收：生产入口对双语正文调用注入模型并保留同词条证据；缺配置阻止 LLM 构建且允许规则模式；未知/跨批证据和无定位输出不能入稿；失败可见且可重试；取消不提交草稿；相同输入复用、模型/提示词变化失效、强制重抽更新缓存；人工确认/禁用不被重建覆盖；无差异术语无需逐条确认即可发布，未解决差异阻止发布；重新提取时自动采用旧稿中未经人工调整且证据一致的 LLM 待复核项。
+- 验证：抽取/缓存/草稿单元测试，生产 runner 与输入捕获集成测试，UI 配置/进度/结果回归；相关 terminology 全域与 Ruff、格式、diff 检查。真实付费模型不作为本地自动化测试前提。
+- 兼容：旧快照没有暂态抽取端口时维持规则模式；不迁移持久化领域资产。沿用既有 digest/cache 身份是为防止错误复用模型结果，不新增自定义哈希体系；强制刷新不改变发布 freshness。
+
+## S14：任务式术语界面（2026-11-13）
+
+- 单文件主子表导出已完成：Excel 工作簿提供冲突主表、少数译名证据、全部证据三个标签页及跳转链接，24 项回归通过；见 [工作簿增量](../../docs/changelogs/project-terminology-build-versioning-reporting/story-14/2026-11-13-004-conflict-workbook.md)。
+
+- 最新增量：候选去重使用次数、少数译名证据子表与审核主表导出已完成，64 项联合回归及全仓 Ruff/格式检查通过；见 [S14 第三次增量](../../docs/changelogs/project-terminology-build-versioning-reporting/story-14/2026-11-13-003-minority-evidence.md)。
+
+- 状态：用户确认交互方向，本地实现、QA 与增量记录完成。完整 UI 回归 307 项通过，最后修改复验 43 项通过；全仓 Ruff/格式/diff 检查通过。见 [S14 增量](../../docs/changelogs/project-terminology-build-versioning-reporting/story-14/2026-11-13-001-task-first-workbench.md)。
+- 验收：首页不展示术语表；查看编辑、冲突处理分别在独立窗口；提取成功且存在冲突时自动打开处理窗口，无冲突不弹；关闭后可继续处理；首页可应用或丢弃待应用结果；方案管理提供明确删除入口及影响说明。
+- 实施：TermsView 保留任务状态与提取配置，把浏览编辑组件放入独立窗口；WorkflowController 在新资产刷新后触发冲突窗口，避免读取旧计数；历史与报告移入进阶窗口；沿用后台任务、写入队列、发布检查和删除确认。
+- 文件：terminology 的 object_views、workflow_controller、asset_presentation、workbench_shell 与独立窗口模块；terminology_profiles 的管理界面；相应 UI 回归。
+- 兼容：不迁移数据库，不删除实际用户数据；项目结果应用到项目术语，独立方案仍通过方案管理发布。已发布历史保持可追溯。
+- 验证：窗口归属、自动弹窗一次、关闭重开、无冲突不弹、待保存禁用应用/丢弃、删除取消与恢复、既有后台生命周期；Ruff 与格式检查。阶段顺序：计划 → 开发 → QA → 增量记录。
+
+### S14 后续：冲突选择与文件导出（2026-11-13，本地完成）
+
+- 冲突列表显示实际候选译名，每行提供“选择译名…”；选择窗口提供候选单选与自定义译名，沿用保存失败保留输入和并发校验。
+- 提供全量冲突清单与完整生效术语 JSON/CSV 导出，不受表格分页/搜索过滤影响；后台执行、明确文件目标、失败可见。
+- “重新检查”不再按当前界面已加载来源缩小项目提取范围；默认使用项目已登记且启用的全部来源。
+- 验证：候选展示、点选提交、来源范围回归、跨页全量导出、往返读取、取消/失败/旧上下文隔离；相关测试与 Ruff。
+- 结果：104 项联合回归、全仓 Ruff/格式/diff 检查通过；Qt 实际渲染已检查。见 [增量记录](../../docs/changelogs/project-terminology-build-versioning-reporting/story-14/2026-11-13-002-conflict-choice-and-export.md)。
 
 ## 目标
 

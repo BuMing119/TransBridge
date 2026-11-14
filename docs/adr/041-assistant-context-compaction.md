@@ -186,7 +186,7 @@ sequenceDiagram
 
 供应商适配测试必须检查规范化后的工具、固定指令、消息/content block 顺序及稳定边界；应用层 JSON digest 只能证明本地结构，不能宣称命中真实 KV cache。支持原始 provider replay 字段的响应按合同保留，不为压缩请求隐藏推理正文；换 provider 时不转发不兼容字段。
 
-缓存使用助手独立 profile，翻译 profile 不变。助手在已识别的 OpenAI 官方端点/模型上使用稳定 key 与自动前缀缓存，不进入仅标 system 且关闭隐式历史断点的 explicit 模式；Anthropic 使用已核验的自动历史缓存。未知端点不猜参数。首次切换旧 explicit 请求布局或新增工具 schema 允许一次配置/前缀重建，之后普通追加保持稳定。不能把本地前缀相同率当成真实缓存命中。
+缓存使用助手独立 profile，翻译 profile 不变。助手在已识别的 OpenAI 官方端点/模型上使用稳定 key 与自动前缀缓存，不进入仅标 system 且关闭隐式历史断点的 explicit 模式；Anthropic 官方端点使用已核验的自动历史缓存协议，不以型号前缀白名单限制新模型。未知端点不猜参数。首次切换旧 explicit 请求布局或新增工具 schema 允许一次配置/前缀重建，之后普通追加保持稳定。请求策略与实际 usage 命中分开记录，不能把本地前缀相同率当成真实缓存命中，也不能把缺少应用缓存参数当成服务端关闭自动缓存。
 
 适配器需要 cache key 时，采用隔离账号/端点、会话/请求及稳定配置的摘要 namespace；不把每轮 turn_id/head_revision、时间戳或整份增长历史的 digest 加入 key。配置隔离与内容变更原因分别记录，不能用更换 key 掩盖前缀不稳定，也不能把相同 key 当成强制缓存命中。
 

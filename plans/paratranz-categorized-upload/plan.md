@@ -1,6 +1,6 @@
 # 项目多插件分类上传
 
-状态：S31 达到 50 文件生成新压缩包下载已实现并完成本地验证（2026-11-03）：新增 40 项通过，扩大 661 通过、1 跳过、1 既有夹具失败已用原下载模块复现；全库 Ruff/格式通过，见 [S31 增量](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-03-001-fresh-archive-download.md)及 [2026-11-11 后缀兼容补修](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-11-002-raw-json-suffix-compatibility.md)。S30 并发、S29 节奏、S28 阅读布局、S27 共享下载及 S26 补传合同保持。
+状态：S31 达到 50 文件生成新压缩包下载已实现；2026-11-11 按用户要求完成目录优先、按需补齐，真实 ZIP 的 189 文件各读一次，20,162 词条离线快照与逐文件读取一致，相关回归 469 项及全库 Ruff/格式通过，见 [按需补齐增量](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-11-004-directory-priority-reads.md)。历史实现见 [全包检索](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-11-003-archive-member-discovery.md)、[S31 初版](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-03-001-fresh-archive-download.md)及 [后缀兼容补修](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-11-002-raw-json-suffix-compatibility.md)。S30 并发、S29 节奏、S28 阅读布局、S27 共享下载及 S26 补传合同保持。
 
 ## 当前目标与约束
 
@@ -19,7 +19,7 @@
 目标：GUI 与助手共用下载入口先读取文件清单，按当前路径/旧路径优先级和来源归属选择、去重；少于 50 个文件保持逐文件下载，达到 50 个使用本轮新生成的项目导出包。计数包含分类及数字分片，不按插件数或项目总文件数切换。
 
 - [x] 传输：独立 `paratranz/artifact_download.py` 负责记录最近导出、触发一次新导出、可取消有界等待、下载和导出身份复核；不复用旧包，失败明确报错，不静默切换传输。
-- [x] 内容：独立 `paratranz/artifact_file_reads.py` 负责本轮临时目录及包内容读取；按 `raw/<完整云端路径>.json` 精确定位完整词条，保留 key/original/translation/context/stage，不混用 utf8 输出或不同插件同名文件。只物化所选文件，继续复用原有快照/匹配/合入逻辑。
+- [x] 内容：`paratranz/artifact_member_index.py` 负责全包路径索引、后缀匹配、归属校验及统一目录优先级；规范 raw 优先，其他按 raw、utf8/utf-8、未知目录及同类覆盖数排序。`artifact_file_reads.py` 逐目标按需解压和解析，首份有效内容即返回，仅为未成功文件尝试其他副本，不比较未读副本内容；支持 JSON UTF-8/16/32，区分空目录、零字节和合法空列表，保留词条字段及来源隔离。复用原有快照/匹配/合入逻辑，实际尝试计入解压预算，finally 关闭 ZIP 并清理临时包。
 - [x] 集成：`batch_download_snapshot.py` 在启动文件请求前选择分支；后台进度显示计数、生成、下载、解压、匹配与清理，所有退出路径关闭客户端及删除本轮 ZIP/解压文件，不改 schema、依赖或上传路径。
 - [x] QA：49/50 边界、项目总数与所选数、分类/旧布局、内容一致性、缺失/重复/不安全成员、损坏包、过期导出、权限/超时/取消/回调异常、词条上限和来源隔离；执行相关回归及 Ruff，最后记录增量。
 

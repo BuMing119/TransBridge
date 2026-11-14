@@ -37,7 +37,7 @@
 
 ## 范围、依据与责任审查
 
-新项目独立 SQLite 库和独立任务库替换项目 JSON/artifact 全量链；项目保存必要翻译内容，插件/历史来源路径不持久化，旧项目和旧包一律拒绝。保留项目版本、快照、格式保真、显式清空、三方合入、输出原子性和有效的会话/任务权限。
+新项目独立 SQLite 库和独立任务库替换项目 JSON/artifact 全量链；项目保存必要翻译内容，插件本体不持久化，来源路径作为可失效引用保存，旧项目和旧包一律拒绝。保留项目版本、快照、格式保真、显式清空、三方合入、输出原子性和有效的会话/任务权限。
 
 旧工作线 `project-open-performance` 解决同次解析复用和 UI 后台化，`project-self-contained-storage` 目标是保存完整来源及升级旧工程；与本轮不兼容的产品边界不同，因此新建 Epic，不追加到已完成 Story 里。既有计划与测试报告保留历史状态。
 
@@ -52,14 +52,14 @@
 - 使用标准库 sqlite3，每项目数据库将 Project/Variant 和合入凭据放入同一事务，任务数据库与项目物理分离；首版 DELETE journal、短事务和 revision CAS，具体理由见 ADR-054。
 - 新根为 `project-store-v1` / `task-store-v1`，不扫描旧根进行升级。新 `.transbridge` 包沿用 ZIP 外壳，必需新 manifest 与数据库身份，旧包拒绝。
 - 业务读取采用有 revision 的范围/分页查询；编辑采用稀疏 patch 和独立 dirty 状态，禁止未加载等同于不存在。项目 dirty、查询 generation、任务结果修订分别管理。
-- 输入提取和任务序列化采用白名单；SourceSnapshot、prepared_source、插件 bytes、完整解析树和来源路径不可跨入持久边界。翻译文件原生字段按格式保真保留。
+- 输入提取和任务序列化采用白名单；SourceSnapshot、prepared_source、插件 bytes 和完整解析树不可跨入持久边界；来源路径仅进入独立引用字段，不作为内容身份。翻译文件原生字段按格式保真保留。
 - 项目与任务合入采用项目内凭据及任务侧对账，不宣称跨库单事务；不以清空用户编辑或重跑任务解决回执失败。
 - 术语版本先独立发布，再由项目事务引用不可变版本；新项目的选择引用单点权威。项目包只携带正式业务资产，不携带任务和运行回执。
 
 ## Story 与依赖
 
 1. S01：新存储格式、查询/事务接口与基准夹具。无前置实现依赖。
-2. S02：来源提取与新建项目，无插件和路径留存。依赖 S01。
+2. S02：来源提取与新建项目，无插件留存，路径仅作引用。依赖 S01。
 3. S03：稀疏编辑与原子增量保存。依赖 S01、S02。
 4. S04：按需打开、完整范围查询与工作台。依赖 S03。
 5. S05：独立任务存储、查询和恢复。依赖 S01、S02 的字段合同。
@@ -87,7 +87,7 @@
 
 状态：本地完成，来源提取、生产建项和格式保真已验证。需求：FR32.1～FR32.4。详细指南：[S02](stories/story-02-source-extraction.md)。
 
-**验收标准**：插件仅在导入操作中读取和解析，正式项目/任务/日志摘要不含插件本体、完整解析树、历史来源路径；必要原文、上下文、顺序及完整身份保存后可独立读取；多来源建项全成或全败；EET/SST 等原生翻译记录不因抽取丢失。
+**验收标准**：插件仅在导入操作中读取和解析，正式项目/任务/日志摘要不含插件本体或完整解析树；项目保存来源路径引用，任务/日志不嵌入插件输入；必要原文、上下文、顺序及完整身份保存后可独立读取；多来源建项全成或全败；EET/SST 等原生翻译记录不因抽取丢失。
 
 **落点**：新增 `application/projects/source_extraction.py`、`source_fields.py` 与 `persistence/project_store/repository.py`。改造现有 `persistence/project_provisioning.py`、`application/projects/provisioning.py`、`provisioning_models.py`；利用 `application/io/eet_adapter.py`、`sst_adapter.py`、`strings_adapter.py` 的解析结果，取消向 `saved_project_sources.py` 发布完整 PreparedProjectSource 的新项目调用。
 
@@ -151,15 +151,15 @@
 
 **验证**：新增 `tests/integration/bootstrap/test_project_result_receipts.py`、`tests/persistence/task_store/test_independent_lifecycle.py`；复用 `tests/application/projects/test_project_result_merge.py`、`tests/application/translation/test_result_merge.py`。逐提交点故障注入、重复请求、先合入后编辑/撤销/切项目、任务删除后项目保存、项目删除时任务仍运行均必测。
 
-## S07：重新选择插件写回与翻译文件导出
+## S07：按需绑定插件写回与翻译文件导出
 
 状态：本地实现与相关回归完成，验证限制见交付记录。需求：FR32.2～FR32.4。
 
-**验收标准**：普通编辑导出翻译数据不需原插件；插件写回要求当次输入，严格核验匹配；缺 Strings/错误插件/取消不破坏项目；输出后不留内部副本；EET/SST/XML 的现有保真合同保持。
+**验收标准**：普通编辑导出翻译数据不需原插件；插件写回优先尝试保存路径，失效时补充当次输入，严格核验匹配；缺 Strings/错误插件/取消不破坏项目；输出后不留内部副本；EET/SST/XML 的现有保真合同保持。
 
 **落点**：新增 `application/projects/write_inputs.py`；改造 `application/preflight/` 的现有输入合同、`application/io/publish/coordinator.py`、`ui/coordinators/source_input_coordinator.py`、`smart_assistant/tools/write_back_preparation.py`，并调整 EET/SST 等 adapter 的项目数据输入。保持 `application/io/publish/plugin_fidelity.py` 等既有校验，不删验证来绕开缺模板。
 
-**步骤**：区分新项目翻译视图与本次 write snapshot；显式选择、映射、许可和输出一条流程；按格式字段重建翻译文件文档；移除补输入后自动永久保存插件的调用；失败路径清理自身临时材料，保留用户原文件与成功输出。
+**步骤**：区分新项目翻译视图与本次 write snapshot；保存路径尝试、按需选择、映射、许可和输出一条流程；按格式字段重建翻译文件文档；移除补输入后自动永久保存插件的调用；失败路径清理自身临时材料，保留用户原文件与成功输出。
 
 **验证**：复用 `tests/integration/publish/test_plugin_fidelity.py`、`test_atomic_publish.py`、`test_bsa_localized_write.py`、`test_round_trip_fidelity.py`；新增 `tests/integration/bootstrap/test_project_storage_composition.py` 与 `tests/smart_assistant/tools/test_write_back_options.py`。覆盖同名不同内容、多个来源、目标插件模式、EET/SST 重复记录及非默认阶段，不能只测 XML。
 
@@ -191,7 +191,7 @@
 
 状态：本地实现与相关回归完成，验证限制见交付记录。需求：FR32 全部。
 
-**验收标准**：需求验收矩阵全部有运行证据；量化证明新项目不保存插件/路径、任务独立、少量保存不全量重写、全范围操作不漏数据、旧格式拒绝不改写。性能未达预算时记录瓶颈并修复，不能仅改报告阈值。
+**验收标准**：需求验收矩阵全部有运行证据；量化证明新项目不保存插件，路径仅作按需引用、任务独立、少量保存不全量重写、全范围操作不漏数据、旧格式拒绝不改写。性能未达预算时记录瓶颈并修复，不能仅改报告阈值。
 
 **落点**：复用 `scripts/benchmark_project_open.py` 的测量终点，新增 `scripts/benchmark_project_storage.py` 和 `scripts/compare_project_storage.py`；测试落在各 Story 所列目录和既有 `tests/performance/`、`tests/integration/`。修改性能 runner 时保留旧基线模式作为测试工具，不把旧格式 reader 重新接回产品。
 
@@ -207,7 +207,7 @@
 
 以下保留实施前的候选预算口径，实际测量见交付记录，不将其改写为产品承诺：100k/80 来源样本重载首屏可编辑中位 ≤2 秒，1/100 条保存中位 ≤500 毫秒，UI 心跳最大间隔 ≤200 毫秒。S01 须固定参考机器和任务范围，S10 验证；若平台固有能力导致预算不合理，提供测量证据和修订理由，不在失败后静默放宽。
 
-硬性结构门禁：原插件持久化为零，历史路径恢复访问为零，项目读写对任务历史遍历为零，少量保存不全量读取/序列化/重写条目。写入量包含 journal/临时文件，比较 10k→100k 总规模下固定 k 条编辑的变化，不只记录最终 DB 文件大小。容量对照分别统计项目、任务、快照/备份和缓存，禁止把任务移出目录的减少冒充总占用减少。
+硬性结构门禁：原插件持久化为零，日常打开/编辑/保存对来源引用目标的访问为零，项目读写对任务历史遍历为零，少量保存不全量读取/序列化/重写条目。写入量包含 journal/临时文件，比较 10k→100k 总规模下固定 k 条编辑的变化，不只记录最终 DB 文件大小。容量对照分别统计项目、任务、快照/备份和缓存，禁止把任务移出目录的减少冒充总占用减少。
 
 ## 风险、回退与未决项
 
@@ -222,7 +222,7 @@
 
 - FR32.1：S01/S02/S03/S08，字段保真、无重复权威、版本与空值。
 - FR32.2：S02/S05/S07/S08/S09/S10，所有持久入口无插件和变相副本。
-- FR32.3：S02/S04/S07/S09，路径不保存、不提示、不恢复访问。
+- FR32.3：S02/S04/S07/S09/S11，路径保存为引用，日常无探测，导出时校验并按需补齐。
 - FR32.4：S07，输入匹配、取消、Strings 与输出保护。
 - FR32.5：S05/S06/S09，任务独立与原项目删除后的可用性。
 - FR32.6：S05/S06/S08，合入、独立删除、租约与回收。
@@ -231,5 +231,19 @@
 - FR32.9：S01/S08/S09/S10，全入口旧格式拒绝且零改写。
 
 ## 本轮验证与交付记录
+
+### S11：来源路径引用与按需输入（2026-11-13）
+
+- 状态：本地实现与相关验证完成；本节记录当前任务阶段，不重开 S01～S10。
+- 依据：FR32.3/FR32.4 与 ADR-054；用户纠正“不存插件”不等于“不存路径”。
+- 范围：建项、添加/更新来源保存引用；项目重开、快照及包保留引用；导出先试引用、失效才补充、手选后同目录补齐、验证成功更新引用；助手保留目录授权。
+- 非目标：不恢复插件 artifact，不迁移旧 JSON 工程，不重做多方案复制导出，不将未验证引用变成默认覆盖目标。
+- 实施：`storage_contracts` 和 `source_extraction` 捕获引用；SQLite 可选 `source_reference` 表兼容现有 v1 库，读取无表为空、写入按需建表；路径更新核对稳定来源、指纹、旧路径及读令牌，不推进翻译修订；项目包校验显式放行引用表。GUI 后台协调器读当前引用并验证、仅未解决项弹文件选择；通过现有 composition 注入引用服务，助手共用绑定与授权边界。
+- 验收：移动/删除原文件不影响打开编辑保存且无源文件访问；有效路径导出不弹选择；同目录匹配只需一次选择；错误内容/Strings/重复候选不误绑定；取消、关窗、切项目/版本与竞争更新不回填；旧 v1 无引用正常使用、包不包含插件本体；输出目标仍由原输出流程决定。
+- 验证：存储提取/来源更新/包兼容、真实 Qt 后台选择流程、助手授权与写回测试；全仓 Ruff 检查及格式检查。无网络/LLM，不对用户项目进行迁移或写入。
+- [x] 分析和契约：确认生产 SQLite 路径及旧 artifact 不可达；修正现行需求和 ADR。
+- [x] 开发：持久化、GUI、助手和相关测试完成并集成；待保存来源不隐式保存译文。
+- [x] QA：最终 804 passed、2 deselected；两项排除失败已在任务开始前代码复现。全仓 Ruff/格式通过，差异已审查；完整命令和时序波动见记录。
+- [x] 增量：实际变更、兼容边界、验证限制及任务临时文件清理见 [S11 记录](../../docs/changelogs/project-storage-redesign/story-11-source-references/2026-11-13-001-persist-and-resolve-source-paths.md)。
 
 此前仅文档阶段的事实保留在[规划记录](../../docs/changelogs/project-storage-redesign/planning/2026-11-09-001-architecture-and-plan.md)。本轮编码、测试和性能实测见[实施增量](../../docs/changelogs/project-storage-redesign/story-01-to-10/2026-11-09-001-translation-project-store.md)；旧记录不改写为实现完成。

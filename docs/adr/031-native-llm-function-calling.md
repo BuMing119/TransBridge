@@ -57,7 +57,7 @@ Provider Schema 是生成约束，不替代应用内 JSON Schema 校验、权限
 
 ### 7. Anthropic 输出上限使用有效正数
 
-Anthropic Messages 要求正数 `max_tokens`。智能助手优先使用配置中的 `max_output_tokens`；配置为 0 时使用助手专用安全默认值。OpenAI-compatible 保持 0 表示让 Provider 使用默认限制的现有语义。
+应用的 Anthropic 生成请求统一发送正数 `max_tokens`。配置 0 表示自动：智能助手使用 4096 并以相同值预留上下文；普通翻译和后处理使用 8192。显式正数保持，负数和布尔值拒绝；默认值不保证任意批次均能完成，截断仍进入既有错误/拆批流程。OpenAI-compatible 的 0 保持省略输出限制。预算解析集中于基础设施纯函数，普通、流式及工具请求共用；不把官方用于缓存预热的零输出请求当作应用生成请求。修订见 [2026-11-12 兼容修复计划](../../plans/llm-provider-compatibility/plan.md)。
 
 ## 备选方案
 

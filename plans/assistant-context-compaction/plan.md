@@ -163,7 +163,7 @@ ContextHead 是 assistant_state 中带 schema、epoch、revision 和 artifact �
 
 专属 assistant profile 不放宽翻译拓扑。namespace 来自会话、请求和稳定配置，不含 turn/head/时间戳/增长历史摘要。动态状态是普通材料，不被 Anthropic system 提取。
 
-已核验官方端点/模型才开启明确缓存参数；Anthropic 助手使用顶层自动缓存且不把新 user 合并进旧 tool_result；OpenAI 保留消息与稳定 key。元数据在供应商 wire 层剥离，不进入原始对话存储。
+已核验官方端点/协议才开启明确缓存参数；Anthropic 助手使用顶层自动缓存，不再以易过期的型号前缀白名单限制官方协议，且不把新 user 合并进旧 tool_result；OpenAI 保留消息与稳定 key。未知端点不猜参数；缓存策略与实际 usage 命中分开诊断。元数据在供应商 wire 层剥离，不进入原始对话存储。
 
 验证：`test_assistant_prompt_cache.py`、两供应商测试及全部既有翻译缓存测试。
 

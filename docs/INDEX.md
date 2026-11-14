@@ -2,6 +2,8 @@
 
 ## 项目简介
 
+- [项目术语与多方案导出使用说明](terminology-workflow.md)：提取、冲突排除、缓存清理、导入现有方案、一次导出多个版本和 Excel 差异查看；[文档与验证核验](test-reports/terminology-conversation-documentation-2026-11-13.md)。
+
 - [二进制 EET 读写实验](dev/eet-experiment.md)：ESP-ESM Translator v3 完整读写、数字缓存、3DNPC语料及原格式发布；[ADR-053](adr/053-eet-binary-io-integration.md)、[集成计划](../plans/eet-integration/plan.md)，全流程本地实现与相关验证完成，保持实验性，最终证据见集成计划。
 
 - [SST 读写与使用说明](dev/sst-experiment.md)：SSU8/SSU9 完整读写、插件生成 SSU9、GUI/助手集成及实验性边界；[ADR-052](adr/052-sst-io-integration.md)、[实施计划](../plans/sst-integration/plan.md)。
@@ -16,16 +18,20 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 ## 需求文档
 
+- [FR33：项目文本语言与输入、输出编码](requirements/project-text-encoding.md)：七项修订需求已确认，S07～S12 本地实现与相关 QA、真实两插件/20,075 条目项目副本验证完成；语言备用、历史读取事实、完整严格输出及复用更新来源。见 [ADR-055](adr/055-project-text-encoding.md)（提议）、[计划](../plans/project-text-encoding/plan.md)和[本轮记录](changelogs/project-text-encoding/story-07-to-12/2026-11-14-001-language-reading-legacy-compatibility.md)；五项已复证既有失败及未运行范围明确保留，S01～S06 日志保持历史事实。
+
 | 文档 | 说明 | 状态 |
 |------|------|------|
 | [requirements.md](requirements.md) | 项目需求概述及历史 FR1～FR16；2026-08-18 已确认综合整改需求 FR17～FR23 与 NFR 增量，覆盖入口一致性、I/O 身份、持久化、任务、翻译工作流、ParaTranz、FOMOD 和发行质量合同；新增 [FR31 自动长期记忆](requirements.md#fr31-assistant-memory) | ⚠️ 历史实现部分核验；整改需求已确认；FR31 为草稿 |
-| [FR32：项目存储重做与任务历史独立](requirements/project-storage-redesign.md) | 翻译内容存储、任务独立、禁止保存来源插件与历史路径、新项目格式拒绝旧格式；相关现行条目已同步修订 | 需求已确认；[架构](adr/054-project-storage-and-independent-tasks.md)已采用，[本地实现与验证](changelogs/project-storage-redesign/story-01-to-10/2026-11-09-001-translation-project-store.md)完成，限制见记录；[工作台完整滚动及当前来源驻留](changelogs/project-storage-redesign/story-04/2026-11-09-002-resident-workbench-source.md)通过 |
+| [FR32：项目存储重做与任务历史独立](requirements/project-storage-redesign.md) | 翻译内容存储、任务独立、禁止保存来源插件、保存路径引用并按需校验、新项目格式拒绝旧格式；相关现行条目已同步修订 | 需求已确认；[架构](adr/054-project-storage-and-independent-tasks.md)已采用，[本地实现与验证](changelogs/project-storage-redesign/story-01-to-10/2026-11-09-001-translation-project-store.md)完成，限制见记录；[工作台完整滚动及当前来源驻留](changelogs/project-storage-redesign/story-04/2026-11-09-002-resident-workbench-source.md)通过；[S11 路径修订](changelogs/project-storage-redesign/story-11-source-references/2026-11-13-001-persist-and-resolve-source-paths.md)完成 |
 
 2026-10-01 补齐：[FR19.14 更新源文件与全部翻译版本迁移](requirements.md#fr19-source-update)、[FR22.9～FR22.11 八位上下文序号与远端刷新](requirements.md#fr22-context-order)，并修正 FR8 的来源恢复与持久化边界。实现及本地验证已有记录；真实 ParaTranz 写入、网页排序和用户桌面验收不在完成声明内。
 
 ---
 
 ## 架构决策记录 (ADR)
+
+2026-11-14：[ADR-055：项目语言编码策略与来源读取事实](adr/055-project-text-encoding.md)保持提议；项目意图与历史事实分离、逐字段语言备用、严格全量输出、设置不读源和复用来源更新已实现并验证。对应 [FR33](requirements/project-text-encoding.md)，证据和限制见[本轮记录](changelogs/project-text-encoding/story-07-to-12/2026-11-14-001-language-reading-legacy-compatibility.md)。
 
 2026-11-09：[ADR-054：翻译数据项目库与独立任务存储](adr/054-project-storage-and-independent-tasks.md)已采用；S01～S10 本地实现与相关验证完成，[证据和性能边界](changelogs/project-storage-redesign/story-01-to-10/2026-11-09-001-translation-project-store.md)。旧数据原样保留，不迁移或自动清理。
 

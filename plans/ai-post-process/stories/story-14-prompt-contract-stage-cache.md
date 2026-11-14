@@ -449,7 +449,7 @@ Provider 转换器只关心经过验证的有序断点，不重复实现业务�
 ### 缓存资格与观测
 
 - 实现时用目标模型 tokenizer 测量八个完整 System 前缀。
-- 低于 Provider 门槛时记录结构化 debug 信息，按普通请求运行。
+- 已知显式门槛不足时记录结构化 debug 信息并省略应用缓存标记；OpenAI 隐式路径不使用固定本地门槛，已支持的官方 Anthropic 协议遇未知型号门槛交由服务端判断。应用未标记不等同于服务端关闭自动缓存。
 - 不在本 Story 中扩写提示词以跨过门槛。
 - 可记录 `stage`、`shape`、System token 数、cache mode 和 Provider 返回的缓存 token 计数。
 - 不记录 System 正文、动态 User 正文或完整 cache key。

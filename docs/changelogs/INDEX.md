@@ -1,5 +1,55 @@
 # 变更日志索引
 
+- 2026-11-14：[语言绑定读取、历史来源兼容与全量严格输出](project-text-encoding/story-07-to-12/2026-11-14-001-language-reading-legacy-compatibility.md) — S07～S12 实现与相关 QA 完成；真实两插件及 20,075 条目项目副本验证通过。入口 656 passed；I/O 广域 1384 passed/1 skipped/1 failed，spy 适配后该文件 11 passed；项目最终 381 passed/1 skipped/7 deselected，五项既有失败已基线复证；全仓 Ruff/格式通过，未运行范围见记录。
+
+- 2026-11-14：[老项目保存时补齐缺省编码配置](project-text-encoding/story-01-to-06/2026-11-14-002-persist-missing-encoding-defaults.md) — S01 后续补充：无其他修改也可保存补齐，保留已有编码及翻译状态；125 项相关测试通过，Ruff/格式与差异检查通过。
+- 2026-11-14：[项目统一文本编码与安全重读](project-text-encoding/story-01-to-06/2026-11-14-001-project-text-encoding.md) — S01～S06 本地实现与相关验证完成；严格全量转码、项目独立配置、全来源/全版本安全重读及恢复。I/O 广域 952 通过、1 跳过，UI 628 通过，最终边界 118 与独立复审 101 通过；项目广域保留 5 项已复现既有失败，全仓 Ruff/格式通过。未做可见桌面/真实 Mod 验收，各测试组不累计重叠。
+
+- 2026-11-14：[S06 导出窗口归属与布局稳定](file-io-dialogs/story-06/2026-11-14-002-export-window-stability.md) — 导出窗口归属主窗口，来源补选归属导出窗口；滚动选项与预留状态/进度区域消除跳动。543 项回归通过，最终布局 11 项复验及全仓 Ruff/格式通过，实际主题多阶段截图已核对。
+
+- 2026-11-14：[S06 原插件写回与同名副本导出](file-io-dialogs/story-06/2026-11-14-001-plugin-copy-export.md) — 单个/批量明确原位或目录，复制已验证插件后写入同名副本，多方案共用普通来源绑定；1465 项回归通过、1 项系统符号链接能力跳过，全仓 Ruff/格式及三态 Qt 离屏检查通过。
+
+- 2026-11-13：[S11 来源路径保存与按需定位](project-storage-redesign/story-11-source-references/2026-11-13-001-persist-and-resolve-source-paths.md) — 保存输入路径引用、导出验证与同目录补齐、待保存来源安全回填；不保存插件本体。最终 804 项通过、2 项已验证为基线失败而排除，全仓 Ruff/格式通过。
+
+- 2026-11-13：[批量导出响应性与线程栈采样修复](file-io-dialogs/story-01-to-03/2026-11-13-002-export-responsiveness-and-stack-capture.md) — 确认阶段复用后台投影、缺失术语快速过滤，替换可能访问冲突的原生延迟采样；同批 ESM 导出及 689 项回归通过，原生 C 栈与完整窗口验收限制详见记录。
+
+- 2026-11-13：[S18 首次模型缺失时按需询问](terminology-localization-profiles/story-18-alignment-cache/2026-11-13-002-on-demand-consent.md) — 启动不弹窗，规则与缓存均无法解决时才询问；每次运行最多一次，同意后自动继续；150 项相关回归与全仓 Ruff 通过。
+
+- 2026-11-13：[S18 版本隔离的持久定位缓存](terminology-localization-profiles/story-18-alignment-cache/2026-11-13-001-variant-cache.md) — 按已提交字段逐条失效、跨启动/同候选不同目标复用、防修改撤销与迟到回填；460 项回归及五轮性能验证通过，10 万条场景单条编辑通知中位 0.0512 ms。
+
+- 2026-11-13：[S17 启动询问一次与自动定位](terminology-localization-profiles/story-17-occurrence-alignment/2026-11-13-002-startup-auto-alignment.md) — 可记住启用或拒绝，允许后规则先行、疑点自动定位，切换复用判断，设置菜单可更改选择；333 项合并回归与全仓 Ruff 通过，未调用真实 API。
+
+- 2026-11-13：[S17 计数分流与可选 AI 定位](terminology-localization-profiles/story-17-occurrence-alignment/2026-11-13-001-counted-alignment.md) — 计数与双语包含关系快速处理，疑点可主动调用模型选位置；冻结判断复用于预览/保存/导出。247 项联合回归、全仓 Ruff 通过；真实 7,470 条候选中 84 条需模型，未调用真实 API。
+
+- 2026-11-13：[S15～16 指定方案导入与多方案导出补记](terminology-localization-profiles/story-15-to-16-import-export/2026-11-13-001-import-export-backfill.md) — 补齐本对话遗漏的需求、ADR、计划及用户说明；本轮联合复验 37 项，历史功能未重复记为本轮新增。
+- 2026-11-13：[S17～18 直接排除与项目缓存清理补记](project-terminology-build-versioning-reporting/story-17-to-18-followups/2026-11-13-001-exclusion-cache-backfill.md) — 区分丢弃、排除与缓存，补明确清理边界和成功后前进；保留 S12 正式性能验证未完成状态。
+
+- 2026-11-13：[S14 方案译文差异与 Excel](terminology-localization-profiles/story-14-scheme-comparison/2026-11-13-001-scheme-comparison.md) — 多选方案后独立查看差异词条，后台比较与可取消生命周期，导出同一快照的差异/方案信息工作表；68 项回归通过。
+
+- 2026-11-13：[S17 冲突原位审核](project-terminology-build-versioning-reporting/story-17/2026-11-13-001-in-place-conflict-review.md) — 左侧状态队列、右侧直接选择与逐例证据；保存继续、安全撤销、复用导出与异步读取。
+
+- 2026-11-13：[S16 统一批次执行器与退出生命周期](project-terminology-build-versioning-reporting/story-16/2026-11-13-003-shared-batch-lifetime.md) — 自动翻译、术语抽取及冲突判断共用 BatchExecutor，取消后保留资源直至请求结束；删除独立请求池，98 项联合回归通过。
+
+- 2026-11-13：[S16 术语取消与退出等待](project-terminology-build-versioning-reporting/story-16/2026-11-13-002-cancellable-shutdown.md) — 模型请求池不阻塞解释器退出，取消去除三秒等待，冲突证据 SQL 可取消；168 项专项及兼容回归通过。
+
+- 2026-11-13：[S16 术语读取性能](project-terminology-build-versioning-reporting/story-16/2026-11-13-001-read-performance.md) — 状态摘要、按需证据和分页读取；五轮合成数据复测页面读取 4.53 秒 → 0.26 秒，五万条 Qt 首屏 9.17 秒 → 0.87 秒。
+
+- 2026-11-13：[S14 冲突选择与文件导出](project-terminology-build-versioning-reporting/story-14/2026-11-13-002-conflict-choice-and-export.md) — 实际候选与逐行选择，复用现有格式导出全量生效术语，导出完整冲突证据，修复重新检查缩小插件范围；104 项联合回归通过。
+
+- 2026-11-13：[S14 任务式术语界面](project-terminology-build-versioning-reporting/story-14/2026-11-13-001-task-first-workbench.md) — 主界面任务流程、独立编辑与冲突窗口、完成提取自动弹出冲突、应用/丢弃及可恢复方案删除；307 项界面回归与 43 项最后复验通过。
+
+- 2026-11-13：[S13 术语只复核差异](project-terminology-build-versioning-reporting/story-13/2026-11-13-002-review-only-differences.md) — 无差异 LLM 候选默认采用，异译和既有决定冲突才复核；旧自动待复核稿可重新提取恢复，105 项相关回归及全仓 Ruff/格式通过。
+
+- 2026-11-13：[S13 项目术语 LLM 抽取接通](project-terminology-build-versioning-reporting/story-13/2026-11-13-001-project-llm-extraction.md) — 双语正文抽取、证据校验、待复核发布、有界并发/取消/成功批次复用、旧草稿模式恢复；联合 725 项回归与全仓 Ruff/格式通过，真实模型未测。
+
+- 2026-11-12：[S01～S03 LLM 服务配置、推理与缓存兼容修复](llm-provider-compatibility/story-01-to-03/2026-11-12-001-provider-request-compatibility.md) — Anthropic 自动预算/自定义地址、可验证推理、5.5 缓存与 OpenAI 隐式策略；翻译 1097、助手 1174、基础设施/配置 362、UI 67 项回归及 Ruff/格式通过，真实 API 未测。
+
+- 2026-11-11：[S4 已保存 AI 结果后台批量审阅](ai-task-recovery/story-04/2026-11-11-001-background-result-review.md) — 将主线程逐词条查库改为后台按来源批量读取，拒绝过时回调并保留逐词条决策保护；87 个不同用例通过，含 20,162 条 SQLite/Qt 验证，Ruff/格式通过。
+
+- 2026-11-11：[S31 按优先目录补齐压缩包文件](paratranz-categorized-upload/story-31/2026-11-11-004-directory-priority-reads.md) — 路径索引后按需读取，首份有效内容即停止，只为缺失/失败文件补读；支持 JSON UTF-8/16/32，469 项回归及 Ruff/格式通过，真实包 189 成员各读一次。
+
+- 2026-11-11：[S31 压缩包全包成员检索](paratranz-categorized-upload/story-31/2026-11-11-003-archive-member-discovery.md) — 按完整路径和追加后缀检索任意导出目录，校验候选归属、词条字段及副本冲突；真实 ZIP 189 文件、20,162 词条离线复验通过，450 项回归及 Ruff/格式通过。
+
 - 2026-11-11：[S2 Windows 长路径存储与失败报告](ai-task-recovery/story-02/2026-11-11-002-windows-storage-paths-and-failures.md) — 修复候选日志、阶段/校对断点及任务/项目数据库长路径，保留阶段与保存失败原因；1239 项回归通过、1 项环境跳过，Ruff/格式通过，旧断点无需迁移。
 
 - 2026-11-11：[S03 一键更新、自动安装与重启](app-update/story-03/2026-11-11-001-automatic-install-and-restart.md) — 一次点击后下载、保存退出、自动安装并重新打开；70 项聚焦回归与 3 项实际隔离安装测试通过，扩大 151 通过/1 项既有环境版本失败，Ruff/格式通过，未发布。
@@ -385,7 +435,7 @@ docs/changelogs/
 | native-structured-outputs | [plan](../../plans/native-structured-outputs/plan.md) | ✅ S01-05 已完成，Responses API 结构化请求支持单一 JSON 围栏严格恢复 | 5 | [S01-05:①双协议实现与终验](native-structured-outputs/story-01-to-05-implementation/2026-08-27-001-原生StructuredOutputs双协议实现与终验.md) · [②提示词 Schema 去重](native-structured-outputs/story-01-to-05-implementation/2026-08-28-002-提示词输出Schema去重.md) · [③OpenAI 结构化响应接入 Responses API](native-structured-outputs/story-01-to-05-implementation/2026-09-02-003-OpenAI结构化响应接入ResponsesAPI.md) · [④OpenAI 结构化响应恢复 Chat Completions](native-structured-outputs/story-01-to-05-implementation/2026-10-03-004-OpenAI结构化响应恢复ChatCompletions.md) · [⑤DeepSeek Chat JSON Output 适配](native-structured-outputs/story-01-to-05-implementation/2026-10-03-005-DeepSeekChatJSONOutput适配.md) · [⑥结构化翻译切回 Responses API](native-structured-outputs/story-01-to-05-implementation/2026-10-03-006-结构化翻译切回ResponsesAPI.md) · [⑦单一 JSON 代码块兼容](native-structured-outputs/story-01-to-05-implementation/2026-10-03-007-单一JSON代码块兼容.md) |
 | terminology-format-compatibility | [plan](../../plans/terminology-format-compatibility/plan.md) | ✅ S01-03 已完成，相关 QA 通过 | 3 | [①实现](terminology-format-compatibility/story-01-to-03-implementation/2026-08-26-001-术语格式最大化兼容实现.md) |
 | existing-translation-terminology | [plan](../../plans/existing-translation-terminology/plan.md) | ✅ S01-02 已完成，相关 QA 通过 | 2 | [s01:①实现](existing-translation-terminology/story-01-dual-path-extraction/2026-08-26-001-双路径术语提取与冲突保护.md) · [s02:①接入](existing-translation-terminology/story-02-translation-bootstrap/2026-08-26-001-翻译启动前存量术语初始化.md) |
-| project-terminology-build-versioning-reporting | [plan](../../plans/project-terminology-build-versioning-reporting/plan.md) | ⚠️ S00-11 生产闭环完成；S12 发布验证未通过，不阻塞运行时 | 13 | [S00-12:①实现与QA](project-terminology-build-versioning-reporting/story-00-to-12-implementation/2026-08-28-001-FR5.16全Story实现与QA收口.md) · [②生产接线与正式基准收口](project-terminology-build-versioning-reporting/story-00-to-12-implementation/2026-08-28-002-FR5.16生产接线与正式基准收口.md) · [③横版工作台与运行时解耦](project-terminology-build-versioning-reporting/story-00-to-12-implementation/2026-08-28-003-术语工作台横版重构与运行时门禁移除.md) · [④本次对话完整增量汇总](project-terminology-build-versioning-reporting/story-00-to-12-implementation/2026-08-28-004-本次对话完整增量汇总.md) |
+| project-terminology-build-versioning-reporting | [plan](../../plans/project-terminology-build-versioning-reporting/plan.md) | ⚠️ S00-11 生产闭环完成；S12 发布验证未通过，不阻塞运行时 | 13 | [S00-12:①实现与QA](project-terminology-build-versioning-reporting/story-00-to-12-implementation/2026-08-28-001-FR5.16全Story实现与QA收口.md) · [②生产接线与正式基准收口](project-terminology-build-versioning-reporting/story-00-to-12-implementation/2026-08-28-002-FR5.16生产接线与正式基准收口.md) · [③横版工作台与运行时解耦](project-terminology-build-versioning-reporting/story-00-to-12-implementation/2026-08-28-003-术语工作台横版重构与运行时门禁移除.md) · [④本次对话完整增量汇总](project-terminology-build-versioning-reporting/story-00-to-12-implementation/2026-08-28-004-本次对话完整增量汇总.md) · [S14:③](project-terminology-build-versioning-reporting/story-14/2026-11-13-003-minority-evidence.md) · [S13:③](project-terminology-build-versioning-reporting/story-13/2026-11-13-003-build-result-identity.md) · [S15:①](project-terminology-build-versioning-reporting/story-15/2026-11-13-001-false-conflict-judgment.md) · [S14:④](project-terminology-build-versioning-reporting/story-14/2026-11-13-004-conflict-workbook.md) · [S15:②](project-terminology-build-versioning-reporting/story-15/2026-11-13-002-judgment-budget-and-status.md) · [S15:③](project-terminology-build-versioning-reporting/story-15/2026-11-13-003-whole-conflict-concurrency.md) |
 | project-terminology-paratranz-sync | [plan](../../plans/project-terminology-paratranz-sync/plan.md) | ⚠️ S00-08 功能实现、离线 QA 通过；正式发行门禁 OFF | 9 | [S00-08:①实现与QA](project-terminology-paratranz-sync/story-00-to-08-implementation/2026-08-30-001-FR5.17项目术语ParaTranz同步实现与QA.md) |
 | ui-workbench | [plan](../../plans/ui-workbench/plan.md) | ✔️ 已实现 | 22 | [s15](ui-workbench/story-15-collection-menu/2026-05-06-001-文件菜单集合管理.md) · [s16:①](ui-workbench/story-16-parse-config-dialog/2026-05-06-001-解析配置对话框与解析执行.md) · [②](ui-workbench/story-16-parse-config-dialog/2026-05-08-002-解析配置对话框独立提取.md) · [s17](ui-workbench/story-17-operation-menu/2026-05-06-001-文件菜单操作项.md) · [s18:①](ui-workbench/story-18-layout-simplify/2026-05-06-001-工作台布局简化.md) · [②](ui-workbench/story-18-layout-simplify/2026-05-07-002-集合工具栏回归工作台.md) · [s19](ui-workbench/story-19-category-filter-tags/2026-05-06-001-分类筛选标签组与面板精简.md) · [s20:①](ui-workbench/story-20-ux-unification/2026-05-07-001-需求分析FR79交互统一化.md) · [②](ui-workbench/story-20-ux-unification/2026-05-07-002-方案策划Story20-21.md) · [③](ui-workbench/story-20-ux-unification/2026-05-07-003-Story20编码筛选系统统一化.md) · [④](ui-workbench/story-20-ux-unification/2026-05-07-004-Story21编码表格交互升级.md) · [s22:①](ui-workbench/story-22-mark-and-visual/2026-05-07-001-需求分析和方案和Story展开.md) · [②](ui-workbench/story-22-mark-and-visual/2026-05-07-002-Story22编码标记系统实现.md) · [③](ui-workbench/story-22-mark-and-visual/2026-05-07-003-聚焦按钮修复和去除emoji.md) |
 | batch-operations | [plan](../../plans/batch-operations/plan.md) | ✔️ 已实现 | 7 | — |

@@ -229,7 +229,7 @@ snapshot 包含可正式使用的已采用/人工确认术语，以及按作用�
 
 构建任务的 `JobSpec.input_fingerprint` 使用 `build_key`，owner 固定 Project/Variant。进度阶段使用稳定业务阶段和数量字段，外部 LLM 的提交数、完成数、等待、重试和耗时单独报告。两秒没有数量进展时仍发当前阶段/对象 heartbeat。
 
-取消时 TaskRuntime 先进入 `cancelling`，停止补充新来源和 LLM 队列。所有 worker、解析 fragment、LLM 请求和 renderer 结果在进入 BuildResult/draft/version 前验证 cancellation token、run lease 和 expected revision；迟到结果只能写入 run-scoped/CAS staging 或记录诊断，不能进入预览、draft 或 version。UI 可在 500ms 内投影“正在停止”，用户可见任务在 3 秒内进入已停止；不可中断外部调用被隔离清理，不能延迟写入。
+取消时 TaskRuntime 先进入 `cancelling`，停止补充新来源和 LLM 队列。所有 worker、解析 fragment、LLM 请求和 renderer 结果在进入 BuildResult/draft/version 前验证 cancellation token、run lease 和 expected revision；迟到结果只能写入 run-scoped/CAS staging 或记录诊断，不能进入预览、draft 或 version。UI 及时投影“正在停止”；术语和自动翻译统一使用公共 BatchExecutor，停止调度并取消调用，待活动请求释放资源后才完成终止。去除固定三秒轮询，不提前伪报终止；不可立即取消的远端调用仍可能延长退出，迟到结果不能写入草稿或版本。该生命周期替代原三秒终态设想，真实整体退出性能尚未完成打包测量。
 
 发布的重计算阶段可在后台执行，但最终 repository transaction 只有在 TaskRuntime run commit permit 与 repository 的 Project revision、Variant revision、source graph/fingerprint、active/base version、draft revision 和 build freshness optimistic guard 全部仍匹配时才提交。TaskRuntime 屏障是必要条件，不能替代业务 revision 校验。
 
@@ -237,7 +237,7 @@ snapshot 包含可正式使用的已采用/人工确认术语，以及按作用�
 
 Repository 保存三层可丢弃缓存：
 
-1. `build_key → BuildResultRef`，完全相同输入直接校验并复用，不重复调用 LLM；
+1. `build_key → BuildResultRef`，以完整规范输入验证构建身份；抽取复用不替代独立的 LLM 冲突初判，不承诺复用后绝不再调用模型；
 2. `source fingerprint + format adapter/version + parse options → parsed fragment`；
 3. `evidence digest + extractor/prompt/profile/model/config digest → extraction fragment`。
 
@@ -246,6 +246,10 @@ Repository 保存三层可丢弃缓存：
 为满足 100 万证据的内存预算，来源按分片解析、持久化后立即释放，不在顶层 job 同时保留所有 `ParseResult`、`SourceSnapshot` 和 Python evidence 对象。现有 tuple 型 adapter 可以按来源串行包装；单来源也可能超预算的格式必须实现并通过 ADR-017 streaming capability 后，才可宣称支持压力基准。global reducer 使用 SQLite 索引、分桶或受控外排实现，具体策略由性能 plan 和基准确定。
 
 缓存不是历史事实来源，可按空间策略清理；正式版本、CanonicalDiff、ManualAction 和与版本绑定的更新日志不得被自动 GC，也不随普通缓存或质量报告轮转删除。空间不足在发布前预检，transaction 失败不留下半版本。
+
+工作台的显式清理只执行当前项目 cache 的 extraction 命名空间清理，覆盖该项目各 Variant；复用仓储锁和后台命令，保留解析/构建缓存、draft、人工决定、已发布术语和其他项目。丢弃本次结果与清除缓存是不同操作。
+
+LLM 冲突初判是抽取后的独立阶段：同一术语全部候选及证据为一个请求，不被本地合批预算拆开或直接跳过；不同冲突组最多 50 路，复用公共请求预算和 BatchExecutor。模型失败/不确定进入人工复核，正常表达差异可归并；模型物理上下文上限仍有效。名称规则、正文抽取、判断缓存与人工决定不能混成一个身份或把人工决定覆盖。
 
 ### 11. UI 使用任务语言和渐进 projection，不暴露内部对象
 

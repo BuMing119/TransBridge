@@ -41,7 +41,7 @@
 **验收标准**
 
 - OpenAI-compatible 只探测有限协议字段；非法值被静默接受时不判定支持，明确校验后再验证合法关闭值。
-- Anthropic 的直接回答映射为省略扩展思考参数；低强度不可证明时保守降级。
+- Anthropic 的 direct/low 分别由官方能力字段或有限协议握手证明；直接回答使用已验证 disabled 或无工具请求的 between_tools，低强度使用已验证 effort。省略参数仅表示继承；[2026-11-12 兼容修复](../llm-provider-compatibility/plan.md)替代原省略即关闭实现。
 - Prompt cache 降级保留思考控制字段。
 - 正式请求明确拒绝缓存机制时，能力失效并以继承语义重试一次；其他异常原样上抛。
 - 未实现探测扩展的假客户端保持原调用行为。
@@ -53,7 +53,7 @@
 
 **测试**
 
-- 扩展 Provider 客户端测试，验证三类 OpenAI-compatible 控制、Anthropic 省略语义、缓存参数合并、流式/普通请求和拒绝回退。
+- 扩展 Provider 客户端测试，验证三类 OpenAI-compatible 控制、Anthropic 已证明控制与未知继承语义、结构化输出/缓存参数合并、流式/普通请求和未输出时的拒绝回退。
 
 ## Story 3：AI 翻译作用域与疑难裁决接线（已完成）
 

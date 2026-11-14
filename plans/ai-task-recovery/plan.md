@@ -43,4 +43,4 @@
 
 2069 项相关回归、95 项最后完整性矩阵通过（集合有重叠）；全库 Ruff 与格式检查通过。2 万条结果离线基准：保存 0.52 秒、恢复 2.73 秒，Qt 最大心跳间隔 157ms。旧任务只读发现及候选核验通过，没有调用真实 LLM 或应用用户译文。
 
-实现范围、逐文件变化、已排除测试及兼容限制见 [增量记录](../../docs/changelogs/ai-task-recovery/story-01-to-05/2026-10-24-001-full-task-recovery.md)；S2 持久化补修见 [短名称临时文件](../../docs/changelogs/ai-task-recovery/story-02/2026-11-11-001-short-checkpoint-temporaries.md) 与 [Windows 长路径及保存失败报告](../../docs/changelogs/ai-task-recovery/story-02/2026-11-11-002-windows-storage-paths-and-failures.md)。原生崩溃原因不属于本轮修复承诺。
+实现范围、逐文件变化、已排除测试及兼容限制见 [增量记录](../../docs/changelogs/ai-task-recovery/story-01-to-05/2026-10-24-001-full-task-recovery.md)；S2 持久化补修见 [短名称临时文件](../../docs/changelogs/ai-task-recovery/story-02/2026-11-11-001-short-checkpoint-temporaries.md) 与 [Windows 长路径及保存失败报告](../../docs/changelogs/ai-task-recovery/story-02/2026-11-11-002-windows-storage-paths-and-failures.md)；S4 审阅阻塞补修见 [后台批量读取](../../docs/changelogs/ai-task-recovery/story-04/2026-11-11-001-background-result-review.md)，验证 20,162 条词条的后台读取及版本变化隔离。原生崩溃原因不属于本轮修复承诺。
