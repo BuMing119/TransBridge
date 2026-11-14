@@ -11,6 +11,7 @@ import pytest
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import FormatId, LocalizedStringsAdapter, ParseRequest, SourceDescriptor
 from transbridge.application.io.identity import SourceNamespace
+from transbridge.config.text_encoding import LEGACY_READ_POLICY, STRICT_READ_POLICY
 
 FIXTURES = Path(__file__).with_name("fixtures") / "strings"
 FORMATS = (FormatId.STRINGS, FormatId.DLSTRINGS, FormatId.ILSTRINGS)
@@ -44,7 +45,7 @@ def _forbid_local_path(*_args):
 
 @pytest.mark.parametrize("format_id", FORMATS)
 def test_archived_real_fixture_matches_local_parse_without_reading_its_virtual_uri(format_id, monkeypatch):
-    fixture = FIXTURES / f"integrity.{format_id.value.rsplit('.', 1)[-1]}"
+    fixture = FIXTURES / f"utf8-integrity.{format_id.value.rsplit('.', 1)[-1]}"
     content = fixture.read_bytes()
     request = _request(format_id)
     local_request = replace(request, source=SourceDescriptor(str(fixture), fixture.name))
@@ -102,7 +103,8 @@ def test_invalid_bytes_return_the_same_failure_diagnostic_as_local_parse(format_
     assert parsed.source_snapshot is None
     assert parsed.entries == ()
     assert parsed.stats.failed == 1
-    assert parsed.diagnostics == local.diagnostics
+    assert parsed.diagnostics[0].code == local.diagnostics[0].code
+    assert content == source.read_bytes()
     assert parsed.diagnostics[0].code == "LOCALIZED_STRINGS_PARSE_FAILED"
 
 
@@ -121,8 +123,8 @@ def test_duplicate_archived_ids_fail_with_original_directory_indices(format_id):
 
 
 @pytest.mark.parametrize("format_id", FORMATS)
-def test_bytes_preserve_bom_non_utf8_directory_order_and_unreferenced_ids(format_id):
-    originals = ((19, b"\xef\xbb\xbfBOM text"), (4, b"Caf\xe9"), (800, b""))
+def test_bytes_preserve_utf8_bom_as_text_directory_order_and_unreferenced_ids(format_id):
+    originals = ((19, b"\xef\xbb\xbfBOM text"), (4, "Café".encode()), (800, b""))
     content = _table(format_id, originals)
     namespace = SourceNamespace("bsa:example-strings")
 
@@ -131,16 +133,50 @@ def test_bytes_preserve_bom_non_utf8_directory_order_and_unreferenced_ids(format
     assert parsed.outcome is OperationOutcome.COMPLETED
     assert parsed.stats.parsed == 3
     assert [entry.string_id for entry in parsed.entries] == [19, 4, 800]
-    assert [entry.original for entry in parsed.entries] == ["BOM text", "Café", ""]
+    assert [entry.original for entry in parsed.entries] == ["\ufeffBOM text", "Café", ""]
     assert all(entry.identity.namespace == namespace for entry in parsed.entries)
     assert all(entry.stage == 0 and entry.translation == "" for entry in parsed.entries)
     metadata = dict(parsed.source_snapshot.metadata)
     assert metadata["strings.order"] == (19, 4, 800)
     records = metadata["strings.records"]
     assert tuple(record.raw_payload for record in records) == tuple(payload for _, payload in originals)
-    assert [record.encoding for record in records] == ["utf-8-sig", "cp1252", "utf-8"]
-    assert parsed.source_snapshot.encoding == "per-entry"
+    assert [record.encoding for record in records] == ["utf-8"] * 3
+    assert parsed.source_snapshot.encoding == "utf-8"
     assert parsed.source_snapshot.content == content
+
+
+@pytest.mark.parametrize("format_id", FORMATS)
+def test_mixed_utf8_and_language_fallback_get_per_record_codec(format_id):
+    data = _table(format_id, ((19, b"Anna\xefg"), (4, "Café".encode())))
+    adapter = LocalizedStringsAdapter(format_id)
+
+    parsed = adapter.parse_bytes(_request(format_id), data)
+    strict = adapter.parse_bytes(_request(format_id, options=(("text_read_policy", STRICT_READ_POLICY),)), data)
+
+    assert parsed.outcome is OperationOutcome.COMPLETED
+    assert [entry.original for entry in parsed.entries] == ["Annaïg", "Café"]
+    assert [dict(entry.metadata)["strings.encoding"] for entry in parsed.entries] == ["cp1252", "utf-8"]
+    assert parsed.diagnostics[0].code == "GAME_TEXT_FALLBACK_USED"
+    assert dict(parsed.diagnostics[0].details) == {"count": 1}
+    assert strict.outcome is OperationOutcome.FAILED
+    assert strict.source_snapshot is None
+    assert "utf-8" in strict.diagnostics[0].message
+    assert "String ID 19" in strict.diagnostics[0].message
+
+
+def test_saved_standalone_and_linked_legacy_strings_preserve_their_original_decoder_semantics():
+    format_id = FormatId.DLSTRINGS
+    data = _table(format_id, ((19, b"\xef\xbb\xbfName\x00\x00"), (4, b"caf\xe9")))
+    request = _request(format_id, options=(("text_read_policy", LEGACY_READ_POLICY),))
+    adapter = LocalizedStringsAdapter(format_id)
+
+    standalone = adapter.parse_bytes(request, data)
+    linked = adapter.parse_bytes(request, data, legacy_linked=True)
+
+    assert [entry.original for entry in standalone.entries] == ["Name\x00\x00", "café"]
+    assert [entry.original for entry in linked.entries] == ["\ufeffName", "café"]
+    assert standalone.source_snapshot.encoding is None
+    assert linked.source_snapshot.encoding is None
 
 
 @pytest.mark.parametrize("format_id", FORMATS)

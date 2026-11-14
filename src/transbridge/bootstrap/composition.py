@@ -15,6 +15,7 @@ from transbridge.application.capabilities import (
     CapabilityState,
 )
 from transbridge.application.ports import ClosablePort, closeables
+from transbridge.application.projects.source_references import ProjectSourceReferences
 from transbridge.application.tasks import (
     BoundedThreadPoolBackend,
     FilesystemCheckpointCatalog,
@@ -39,6 +40,7 @@ from transbridge.application.use_cases import ValidateContextUseCase
 from transbridge.config import ConfigRepository, UiPreferenceRepository, default_config_repository
 from transbridge.config.paths import get_data_dir
 from transbridge.config.task_results import TaskResultPreferenceRepository
+from transbridge.config.text_encoding import TextEncodingDefaults
 from transbridge.persistence.task_store import TaskStore
 
 from .adapters import DenyByDefaultSecurity, NullSecretStore, SystemClock, UuidGenerator
@@ -90,7 +92,10 @@ def build_runtime(
         backend=BoundedThreadPoolBackend(max_workers=3),
     )
     runtime_settings = dict(settings or {})
-    if "ui_preferences" not in runtime_use_cases.names() or "task_result_preferences" not in runtime_use_cases.names():
+    if any(
+        name not in runtime_use_cases.names()
+        for name in ("ui_preferences", "task_result_preferences", "text_encoding_defaults")
+    ):
         ui_config_path = runtime_settings.get("ui_config_path")
         config_repository = (
             default_config_repository()
@@ -104,6 +109,8 @@ def build_runtime(
             runtime_use_cases.register("ui_preferences", UiPreferenceRepository(config_repository))
         if "task_result_preferences" not in runtime_use_cases.names():
             runtime_use_cases.register("task_result_preferences", TaskResultPreferenceRepository(config_repository))
+        if "text_encoding_defaults" not in runtime_use_cases.names():
+            runtime_use_cases.register("text_encoding_defaults", TextEncodingDefaults(config_repository))
     persistence_root = runtime_settings.get("persistence_v2_root")
     if persistence_root is None:
         persistence_root = Path(get_data_dir())
@@ -111,6 +118,7 @@ def build_runtime(
         persistence_root,
         id_factory=runtime_ports.ids.new_id,
         timestamp_factory=lambda: runtime_ports.clock.now().isoformat(),
+        text_encoding_defaults=runtime_use_cases.resolve("text_encoding_defaults"),
     )
     if "task_store" in runtime_use_cases.names():
         task_store = runtime_use_cases.resolve("task_store")
@@ -186,6 +194,8 @@ def build_runtime(
         "project_snapshots": persistence.project_snapshots,
         "project_archive": persistence.project_archive,
         "project_source_updates": persistence.project_source_updates,
+        "project_text_encodings": persistence.project_text_encodings,
+        "project_source_references": ProjectSourceReferences(persistence.projects, persistence.project_lifecycle),
         "session_lifecycle": persistence.session_lifecycle,
         "gui_session_commands": persistence.gui_session_commands,
         "project_projection": persistence.project_projection,

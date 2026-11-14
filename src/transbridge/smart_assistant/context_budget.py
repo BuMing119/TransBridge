@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 import json
 from typing import Any
 
+from transbridge.infra.llm_request_config import ASSISTANT_OUTPUT_TOKENS, resolve_output_tokens
+
 from .context_capacity import FALLBACK_CONTEXT_WINDOW
 from .context_estimation import ESTIMATOR_LABEL, estimate_tokens
 
@@ -61,7 +63,7 @@ class ContextBudgetExceeded(ValueError):
 @dataclass(frozen=True)
 class ContextBudget:
     context_window: int = FALLBACK_CONTEXT_WINDOW
-    output_reserve: int = 4096
+    output_reserve: int = ASSISTANT_OUTPUT_TOKENS
     protocol_margin: int = 512
     estimator: Callable[[str], int] = field(default=estimate_tokens, repr=False, compare=False)
     estimator_label: str = ESTIMATOR_LABEL
@@ -97,10 +99,15 @@ class ContextBudget:
         return usage
 
 
-def budget_for_config(config, output_reserve=4096, *, context_window=None) -> ContextBudget:
+def budget_for_config(config, output_reserve=None, *, context_window=None) -> ContextBudget:
     from .context_capacity import resolve_context_capacity
     from .context_estimation import select_estimator
 
     capacity = resolve_context_capacity(config, override=context_window)
     estimator, label = select_estimator(str(getattr(config, "model", "") or ""))
-    return ContextBudget(capacity.window, output_reserve, estimator=estimator, estimator_label=label)
+    configured = getattr(config, "max_output_tokens", 0) if output_reserve is None else output_reserve
+    reserve = (
+        resolve_output_tokens(getattr(config, "provider", ""), configured, default=ASSISTANT_OUTPUT_TOKENS)
+        or ASSISTANT_OUTPUT_TOKENS
+    )
+    return ContextBudget(capacity.window, reserve, estimator=estimator, estimator_label=label)

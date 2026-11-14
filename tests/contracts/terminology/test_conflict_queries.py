@@ -73,3 +73,31 @@ def test_search_treats_wildcards_as_literal_text_and_does_not_search_metadata(re
     empty = repository.list_conflicts(build.ref, filters=ConflictFilter("project-1"))
     assert empty.items == ()
     assert empty.total == 0
+
+
+@pytest.mark.parametrize(
+    "state, identities",
+    [
+        ("pending", ("conflict-1", "conflict-4")),
+        ("resolved", ("conflict-2",)),
+        ("equivalent", ("conflict-3",)),
+    ],
+)
+def test_review_states_and_resume_anchor_filter_before_paging(repository, state, identities):
+    build = _conflicts_build()
+    groups = list(build.conflicts)
+    groups[1] = replace(groups[1], status="unified", recommended_translation="道路")
+    groups[2] = replace(groups[2], status="equivalent", recommended_translation="STRASSE", notes="同一术语")
+    build = replace(build, conflicts=tuple(groups))
+    repository.put_build(build)
+    result = repository.list_conflicts(build.ref, PageRequest(limit=1), filters=ConflictFilter(review_state=state))
+    assert result.total == len(identities)
+    assert result.items[0].conflict_group_id == identities[0]
+    resumed = repository.list_conflicts(build.ref, filters=ConflictFilter(review_state=state, start_at=identities[-1]))
+    assert resumed.total == 1
+    assert resumed.items[0].conflict_group_id == identities[-1]
+    if result.next_cursor:
+        with pytest.raises(CursorStaleError):
+            repository.list_conflicts(
+                build.ref, PageRequest(cursor=result.next_cursor), filters=ConflictFilter(review_state="all")
+            )

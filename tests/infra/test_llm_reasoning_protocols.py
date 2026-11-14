@@ -3,11 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from transbridge.infra.llm_client import AnthropicClient, OpenAICompatibleClient
+from transbridge.infra.llm_client import OpenAICompatibleClient
 from transbridge.infra.llm_reasoning import ReasoningCapability, ReasoningIntent
 from transbridge.infra.llm_reasoning_protocols import (
-    anthropic_reasoning_capability,
-    anthropic_reasoning_patch,
     detect_openai_reasoning_capability,
     openai_reasoning_patch,
 )
@@ -113,8 +111,6 @@ def test_protocol_patches_degrade_low_to_direct_when_no_low_contract_exists() ->
 
     assert openai_reasoning_patch(effort, ReasoningIntent.PREFER_LOW).standard == {"reasoning_effort": "low"}
     assert openai_reasoning_patch(thinking, ReasoningIntent.PREFER_LOW).extra_body == {"thinking": {"type": "disabled"}}
-    anthropic = anthropic_reasoning_capability()
-    assert anthropic_reasoning_patch(anthropic, ReasoningIntent.PREFER_DIRECT).extra_body == {}
 
 
 def _openai_client() -> OpenAICompatibleClient:
@@ -204,13 +200,3 @@ def test_stream_prompt_cache_retry_preserves_reasoning_control() -> None:
     retry = client._client.chat.completions.create.call_args_list[1].kwargs
     assert retry["extra_body"] == {"thinking": {"type": "disabled"}}
     assert chunks == ["OK"]
-
-
-def test_anthropic_controlled_call_is_protocol_omission() -> None:
-    client = AnthropicClient.__new__(AnthropicClient)
-    client.chat = MagicMock(return_value="OK")
-
-    patch = anthropic_reasoning_patch(anthropic_reasoning_capability(), ReasoningIntent.PREFER_DIRECT)
-
-    assert client.chat_with_reasoning([], 32, patch) == "OK"
-    client.chat.assert_called_once_with([], 32)

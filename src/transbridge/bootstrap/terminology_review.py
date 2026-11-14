@@ -7,6 +7,7 @@ from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.terminology.batch_edits import batch_commands
 from transbridge.application.terminology.build_freshness import build_input_digest, require_current_build
 from transbridge.application.terminology.conflict_review import TerminologyConflictDetails, TerminologyReviewCounts
+from transbridge.application.terminology.conflict_undo import ConflictUndoService
 from transbridge.application.terminology.conflicts import (
     ConflictResolutionCommand,
     ConflictResolutionOperation,
@@ -41,6 +42,9 @@ class TerminologyReviewCommands:
     def review_counts(self, context: RequestContext) -> TerminologyReviewCounts:
         project_id, variant_id = require_line(context)
         repository = self._repositories.for_project(project_id)
+        status_reader = getattr(repository, "workbench_status", None)
+        if status_reader is not None:
+            return status_reader(project_id, variant_id).review_counts
         build = repository.latest_build(project_id, variant_id)
         draft = repository.active_draft(project_id, variant_id)
         effective = repository.effective_version(project_id, variant_id)
@@ -131,11 +135,16 @@ class TerminologyReviewCommands:
         details = self.conflict_details(conflict, context)
         return self.resolve_review(details, operation, context, **values)
 
-    def conflict_details(self, conflict, context: RequestContext) -> TerminologyConflictDetails:
+    def conflict_details(self, conflict, context: RequestContext, *, cancellation=None) -> TerminologyConflictDetails:
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
         project_id, variant_id = require_line(context)
         if (conflict.project_id, conflict.variant_id) != (project_id, variant_id):
             raise PermissionError("异译不属于当前工程和翻译版本")
         repository = self._repositories.for_project(project_id)
+        reads = getattr(repository, "conflict_reads", None)
+        if reads is not None:
+            return reads.details(conflict, project_id, variant_id, cancellation=cancellation)
         build = repository.latest_build(project_id, variant_id)
         pinned = (
             None
@@ -161,6 +170,8 @@ class TerminologyReviewCommands:
                 *(item.scope.plugin_id for item in decisions if item.scope.plugin_id),
             })
         )
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
         return TerminologyConflictDetails(build.ref, draft.ref, projected, candidates, evidence, plugin_ids, decisions)
 
     def resolve_review(self, details: TerminologyConflictDetails, operation, context: RequestContext, **values):
@@ -188,6 +199,19 @@ class TerminologyReviewCommands:
             context,
         )
 
+    def undo_review(self, details_before, expected_ref_after: DraftRef, context: RequestContext):
+        project_id, variant_id = require_line(context)
+        current = self.conflict_details(details_before.conflict, context)
+        if current.build_ref != details_before.build_ref or current.draft_ref != expected_ref_after:
+            raise RepositoryConflictError("草稿或异译证据已变化，无法撤销上次审核")
+        repository = self._repositories.for_project(project_id)
+        reader = LifecycleDraftLineReader(self._lifecycle, repository)
+        line = reader.read_line(None, project_id, variant_id)
+        service = ConflictUndoService(
+            DraftService(repository.draft_transactions(reader), self._ids), RequestManualActor(), self._clock, self._ids
+        )
+        return service.undo(details_before, DraftWriteExpectation.from_ref(expected_ref_after, line), context)
+
     def discard_draft(self, expected_ref: DraftRef, context: RequestContext) -> None:
         if (expected_ref.project_id, expected_ref.variant_id) != require_line(context):
             raise PermissionError("待放弃草稿不属于当前工程和翻译版本")
@@ -211,8 +235,12 @@ class TerminologyReviewCommands:
         if expected_ref is not None and ref != expected_ref:
             raise RepositoryConflictError("草稿已变化，请重新审核")
         expectation = DraftWriteExpectation.from_ref(ref, line)
-        build = repository.latest_build(project_id, variant_id)
-        conflicts = () if build is None else build.conflicts
+        reads = getattr(repository, "conflict_reads", None)
+        if reads is not None:
+            conflicts = reads.latest_conflicts(project_id, variant_id)
+        else:
+            build = repository.latest_build(project_id, variant_id)
+            conflicts = () if build is None else build.conflicts
         return DecisionService(drafts, RequestManualActor(), self._clock, self._ids, conflicts=conflicts), expectation
 
 

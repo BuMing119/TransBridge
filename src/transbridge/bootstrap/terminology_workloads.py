@@ -122,14 +122,21 @@ class ProductionTerminologyCommands:
     def resolve_conflict(self, conflict, operation, context: RequestContext, **values):
         return self._review.resolve_conflict(conflict, operation, context, **values)
 
-    def conflict_details(self, conflict, context: RequestContext):
-        return self._review.conflict_details(conflict, context)
+    def conflict_details(self, conflict, context: RequestContext, *, cancellation=None):
+        return self._review.conflict_details(conflict, context, cancellation=cancellation)
 
     def resolve_review(self, details, operation, context: RequestContext, **values):
         return self._review.resolve_review(details, operation, context, **values)
 
+    def undo_review(self, details_before, expected_ref_after, context: RequestContext):
+        return self._review.undo_review(details_before, expected_ref_after, context)
+
     def discard_draft(self, expected_ref, context: RequestContext) -> None:
         self._review.discard_draft(expected_ref, context)
+
+    def clear_extraction_cache(self, context: RequestContext) -> int:
+        project_id, _variant_id = _line(context)
+        return self._repositories.for_project(project_id).cache.clear("extraction")
 
     def restore(self, version_ref: TerminologyVersionRef, context: RequestContext, config=None) -> JobRef:
         return self._publication.restore(version_ref, context, config)
@@ -204,15 +211,31 @@ class ProductionTerminologyCommands:
         return self._entrypoint.submit(request, _owner(context)).ref
 
     def latest_build_ref(self, project_id: str, variant_id: str) -> BuildResultRef | None:
-        build = self._repositories.for_project(project_id).latest_build(project_id, variant_id)
+        repository = self._repositories.for_project(project_id)
+        reader = getattr(repository, "latest_build_ref", None)
+        if reader is not None:
+            return reader(project_id, variant_id)
+        build = repository.latest_build(project_id, variant_id)
         return None if build is None else build.ref
 
     def latest_build_result(self, project_id: str, variant_id: str):
         return self._repositories.for_project(project_id).latest_build(project_id, variant_id)
 
     def latest_version_ref(self, project_id: str, variant_id: str):
-        effective = self._repositories.for_project(project_id).effective_version(project_id, variant_id)
+        repository = self._repositories.for_project(project_id)
+        reader = getattr(repository, "effective_ref", None)
+        if reader is not None:
+            return reader(project_id, variant_id)
+        effective = repository.effective_version(project_id, variant_id)
         return None if effective is None else effective.ref
+
+    def workbench_status(self, context: RequestContext):
+        project_id, variant_id = _line(context)
+        reader = getattr(self._repositories.for_project(project_id), "workbench_status", None)
+        return None if reader is None else reader(project_id, variant_id)
+
+    def latest_version(self, project_id: str, variant_id: str):
+        return self._repositories.for_project(project_id).effective_version(project_id, variant_id)
 
     def active_draft(self, context: RequestContext):
         return self._review.active_draft(context)
@@ -229,10 +252,15 @@ class ProductionTerminologyCommands:
 
     @staticmethod
     def _latest_build_ref(repository, project_id: str, variant_id: str) -> BuildResultRef:
-        build = repository.latest_build(project_id, variant_id)
-        if build is None:
+        reader = getattr(repository, "latest_build_ref", None)
+        if reader is not None:
+            ref = reader(project_id, variant_id)
+        else:
+            build = repository.latest_build(project_id, variant_id)
+            ref = None if build is None else build.ref
+        if ref is None:
             raise RuntimeError("当前翻译版本还没有术语构建结果")
-        return build.ref
+        return ref
 
 
 class ReportRunner:

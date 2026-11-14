@@ -138,8 +138,8 @@ def _source_templates() -> tuple[_SourceTemplate, ...]:
         ),
         (
             "strings",
-            "tests/contracts/io/fixtures/strings/integrity.strings",
-            "integrity.strings",
+            "tests/contracts/io/fixtures/strings/utf8-integrity.strings",
+            "utf8-integrity.strings",
             FormatId.STRINGS,
             LocalizedStringsAdapter(FormatId.STRINGS),
         ),

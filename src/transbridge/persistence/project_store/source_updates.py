@@ -19,9 +19,10 @@ from .connection import project_connection
 from .format import PROJECT_FILENAME, ProjectStorageConflict, UnsupportedProjectFormat
 from .history import write_snapshot
 from .lifecycle import _verify_project, _write_project
-from .reads import require_variant
+from .reads import read_sources, require_variant
 from .records import read_project, read_variant
 from .repository import ProjectStore
+from .source_references import read_reference_path
 from .variant_rows import save_sources, write_variant
 
 
@@ -56,19 +57,29 @@ class ProjectSourceRevisionStore:
             )
             return SourceUpdateRead(project, variants)
 
+    def read_source_references(self, ref: ProjectRef) -> tuple[ProjectDto, dict[str, str]]:
+        with project_connection(self.projects.store_for(ref.identity).path) as connection:
+            return read_project(connection, ref), {
+                source.namespace.value: source.reference_path
+                for source in read_sources(connection, native_fields=False)
+            }
+
+    def write_project(self, ref: ProjectRef, project: ProjectDto, expected_revision: int) -> None:
+        with project_connection(self.projects.store_for(ref.identity).path, write=True) as connection:
+            _verify_project(connection, project, expected_revision)
+            _write_project(connection, project)
+
     def previous(self, ref: ProjectRef, source) -> PreparedProjectSource:
         summary = self.projects.store_for(ref.identity).summary()
         target = TransitionTarget(ref, VariantRef(summary.active_variant, ref.identity))
         prepared = self.projects.candidate(target)
         namespace = source_content_identity(source.to_dict())
-        baselines = [item for item in prepared.baselines if item.fingerprint.namespace.value == namespace]
-        hydrations = [item for item in prepared.hydrations if item.source_id == source.source_id]
-        if len(baselines) != 1 or len(hydrations) != 1:
+        baseline = next((item for item in prepared.baselines if item.fingerprint.namespace.value == namespace), None)
+        hydration = next((item for item in prepared.hydrations if item.source_id == source.source_id), None)
+        if baseline is None or hydration is None or baseline.fingerprint.sha256 != source.fingerprint:
             raise ProjectStorageConflict("current source revision has no unambiguous translation facts")
         return PreparedProjectSource(
-            tuple({**source.to_dict(), "location": hydrations[0].location}.items()),
-            baselines[0],
-            hydration=hydrations[0],
+            tuple({**source.to_dict(), "location": hydration.location}.items()), baseline, hydration=hydration
         )
 
     def commit(
@@ -81,6 +92,7 @@ class ProjectSourceRevisionStore:
         source: PreparedProjectSource,
         replaces_namespace=None,
         backup_metadata=None,
+        expected_reference_path: str | None = None,
     ) -> str:
         ref = ProjectRef(ProjectId(project.envelope.identity))
         old_by_ref = {item.ref: item for item in expected.variants}
@@ -88,12 +100,15 @@ class ProjectSourceRevisionStore:
             raise ProjectStorageConflict("the source update must preserve all declared Variants")
         with project_connection(self.projects.store_for(ref.identity).path, write=True) as connection:
             _verify_project(connection, project, expected.project.envelope.revision)
+            if replaces_namespace is not None and expected_reference_path is not None:
+                _verify_reference(connection, replaces_namespace, expected_reference_path)
+            backup_name = f"更新来源前 · {backup_metadata['source']}"
             for index, old in enumerate(expected.variants):
                 if require_variant(connection, old.ref.identity)["revision"] != old.revision:
                     raise ProjectStorageConflict("a Variant changed before the source update")
                 write_snapshot(
                     connection,
-                    LifecycleSnapshot(ref, old.ref, old, f"更新来源前 · {backup_metadata['source']}"),
+                    LifecycleSnapshot(ref, old.ref, old, backup_name),
                     f"{transaction_id}-{index}",
                 )
             first = variants[0]
@@ -107,13 +122,17 @@ class ProjectSourceRevisionStore:
                     old_by_ref[first.ref].revision,
                     source_additions=(extract_source(source),),
                 ),
-                replacements=(
-                    {}
-                    if replaces_namespace is None
-                    else {replaces_namespace.value: source.baseline.fingerprint.namespace.value}
-                ),
+                replacements={replaces_namespace.value: source.baseline.fingerprint.namespace.value}
+                if replaces_namespace is not None
+                else None,
             )
             _write_project(connection, project)
             for variant in variants:
                 write_variant(connection, variant, variant.entries, old_by_ref[variant.ref].revision)
         return f"project-snapshot:{transaction_id}"
+
+
+def _verify_reference(connection, namespace, expected):
+    row = connection.execute("SELECT source_id FROM project_source WHERE namespace = ?", (namespace.value,)).fetchone()
+    if row is None or read_reference_path(connection, row[0]) != expected:
+        raise DomainError(ErrorCategory.CONFLICT, "SOURCE_UPDATE_STALE", "来源路径在预览后发生变化，请重新预览。")

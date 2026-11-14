@@ -90,3 +90,15 @@ def test_disabled_and_unavailable_llm_states_are_explicit() -> None:
 
     assert service.extract(evidence, llm_enabled=False).llm_status is LlmExtractionStatus.SKIPPED
     assert service.extract(evidence, llm_enabled=True).llm_status is LlmExtractionStatus.UNAVAILABLE
+
+
+def test_llm_terms_require_complete_words_and_visible_lexical_content():
+    evidence = (_evidence("e-1", "The Dragonborn uses <br>.", "龙裔使用<br>。", "BOOK:DESC"),)
+    result = TerminologyExtractionService(
+        llm=_Llm((
+            LlmTermProposal("e-1", "Dragon", "龙"),
+            LlmTermProposal("e-1", "<br>", "<br>"),
+            LlmTermProposal("e-1", "Dragonborn", "龙裔"),
+        ))
+    ).extract(evidence, llm_enabled=True)
+    assert [(item.original, item.translation) for item in result.candidates] == [("Dragonborn", "龙裔")]

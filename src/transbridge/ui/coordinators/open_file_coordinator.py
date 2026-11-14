@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt
 from transbridge.application.io.open_translation_file import prepare_open_file
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 from transbridge.ui.source_hydration import slot_from_hydration, source_slot_key
+from transbridge.ui.text_encoding import context_text_encodings
 from transbridge.ui.workers import ApiWorker
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ class OpenFileCoordinator:
         def prepare():
             from .parse_coordinator import _apply_dictionary_to_collection
 
+            read_options = context_text_encodings(context).read_options()
             slots, failures = [], []
             expected = authority
             seen = set()
@@ -90,7 +92,11 @@ class OpenFileCoordinator:
                     break
                 try:
                     opened = prepare_open_file(
-                        path, options, runtime_context, apply_dictionary=_apply_dictionary_to_collection
+                        path,
+                        options,
+                        runtime_context,
+                        apply_dictionary=_apply_dictionary_to_collection,
+                        **read_options,
                     )
                     if self._host.context is not context:
                         raise ValueError("工程版本或内容已变化，文件未添加。")
@@ -109,7 +115,9 @@ class OpenFileCoordinator:
                         value = added.value
                         expected = (project_id, variant_id), value.project_revision, value.variant_revision
                         hydration = replace(
-                            value.hydration, source_id=value.source_id, reference_location=value.location
+                            value.hydration,
+                            source_id=value.source_id,
+                            reference_location=value.location or value.hydration.reference_location,
                         )
                     key = source_slot_key(hydration)
                     if key in seen or authority is None and key in context.slots:

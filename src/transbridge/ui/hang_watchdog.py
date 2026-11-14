@@ -1,19 +1,20 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""Capture Python stacks when the GUI stops acknowledging a native watchdog.
+"""Best-effort Python stack capture when the GUI stops acknowledging heartbeats.
 
-The GUI entrypoint owns faulthandler's process-wide delayed-dump timer. Its C
-watchdog can fire even when Python code cannot acquire the GIL. This module
-never enables fault/signal handlers or terminates the process.
+Use a Python monitor and retained frame references: the native delayed
+faulthandler sampler can race frame destruction and crash CPython 3.12 itself.
+A native call retaining the GIL delays sampling until Python can run again.
+No process-wide fault handlers or delayed-dump timers are installed or changed.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-import faulthandler
 import logging
 import math
 import os
 from pathlib import Path
+import sys
 import threading
 import time
 
@@ -25,12 +26,7 @@ _logger = logging.getLogger(__name__)
 
 
 class UiHangWatchdog(QObject):
-    """One dump per missed heartbeat interval; rearm when the GUI recovers.
-
-    Keep the output descriptor open until the native watchdog has stopped.
-    Rotate only this session's files, after cancellation, retaining two backups.
-    A single dump may exceed the size limit; it must remain intact for diagnosis.
-    """
+    """Serialize capture, rotation and close; write once per continuous stall."""
 
     MAX_LOG_BYTES = 2 * 1024 * 1024
 
@@ -46,6 +42,9 @@ class UiHangWatchdog(QObject):
         self._closed = False
         self._last_heartbeat = 0.0
         self._last_heartbeat_utc = ""
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._monitor: threading.Thread | None = None
         self._timer = QTimer(self)
         self._timer.setInterval(max(1, min(1000, int(timeout_seconds * 250))))
         self._timer.timeout.connect(self._heartbeat)
@@ -57,6 +56,8 @@ class UiHangWatchdog(QObject):
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._open_file()
             self._arm()
+            self._monitor = threading.Thread(target=self._watch, name="transbridge-gui-watchdog", daemon=True)
+            self._monitor.start()
             self._timer.start()
             _logger.info("GUI hang watchdog enabled: timeout=%ss, stacks=%s", self._timeout, self.path)
         except Exception:
@@ -64,7 +65,6 @@ class UiHangWatchdog(QObject):
             _logger.exception("GUI hang watchdog could not start; continuing without automatic stack capture")
 
     def _open_file(self) -> None:
-        # Unbuffered output shares the descriptor with faulthandler's native write.
         self._file = self.path.open("xb", buffering=0)
         self._write(
             f"TransBridge {__version__} GUI hang diagnostics\n"
@@ -72,6 +72,7 @@ class UiHangWatchdog(QObject):
             f"PID: {os.getpid()}; GUI thread: 0x{threading.get_ident():x}\n"
             f"Timeout: {self._timeout}s without a GUI heartbeat; one dump per stall.\n"
             "Python stacks only (no locals or source text); at most 100 threads / 100 frames per thread.\n\n"
+            "Sampling requires Python execution; native calls retaining the GIL can delay capture.\n\n"
         )
 
     def _write(self, text: str) -> None:
@@ -80,13 +81,39 @@ class UiHangWatchdog(QObject):
     def _arm(self) -> None:
         self._last_heartbeat = time.monotonic()
         self._last_heartbeat_utc = datetime.now(UTC).isoformat()
-        faulthandler.dump_traceback_later(self._timeout, repeat=False, file=self._file, exit=False)
         self._armed = True
 
-    def _cancel(self) -> None:
-        if self._armed:
-            faulthandler.cancel_dump_traceback_later()
-            self._armed = False
+    def _watch(self) -> None:
+        try:
+            while not self._stop.wait(min(0.25, self._timeout / 4)):
+                with self._lock:
+                    if self._closed:
+                        return
+                    if self._armed and time.monotonic() - self._last_heartbeat >= self._timeout:
+                        self._armed = False
+                        self._write(f"Timeout ({self._timeout:.3f}s)!\n")
+                        self._dump_threads()
+        except Exception:
+            self._stop.set()
+            _logger.exception("GUI hang watchdog stopped after a diagnostic failure")
+
+    def _dump_threads(self) -> None:
+        # _current_frames retains the Python frame objects. Never walk raw
+        # interpreter frames from a native thread without the GIL (CPython #140815).
+        frames = sys._current_frames()
+        try:
+            for identity, frame in tuple(frames.items())[:100]:
+                self._write(f"Thread 0x{identity:x} (most recent call first):\n")
+                for _ in range(100):
+                    if frame is None:
+                        break
+                    code = frame.f_code
+                    self._write(f'  File "{code.co_filename[:500]}", line {frame.f_lineno} in {code.co_name[:500]}\n')
+                    frame = frame.f_back
+                self._write("\n")
+        finally:
+            # Do not keep application locals alive after the diagnostic finishes.
+            frames.clear()
 
     def _record_recovery(self) -> None:
         elapsed = time.monotonic() - self._last_heartbeat
@@ -99,12 +126,15 @@ class UiHangWatchdog(QObject):
     def _heartbeat(self) -> None:
         if self._closed or self._file is None:
             return
+        if self._stop.is_set():
+            self.close()
+            return
         try:
-            self._cancel()
-            self._record_recovery()
-            if self._file.tell() >= self.MAX_LOG_BYTES:
-                self._rotate()
-            self._arm()
+            with self._lock:
+                self._record_recovery()
+                if self._file.tell() >= self.MAX_LOG_BYTES:
+                    self._rotate()
+                self._arm()
         except Exception:
             self.close()
             _logger.exception("GUI hang watchdog stopped after a diagnostic I/O or scheduling failure")
@@ -123,13 +153,18 @@ class UiHangWatchdog(QObject):
         """Stop before Qt teardown, without touching unrelated fault handlers."""
         if self._closed:
             return
-        self._closed = True
         self._timer.stop()
-        self._cancel()
-        if self._file is not None:
-            try:
-                self._file.close()
-            except OSError:
-                _logger.exception("Could not close GUI hang diagnostic file: %s", self.path)
-            finally:
-                self._file = None
+        self._stop.set()
+        # The monitor never waits for the GUI or a queued Qt callback.
+        if self._monitor is not None and self._monitor.is_alive():
+            self._monitor.join()
+        with self._lock:
+            self._closed = True
+            self._armed = False
+            if self._file is not None:
+                try:
+                    self._file.close()
+                except OSError:
+                    _logger.exception("Could not close GUI hang diagnostic file: %s", self.path)
+                finally:
+                    self._file = None

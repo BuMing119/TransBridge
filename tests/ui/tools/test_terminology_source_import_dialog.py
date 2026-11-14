@@ -25,6 +25,29 @@ from transbridge.ui.tools.terminology_profiles import TerminologyImportPolicyDia
 _APP = QApplication.instance() or QApplication([])
 
 
+def test_import_destination_and_new_profile_name_are_explicit_and_editable():
+    from PyQt6.QtWidgets import QDialogButtonBox
+
+    selection = SimpleNamespace(
+        label="术语文件", default_name="文件名", request=SimpleNamespace(file_path="terms.json")
+    )
+    target = SimpleNamespace(profile_id="existing", name="我的空方案")
+    dialog = TerminologyImportPolicyDialog(selection, target=target)
+    assert dialog.target_profile_id == "existing"
+    assert "我的空方案" in dialog.target_combo.currentText()
+    assert not dialog.name_edit.isEnabled()
+    dialog.target_combo.setCurrentIndex(1)
+    assert dialog.target_profile_id is None
+    assert dialog.name_edit.isEnabled()
+    dialog.name_edit.setText("自定义名称")
+    assert dialog.profile_name == "自定义名称"
+    buttons = dialog.findChild(QDialogButtonBox)
+    assert buttons.button(QDialogButtonBox.StandardButton.Ok).isEnabled()
+    dialog.name_edit.clear()
+    assert not buttons.button(QDialogButtonBox.StandardButton.Ok).isEnabled()
+    dialog.close()
+
+
 @pytest.mark.parametrize("policy", tuple(TerminologyProfileImportPolicy))
 def test_import_dialog_explains_full_import_and_freezes_policy(policy) -> None:
     profile_service = TerminologyProfileService(

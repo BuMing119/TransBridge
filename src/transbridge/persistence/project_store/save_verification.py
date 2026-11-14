@@ -7,6 +7,7 @@ import json
 import sqlite3
 
 from transbridge.application.projects.models import LifecycleSave
+from transbridge.application.projects.save_changes import project_needs_encoding_defaults
 from transbridge.persistence.v2.ids import ProjectRef
 from transbridge.persistence.v2.variant import SourceFingerprint
 
@@ -22,7 +23,8 @@ def save_matches(connection: sqlite3.Connection, save: LifecycleSave) -> bool:
         return False
     project = read_project(connection, ProjectRef(snapshot.ref.project_id))
     if (
-        project.envelope.revision != save.project.envelope.revision
+        project_needs_encoding_defaults(project)
+        or project.envelope.revision != save.project.envelope.revision
         or any(
             project.envelope.data[key] != save.project.envelope.data[key]
             for key in ("name", "variant_ids", "variant_names", "active_variant_id")

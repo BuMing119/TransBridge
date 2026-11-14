@@ -27,6 +27,7 @@ def configuration_digest(config):
             "base_url",
             "model",
             "api_key",
+            "max_output_tokens",
             "temperature",
             "assistant_context_window",
             "assistant_auto_compaction",

@@ -3,8 +3,6 @@
 
 from dataclasses import dataclass
 
-from transbridge.application.terminology.browse_queries import TermBrowseQuery
-
 
 @dataclass(frozen=True, slots=True)
 class WorkbenchAssets:
@@ -16,6 +14,7 @@ class WorkbenchAssets:
     task_result: object = None
     review_counts: object = None
     browse_context: object = None
+    version: object = None
 
 
 def read_assets(commands, context, *, run_id=None, browsing=None, cancellation=None) -> WorkbenchAssets:
@@ -33,6 +32,19 @@ def read_assets(commands, context, *, run_id=None, browsing=None, cancellation=N
     def read(method):
         return call(lambda: getattr(commands, method, lambda *_args: None)(context.project_id, context.variant_id))
 
+    status_reader = getattr(commands, "workbench_status", None)
+    status = None if status_reader is None else call(lambda: status_reader(context))
+    if status is not None:
+        return WorkbenchAssets(
+            build_ref=None if status.build is None else status.build.ref,
+            build=status.build,
+            draft=status.draft,
+            version_ref=status.version_ref,
+            comparison=read("latest_comparison"),
+            task_result=None if run_id is None else call(lambda: commands.task_result(run_id, context)),
+            review_counts=status.review_counts,
+        )
+
     return WorkbenchAssets(
         read("latest_build_ref"),
         read("latest_build_result"),
@@ -43,12 +55,6 @@ def read_assets(commands, context, *, run_id=None, browsing=None, cancellation=N
         if run_id is None
         else call(lambda: getattr(commands, "task_result", lambda *_args: None)(run_id, context)),
         call(lambda: getattr(commands, "review_counts", lambda *_args: None)(context)),
-        None
-        if browsing is None
-        else call(
-            lambda: browsing.describe(
-                TermBrowseQuery(context.project_id, context.variant_id),
-                **({} if cancellation is None else {"cancellation": cancellation}),
-            )
-        ),
+        None,  # Full scheme mappings load only when the advanced source browser is opened.
+        read("latest_version"),
     )

@@ -43,6 +43,7 @@ class OperationPlanDraft:
     backup_enabled: bool = False
     expected_side_effects: tuple[str, ...] = ()
     is_batch: bool = False
+    text_encoding_summary: str = ""
 
     def __post_init__(self) -> None:
         if not self.target.strip() or not self.target_revision.strip() or not self.input_fingerprint.strip():
@@ -95,6 +96,7 @@ class _OperationMapper:
             warnings=value.warnings,
             request_digest=value.request_digest,
             is_batch=value.is_batch,
+            text_encoding_summary=value.text_encoding_summary,
         )
 
     def preflight(self, draft: object) -> OperationPreflightResult:

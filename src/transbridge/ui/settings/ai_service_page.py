@@ -8,6 +8,13 @@ from types import SimpleNamespace
 from PyQt6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QLabel, QLineEdit, QPushButton, QSpinBox
 
 from transbridge.config.llm import DEFAULT_MAX_CONCURRENT, MAX_CONCURRENT
+from transbridge.infra.llm_request_config import (
+    ANTHROPIC_DEFAULT_ENDPOINT,
+    ASSISTANT_OUTPUT_TOKENS,
+    OPENAI_DEFAULT_ENDPOINT,
+    TRANSLATION_OUTPUT_TOKENS,
+    resolve_anthropic_endpoint,
+)
 
 from .page_common import SettingsPage, apply_if_present, password_editor
 
@@ -39,7 +46,7 @@ class AiServicePage(SettingsPage):
         form.addRow("API Key", self.api_key_edit)
 
         self.base_url_edit = QLineEdit(str(getattr(config, "base_url", "") or ""), self)
-        self.base_url_edit.setPlaceholderText("https://api.openai.com/v1")
+        self._refresh_endpoint_placeholder()
         form.addRow("Base URL", self.base_url_edit)
 
         self.concurrent_spin = _spin(
@@ -54,7 +61,11 @@ class AiServicePage(SettingsPage):
         self.input_tokens_spin = _spin(1, 1_000_000, int(getattr(config, "max_tokens_per_batch", 2000) or 2000), self)
         form.addRow("每请求业务内容 Token 上限", self.input_tokens_spin)
         self.output_tokens_spin = _spin(0, 1_000_000, int(getattr(config, "max_output_tokens", 0) or 0), self)
-        self.output_tokens_spin.setSpecialValueText("不限制")
+        self.output_tokens_spin.setSpecialValueText("自动")
+        self.output_tokens_spin.setToolTip(
+            f"自动模式下，Anthropic 翻译使用 {TRANSLATION_OUTPUT_TOKENS:,} Token，"
+            f"助手预留 {ASSISTANT_OUTPUT_TOKENS:,} Token。OpenAI 兼容翻译使用服务端默认值。"
+        )
         form.addRow("默认输出 Token 上限", self.output_tokens_spin)
         self.context_window_spin = _spin(0, 4_000_000, int(getattr(config, "assistant_context_window", 0)), self)
         self.context_window_spin.setSpecialValueText("自动匹配模型容量")
@@ -69,6 +80,7 @@ class AiServicePage(SettingsPage):
         self.context_window_spin.valueChanged.connect(self._refresh_context_capacity)
         self.model_edit.textChanged.connect(self._refresh_context_capacity)
         self.base_url_edit.textChanged.connect(self._refresh_context_capacity)
+        self.provider_combo.currentIndexChanged.connect(self._apply_provider_defaults)
         self.provider_combo.currentIndexChanged.connect(self._refresh_context_capacity)
         self._refresh_context_capacity()
         self.auto_compaction_check = QCheckBox("接近容量时自动生成分段摘要", self)
@@ -92,6 +104,20 @@ class AiServicePage(SettingsPage):
         self.test_status.setWordWrap(True)
         form.addRow("连接结果", self.test_status)
 
+    def _refresh_endpoint_placeholder(self) -> None:
+        anthropic = self.provider_combo.currentData() == "anthropic"
+        self.base_url_edit.setPlaceholderText(ANTHROPIC_DEFAULT_ENDPOINT if anthropic else OPENAI_DEFAULT_ENDPOINT)
+        self.base_url_edit.setToolTip("留空时读取 ANTHROPIC_BASE_URL，未设置时使用官方地址。" if anthropic else "")
+
+    def _apply_provider_defaults(self) -> None:
+        self._refresh_endpoint_placeholder()
+        address = self.base_url_edit.text().strip()
+        if self.provider_combo.currentData() == "anthropic":
+            if address.rstrip("/") == OPENAI_DEFAULT_ENDPOINT:
+                self.base_url_edit.clear()
+        elif not address:
+            self.base_url_edit.setText(OPENAI_DEFAULT_ENDPOINT)
+
     def _refresh_context_capacity(self) -> None:
         from transbridge.smart_assistant.context_capacity import resolve_context_capacity
 
@@ -102,10 +128,14 @@ class AiServicePage(SettingsPage):
             assistant_context_window=self.context_window_spin.value(),
         )
         try:
+            if config.provider == "anthropic":
+                config.base_url = resolve_anthropic_endpoint(config.base_url)
             capacity = resolve_context_capacity(config)
             automatic = resolve_context_capacity(config, override=0)
-        except ValueError:
-            self.context_capacity_note.setText("服务地址格式无效，请检查后再设置容量。")
+        except ValueError as exc:
+            self.context_capacity_note.setText(
+                str(exc) if config.provider == "anthropic" else "服务地址格式无效，请检查后再设置容量。"
+            )
             return
         text = f"生效容量：{capacity.window:,} token；来源：{capacity.source}。"
         if config.assistant_context_window and automatic.window > capacity.window:

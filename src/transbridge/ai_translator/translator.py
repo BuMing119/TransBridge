@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 from transbridge.application.io.identity import EntryKey
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
+from transbridge.infra.llm_request_config import resolve_output_tokens
 from transbridge.infra.llm_structured_outputs import LlmStructuredOutputTruncatedError
 
 from .activity import ActivityKind, ActivityMessage
@@ -151,6 +152,9 @@ class AutoTranslator:
         from transbridge.application.translation.draft_reuse import CommittedDraftTranslations
 
         self._cfg = config
+        self._max_output_tokens = resolve_output_tokens(
+            getattr(config.llm_config, "provider", ""), config.llm_config.max_output_tokens
+        )
         self._paratranz_client = paratranz_client
         self._project_id = project_id
         self._candidate_checkpoint_port = candidate_checkpoint
@@ -416,7 +420,7 @@ class AutoTranslator:
         self._extractor = NounExtractor(
             term_client,
             self._builder,
-            max_output_tokens=self._cfg.llm_config.max_output_tokens,
+            max_output_tokens=self._max_output_tokens,
         )
 
         # 清空 in-flight 缓存（新翻译会话）
@@ -831,7 +835,7 @@ class AutoTranslator:
                                 1,
                                 int(getattr(self._cfg.llm_config, "pp_refinement_batch_size", 5)),
                             ),
-                            max_output_tokens=self._cfg.llm_config.max_output_tokens,
+                            max_output_tokens=self._max_output_tokens,
                             max_workers=self._cfg.llm_config.max_concurrent,
                             progress_callback=post_progress.for_phase("proofread"),
                             event_callback=post_progress.event,
@@ -873,7 +877,7 @@ class AutoTranslator:
                             stage_names.append(phase)
                     llm_port = LlmClientPostProcessPort(
                         self._llm,
-                        max_output_tokens=self._cfg.llm_config.max_output_tokens,
+                        max_output_tokens=self._max_output_tokens,
                     )
                     llm_phases = (
                         (
@@ -1225,7 +1229,7 @@ class AutoTranslator:
         try:
             response = self._monitored_chat(
                 None,
-                self._cfg.llm_config.max_output_tokens,
+                self._max_output_tokens,
                 pause_event,
                 stop_event,
                 chunk_callback=_chunk_cb,

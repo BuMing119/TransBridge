@@ -13,7 +13,7 @@ from transbridge.converter.translation_entry import TranslationEntry
 
 from .models import PublishedTerminologyProfile
 from .projection import ProjectedTranslation, ProjectionDiagnostic, SourceTermIndex, TerminologyProfileProjector
-from .transition_projection import base_source_content, same_profile_revision, transition_content
+from .transition_projection import base_source_content, destination_term_keys, same_profile_revision, transition_content
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,15 +47,19 @@ class ProfileEntryProjector:
         self._same_revision = same_profile_revision(source_profile, profile)
         if self._same_revision:
             return
+        target_keys = destination_term_keys(source_profile, profile, base_snapshot)
         if source_profile is not None:
             self._projector = (projector or TerminologyProfileProjector()).prepare(
-                transition_content(source_profile, profile, base_snapshot), ignore_missing=True
+                transition_content(source_profile, profile, base_snapshot),
+                ignore_missing=True,
+                target_term_keys=target_keys,
             )
             return
         assert profile is not None
         self._projector = (projector or TerminologyProfileProjector()).prepare(
             base_source_content(profile, base_snapshot),
             ignore_missing=base_snapshot is not None and base_snapshot.status is EffectiveSnapshotStatus.READY,
+            target_term_keys=target_keys,
         )
         self._owned_keys = frozenset(item.term_key for item in profile.content.mappings if item.scheme_owned)
         self._owned_sources = SourceTermIndex(item.original for item in profile.content.mappings if item.scheme_owned)

@@ -7,6 +7,7 @@ from dataclasses import replace
 
 from .conflicts import reconcile_evidence
 from .drafts import DraftLineState, DraftTransactionPort, DraftWriteExpectation, new_draft, revised_draft
+from .equivalent_candidates import equivalent_candidates
 from .errors import RepositoryConflictError
 from .identity import normalize_translation, term_id
 from .models import (
@@ -14,6 +15,7 @@ from .models import (
     ConflictGroup,
     ConflictStatus,
     DecisionStatus,
+    ExtractionMethod,
     ScopeKind,
     TermDecision,
     TerminologyDraft,
@@ -66,7 +68,10 @@ class BuildDraftCoordinator:
             current.conflict_resolutions if current is not None else (() if effective is None else effective.conflicts)
         )
         resolutions = _current_resolutions(previous_conflicts, build.conflicts)
-        reconciled, _ = reconcile_evidence(decisions, build.candidates)
+        current_conflicts = {item.conflict_group_id: item for item in build.conflicts}
+        current_conflicts.update({item.conflict_group_id: item for item in resolutions})
+        candidates = equivalent_candidates(build.candidates, tuple(current_conflicts.values()), decisions)
+        reconciled, _ = reconcile_evidence(decisions, candidates)
         resolved = {item.normalized_original: item for item in resolutions}
         originals = {item.term_id: item for item in decisions}
         reconciled = tuple(
@@ -76,6 +81,8 @@ class BuildDraftCoordinator:
             else item
             for item in reconciled
         )
+        if current is not None:
+            reconciled = _adopt_aligned_automatic_reviews(reconciled, current, build)
         merged = (*reconciled, *decisions_from_build(build, decisions))
         if current is None:
             draft = new_draft(
@@ -104,10 +111,44 @@ class BuildDraftCoordinator:
         return draft
 
 
+def _adopt_aligned_automatic_reviews(decisions, current, build):
+    """Re-evaluate untouched automatic reviews against current consistent evidence."""
+    touched = {action.term_id for action in current.actions}
+    previous = {item.term_id: item for item in current.decisions}
+    conflicts = {item.normalized_original for item in build.conflicts}
+    candidates = {}
+    for candidate in build.candidates:
+        candidates.setdefault((candidate.normalized_original, candidate.scope), []).append(candidate)
+    result = []
+    for decision in decisions:
+        matches = candidates.get((decision.normalized_original, decision.scope), ())
+        if (
+            decision.status is DecisionStatus.REVIEW_REQUIRED
+            and previous[decision.term_id].status is DecisionStatus.REVIEW_REQUIRED
+            and decision.term_id not in touched
+            and not decision.suppressed
+            and previous[decision.term_id].evidence_ids
+            and decision.normalized_original not in conflicts
+            and matches
+            and all(
+                item.extraction_method is ExtractionMethod.LLM_TEXT
+                and item.normalized_translation == normalize_translation(decision.translation)
+                for item in matches
+            )
+        ):
+            decision = replace(decision, status=DecisionStatus.ADOPTED)
+        result.append(decision)
+    return tuple(result)
+
+
 def _current_resolutions(
     previous: tuple[ConflictGroup, ...], current: tuple[ConflictGroup, ...]
 ) -> tuple[ConflictGroup, ...]:
-    by_id = {item.conflict_group_id: item for item in previous if item.status is not ConflictStatus.UNRESOLVED}
+    by_id = {
+        item.conflict_group_id: item
+        for item in previous
+        if item.status not in {ConflictStatus.UNRESOLVED, ConflictStatus.EQUIVALENT}
+    }
     return tuple(
         replace(item, status=old.status, recommended_translation=old.recommended_translation, notes=old.notes)
         for item in current

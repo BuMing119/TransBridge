@@ -21,12 +21,11 @@ from transbridge.infra.llm_tool_calling import (
 from transbridge.infra.llm_usage import UsageAttempt, single_attempt_client
 from transbridge.infra.prompt_cache import (
     extract_prompt_cache_directives,
+    is_cache_parameter_rejection,
     prepare_openai_chat_cache_request,
 )
 
 logger = logging.getLogger(__name__)
-
-_PROMPT_CACHE_REJECTION_KEYWORDS = ("prompt_cache", "prompt cache", "cache_control", "cache")
 
 
 @dataclass
@@ -50,18 +49,6 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
     if isinstance(value, dict):
         return value.get(name, default)
     return getattr(value, name, default)
-
-
-def _is_cache_rejection(exc: Exception) -> bool:
-    status = getattr(exc, "status_code", None)
-    if status is None:
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-    if status not in (400, 422):
-        return False
-    message = getattr(exc, "message", None)
-    text = message if isinstance(message, str) else str(exc)
-    lowered = text.lower()
-    return any(keyword in lowered for keyword in _PROMPT_CACHE_REJECTION_KEYWORDS)
 
 
 def _openai_tools(tools: list[LlmToolDefinition]) -> list[dict[str, Any]]:
@@ -102,29 +89,6 @@ def _request_kwargs(
     }
     if request["request_options"]:
         kwargs["extra_body"] = dict(request["request_options"])
-    if max_tokens > 0:
-        kwargs["max_tokens"] = max_tokens
-    if not tools:
-        kwargs.pop("tools")
-        kwargs.pop("tool_choice")
-    return kwargs
-
-
-def _clean_retry_kwargs(
-    owner: Any,
-    messages: list[dict],
-    max_tokens: int,
-    tools: list[LlmToolDefinition],
-) -> dict[str, Any]:
-    clean_messages, _ = extract_prompt_cache_directives(_convert_messages(messages))
-    kwargs: dict[str, Any] = {
-        "model": owner._model,
-        "messages": clean_messages,
-        "stream": True,
-        "stream_options": {"include_usage": True},
-        "tools": _openai_tools(tools),
-        "tool_choice": "auto",
-    }
     if max_tokens > 0:
         kwargs["max_tokens"] = max_tokens
     if not tools:
@@ -286,6 +250,10 @@ def chat_stream_with_tools(
         owner._active_requests += 1
     try:
         kwargs = _request_kwargs(owner, messages, max_tokens, tools)
+        cache_fields = tuple(kwargs.get("extra_body", ()))
+        has_explicit_breakpoints = "prompt_cache_options" in cache_fields
+        if has_explicit_breakpoints:
+            cache_fields += ("prompt_cache_breakpoint",)
         retry_of = None
         for index in range(2):
             accumulator = _StreamAccumulator()
@@ -296,7 +264,7 @@ def chat_stream_with_tools(
                 turn = _finalize(accumulator)
             except BaseException as exc:
                 usage_rejected = _is_usage_rejection(exc)
-                cache_rejected = _is_cache_rejection(exc)
+                cache_rejected = isinstance(exc, Exception) and is_cache_parameter_rejection(exc, fields=cache_fields)
                 retry = index == 0 and not accumulator.saw_event and (usage_rejected or cache_rejected)
                 reason = "usage_parameter_unsupported" if usage_rejected else "cache_parameter_unsupported"
                 attempt.finish(
@@ -307,10 +275,11 @@ def chat_stream_with_tools(
                     raise
                 logger.warning("OpenAI optional parameters rejected; retrying once: %s", reason)
                 retry_of = attempt.attempt_id
+                kwargs = dict(kwargs)
                 if cache_rejected:
-                    kwargs = _clean_retry_kwargs(owner, messages, max_tokens, tools)
-                else:
-                    kwargs = dict(kwargs)
+                    kwargs.pop("extra_body")
+                    if has_explicit_breakpoints:
+                        kwargs["messages"], _ = extract_prompt_cache_directives(_convert_messages(messages))
                 if usage_rejected:
                     kwargs.pop("stream_options", None)
             else:

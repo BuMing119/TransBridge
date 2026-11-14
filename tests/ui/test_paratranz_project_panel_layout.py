@@ -46,6 +46,7 @@ class _Context(QObject):
 class _LoadWorker(QObject):
     result = pyqtSignal(object)
     error = pyqtSignal(str)
+    finished = pyqtSignal()
 
     def start(self):
         pass
@@ -119,7 +120,7 @@ def test_initial_missing_token_reports_configuration_state_without_starting_work
 
 def test_load_failure_and_removed_token_keep_existing_status_feedback(qapp, monkeypatch):
     worker = _LoadWorker()
-    monkeypatch.setattr(project_panel, "ApiWorker", lambda _fn: worker)
+    monkeypatch.setattr(project_panel, "ApiWorker", lambda _fn, **_kwargs: worker)
     context = _Context(token="test-only")
     panel = project_panel.ProjectListPanel(context)
     panel.resize(200, 640)

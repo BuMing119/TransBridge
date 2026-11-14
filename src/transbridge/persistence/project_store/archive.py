@@ -23,6 +23,7 @@ from transbridge.persistence.terminology.portable_assets import (
 )
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef
 
+from .alignment_cache_schema import remove as remove_alignment_cache
 from .archive_validation import archive_json, validate_archive_database
 from .connection import project_connection
 from .entry_codec import encode_json, pack_text
@@ -72,6 +73,7 @@ class ProjectPackage:
                         raise ProjectStorageConflict("project changed before export")
                     connection.backup(backup)
                 with project_connection(copy, write=True) as connection:
+                    remove_alignment_cache(connection)
                     connection.execute("DELETE FROM commit_receipt")
                     connection.execute("""
                         DELETE FROM entry_state WHERE entry_id IN (
@@ -148,6 +150,7 @@ class ProjectPackage:
                 raise UnsupportedProjectFormat(f"Invalid portable terminology content: {exc}") from exc
             copied = project_id != summary.identity
             with project_connection(staged, write=True) as connection:
+                remove_alignment_cache(connection)
                 active_variant = (
                     _reidentify_variants(connection, summary.active_variant.value)
                     if copied

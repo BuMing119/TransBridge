@@ -61,8 +61,8 @@ class TerminologyWindowContext(QObject):
         if self._current():
             self._profiles.refresh()
 
-    def preview_source_import(self, source, *, policy=TerminologyProfileImportPolicy.KEEP_EXISTING):
-        return self._require_profiles().preview_source_import(source, policy=policy)
+    def preview_source_import(self, source, *, policy=TerminologyProfileImportPolicy.KEEP_EXISTING, **options):
+        return self._require_profiles().preview_source_import(source, policy=policy, **options)
 
     def create_from_source_import(self, name, preview, *, select=False):
         return self._require_profiles().create_from_source_import(name, preview, select=select)

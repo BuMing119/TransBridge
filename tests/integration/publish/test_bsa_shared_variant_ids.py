@@ -43,7 +43,7 @@ def shared_source(tmp_path, request):
         + _group("INFO", dialogue)
     )
     tables = {
-        "strings": _strings({148: b"FULL original", 149: b"Caf\xe9 preserved"}, "strings"),
+        "strings": _strings({148: b"FULL original", 149: "Café preserved".encode()}, "strings"),
         "dlstrings": _strings({148: b"DESC original", 149: b"Unreferenced description"}, "dlstrings"),
         "ilstrings": _strings({148: b"INFO original", 149: b"Unreferenced dialogue"}, "ilstrings"),
     }

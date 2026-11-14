@@ -5,9 +5,10 @@ import pytest
 from tests.application.terminology.test_build import _entry
 from tests.integration.bootstrap.test_terminology_build_review import _Harness
 from tests.integration.bootstrap.test_terminology_publication_review import _finish_publish
+from transbridge.application.terminology.conflict_queries import ConflictFilter
 from transbridge.application.terminology.conflicts import ConflictResolutionOperation as Operation
 from transbridge.application.terminology.errors import CursorStaleError, RepositoryConflictError, RevisionConflictError
-from transbridge.application.terminology.models import ConflictStatus, TermScope
+from transbridge.application.terminology.models import ConflictStatus, ManualActionType, TermScope
 from transbridge.application.terminology.ports import PageRequest
 from transbridge.persistence.terminology.repository import SqliteTerminologyRepository
 
@@ -131,3 +132,83 @@ def test_discard_compares_complete_ref_and_keeps_published_history(harness):
     harness.commands.restore(first.ref, harness.context)
     assert _finish_publish(harness).current
     assert len(harness.repository.list_versions("project-1", "main").items) == 2
+
+
+def test_review_state_filters_use_saved_overlay_before_paging(harness):
+    harness.build()
+    details = _details(harness)
+    harness.commands.resolve_review(details, Operation.UNIFY, harness.context, translation="巨龙")
+    for state, original in (("pending", "sword"), ("resolved", "dragon")):
+        page = harness.repository.list_review_conflicts(
+            details.build_ref, PageRequest(limit=1), filters=ConflictFilter(review_state=state)
+        )
+        assert page.total == 1
+        assert page.items[0].normalized_original == original
+
+
+@pytest.mark.parametrize(
+    "operation, values",
+    [
+        (Operation.UNIFY, {"translation": "巨龙"}),
+        (Operation.PLUGIN_EXCEPTION, {"translation": "插件龙", "plugin_id": "A.esm"}),
+        (Operation.IGNORE, {}),
+    ],
+)
+def test_undo_restores_previous_group_and_keeps_other_decisions_and_audit(harness, operation, values):
+    harness.build()
+    commands, context = harness.commands, harness.context
+    commands.resolve_review(_details(harness, "sword"), Operation.UNIFY, context, translation="长剑")
+    before = _details(harness)
+    draft_before = commands.active_draft(context)
+    result = commands.resolve_review(before, operation, context, **values)
+    undone = commands.undo_review(before, result.draft.ref, context)
+    assert undone.draft.decisions == draft_before.decisions
+    assert undone.conflict == before.conflict
+    assert undone.draft.conflict_resolutions == draft_before.conflict_resolutions
+    assert set(result.draft.actions).issubset(undone.draft.actions)
+    assert sum(action.action_type is ManualActionType.UNDO_CONFLICT for action in undone.draft.actions) == 1
+    assert _details(harness).conflict.status is ConflictStatus.UNRESOLVED
+    with pytest.raises(RepositoryConflictError):
+        commands.undo_review(before, result.draft.ref, context)
+
+
+def test_undo_edit_of_resolved_choice_restores_previous_translation(harness):
+    harness.build()
+    commands, context = harness.commands, harness.context
+    commands.resolve_review(_details(harness), Operation.UNIFY, context, translation="龙")
+    before = _details(harness)
+    result = commands.resolve_review(before, Operation.UNIFY, context, translation="巨龙")
+    undone = commands.undo_review(before, result.draft.ref, context)
+    assert undone.conflict.recommended_translation == "龙"
+    assert _details(harness).decisions == before.decisions
+
+
+def test_undo_rejects_intervening_write_and_wrong_context(harness):
+    harness.build()
+    commands, context = harness.commands, harness.context
+    before = _details(harness)
+    result = commands.resolve_review(before, Operation.UNIFY, context, translation="龙")
+    with pytest.raises(PermissionError):
+        commands.undo_review(before, result.draft.ref, replace(context, variant_id="other"))
+    commands.resolve_review(_details(harness, "sword"), Operation.UNIFY, context, translation="长剑")
+    current = commands.active_draft(context)
+    with pytest.raises(RepositoryConflictError):
+        commands.undo_review(before, result.draft.ref, context)
+    with pytest.raises(RepositoryConflictError):
+        commands.undo_review(before, current.ref, context)
+    assert commands.active_draft(context) == current
+
+
+def test_undo_rejects_forged_previous_decisions_and_new_build(harness):
+    harness.build()
+    commands, context = harness.commands, harness.context
+    commands.resolve_review(_details(harness), Operation.UNIFY, context, translation="龙")
+    before = _details(harness)
+    result = commands.resolve_review(before, Operation.UNIFY, context, translation="巨龙")
+    forged = replace(before, decisions=(replace(before.decisions[0], translation="伪造"),))
+    with pytest.raises(RepositoryConflictError, match="快照"):
+        commands.undo_review(forged, result.draft.ref, context)
+    assert commands.active_draft(context) == result.draft
+    harness.build()
+    with pytest.raises(RepositoryConflictError):
+        commands.undo_review(before, result.draft.ref, context)

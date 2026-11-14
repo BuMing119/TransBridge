@@ -27,6 +27,8 @@ from transbridge.ui.workbench.file_source_formats import (
     FILE_FILTER_HINTS as _FILTER_HINTS,
     FILE_SOURCE_FILTER as _FILE_FILTER,
     FILE_SOURCE_FORMATS as _FORMATS,
+    TRANSLATION_FILE_FILTER,
+    TRANSLATION_FILE_FORMATS,
 )
 
 
@@ -75,7 +77,7 @@ class OpenFileDialog(QDialog):
         self.translation_browse.setAccessibleName("选择已有译文来源")
         self.translation_browse.clicked.connect(self._browse_translation)
         donor_layout.addLayout(self._file_row(self.translation_input, self.translation_browse))
-        self.translation_format_combo = self._format_choice("译文来源格式")
+        self.translation_format_combo = self._format_choice("译文来源格式", TRANSLATION_FILE_FORMATS)
         self.translation_format_combo.addItem("Strings 目录", "strings-directory")
         self.strings_language = ExportFormatComboBox()
         self.strings_language.setAccessibleName("Strings 语言")
@@ -150,10 +152,10 @@ class OpenFileDialog(QDialog):
         return row
 
     @staticmethod
-    def _format_choice(name):
+    def _format_choice(name, formats=_FORMATS):
         choice = ExportFormatComboBox()
         choice.setAccessibleName(name)
-        for label, value in _FORMATS:
+        for label, value in formats:
             choice.addItem(label, value)
         return choice
 
@@ -194,7 +196,7 @@ class OpenFileDialog(QDialog):
             path = QFileDialog.getExistingDirectory(self, "选择 Strings 目录", self.translation_input.text())
         else:
             path, selected_filter = QFileDialog.getOpenFileName(
-                self, "选择已有译文文件", self.translation_input.text(), _FILE_FILTER
+                self, "选择已有译文文件", self.translation_input.text(), TRANSLATION_FILE_FILTER
             )
             if path:
                 self._apply_filter_hint(self.translation_format_combo, selected_filter)

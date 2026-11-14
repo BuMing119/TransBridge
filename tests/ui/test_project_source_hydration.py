@@ -134,12 +134,25 @@ def test_empty_project_has_no_slots():
     assert source_hydration.prepare_project_slots((), _snapshot([])) == ()
 
 
-def test_already_bound_hydration_does_not_revalidate_source_entries(monkeypatch):
+@pytest.mark.parametrize("format_id", [FormatId.PLUGIN_SSE, FormatId.XML_XT, FormatId.BINARY_EET])
+def test_saved_reference_is_an_input_hint_not_an_output_target(format_id):
+    source = _source("project-source:source", "namespace", format_id=format_id)
+    source.reference_location = "C:/previous/Source.esp"
+    source.source_snapshot = SimpleNamespace(source=SimpleNamespace(uri="project-source:namespace"), content=None)
+
+    slot = source_hydration.slot_from_hydration(source)
+
+    assert slot.reference_path == source.reference_location
+    assert slot.esp_path is slot.eet_path is slot.xt_path is None
+
+
+@pytest.mark.parametrize("registered_reference", ["current.esp", ""])
+def test_already_bound_hydration_does_not_revalidate_source_entries(monkeypatch, registered_reference):
     source = _source("artifact.esp", "namespace")
     source.source_id = "registered"
     source.reference_location = "current.esp"
     snapshot = ProjectionSnapshot(
-        "project:new", 3, 3, {"sources": [{"source_id": source.source_id, "location": source.reference_location}]}
+        "project:new", 3, 3, {"sources": [{"source_id": source.source_id, "location": registered_reference}]}
     )
     monkeypatch.setattr(source_hydration, "replace", lambda *_args, **_kwargs: pytest.fail("Copied bound hydration"))
 

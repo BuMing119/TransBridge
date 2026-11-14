@@ -278,7 +278,7 @@ class WorkbenchProjectPaging(QObject):
                 self._terminology_window = requested
                 visible = (self.result or self._resident).entries
                 stop = requested[-1] + WORKBENCH_PAGE_SIZE
-                self.host._terminology_preview.set_entries(visible[start:stop])
+                self.host._terminology_preview.set_entries(visible[start:stop], viewport_only=True)
                 self.refresh_terminology_projection()
             return
         offsets = collection.missing_pages(requested)
@@ -336,7 +336,7 @@ class WorkbenchProjectPaging(QObject):
         host._filters_view.set_content_visible(True)
         self._rendering = True
         try:
-            host._terminology_preview.set_entries(host._entries)
+            host._terminology_preview.set_entries(host._entries, viewport_only=True)
             host._populate_table()
         finally:
             self._rendering = False

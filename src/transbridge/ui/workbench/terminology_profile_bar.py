@@ -48,6 +48,7 @@ class TerminologyProfileBar(QWidget):
 
     selection_requested = pyqtSignal(object)
     manage_requested = pyqtSignal()
+    alignment_requested = pyqtSignal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -70,6 +71,17 @@ class TerminologyProfileBar(QWidget):
         self.detail = ElidedLabel(parent=self)
         self.detail.setAccessibleName("译名方案状态")
         row.addWidget(self.detail, 1)
+
+        self.alignment_button = QPushButton("重新定位", self)
+        self.alignment_button.setAccessibleName("重试或取消自动术语定位")
+        self.alignment_button.setToolTip(
+            "启用后自动判断有疑点的术语位置；已有结果会复用。此按钮仅用于取消或主动重试未解决的条目。"
+        )
+        self.alignment_button.setEnabled(False)
+        self.alignment_button.setVisible(False)
+        ComponentStyle.apply_static(self.alignment_button, ComponentKind.BUTTON)
+        self.alignment_button.clicked.connect(self.alignment_requested.emit)
+        row.addWidget(self.alignment_button)
 
         self.manage_button = QPushButton("管理…", self)
         self.manage_button.setAccessibleName("管理译名方案")

@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from transbridge.application.contracts import DomainError, ErrorCategory, RequestContext
 from transbridge.application.io.contracts import FormatId, SourceSnapshot
 from transbridge.application.io.mutation import EntrySnapshot
+from transbridge.application.io.text_source_options import snapshot_read_options
 
 from .provisioning_models import ProjectSourcePreparationPort, ProjectSourceRequest
 
@@ -18,6 +19,8 @@ def bind_plugin_write_input(
     path: str,
     context: RequestContext,
     preparer: ProjectSourcePreparationPort,
+    *,
+    input_encoding: str | None = None,
 ) -> SourceSnapshot:
     if expected.format_id is not FormatId.PLUGIN_SSE:
         raise ValueError("this operation input must match a project plugin source")
@@ -25,8 +28,10 @@ def bind_plugin_write_input(
     options = {
         "skip_empty": False,
         "discover_sibling_strings": True,
-        "language": metadata.get("localized_language", "english"),
+        **snapshot_read_options(expected),
     }
+    if "localized_language" in metadata:
+        options["language"] = metadata["localized_language"]
     if "source_namespace" in metadata:
         options["source_namespace"] = metadata["source_namespace"]
     try:

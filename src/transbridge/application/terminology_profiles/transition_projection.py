@@ -63,6 +63,23 @@ def transition_content(
     return TerminologyProfileContent(tuple(mappings))
 
 
+def destination_term_keys(source, target, base):
+    """Only actual destination declarations own complete target spellings; shadows do not."""
+    if target is not None:
+        return frozenset(mapping.term_key for mapping in target.content.mappings)
+    if base is not None and base.status is EffectiveSnapshotStatus.READY:
+        return frozenset(
+            logical_term_key(item.original, scope_kind=item.scope.kind.value, plugin_id=item.scope.plugin_id)
+            for item in base.decisions
+            if item.is_effective
+        )
+    return (
+        frozenset(mapping.term_key for mapping in source.content.mappings if mapping.base_translation)
+        if source
+        else frozenset()
+    )
+
+
 def base_source_content(
     target: PublishedTerminologyProfile, base: EffectiveTerminologySnapshot | None
 ) -> TerminologyProfileContent:

@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 
 from transbridge.config.language_profiles import discover_language_profiles
 from transbridge.config.llm import DEFAULT_MAX_CONCURRENT, MAX_CONCURRENT
+from transbridge.infra.llm_request_config import TRANSLATION_OUTPUT_TOKENS
 from transbridge.ui.foundation.components import (
     ComponentStyle,
     ElidedLabel,
@@ -337,7 +338,10 @@ def _build_runtime_group(view: object, parent: QWidget) -> QGroupBox:
     view.controls.tokens_spin.setToolTip("多条目组批预算；单条超出时独立发送")
     form.addRow("组批 Token 预算", view.controls.tokens_spin)
     view.controls.output_tokens_spin = _spin(group, 0, 65536, 0, 256)
-    view.controls.output_tokens_spin.setSpecialValueText("不限制（供应商支持时）")
+    view.controls.output_tokens_spin.setSpecialValueText("自动")
+    view.controls.output_tokens_spin.setToolTip(
+        f"自动模式下，Anthropic 使用 {TRANSLATION_OUTPUT_TOKENS:,} Token；OpenAI 兼容服务使用服务端默认值。"
+    )
     form.addRow("输出 Token 上限", view.controls.output_tokens_spin)
     return group
 

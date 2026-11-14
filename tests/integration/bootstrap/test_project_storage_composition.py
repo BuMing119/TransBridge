@@ -76,11 +76,17 @@ def test_normal_project_lifecycle_reopens_without_plugin_and_does_not_restore_le
     plugin = source.read_bytes()
     context = RequestContext("gui", run_id="fr32-storage-composition")
     path_open = Path.open
+    path_stat = Path.stat
 
     def block_legacy_reads(path, *args, **kwargs):
         if path.is_relative_to(root) and _LEGACY_ROOTS.intersection(path.relative_to(root).parts[:1]):
             raise AssertionError(f"Normal project lifecycle tried to open legacy material: {path}")
         return path_open(path, *args, **kwargs)
+
+    def block_source_stat(path, *args, **kwargs):
+        if path == source:
+            raise AssertionError(f"Reopening or saving tried to inspect the source: {path}")
+        return path_stat(path, *args, **kwargs)
 
     with monkeypatch.context() as guarded:
         guarded.setattr(Path, "open", block_legacy_reads)
@@ -104,10 +110,12 @@ def test_normal_project_lifecycle_reopens_without_plugin_and_does_not_restore_le
             initial.close()
 
         source.unlink()
+        guarded.setattr(Path, "stat", block_source_stat)
         reopened = _services(root)
         try:
             prepared = reopened.current_project_opener.prepare_active(context)
             assert prepared.is_success, prepared.diagnostics
+            assert prepared.value.hydrations[0].reference_location == str(source)
             assert reopened.current_project_opener.activate(prepared.value, context).is_success
             active = reopened.project_lifecycle.active
             assert active.project_ref.identity == project_id
@@ -115,7 +123,34 @@ def test_normal_project_lifecycle_reopens_without_plugin_and_does_not_restore_le
             assert [entry.translation for entry in active.variant.snapshot().entries] == ["欢迎"]
             assert [item.project_id for item in reopened.project_catalog.list_projects().projects] == [project_id.value]
             persisted = ProjectStore(project_path(root, project_id))
-            assert persisted.read_page(persisted.summary().active_variant)[0].state.translation == "欢迎"
+            (entry,) = persisted.read_page(persisted.summary().active_variant)
+            assert entry.state.translation == "欢迎"
+            assert reopened.gui_project_commands.update_entry(
+                entry.state.entry_key, context, translation="你好"
+            ).is_success
+            assert reopened.gui_project_commands.save(context).is_success
+            assert persisted.sources()[0].reference_path == str(source)
+            original_variant = active.formal_variant_ref
+            token = persisted.read_token(original_variant.identity)
+            (info,) = persisted.sources(native_fields=False)
+            reference = str(source.with_name("Moved.esp"))
+            assert reopened.projects.update_source_reference(
+                project_id,
+                prepared.value.hydrations[0].source_id,
+                info.namespace,
+                expected_fingerprint=info.fingerprint,
+                expected_path=info.reference_path,
+                reference_path=reference,
+                token=token,
+            )
+            assert persisted.read_token(original_variant.identity) == token
+            copied = reopened.gui_project_commands.create_variant(
+                "Copy after reference update", context, copy_active=True
+            )
+            assert copied.is_success, copied.diagnostics
+            assert reopened.gui_project_commands.switch_v2(active.project_ref, original_variant, context).is_success
+            assert persisted.sources()[0].reference_path == reference
+            active = reopened.project_lifecycle.active
 
             guarded.undo()
             rejected = reopened.current_project_opener.prepare_path(legacy_record, context)
@@ -131,7 +166,6 @@ def test_normal_project_lifecycle_reopens_without_plugin_and_does_not_restore_le
         if file.is_file():
             content = file.read_bytes()
             assert plugin not in content
-            assert input_dir.name.encode() not in content
 
 
 def test_desktop_project_picker_exposes_the_database_and_routes_it_to_the_opener(tmp_path, monkeypatch):
@@ -414,6 +448,7 @@ def test_source_replacement_preserves_variant_independence_and_historical_order(
     for path in (first, second, replacement):
         path.unlink()
     reopened = ProjectStore(project.path)
+    assert [source.reference_path for source in reopened.sources()] == [str(replacement), str(second)]
     for variant, translation in ((original_variant, "Main translation"), (alternate, "Copy translation")):
         entries = reopened.read_page(variant.identity)
         assert [item.snapshot.original for item in entries] == ["New", "Welcome", "Another source"]
@@ -437,6 +472,7 @@ def test_source_replacement_preserves_variant_independence_and_historical_order(
 
     restored_store = ProjectStore(project.path)
     assert [source.name for source in restored_store.sources()] == [first.name, second.name]
+    assert [source.reference_path for source in restored_store.sources()] == [str(first), str(second)]
     restored = restored_store.read_page(original_variant.identity)
     assert [
         (item.snapshot.entry_key, item.snapshot.original, item.state.translation, item.state.stage) for item in restored
@@ -447,7 +483,6 @@ def test_source_replacement_preserves_variant_independence_and_historical_order(
     for file in root.rglob("*"):
         if file.is_file():
             data = file.read_bytes()
-            assert inputs.name.encode() not in data
             assert all(plugin not in data for plugin in source_bytes)
 
 
@@ -510,7 +545,6 @@ def test_portable_project_keeps_only_selected_history_and_translations(tmp_path,
         assert b"private-apply-receipt" not in payload
         assert task_id.encode() not in payload
         assert plugin not in payload
-        assert inputs.name.encode() not in payload
     services = _services(destination)
     try:
         imported_path = services.project_archive.import_project(str(package), context)
@@ -518,6 +552,8 @@ def test_portable_project_keeps_only_selected_history_and_translations(tmp_path,
         assert opened.is_success, opened.diagnostics
         imported = ProjectStore(imported_path)
         assert imported.summary().identity == project_ref.identity
+        assert imported.sources()[0].reference_path == str(source)
+        assert opened.value["hydrations"][0].reference_location == str(source)
         (restored,) = imported.read_page(variant_ref.identity)
         assert restored.state.entry_key == entry.state.entry_key
         assert restored.state.translation == translation
@@ -533,6 +569,7 @@ def test_portable_project_keeps_only_selected_history_and_translations(tmp_path,
         copy = ProjectStore(copy_path)
         copy_summary = copy.summary()
         assert copy_summary.identity != project_ref.identity
+        assert copy.sources()[0].reference_path == str(source)
         assert copy.read_page(copy_summary.active_variant) == (restored,)
         copy_variant = VariantRef(copy_summary.active_variant, copy_summary.identity)
         assert history.list(copy_variant) == history.list(variant_ref)

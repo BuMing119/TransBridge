@@ -56,9 +56,9 @@ class ProjectStore:
         with project_connection(self.path, check_schema=True) as connection:
             return reads.read_summary(connection)
 
-    def sources(self) -> tuple[SourceInfo, ...]:
+    def sources(self, *, native_fields: bool = True) -> tuple[SourceInfo, ...]:
         with project_connection(self.path) as connection:
-            return reads.read_sources(connection)
+            return reads.read_sources(connection, native_fields=native_fields)
 
     def read_page(
         self,

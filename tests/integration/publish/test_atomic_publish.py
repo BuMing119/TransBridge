@@ -569,7 +569,7 @@ def test_real_eet_parse_write_reparse_atomic_success_with_unicode_long_path(tmp_
         (XtXmlAdapter(), Path("tests/contracts/io/fixtures/xt-small.xml"), FormatId.XML_XT, "XT atomic"),
         (
             LocalizedStringsAdapter(FormatId.STRINGS),
-            Path("tests/contracts/io/fixtures/strings/integrity.strings"),
+            Path("tests/contracts/io/fixtures/strings/utf8-integrity.strings"),
             FormatId.STRINGS,
             "Localized atomic ✓",
         ),

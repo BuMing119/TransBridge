@@ -52,7 +52,8 @@ def test_inline_valid_loose_table_is_preserved_without_entering_unrelated_archiv
     payload = _strings({148: b"Caf\xe9 unrelated but preserved"}, "strings")
     (strings / "mod_English.strings").write_bytes(payload)
     adapter = SsePluginAdapter()
-    parsed = adapter.parse(_request(path))
+    parse_options = (("input_encoding", "cp1252"),)
+    parsed = adapter.parse(replace(_request(path), options=parse_options))
     assert parsed.outcome is OperationOutcome.COMPLETED, parsed.diagnostics
     assert len(dict(parsed.source_snapshot.metadata)["localized_sources"]) == 1
     target = tmp_path / "output" / "translated.esp"
@@ -65,13 +66,16 @@ def test_inline_valid_loose_table_is_preserved_without_entering_unrelated_archiv
             1,
             RequestContext("inline-write"),
             source_snapshot=parsed.source_snapshot,
+            options=(*parse_options, ("output_encoding", "cp1252")),
         )
     )
 
     assert result.outcome is OperationOutcome.COMPLETED, result.diagnostics
     assert (target.parent / "Strings" / "translated_English.strings").read_bytes() == payload
     assert archive.read_bytes() == b"unrelated broken archive"
-    assert [entry.original for entry in adapter.parse(_request(target)).entries] == ["Changed inline"]
+    assert [entry.original for entry in adapter.parse(replace(_request(target), options=parse_options)).entries] == [
+        "Changed inline"
+    ]
 
 
 def test_localized_partial_loose_table_still_rejects_corrupt_archive_dependency(tmp_path):
@@ -151,6 +155,26 @@ def test_zero_localized_id_is_a_valid_empty_reference_without_tables(tmp_path, s
     entries = PluginParser().parse_plugin(path, skip_empty=skip_empty)
 
     assert [entry.original for entry in entries] == ([] if skip_empty else [""])
+
+
+@pytest.mark.parametrize(("language", "expected"), [(None, "Żółć"), ("french", "Łąka")])
+def test_localized_suffix_is_independent_of_source_encoding_language(tmp_path, language, expected):
+    path = _plugin(tmp_path, localized=True)
+    strings = tmp_path / "Strings"
+    strings.mkdir()
+    for suffix, text in (("English", "Żółć"), ("French", "Łąka")):
+        (strings / f"mod_{suffix}.strings").write_bytes(_strings({1: text.encode("cp1250")}, "strings"))
+    options = {"source_language": "polish"}
+    if language is not None:
+        options["language"] = language
+
+    parsed = SsePluginAdapter().parse(replace(_request(path), options=tuple(options.items())))
+
+    assert parsed.outcome is OperationOutcome.COMPLETED, parsed.diagnostics
+    assert [entry.original for entry in parsed.entries] == [expected]
+    metadata = dict(parsed.source_snapshot.metadata)
+    assert metadata["source_language"] == "polish"
+    assert metadata["localized_language"] == (language or "english")
 
 
 def test_legacy_parser_reports_missing_text_instead_of_returning_a_partial_plugin(tmp_path):

@@ -89,7 +89,9 @@ class TerminologySchemesController(QObject):
         self._confirm_import(selection)
 
     def _confirm_import(self, selection) -> None:
-        dialog = TerminologyImportPolicyDialog(selection, self._view)
+        target = self._profiles.state.selected_revision
+        options = {} if target is None else {"target": target}
+        dialog = TerminologyImportPolicyDialog(selection, self._view, **options)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         if selection.request.source_id == "paratranz":
@@ -104,11 +106,14 @@ class TerminologySchemesController(QObject):
             }:
                 QMessageBox.warning(self._view, "ParaTranz 绑定已变化", "请重新选择当前工程的 ParaTranz 导入。")
                 return
+        target_id = getattr(dialog, "target_profile_id", None)
+        options = {} if target_id is None else {"target_profile_id": target_id}
         self._imports.start_with_reader(
             selection.request,
-            default_name=selection.default_name,
+            default_name=getattr(dialog, "profile_name", selection.default_name),
             reader_factory=selection.reader_factory,
             policy=dialog.policy,
+            **options,
         )
 
     def _refresh_paratranz(self, *_args) -> None:

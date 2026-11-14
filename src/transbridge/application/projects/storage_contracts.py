@@ -32,6 +32,7 @@ class SourceInfo:
     fingerprint: str
     options: tuple[tuple[str, Any], ...] = ()
     format_fields: tuple[tuple[str, Any], ...] = ()
+    reference_path: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,10 +45,24 @@ class ExtractedSource:
     options: tuple[tuple[str, Any], ...] = ()
     format_fields: tuple[tuple[str, Any], ...] = ()
     format_records: tuple[tuple[str, str | None], ...] = ()
+    reference_path: str = ""
 
     @property
     def info(self) -> SourceInfo:
-        return SourceInfo(self.namespace, self.name, self.format_id, self.fingerprint, self.options, self.format_fields)
+        return SourceInfo(
+            self.namespace,
+            self.name,
+            self.format_id,
+            self.fingerprint,
+            self.options,
+            self.format_fields,
+            self.reference_path,
+        )
+
+
+def validate_source_reference_path(path: str) -> None:
+    if not isinstance(path, str) or "\x00" in path:
+        raise ValueError("source reference must be path text")
 
 
 @dataclass(frozen=True, slots=True)

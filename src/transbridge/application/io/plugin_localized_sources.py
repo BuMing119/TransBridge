@@ -44,9 +44,11 @@ def _localized_source_snapshots(
                 SourceDescriptor(uri, resource.name, len(resource.content)),
                 request.context,
                 format_id,
+                options=request.options,
                 cancellation=request.cancellation,
             ),
             resource.content,
+            legacy_linked=True,
         )
         if parsed.outcome is OperationOutcome.CANCELLED:
             raise LocalizedSnapshotCancelled("localized source capture cancelled")

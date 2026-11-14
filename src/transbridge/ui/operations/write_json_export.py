@@ -10,14 +10,24 @@ from transbridge.application.io.json_export import JSON_EXPORT_LABELS, JsonExpor
 from transbridge.application.io.operation_write import HydratedWriteDraft
 from transbridge.application.io.plugin_transfer import PluginTransferDraft
 from transbridge.application.io.publish import ConflictPolicy
+from transbridge.ui.text_encoding import TEXT_FORMATS, export_encoding_summary
 
 from .mappers import OperationPlanDraft
 from .plan_view import EditableControl, EditableFieldState
 from .write_batch import _HydratedWriteBatch, _write_batch_plan
+from .write_destinations import (
+    DESTINATION_MODE,
+    destination_mode_field,
+    plugin_destination_fields,
+    plugin_transfer_field,
+)
 from .write_plan import _write_plan
 
 FORMAT_NAMES = {
     FormatId.PLUGIN_SSE: "原插件格式",
+    FormatId.STRINGS: "Skyrim STRINGS (.strings)",
+    FormatId.DLSTRINGS: "Skyrim DLSTRINGS (.dlstrings)",
+    FormatId.ILSTRINGS: "Skyrim ILSTRINGS (.ilstrings)",
     FormatId.XML_EET: "ESP-ESM Translator XML (.xml)",
     FormatId.BINARY_EET: "ESP-ESM Translator EET (.eet)",
     FormatId.XML_XT: "xTranslator XML (.xml)",
@@ -60,9 +70,10 @@ def json_export_plan(draft, fields) -> OperationPlanDraft:
                 if batch and directory
                 else ""
                 if batch
-                else edits.get("target_path", source.target_path).strip()
+                else edits.get("target_path", source.target_path if isinstance(value, JsonExportDraft) else "").strip()
             ),
             conflict_policy=ConflictPolicy.EXPLICIT_OVERWRITE if overwrite else ConflictPolicy.FAIL,
+            options=tuple((key, val) for key, val in source.options if key != DESTINATION_MODE),
         )
         for source in sources
     )
@@ -75,6 +86,7 @@ def json_export_plan(draft, fields) -> OperationPlanDraft:
     can_sst = all(source.source_snapshot.format_id is FormatId.PLUGIN_SSE for source in converted)
     if can_sst:
         options.append(("sst.ssu9", "xTranslator SST SSU9（实验性）"))
+    text_source = next((item for item in converted if item.format_id in TEXT_FORMATS), None)
     return OperationPlanDraft(
         request=request,
         target="；".join(filter(None, targets)) or "请选择输出位置",
@@ -84,12 +96,20 @@ def json_export_plan(draft, fields) -> OperationPlanDraft:
         ).hexdigest(),
         scope_summary=f"{len(converted)} 个来源文件",
         mode_summary=f"导出 {FORMAT_NAMES[output]}",
+        text_encoding_summary="" if text_source is None else export_encoding_summary(text_source),
         conflict_summary="已确认覆盖" if overwrite else "同名文件需要确认",
         backup_summary="覆盖前创建备份",
         estimated_impact=(("files", len(converted)),),
         editable_fields=(
             EditableFieldState(
                 "output_format", "输出格式", output.value, control=EditableControl.CHOICE, options=tuple(options)
+            ),
+            *(
+                (destination_mode_field(),)
+                if can_sst and batch
+                else (plugin_transfer_field(), *plugin_destination_fields())
+                if can_sst
+                else ()
             ),
             EditableFieldState(
                 "output_directory" if batch else "target_path",

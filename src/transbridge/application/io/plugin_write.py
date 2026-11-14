@@ -9,6 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from transbridge.application.contracts import Diagnostic, OperationCounts, OperationOutcome, OperationResult
+from transbridge.config.text_encoding import DEFAULT_SOURCE_LANGUAGE
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.parser.plugin_parser import PluginParser
@@ -33,9 +34,10 @@ from .plugin_localized_sources import (
 from .plugin_publication_source import prepared_plugin_source
 from .stage_policy import DEFAULT_STAGE_POLICY, StageOperation, StagePolicyPort
 from .strings_adapter import LocalizedStringsAdapter
+from .text_source_options import snapshot_read_options
 
 
-def write_plugin(request: WriteRequest) -> OperationResult[tuple[str, ...]]:
+def write_plugin(request: WriteRequest, *, copy_source: bool = False) -> OperationResult[tuple[str, ...]]:
     from .legacy_adapters import (
         _cancelled,
         _copy_failure,
@@ -67,7 +69,7 @@ def write_plugin(request: WriteRequest) -> OperationResult[tuple[str, ...]]:
         options.setdefault("language", dict(snapshot.metadata).get("localized_language", "english"))
         request = replace(request, options=tuple(options.items()))
         source_path = _local_path(snapshot.source.uri)
-        prepared = prepared_plugin_source(snapshot, options, for_write=True)
+        prepared = prepared_plugin_source(snapshot, for_write=True)
         parser, source_entries = prepared.parser, prepared.entries
         if parser is None:
             raise ValueError("plugin source parser was retired before rendering")
@@ -128,11 +130,18 @@ def write_plugin(request: WriteRequest) -> OperationResult[tuple[str, ...]]:
             plugin,
             strings_lookup=parser.get_strings_lookup(),
             language=str(options.get("language", "english")),
+            output_encoding=str(options.get("output_encoding", "utf-8")),
         )
-        writer.apply_collection(TranslationEntryCollection(projected_entries))
         if _cancelled(request.cancellation):
             return OperationResult.cancelled(run_id=request.context.run_id)
         target = _local_path(request.target.uri)
+        if copy_source:
+            # The publisher has created the private stage directory. Every
+            # scheme starts with the same captured bytes used by the parser.
+            target.write_bytes(snapshot.content)
+        writer.apply_collection(TranslationEntryCollection(projected_entries))
+        if _cancelled(request.cancellation):
+            return OperationResult.cancelled(run_id=request.context.run_id)
         target.parent.mkdir(parents=True, exist_ok=True)
         if localized_sources:
             string_artifacts: list[str] = []
@@ -161,7 +170,7 @@ def write_plugin(request: WriteRequest) -> OperationResult[tuple[str, ...]]:
             if plugin_saved:
                 if writer._inline_count:
                     plugin.save(target)
-                else:
+                elif not copy_source:
                     # External Strings changed; the plugin's records and IDs did
                     # not. Preserve the confirmed bytes instead of reserializing
                     # and recompressing every record just to change its filename.
@@ -176,11 +185,14 @@ def write_plugin(request: WriteRequest) -> OperationResult[tuple[str, ...]]:
                 artifact_refs=artifacts,
                 run_id=request.context.run_id,
             )
-        result = writer.write(target)
-        artifacts = tuple(
-            str(path)
-            for path in ([target] if result.get("esp_saved") else []) + list(result.get("strings_written", ()))
-        )
+        if copy_source and not writer._inline_count:
+            artifacts = (str(target),)
+        else:
+            result = writer.write(target)
+            artifacts = tuple(
+                str(path)
+                for path in ([target] if result.get("esp_saved") else []) + list(result.get("strings_written", ()))
+            )
         if not artifacts:
             raise ValueError("plugin writer produced no artifact")
     except (OSError, TypeError, ValueError) as exc:
@@ -271,7 +283,11 @@ def _localized_write_requests(
 
     mapped_ids: set[tuple[FormatId, int]] = set()
     localized_requests: list[tuple[LocalizedStringsAdapter, WriteRequest]] = []
-    language = str(dict(request.options).get("language", "english"))
+    language = str(
+        dict(request.options).get(
+            "language", dict(request.source_snapshot.metadata).get("localized_language", "english")
+        )
+    )
     for snapshot, base_entries in sources:
         adapter = LocalizedStringsAdapter(snapshot.format_id)
         mapped_entries: list[TranslationEntry] = []
@@ -316,11 +332,12 @@ def _localized_write_requests(
     return tuple(localized_requests)
 
 
-def _parser_from_snapshot(snapshot: SourceSnapshot, options: dict):
+def _parser_from_snapshot(snapshot: SourceSnapshot):
     """The parser sees only materialized snapshot bytes, never mutable source paths."""
     if snapshot.content is None:
         raise ValueError("plugin writing requires captured source bytes")
-    language = str(dict(snapshot.metadata).get("localized_language", options.get("language", "english")))
+    read_options = snapshot_read_options(snapshot)
+    language = str(dict(snapshot.metadata).get("localized_language", DEFAULT_SOURCE_LANGUAGE))
     with TemporaryDirectory(prefix="transbridge-plugin-snapshot-") as directory:
         source = Path(directory) / Path(snapshot.source.uri).name
         source.write_bytes(snapshot.content)
@@ -340,6 +357,8 @@ def _parser_from_snapshot(snapshot: SourceSnapshot, options: dict):
             skip_empty=False,
             language=language,
             discover_sibling_strings=bool(sources),
+            raise_on_error=True,
+            **read_options,
         )
         return parser, entries
 
@@ -365,7 +384,7 @@ def localized_write_requests(request: WriteRequest):
     ):
         # The bundle validator receives the original hydrated DTOs. Only when
         # an ID is shared do we need the library's source field type again.
-        source_entries = prepared_plugin_source(request.source_snapshot, dict(request.options)).entries
+        source_entries = prepared_plugin_source(request.source_snapshot).entries
         request = _source_typed_request(
             request, {(entry.key, entry.identity.original): entry for entry in source_entries}
         )

@@ -12,6 +12,7 @@ from threading import RLock
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, ErrorCategory
 from transbridge.application.projects.models import LifecycleActivation, LifecycleProjectUpdate, LifecycleSave
 from transbridge.application.projects.provisioning_models import ProjectProvisioningCommit
+from transbridge.application.projects.save_changes import project_needs_encoding_defaults
 from transbridge.persistence.terminology.project_selection import decode_selection
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantId
 from transbridge.persistence.v2.models import PathBoundaryError, ProjectDto
@@ -150,8 +151,10 @@ class ProjectLifecycleStore:
         with self._connection(save.project) as connection:
             _verify_project(connection, save.project, save.expected_persisted_project_revision)
             snapshot = save.variant
-            if save.project.envelope.revision != save.expected_persisted_project_revision:
+            project_changed = save.project.envelope.revision != save.expected_persisted_project_revision
+            if project_changed or save.source_additions:
                 save_sources(connection, save)
+            if project_changed or project_needs_encoding_defaults(save.project):
                 _write_project(connection, save.project)
             if snapshot is not None and snapshot.revision != save.expected_persisted_revision:
                 changes = snapshot.entries if save.entry_changes is None else save.entry_changes

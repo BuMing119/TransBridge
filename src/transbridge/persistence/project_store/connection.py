@@ -12,6 +12,7 @@ from transbridge.filesystem_paths import native_path, sqlite_uri
 from transbridge.persistence.v2.filesystem import OsPersistenceFilesystem
 from transbridge.persistence.v2.session_write_lease import persistence_write_lease
 
+from .alignment_cache_schema import SCHEMA as ALIGNMENT_CACHE_SCHEMA
 from .format import (
     PROJECT_APPLICATION_ID,
     PROJECT_FILENAME,
@@ -22,6 +23,7 @@ from .format import (
     UnsupportedProjectFormat,
 )
 from .schema import SCHEMA
+from .source_references import SCHEMA as SOURCE_REFERENCE_SCHEMA
 
 
 @contextmanager
@@ -86,7 +88,12 @@ def _validate_format(connection: sqlite3.Connection, *, check_schema: bool) -> N
         raise UnsupportedProjectFormat("project database requires DELETE journal mode")
     if check_schema:
         actual = {row[0] for row in connection.execute("SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL")}
-        if actual != set(SCHEMA):
+        supported = set(SCHEMA)
+        if actual.intersection(ALIGNMENT_CACHE_SCHEMA):
+            supported.update(ALIGNMENT_CACHE_SCHEMA)
+        if SOURCE_REFERENCE_SCHEMA in actual:
+            supported.add(SOURCE_REFERENCE_SCHEMA)
+        if actual != supported:
             raise UnsupportedProjectFormat("database schema differs from the supported project schema")
     try:
         project = connection.execute("SELECT format, deleted FROM project WHERE singleton = 1").fetchone()

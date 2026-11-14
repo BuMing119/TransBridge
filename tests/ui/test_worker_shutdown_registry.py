@@ -8,10 +8,11 @@ import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from PyQt6.QtCore import QCoreApplication, QEvent, Qt, QTimer
-from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox, QWidget
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, QTimer, pyqtSignal
+from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox, QStackedWidget, QWidget
 import pytest
 
+from transbridge.ui.paratranz import project_panel
 from transbridge.ui.shell import window_lifecycle
 from transbridge.ui.shell.close_input_guard import CloseInputGuard
 from transbridge.ui.shell.window_lifecycle import WindowLifecycle
@@ -71,6 +72,18 @@ class CloseHost(QWidget):
             event.accept()
 
 
+class _CatalogContext(QObject):
+    config_changed = pyqtSignal(object)
+    project_list_changed = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        self.config = SimpleNamespace(token="fixture-only", user_id=7)
+        self.active_project_id = None
+        self.current_project = None
+        self.mine_project_ids = set()
+
+
 @pytest.fixture
 def host(monkeypatch):
     _wait(lambda: not get_api_worker_registry().busy)
@@ -125,6 +138,96 @@ def test_close_waits_for_generic_and_child_workers_before_final_save(host, owner
     finally:
         release.set()
         worker.wait(2000)
+
+
+def test_hidden_catalog_defers_pagination_until_shown(host, monkeypatch):
+    requested = []
+
+    class Projects:
+        def __init__(self, **_kwargs):
+            pass
+
+        def list_projects(self, *, page, page_size, uid, cancellation):
+            requested.append((page, uid))
+            return [{"id": index, "name": str(index)} for index in range(page_size if page == 1 else 1)]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(project_panel, "ParatranzProjectAPI", Projects)
+    context = _CatalogContext()
+    pages = QStackedWidget(host)
+    pages.addWidget(QWidget())
+    panel = project_panel.ProjectListPanel(context)
+    pages.addWidget(panel)
+    pages.show()
+    context.config_changed.emit(context.config)
+    context.project_list_changed.emit()
+    panel.switch_to_mine()
+
+    assert not get_api_worker_registry().busy
+    assert requested == []
+
+    pages.setCurrentWidget(panel)
+    _wait(lambda: panel._list.count() == 201 and not get_api_worker_registry().busy)
+    assert requested == [(1, 7), (2, 7)]
+    assert context.mine_project_ids == set(range(200))
+
+
+@pytest.mark.parametrize("cancel_exit", [False, True])
+def test_close_cancels_catalog_after_current_page(host, monkeypatch, cancel_exit):
+    requested = []
+    entered, release, client_closed = (threading.Event() for _ in range(3))
+    tokens = []
+
+    class Projects:
+        def __init__(self, **_kwargs):
+            pass
+
+        def list_projects(self, *, page, page_size, uid, cancellation=None):
+            requested.append(page)
+            tokens.append(cancellation)
+            if len(requested) == 1:
+                entered.set()
+                assert release.wait(5)
+                return [{"id": index, "name": str(index)} for index in range(page_size)]
+            return [{"id": 42, "name": "Refreshed project"}]
+
+        def close(self):
+            client_closed.set()
+
+    monkeypatch.setattr(project_panel, "ParatranzProjectAPI", Projects)
+    panel = project_panel.ProjectListPanel(_CatalogContext(), host)
+    panel.show()
+    try:
+        assert entered.wait(2)
+        assert not host.close()
+        assert host.order == []
+        assert get_api_worker_registry().busy
+        assert tokens[0].is_cancelled
+        if cancel_exit:
+            host.lifecycle.cancel_close()
+        release.set()
+
+        if cancel_exit:
+            _wait(lambda: not get_api_worker_registry().busy)
+            assert not host.close_pending and host.isEnabled()
+            assert "加载已取消" in panel._status.text()
+            assert panel._list.count() == 0
+            assert host.order == []
+        else:
+            _wait(lambda: host.close_ready)
+            assert host.order == ["save", "disposed", "closed"]
+        assert client_closed.is_set()
+        assert requested == [1]
+        if cancel_exit:
+            panel.load_projects()
+            _wait(lambda: panel._list.count() == 1 and not get_api_worker_registry().busy)
+            assert panel._list.item(0).text() == "Refreshed project"
+            assert requested == [1, 1]
+    finally:
+        release.set()
+        _wait(lambda: not get_api_worker_registry().busy)
 
 
 def test_close_drains_follow_up_worker_started_by_result_handler(host):

@@ -165,7 +165,10 @@ def test_selected_esp_uses_background_preview_and_preserves_project(transfer_cas
         case.dialog._select_plugin("")
         assert not case.dialog._checks_scroll.isVisible()
         assert case.dialog._preflight is None
-        assert dict(case.dialog.edited_values())["target_path"] == ""
+        fields = dict(case.dialog.edited_values())
+        assert fields["destination_mode"] == "directory"
+        assert fields["output_directory"] == ""
+        assert "target_path" not in fields
         assert not case.queued
         assert not case.dialog._details.isVisible()
         assert not case.dialog._progress.isVisible()

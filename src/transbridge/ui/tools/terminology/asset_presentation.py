@@ -5,12 +5,23 @@ from dataclasses import replace
 
 from transbridge.application.terminology.workloads import TerminologyWorkloadType
 
+from .build_projection import build_completion_message
+from .source_context_loader import SourceContextLoader
 from .view_models import business_diagnostic
 
 
 class WorkbenchAssetPresentation:
     def __init__(self, window):
         self.window = window
+        self._source_loader = None
+        browsing = window.presenter.services.browsing
+        if browsing is not None:
+            self._source_loader = SourceContextLoader(
+                window.terms_view.source_browser, browsing, window.presenter.context
+            )
+            window.closed.connect(self._source_loader.close)
+            window.context_invalidated.connect(self._source_loader.close)
+        window._browsing.bind_views(effective=window.effective_view, draft=window.draft_view)
 
     def apply_refresh(self, refresh):
         for workload, result in refresh.completions:
@@ -33,18 +44,26 @@ class WorkbenchAssetPresentation:
         context = view.presenter.context
         if context.project_id is None or context.variant_id is None:
             return
+        if view.build_view.extraction_options.restore_from_build(assets.build):
+            view.run_preflight(repair=False, refresh_assets=False)
         view.bind_page("history", (context.project_id, context.variant_id))
         if assets.build_ref is not None:
-            view.bind_page("conflicts", assets.build_ref)
+            view._conflict_review.bind_assets(assets)
         view._browsing.refresh()
         if assets.browse_context is not None:
             view.terms_view.source_browser.render_context(assets.browse_context)
+        elif self._source_loader is not None:
+            self._source_loader.invalidate()
         version_id = "" if assets.version_ref is None else assets.version_ref.version_id
         view.versions_view.set_context(version_id)
         view.workspace.set_terminology_version(version_id)
         view._workflow.render(assets)
+        if assets.draft is None:
+            view.build_view.result_group.hide()
+            view.build_view.metrics.hide()
         if assets.review_counts is not None:
             count = assets.review_counts
+            view.conflicts_view.progress.setText(f"术语冲突 · {count.unresolved_conflicts} 项待处理")
             view.build_view.attention_metric.setText(f"{count.total} 项")
             view.build_view.decisions.setText(
                 f"{count.review_required_terms} 条术语待复核，{count.unresolved_conflicts} 组异译待决定。"
@@ -67,11 +86,7 @@ class WorkbenchAssetPresentation:
             return
         if workload is TerminologyWorkloadType.BUILD:
             view._workflow.build_completed()
-            view.operation_notice.show_message(
-                "来源整理未完整完成，请查看来源详情并重新整理。"
-                if summary is None or summary.is_partial or summary.is_stale
-                else "来源整理完成。请在草稿中检查术语，完成待办后检查影响并发布。"
-            )
+            view.operation_notice.show_message(build_completion_message(summary))
         if workload is TerminologyWorkloadType.PUBLISH:
             if view._profile_controller is not None:
                 view._profile_controller.refresh()

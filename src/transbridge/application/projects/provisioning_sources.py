@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from transbridge.application.contracts import DomainError, ErrorCategory, RequestContext
 from transbridge.application.io import FormatId, Stage
 from transbridge.application.io.identity import SourceNamespace
+from transbridge.config.text_encoding import TextEncodings
 from transbridge.persistence.v2.variant import SourceBaseline
 
 from .provisioning_models import (
@@ -17,6 +18,7 @@ from .provisioning_models import (
     ProjectProvisioningRequest,
     ProjectSourcePreparationPort,
 )
+from .source_encoding import with_source_read_options
 from .source_registry import (
     SourceRegistrySnapshot,
     SourceRelation,
@@ -66,6 +68,7 @@ def prepare_project_sources(
     sources: ProjectSourcePreparationPort,
     request: ProjectProvisioningRequest,
     context: RequestContext,
+    encodings: TextEncodings,
 ) -> PreparedProjectSources:
     candidates = (
         *((source, "primary") for source in request.sources),
@@ -75,7 +78,12 @@ def prepare_project_sources(
     for source, role in candidates:
         try:
             registrations.append(
-                sources.prepare_source(source, context, role=role, common_options=request.parse_options)
+                sources.prepare_source(
+                    with_source_read_options(source, encodings),
+                    context,
+                    role=role,
+                    common_options=request.parse_options,
+                )
             )
         except DomainError as exc:
             raise DomainError(

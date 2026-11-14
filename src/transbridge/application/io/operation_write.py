@@ -24,6 +24,7 @@ from .catalog import FormatCatalog, default_format_catalog
 from .contracts import CapabilityLevel, FormatId, SourceDescriptor, SourceSnapshot, WriteRequest
 from .mutation import EntrySnapshot
 from .plugin_bsa_output import conflicting_loose_outputs
+from .plugin_destination import PLUGIN_DESTINATION_MODE, validate_plugin_destination
 from .plugin_localized_sources import localized_physical_inputs
 from .publish import (
     BackupPolicy,
@@ -239,6 +240,13 @@ class HydratedWritePreflightService:
         fingerprints = tuple(
             (self._filesystem.canonicalize(path), self._filesystem.fingerprint(path)) for path in paths
         )
+        mode = dict(draft.options).get(PLUGIN_DESTINATION_MODE)
+        if draft.format_id is FormatId.PLUGIN_SSE and mode is not None:
+            diagnostic = validate_plugin_destination(
+                draft.source_snapshot, mode, draft.target_path, fingerprints, self._filesystem
+            )
+            if diagnostic is not None:
+                checks.append(WritePreflightCheck(diagnostic.code, False, diagnostic.message))
         initial = fingerprints[0][1]
         any_existing = any(value.exists for _path, value in fingerprints)
         overwrite_ready = not any_existing or draft.conflict_policy is ConflictPolicy.EXPLICIT_OVERWRITE

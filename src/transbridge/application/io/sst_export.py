@@ -230,7 +230,7 @@ def build_sst_from_plugin(request: WriteRequest) -> SstDocument:
     masters = _masters(snapshot.content, Path(snapshot.source.display_name or snapshot.source.uri).name)
     # Publication retires parsed plugins between render and fidelity validation.
     # Request a fresh source when this is a repeated build in the same scope.
-    prepared = prepared_plugin_source(snapshot, dict(request.options), for_write=True)
+    prepared = prepared_plugin_source(snapshot, for_write=True)
     if prepared.parser is None or prepared.parser.get_plugin() is None:
         raise SstExportError("SST_EXPORT_SOURCE_REQUIRED", "插件快照无法提供完整解析结果。")
     plugin = prepared.parser.get_plugin()

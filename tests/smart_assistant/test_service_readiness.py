@@ -32,6 +32,16 @@ def test_configuration_change_is_read_again_without_relying_on_model_name(monkey
     assert read_service_availability().ready
 
 
+def test_anthropic_readiness_accepts_default_address_and_rejects_stale_openai_address(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+    config = LLMConfig(provider="anthropic", base_url="", model="claude", api_key="credential")
+    assert service_availability(config).ready
+    config.base_url = "https://api.openai.com/v1"
+    status = service_availability(config)
+    assert not status.ready and status.missing_fields == ("base_url",)
+    assert "指向 OpenAI" in status.message and "credential" not in status.message
+
+
 def test_configuration_failure_has_recoverable_public_message(monkeypatch):
     def fail(cls):
         raise OSError("storage unavailable")

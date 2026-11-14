@@ -228,7 +228,8 @@ def _register_writer_tools():
                     "actual artifacts and diagnostics. Independent batch members may complete when others fail. "
                     "Wait for the task terminal result before dependent actions. "
                     "Requires admin confirmation and an authorized output root. "
-                    "For project plugin sources provide input_plugin or input_plugins for this operation. "
+                    "Project plugins use the saved source path when it is authorized and matches the project. "
+                    "Provide input_plugin or input_plugins to select a matching plugin explicitly. "
                     "Specify path or output_dir for the output."
                 ),
                 "execute": _tool_write_back,

@@ -1,4 +1,5 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
+from ..operations.errors import OperationCompositionError
 from ..workers import ApiWorker
 
 
@@ -58,7 +59,7 @@ class OperationCoordinator:
         if self._supports(facade, "write"):
             values = self._write_projection_values()
             if values is not None:
-                return facade.begin_write(self._host.context, **values)
+                return self._open_write(facade, values)
             return None
         self._host.write_card.write()
 
@@ -69,16 +70,27 @@ class OperationCoordinator:
         if self._supports(facade, "write", batch=True):
             values = self._write_projection_values()
             if values is not None:
-                return facade.begin_write(self._host.context, batch=True, **values)
+                return self._open_write(facade, values, batch=True)
             return None
         self._host.write_card.batch_write()
+
+    def _open_write(self, facade, values, *, batch=False):
+        try:
+            return facade.begin_write(self._host.context, batch=batch, **values)
+        except OperationCompositionError as exc:
+            self._host.show_message(str(exc), error=True)
+            return None
 
     def _write_projection_values(self):
         controller = getattr(self._host.workbench, "terminology_profile_controller", None)
         if controller is None:
             return {}
         try:
-            return {"entry_projection": controller.capture_write_projection()}
+            values = {"entry_projection": controller.capture_write_projection()}
+            capture = getattr(controller, "capture_export_schemes", None)
+            if capture is not None:
+                values["export_schemes"] = capture()
+            return values
         except RuntimeError as exc:
             self._host.show_message(str(exc))
             return None

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any, Protocol
 
 from transbridge.application.contracts import JobRef, OperationOutcome, RequestContext
@@ -18,15 +19,15 @@ from transbridge.application.terminology.decisions import DecisionOperation
 from transbridge.application.terminology.input_capture import BuildInputSnapshot, TerminologyBuildInputPort
 from transbridge.application.terminology.models import DraftRef, TerminologyDraft
 from transbridge.application.terminology.publication_review import TerminologyPublishPreview
+from transbridge.application.terminology.query_control import QueryCancelled
 
+from .build_projection import project_build
 from .preflight_presentation import preflight_failed, preflight_ready
 from .task_adapter import TerminologyTaskAdapter, TerminologyTaskViewState
 from .term_editing import TermEditingCommands
 from .view_models import (
-    TechnicalDetail,
     TerminologyNotice,
     TerminologyPreflightViewState,
-    TerminologySummaryViewState,
     business_diagnostic,
     phase_label,
 )
@@ -55,11 +56,19 @@ class TerminologyCommandPort(Protocol):
 
     def discard_draft(self, expected_ref: DraftRef, context: RequestContext) -> None: ...
 
+    def clear_extraction_cache(self, context: RequestContext) -> int: ...
+
     def review_counts(self, context: RequestContext) -> TerminologyReviewCounts: ...
 
-    def conflict_details(self, conflict, context: RequestContext) -> TerminologyConflictDetails: ...
+    def conflict_details(
+        self, conflict, context: RequestContext, *, cancellation=None
+    ) -> TerminologyConflictDetails: ...
 
     def resolve_review(self, details: TerminologyConflictDetails, operation, context: RequestContext, **values): ...
+
+    def undo_review(
+        self, details_before: TerminologyConflictDetails, expected_ref: DraftRef, context: RequestContext
+    ): ...
 
     def task_failure(self, run_id: str, context: RequestContext) -> str | None: ...
 
@@ -136,6 +145,8 @@ class TerminologyPresenter:
         self.context = context
         self._snapshot: BuildInputSnapshot | None = None
         self._build_config: dict[str, Any] = {}
+        self._build_config_revision = 0
+        self._build_config_lock = RLock()
         self._task_adapter: TerminologyTaskAdapter | None = None
         self._closed = False
         self.term_editing = TermEditingCommands(self._short_command, context, lambda: deepcopy(self._build_config))
@@ -148,33 +159,53 @@ class TerminologyPresenter:
     def closed(self) -> bool:
         return self._closed
 
-    def preflight(self, *, config: dict[str, Any] | None = None) -> TerminologyPreflightViewState:
-        state, _snapshot = self._capture_preflight(config=config)
+    def preflight(
+        self, *, config: dict[str, Any] | None = None, config_revision: int | None = None
+    ) -> TerminologyPreflightViewState:
+        state, _snapshot = self._capture_preflight(config=config, config_revision=config_revision)
         return state
+
+    def configure_build(self, config: dict[str, Any]) -> int:
+        """Record UI choices before scheduling I/O; older captures cannot restore them."""
+        self._require_open()
+        with self._build_config_lock:
+            self._build_config.update(deepcopy(config))
+            self._build_config_revision += 1
+            self._snapshot = None
+            return self._build_config_revision
 
     def set_source_scope(self, source_ids) -> None:
         """Keep the explicitly repaired operation scope through build and publication."""
-        self._build_config["source_ids"] = list(source_ids)
+        self.configure_build({"source_ids": list(source_ids)})
 
     def _capture_preflight(
-        self, *, config: dict[str, Any] | None = None
+        self, *, config: dict[str, Any] | None = None, config_revision: int | None = None
     ) -> tuple[TerminologyPreflightViewState, BuildInputSnapshot | None]:
         self._require_open()
         if config is not None:
-            self._build_config = deepcopy(config)
-        self._snapshot = None
+            config_revision = self.configure_build(config)
+        with self._build_config_lock:
+            revision = self._build_config_revision if config_revision is None else config_revision
+            if revision != self._build_config_revision:
+                raise QueryCancelled("术语提取设置已变化，已丢弃旧检查。")
+            captured_config = deepcopy(self._build_config)
+            self._snapshot = None
         if self.services.build_inputs is None:
             return preflight_failed(self.context, message="术语构建服务尚未接入当前运行环境。"), None
-        result = self.services.build_inputs.capture_build_input(self.context, config=deepcopy(self._build_config))
+        result = self.services.build_inputs.capture_build_input(self.context, config=captured_config)
+        with self._build_config_lock:
+            if revision != self._build_config_revision or self._closed:
+                raise QueryCancelled("术语提取设置已变化，已丢弃旧检查。")
+            if result.outcome is OperationOutcome.COMPLETED:
+                self._snapshot = result.value
         if result.outcome is not OperationOutcome.COMPLETED or result.value is None:
             diagnostic = result.diagnostics[0] if result.diagnostics else None
             return preflight_failed(self.context, diagnostic), None
         snapshot = result.value
-        self._snapshot = snapshot
         return preflight_ready(snapshot, self.context), snapshot
 
-    def start_build(self) -> JobRef:
-        state, snapshot = self._capture_preflight()
+    def start_build(self, *, config: dict[str, Any] | None = None, config_revision: int | None = None) -> JobRef:
+        state, snapshot = self._capture_preflight(config=config, config_revision=config_revision)
         if not state.ready:
             raise TerminologyPreflightError(state)
         assert snapshot is not None
@@ -200,8 +231,16 @@ class TerminologyPresenter:
     def discard_draft(self, expected_ref) -> None:
         self._short_command("discard_draft", expected_ref, self.context)
 
-    def conflict_details(self, conflict):
-        return self._short_command("conflict_details", conflict, self.context)
+    def clear_extraction_cache(self) -> int:
+        return self._short_command("clear_extraction_cache", self.context)
+
+    def conflict_details(self, conflict, *, cancellation=None):
+        if cancellation is None:
+            return self._short_command("conflict_details", conflict, self.context)
+        return self._short_command("conflict_details", conflict, self.context, cancellation=cancellation)
+
+    def undo_review(self, details, expected_ref):
+        return self._short_command("undo_review", details, expected_ref, self.context)
 
     def resolve_review(self, details, operation, *, translation=None, plugin_id=None):
         return self._short_command(
@@ -290,41 +329,7 @@ class TerminologyPresenter:
     def cancel_task(self, ref: JobRef) -> bool:
         return self._task_adapter is not None and self._task_adapter.cancel(ref)
 
-    @staticmethod
-    def project_build(result: BuildResult) -> TerminologySummaryViewState:
-        summary = result.summary
-        partial = result.completeness.value == "partial"
-        stale = result.freshness.value == "stale"
-        decisions = (
-            f"发现 {summary.conflict_count} 组同名异译需要决定。"
-            if summary.conflict_count
-            else "没有发现需要决定的同名异译。"
-        )
-        if stale:
-            impact = "工程状态已变化，本次结果只能查看，不能发布。"
-            next_action = "按当前工程状态重新构建。"
-        elif partial:
-            impact = "部分来源未完成；已有正式版本和历史保持不变。"
-            next_action = "检查未完成来源，或先导出质量报告。"
-        else:
-            impact = "发布后，后续翻译将优先采用确认后的术语。"
-            next_action = "先检查异译，再进行人工调整。"
-        return TerminologySummaryViewState(
-            "本次构建结果",
-            f"从 {summary.source_count} 个来源整理出 {summary.candidate_count} 个术语候选。",
-            decisions,
-            impact,
-            next_action,
-            partial,
-            stale,
-            (
-                TechnicalDetail("构建引用", result.ref.build_key),
-                TechnicalDetail("内容摘要", result.ref.content_digest),
-                TechnicalDetail("诊断代码", "\n".join(result.diagnostics) or "无"),
-            ),
-            summary.candidate_count,
-            summary.conflict_count,
-        )
+    project_build = staticmethod(project_build)
 
     @staticmethod
     def project_task(state: TerminologyTaskViewState) -> tuple[str, str]:

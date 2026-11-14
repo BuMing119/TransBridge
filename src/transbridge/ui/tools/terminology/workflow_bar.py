@@ -26,7 +26,7 @@ class TerminologyWorkflowBar(QWidget):
         self.edit_button = QPushButton("继续编辑", self)
         self.edit_button.setProperty("tbTerminologyPrimary", True)
         self.edit_button.clicked.connect(self.edit_requested)
-        self.publish_button = QPushButton("检查影响并发布…", self)
+        self.publish_button = QPushButton("应用到项目术语…", self)
         self.publish_button.setProperty("tbTerminologyPrimary", True)
         self.publish_button.clicked.connect(self.publish_requested)
         row.addWidget(self.edit_button)
@@ -46,10 +46,10 @@ class TerminologyWorkflowBar(QWidget):
 
     def render(self, state):
         self._state = state
-        self.edit_button.setVisible(state.has_version and not state.has_draft)
+        self.edit_button.hide()
         self.publish_button.setVisible(state.can_publish)
-        self.build_button.setVisible(state.has_draft and state.next_action == "build")
-        self.publish_button.setToolTip("先检查逐条变化和发布条件，再确认发布。")
+        self.build_button.hide()
+        self.publish_button.setToolTip("检查本次变化并确认应用，之后用于项目翻译。")
         self.set_pending(self._pending)
 
     def set_pending(self, pending):

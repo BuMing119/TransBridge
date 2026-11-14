@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from transbridge.persistence.v2.models import ProjectDto
+
 from .source_registry import SourceRelationKind, is_plugin_source, legacy_source_role
 
 
@@ -126,4 +128,10 @@ def authoritative_baseline_sources(
     return tuple(source for source in sources if all(source is not pair.translation for pair in pairs))
 
 
-__all__ = ["authoritative_baseline_sources", "folded_plugin_pairs", "source_content_identity"]
+def registered_source_ids(project: ProjectDto) -> dict[str | None, str]:
+    data = project.envelope.data
+    sources = authoritative_baseline_sources(tuple(data["sources"]), tuple(data.get("source_relations", ())))
+    return {source_content_identity(source): source["source_id"] for source in sources}
+
+
+__all__ = ["authoritative_baseline_sources", "folded_plugin_pairs", "registered_source_ids", "source_content_identity"]

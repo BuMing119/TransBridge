@@ -40,6 +40,7 @@ from .paratranz_page import ParaTranzSettingsPage
 from .sections import SECTION_LABELS, SettingsSection
 from .task_results_page import TaskResultsSettingsPage
 from .terminology_page import TerminologySettingsPage
+from .text_encoding_page import TextEncodingSettingsPage
 
 
 def build_settings_center(dialog: object, initial_section: SettingsSection) -> None:
@@ -157,6 +158,9 @@ def build_settings_center(dialog: object, initial_section: SettingsSection) -> N
         else unavailable_page("此设置入口尚未接入结果处理配置。", dialog)
     )
     _insert_page(dialog, SettingsSection.TASK_RESULTS, results_page)
+    encoding_page = TextEncodingSettingsPage(dialog._text_encoding_defaults, dialog)
+    _insert_page(dialog, SettingsSection.TEXT_ENCODING, encoding_page)
+    encoding_page.changed.connect(dialog._sync_controls)
 
     body.addWidget(dialog._section_list)
     body.addWidget(dialog._stack, 1)
@@ -191,6 +195,7 @@ def build_settings_center(dialog: object, initial_section: SettingsSection) -> N
     root.addWidget(dialog._buttons)
     dialog.select_section(initial_section)
     dialog._section_list.currentRowChanged.connect(lambda _row: _sync_default_action(dialog))
+    dialog._section_list.currentRowChanged.connect(lambda _row: dialog._sync_controls())
     _sync_default_action(dialog)
     dialog.setTabOrder(dialog._default_button, dialog._apply_button)
     dialog.setTabOrder(dialog._apply_button, dialog._cancel_button)

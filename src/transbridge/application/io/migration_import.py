@@ -16,6 +16,7 @@ import logging
 from pathlib import Path
 
 from transbridge.application.contracts import OperationOutcome, RequestContext
+from transbridge.config.text_encoding import DEFAULT_SOURCE_LANGUAGE, DEFAULT_TEXT_ENCODING, XTRANSLATOR_READ_POLICY
 from transbridge.converter.eet_matching import known_editor_id
 from transbridge.converter.sst_matching import target_locator
 from transbridge.converter.translation_entry import TranslationEntry
@@ -79,6 +80,9 @@ def prepare_migration_import(
     format_hint: FormatId | str | None = None,
     context: RequestContext | None = None,
     require_original_match: bool = False,
+    input_encoding: str = DEFAULT_TEXT_ENCODING,
+    source_language: str | None = None,
+    text_read_policy: str = XTRANSLATOR_READ_POLICY,
 ) -> MigrationImportDraft:
     """Parse and map one source without changing ``target``.
 
@@ -115,7 +119,12 @@ def prepare_migration_import(
 
     skipped_conflicts = 0
     if format_id is FormatId.PLUGIN_SSE:
-        imported, skipped_conflicts = _parse_plugin(source, context)
+        read_options = (
+            ("input_encoding", input_encoding),
+            ("source_language", DEFAULT_SOURCE_LANGUAGE if source_language is None else source_language),
+            ("text_read_policy", text_read_policy),
+        )
+        imported, skipped_conflicts = _parse_plugin(source, context, read_options)
     elif format_id in _JSON_FORMATS:
         imported, skipped_conflicts = _parse_json(path, content, format_id, source, context)
     elif format_id is FormatId.BINARY_EET:
@@ -149,12 +158,19 @@ def prepare_migration_import(
     return MigrationImportDraft(str(path), format_id, tuple(states.items()), unmatched, skipped_conflicts)
 
 
-def _parse_plugin(source: SourceDescriptor, context: RequestContext | None) -> tuple[tuple[_ImportedEntry, ...], int]:
+def _parse_plugin(
+    source: SourceDescriptor, context: RequestContext | None, read_options: tuple[tuple[str, str], ...]
+) -> tuple[tuple[_ImportedEntry, ...], int]:
     from .legacy_adapters import SsePluginAdapter
 
     try:
         result = SsePluginAdapter().parse(
-            ParseRequest(source, context or RequestContext("ui.migration-import"), format_hint=FormatId.PLUGIN_SSE)
+            ParseRequest(
+                source,
+                context or RequestContext("ui.migration-import"),
+                format_hint=FormatId.PLUGIN_SSE,
+                options=read_options,
+            )
         )
     except Exception as exc:
         raise MigrationImportError("MIGRATION_PLUGIN_INVALID", "已翻译插件无法完整解析。") from exc

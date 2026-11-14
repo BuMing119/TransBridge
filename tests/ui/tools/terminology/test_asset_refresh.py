@@ -78,7 +78,7 @@ def test_superseded_read_stops_between_stages_and_retains_earlier_completion():
     owner.close()
 
 
-def test_asset_read_cancellation_stops_before_the_next_port_and_passes_token_to_browse():
+def test_asset_read_cancellation_stops_before_next_port_and_defers_source_mapping_reads():
     token, reads = QueryCancellation(), []
     commands = SimpleNamespace(
         latest_build_ref=lambda *_args: token.cancel(),
@@ -90,7 +90,7 @@ def test_asset_read_cancellation_stops_before_the_next_port_and_passes_token_to_
     token = QueryCancellation()
     browsing = SimpleNamespace(describe=lambda query, *, cancellation: reads.append(cancellation))
     read_assets(SimpleNamespace(), _CONTEXT, browsing=browsing, cancellation=token)
-    assert reads == [token]
+    assert reads == []
 
 
 def test_closed_coordinator_rejects_queued_results_and_reports_original_failure():

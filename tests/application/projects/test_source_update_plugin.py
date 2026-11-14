@@ -6,11 +6,14 @@ from zipfile import ZipFile
 
 import pytest
 
+from tests.plugin_fixtures import write_plugin
 from transbridge.application.contracts import RequestContext
 from transbridge.application.io import FormatId, Stage
 from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
 from transbridge.application.projects.source_content import source_content_identity
 from transbridge.bootstrap.persistence import build_persistence_v2_services
+from transbridge.config.repository import ConfigRepository
+from transbridge.config.text_encoding import TextEncodingDefaults, TextEncodings
 from transbridge.persistence.project_store.history import ProjectHistory
 from transbridge.persistence.project_store.repository import ProjectStore
 from transbridge.persistence.v2.ids import VariantId, VariantRef
@@ -105,6 +108,61 @@ def test_original_qualified_source_update_preserves_exact_text_only(services, tm
     }
     assert entries["Second"].translation == "Translated Second"
     assert entries["New first"].translation == ""
+
+
+def test_same_bytes_with_filtered_duplicate_locators_cannot_rebind_other_record(tmp_path):
+    source = write_plugin(
+        tmp_path / "Conflict.esp",
+        [(0x800, "Same", "\xa0"), (0x800, "Same", "\u0403@")],
+        encoding="cp1251",
+    )
+    defaults = TextEncodingDefaults(ConfigRepository(tmp_path / "defaults.ini"))
+    defaults.save(TextEncodings("cp1251"))
+    ids = count()
+    services = build_persistence_v2_services(
+        tmp_path / "data",
+        id_factory=lambda: str(next(ids)),
+        timestamp_factory=lambda: "2026-10-01T00:00:00+00:00",
+        text_encoding_defaults=defaults,
+    )
+    try:
+        context = RequestContext("plugin-update-test", run_id="duplicate-filter")
+        created = services.gui_project_commands.create_project(
+            ProjectProvisioningRequest(
+                "Filtered plugin update",
+                source=ProjectSourceRequest(str(source), options=(("skip_empty", True),)),
+            ),
+            context,
+        )
+        assert created.is_success, created.diagnostics
+        active = services.project_lifecycle.active
+        path = services.projects.path_for(active.project_ref)
+        (row,) = active.variant.snapshot().entries
+        assert row.entry_key.original == "\u0403@"
+        assert services.gui_project_commands.update_entry(
+            row.entry_key, context, translation="Saved translation"
+        ).is_success
+        assert services.gui_project_commands.save(context).is_success
+        encoding = services.project_text_encodings
+        prepared = encoding.prepare(path, TextEncodings("cp932", source_language="japanese"), context)
+        assert prepared.is_success, prepared.diagnostics
+        assert encoding.commit(prepared.value.token, context).is_success
+
+        # cp932 hides the older row (0x8140 is whitespace) and exposes the
+        # other row at the same locator (0xA0 decodes as U+F8F0).
+        updates = services.project_source_updates
+        (target,) = updates.list_sources(path, context).value
+        before = ProjectStore(path).path.read_bytes()
+        rejected = updates.prepare(path, target.source_id, target.location, context)
+
+        assert not rejected.is_success
+        assert rejected.diagnostics[0].code == "TEXT_ENCODING_ENTRY_MAPPING_UNSAFE"
+        assert ProjectStore(path).path.read_bytes() == before
+        (still_saved,) = services.project_lifecycle.active.variant.snapshot().entries
+        assert still_saved.entry_key == row.entry_key
+        assert still_saved.translation == "Saved translation"
+    finally:
+        services.close()
 
 
 def test_real_plugin_updates_all_variants_and_preserves_reordered_reviewed_entries(services, tmp_path):

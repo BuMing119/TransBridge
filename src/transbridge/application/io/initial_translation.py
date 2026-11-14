@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, DomainError, ErrorCategory
+from transbridge.config.text_encoding import DEFAULT_TEXT_ENCODING, XTRANSLATOR_READ_POLICY
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 from .contracts import FormatId
@@ -19,7 +20,16 @@ _NO_UPDATES = {
 }
 
 
-def apply_initial_translation(parsed, source_path, options, context):
+def apply_initial_translation(
+    parsed,
+    source_path,
+    options,
+    context,
+    *,
+    input_encoding: str = DEFAULT_TEXT_ENCODING,
+    source_language: str | None = None,
+    text_read_policy: str = XTRANSLATOR_READ_POLICY,
+):
     """Combine independently matched donors; never resolve conflicts by file order."""
     locations = options.get("locations") if isinstance(options, dict) else None
     if locations is None and isinstance(options, dict):
@@ -56,6 +66,9 @@ def apply_initial_translation(parsed, source_path, options, context):
                 context=context,
                 target_snapshot=parsed.source_snapshot,
                 require_original_match=True,
+                input_encoding=input_encoding,
+                source_language=source_language,
+                text_read_policy=text_read_policy,
             )
         except MigrationImportError as exc:
             if exc.code in _NO_UPDATES:

@@ -29,13 +29,21 @@ def prepare_parse_migrations(
     *,
     plugin_path: str | None = None,
     context: RequestContext | None = None,
+    input_encoding: str = "utf-8",
+    source_language: str = "english",
+    text_read_policy: str = "xtranslator-v1",
 ) -> ParseMigrationResult:
     """Keep successful sources while rejecting each failed source atomically.
 
     Preserve the existing EET → XT → translated plugin → Strings precedence.
     EET parsing already supplied the primary source, so only plugin parsing applies
-    it as a migration. Explicitly selected sources must use strict readers.
+    it as a migration. Plugin and Strings sources use the project's reading rules.
     """
+    read_options = {
+        "input_encoding": input_encoding,
+        "source_language": source_language,
+        "text_read_policy": text_read_policy,
+    }
     completed = set()
     failures = []
     applied = 0
@@ -49,7 +57,7 @@ def prepare_parse_migrations(
             continue
         try:
             if field == "tp_path":
-                candidate, count = _translated_plugin(collection, path, context)
+                candidate, count = _translated_plugin(collection, path, context, read_options)
             elif field == "eet_path":
                 from transbridge.ui.eet_source import prepare_eet_migration
 
@@ -61,6 +69,7 @@ def prepare_parse_migrations(
                     plugin_stem=Path(plugin_path).stem if plugin_path else "",
                     strings_lang=config.strings_lang,
                     context=context,
+                    **read_options,
                 )
                 candidate, count = draft.collection, draft.applied_count
             collection = candidate
@@ -72,8 +81,8 @@ def prepare_parse_migrations(
     return ParseMigrationResult(collection, applied, frozenset(completed), tuple(failures))
 
 
-def _translated_plugin(collection, path, context):
-    draft = prepare_migration_import(path, collection, format_hint="plugin.sse", context=context)
+def _translated_plugin(collection, path, context, read_options):
+    draft = prepare_migration_import(path, collection, format_hint="plugin.sse", context=context, **read_options)
     states = draft.state_mapping()
     count = 0
     entries = []

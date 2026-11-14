@@ -19,7 +19,9 @@ from transbridge.application.io.sst_export import (
 )
 from transbridge.application.io.strings_adapter import _encode_chunk
 from transbridge.application.projects.native_source_formats import SST_FORMATS, _eet_record, _sst_record
+from transbridge.application.projects.source_encoding import TEXT_ENCODING_FORMATS
 from transbridge.application.projects.translation_templates import STRINGS_FORMATS, XML_FORMATS, _xml_parser
+from transbridge.config.text_encoding import TextReadOptions
 from transbridge.converter.eet_entries import EET_CODEC_VERSION
 from transbridge.converter.sst_entries import SST_CODEC_VERSION
 from transbridge.parser.eet_binary_codec import EetDocument
@@ -50,6 +52,11 @@ def validate_format(format_id, values, fingerprint):
     for name in ("source_role", "encoding", "localized_language", "stage_policy_version"):
         if name in fields and (not isinstance(fields[name], str) or not fields[name]):
             raise ValueError(f"source format field {name} must be text")
+    read_facts = {key: fields[key] for key in ("source_language", "text_read_policy") if key in fields}
+    if read_facts:
+        if format_id not in TEXT_ENCODING_FORMATS:
+            raise ValueError("game text read facts require a compatible source format")
+        TextReadOptions(**read_facts)
     if format_id is FormatId.BINARY_EET:
         _require_fields(native, {"eet_header"})
         version, game, phrases, type_dt = fields["eet_header"]

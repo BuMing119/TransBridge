@@ -10,6 +10,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from transbridge.application.terminology_profiles import TerminologyProfileImportPolicy
 
 from .profile_refresh import _READ, ProfileRefreshCoordinator
+from .terminology_alignment import AlignmentBarBinding, freeze_alignment_scope
 from .terminology_profile_bar import (
     APPLIED_SCHEME,
     TerminologyProfileBar,
@@ -37,6 +38,20 @@ class TerminologyProfileUiController(QObject):
         self._state_identity = None
         self._refresh_pending = False
         self._preview_selection = _READ
+        coordinator = getattr(preview, "terminology_preview", None)
+        cache_for = getattr(factory, "alignment_cache_for", None)
+        if coordinator is not None and callable(cache_for):
+            coordinator.set_cache_provider(lambda: None if self.identity is None else cache_for(*self.identity))
+        self._alignment = AlignmentBarBinding(
+            bar,
+            getattr(preview, "terminology_preview", None),
+            scope=lambda: freeze_alignment_scope(ctx),
+            context_identity=lambda: (
+                self.identity,
+                getattr(ctx, "project_revision", None),
+                getattr(ctx, "variant_revision", None),
+            ),
+        )
         self._refresh = ProfileRefreshCoordinator(
             self, factory, identity=lambda: self.identity, owner=bar, thread_pool=thread_pool
         )
@@ -74,16 +89,33 @@ class TerminologyProfileUiController(QObject):
             TerminologyProfileProjector,
         )
 
+        preview = getattr(self._preview, "terminology_preview", None)
+        projector = TerminologyProfileProjector() if preview is None else preview.capture_projector()
         return FrozenProfileWriteProjection(
             identity[0],
             identity[1],
             self._state.selected_revision,
-            TerminologyProfileProjector(),
+            projector,
             self._state.base_snapshot,
             source_profile=self._state.applied_revision,
         )
 
-    def preview_source_import(self, source, *, policy=TerminologyProfileImportPolicy.KEEP_EXISTING):
+    def capture_export_schemes(self):
+        from transbridge.application.terminology_profiles.export_source import ProfileExportSource
+
+        return ProfileExportSource(
+            tuple(
+                (choice.profile_id, choice.label)
+                for choice in self.state.choices
+                if choice.profile_id != APPLIED_SCHEME
+            ),
+            self._service,
+            self.capture_write_projection(),
+        )
+
+    def preview_source_import(
+        self, source, *, policy=TerminologyProfileImportPolicy.KEEP_EXISTING, target_profile_id=None
+    ):
         """Build a Qt-free import preview for the current Project/Variant."""
 
         identity = getattr(self._ctx, "active_version_identity", None)
@@ -96,6 +128,14 @@ class TerminologyProfileUiController(QObject):
         from transbridge.application.terminology_profiles import TerminologyProfileImportService
 
         base_snapshot = read_base(project_id, variant_id)
+        if target_profile_id is not None:
+            if self.state.selected_profile_id != target_profile_id:
+                raise RuntimeError("当前方案已变化，请重新导入。")
+            from transbridge.application.terminology_profiles.existing_import import preview_existing_import
+
+            return preview_existing_import(
+                self._service, project_id, variant_id, base_snapshot, source, target_profile_id, policy=policy
+            )
         if not getattr(source, "entries", ()):
             raise RuntimeError("该外部来源没有可保存的有效术语。")
         return TerminologyProfileImportService(self._service).preview(
@@ -113,6 +153,19 @@ class TerminologyProfileUiController(QObject):
         if identity is None or self._service is None:
             raise RuntimeError("当前工程上下文已经变化，请重新读取外部来源。")
         project_id, variant_id = (str(identity[0]), str(identity[1]))
+        if preview.target_publication is not None:
+            target = preview.target_publication
+            if (project_id, variant_id) != (preview.project_id, preview.variant_id):
+                raise RuntimeError("工程或翻译版本已变化，请重新导入。")
+            if self.state.selected_profile_id != target.profile_id:
+                raise RuntimeError("当前方案已变化，请重新导入。")
+            from transbridge.application.terminology_profiles import TerminologyProfileImportResult
+
+            published = self._service.publish_reviewed(target)
+            result = TerminologyProfileImportResult(self._service.get_profile(target.profile_id), published)
+            self._preview_selection = target.profile_id
+            self.refresh()
+            return result
         read_base = getattr(self._factory, "base_terminology_snapshot", None)
         if not callable(read_base):
             raise RuntimeError("当前工程没有可用于创建方案的项目术语服务。")
@@ -280,6 +333,7 @@ class TerminologyProfileUiController(QObject):
     def _render(self, state: TerminologyProfileBarState) -> None:
         self._state = state
         self._bar.render(state)
+        self._alignment.set_state(state)
         self.state_changed.emit(state)
 
 

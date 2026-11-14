@@ -91,6 +91,7 @@ class ProfileVariantSaveCoordinator:
                 target_profile=projection.profile,
                 source_profile=projection.source_profile,
                 base_snapshot=projection.base_snapshot,
+                projection_projector=projection.projector,
                 target_variant_id=None if target is None else target["id"],
                 expected_target_revision=None if target is None else target["revision"],
                 expected_project_revision=project_revision,

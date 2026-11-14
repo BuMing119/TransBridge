@@ -37,7 +37,10 @@ class TerminologySourceImportDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.preview = preview
+        target = preview.target_publication
         self.setWindowTitle("从外部来源创建译名方案")
+        if target is not None:
+            self.setWindowTitle(f"导入到方案：{target.name}")
         self.setAccessibleName("外部来源转译名方案预览")
         self.resize(1040, 760)
         layout = QVBoxLayout(self)
@@ -49,6 +52,8 @@ class TerminologySourceImportDialog(QDialog):
             self,
         )
         explanation.setWordWrap(True)
+        if target is not None:
+            explanation.setText("确认后将合并到此方案并保存新版本；不会创建另一个方案。搜索和筛选只影响预览。")
         layout.addWidget(explanation)
 
         form = QFormLayout()
@@ -65,6 +70,9 @@ class TerminologySourceImportDialog(QDialog):
         policy_label.setAccessibleName("本次导入的批量处理方式")
         form.addRow("同名术语处理", policy_label)
         self.name_edit = QLineEdit(default_name, self)
+        if target is not None:
+            self.name_edit.setText(target.name)
+            self.name_edit.setReadOnly(True)
         self.name_edit.setAccessibleName("新译名方案名称")
         ComponentStyle.apply_static(self.name_edit, ComponentKind.INPUT)
         form.addRow("方案名称", self.name_edit)
@@ -125,11 +133,14 @@ class TerminologySourceImportDialog(QDialog):
 
         self.select_check = QCheckBox("创建后用于当前翻译版本", self)
         self.select_check.setChecked(select_after_create)
+        self.select_check.setVisible(target is None)
         layout.addWidget(self.select_check)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, self)
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
         self.create_button = QPushButton("创建并选用" if select_after_create else "创建译名方案", self)
+        if target is not None:
+            self.create_button.setText("确认导入")
         self.select_check.toggled.connect(
             lambda selected: self.create_button.setText("创建并选用" if selected else "创建译名方案")
         )
@@ -183,7 +194,7 @@ class TerminologySourceImportDialog(QDialog):
     def _update_count(self) -> None:
         self.count_label.setText(
             f"显示 {self.filtered.rowCount()} / {self.model.rowCount()} 项；"
-            f"创建时保存全部 {self.preview.mapping_count} 条方案映射。"
+            f"确认后保存全部 {self.preview.mapping_count} 条方案映射。"
         )
 
     def _search_status(self, pending, error) -> None:

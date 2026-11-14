@@ -20,6 +20,7 @@ from transbridge.application.contracts import (
     OperationOutcome,
     OperationResult,
 )
+from transbridge.config.text_encoding import DEFAULT_SOURCE_LANGUAGE, LEGACY_READ_POLICY
 from transbridge.converter.translation_entry import STAGE_TRANSLATED, TranslationEntry
 from transbridge.parser.eet_parser import EET_XmlParser
 from transbridge.parser.plugin.dialogue_order_binary import DialogueOrderCancelled
@@ -48,6 +49,7 @@ from .plugin_dialogue_order import capture_dialogue_order_metadata
 from .plugin_localized_sources import LocalizedSnapshotCancelled, validate_localized_snapshot
 from .plugin_write import _blocking_stage_diagnostics, _localized_source_snapshots, write_plugin
 from .stage_policy import DEFAULT_STAGE_POLICY, StageOperation, StagePolicyPort
+from .text_source_options import request_text_read_options, source_text_fallback_diagnostics, source_text_metadata
 
 _logger = logging.getLogger(__name__)
 
@@ -385,13 +387,16 @@ class SsePluginAdapter(_LegacyFormatAdapter):
                 raise ValueError("missing TES4 header")
             parser = PluginParser()
             options = dict(request.options)
+            read_options = request_text_read_options(options)
+            language = str(options.get("language", DEFAULT_SOURCE_LANGUAGE))
             discover_localized = bool(options.get("discover_sibling_strings", True))
             entries = parser.parse_plugin(
                 source_path,
                 captured_content=content,
                 skip_empty=bool(options.get("skip_empty", True)),
-                language=str(options.get("language", "english")),
+                language=language,
                 discover_sibling_strings=discover_localized,
+                **read_options.as_options(),
             )
             if parser.get_plugin() is None:
                 raise ValueError("plugin parser did not produce a source plugin")
@@ -407,7 +412,7 @@ class SsePluginAdapter(_LegacyFormatAdapter):
             localized_sources = (
                 _localized_source_snapshots(
                     source_path,
-                    str(options.get("language", "english")),
+                    language,
                     request,
                     lookup=parser.get_strings_lookup(),
                     plugin_content=content,
@@ -434,13 +439,15 @@ class SsePluginAdapter(_LegacyFormatAdapter):
             return self._cancelled_parse(request)
         snapshot = replace(
             snapshot,
+            encoding=None if read_options.text_read_policy == LEGACY_READ_POLICY else read_options.input_encoding,
             metadata=(
                 *snapshot.metadata,
                 ("localized_lookup_detected", parser.get_strings_lookup() is not None),
-                ("localized_language", str(options.get("language", "english"))),
+                ("localized_language", language),
                 ("localized_sources", localized_sources),
                 ("stage_policy_version", DEFAULT_STAGE_POLICY.version),
                 dialogue_metadata,
+                *source_text_metadata(read_options),
             ),
         )
         namespace = request.source_namespace or _namespace_from_locators(
@@ -477,7 +484,7 @@ class SsePluginAdapter(_LegacyFormatAdapter):
             request.source,
             snapshot,
             mapped,
-            parser.conflict_diagnostics,
+            (*parser.conflict_diagnostics, *source_text_fallback_diagnostics(parser.fallback_count)),
             ParseStats(parsed=len(mapped), skipped=parser.conflict_skipped_count),
             self.adapter_id,
             self.adapter_version,
@@ -497,11 +504,11 @@ class SsePluginAdapter(_LegacyFormatAdapter):
             return _failed_diagnostics(diagnostics, request.context.run_id)
         return validation
 
-    def write(self, request: WriteRequest) -> OperationResult[tuple[str, ...]]:
+    def write(self, request: WriteRequest, *, copy_source: bool = False) -> OperationResult[tuple[str, ...]]:
         validation = self.validate_write(request)
         if validation.outcome is not OperationOutcome.COMPLETED:
             return _copy_failure(validation)
-        return write_plugin(request)
+        return write_plugin(request, copy_source=copy_source)
 
     def capabilities(self) -> FormatCapability:
         capability = super().capabilities()

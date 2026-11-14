@@ -14,6 +14,12 @@ from typing import Any
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
+from transbridge.infra.llm_request_config import (
+    ASSISTANT_OUTPUT_TOKENS,
+    resolve_anthropic_endpoint,
+    resolve_output_tokens,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,7 +46,8 @@ def _create_llm_client(config, _cache: dict | None = None):
     if not service_availability(config).ready:
         return None
 
-    current_hash = hash((config.api_key, config.provider, config.base_url, config.model))
+    base_url = resolve_anthropic_endpoint(config.base_url) if config.provider == "anthropic" else config.base_url
+    current_hash = hash((config.api_key, config.provider, base_url, config.model))
 
     if _cache is not None:
         cached = _cache.get("client")
@@ -59,10 +66,9 @@ def _create_llm_client(config, _cache: dict | None = None):
 
 def _smart_assistant_max_tokens(config) -> int:
     """Return a Provider-valid output limit for one assistant round."""
-    configured = int(getattr(config, "max_output_tokens", 0) or 0)
-    if getattr(config, "provider", "") == "anthropic" and configured <= 0:
-        return 4096
-    return configured
+    return resolve_output_tokens(
+        getattr(config, "provider", ""), getattr(config, "max_output_tokens", 0), default=ASSISTANT_OUTPUT_TOKENS
+    )
 
 
 class _SignalBridge(QObject):
@@ -262,9 +268,9 @@ class ConversationOrchestrator(QObject):
         self._round_tools = build_native_tool_definitions(loaded_namespaces)
         binding = getattr(self, "request_binding", None)
         if binding is not None:
+            self._round_max_tokens = self._round_max_tokens or ASSISTANT_OUTPUT_TOKENS
             preparation = getattr(binding, "context_preparation", None)
             if preparation is not None:
-                self._round_max_tokens = self._round_max_tokens or 4096
 
                 def prepared(result):
                     if not self._is_current(generation):
@@ -294,10 +300,9 @@ class ConversationOrchestrator(QObject):
                 )
                 return
             try:
-                self._round_max_tokens = self._round_max_tokens or 4096
                 self._round_messages, self._round_tools = binding.prepare_model_input(
                     self._conversation.get_transcript(),
-                    self._round_max_tokens or 4096,
+                    self._round_max_tokens,
                     context_window=int(getattr(cfg, "assistant_context_window", 0)),
                     workspace_snapshot=workspace_snapshot,
                 )
@@ -313,7 +318,7 @@ class ConversationOrchestrator(QObject):
         try:
             from transbridge.smart_assistant.context_budget import budget_for_config
 
-            budget_for_config(cfg, self._round_max_tokens or 4096).require(self._round_messages, self._round_tools)
+            budget_for_config(cfg, self._round_max_tokens).require(self._round_messages, self._round_tools)
         except ValueError as exc:
             self._on_system_message(str(exc))
             return

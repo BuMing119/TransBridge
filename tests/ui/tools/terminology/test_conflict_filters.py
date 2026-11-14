@@ -55,6 +55,14 @@ def test_conflict_filter_button_applies_search_and_risk_to_sqlite(tmp_path):
         _settle(window.conflicts_model)
         assert window.conflicts_model.rowCount() == 1
         assert window.conflicts_model.index(0, 0).data() == "dragon"
+        selected = []
+        window.conflicts_view.review_requested.disconnect()
+        window.conflicts_view.review_requested.connect(selected.append)
+        assert window.conflicts_view.table.isColumnHidden(1)
+        assert window.conflicts_view.table.indexWidget(window.conflicts_model.index(0, 4)) is None
+        window.conflicts_view.table.setCurrentIndex(window.conflicts_model.index(-1, 0))
+        window.conflicts_view.table.selectRow(0)
+        assert selected[-1].normalized_original == "dragon"
         window.bind_page("conflicts", build.ref)
         _settle(window.conflicts_model)
         assert window.conflicts_model.rowCount() == 1

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import logging
 from urllib.parse import urlsplit
 
+from transbridge.infra.llm_request_config import resolve_anthropic_endpoint, resolve_output_tokens
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,12 +21,21 @@ class ServiceAvailability:
 def service_availability(config) -> ServiceAvailability:
     """Validate the same local requirements used before creating the model client."""
     model = str(getattr(config, "model", "") or "").strip()
+    provider = getattr(config, "provider", "")
     missing, labels = [], []
-    for name, label in (("model", "模型名称"), ("base_url", "服务地址"), ("api_key", "API Key")):
+    required = [("model", "模型名称"), ("api_key", "API Key")]
+    if provider != "anthropic":
+        required.insert(1, ("base_url", "服务地址"))
+    for name, label in required:
         if not str(getattr(config, name, "") or "").strip():
             missing.append(name)
             labels.append(label)
-    if "base_url" not in missing:
+    if provider == "anthropic":
+        try:
+            resolve_anthropic_endpoint(getattr(config, "base_url", None))
+        except ValueError as exc:
+            return ServiceAvailability(model, False, (*missing, "base_url"), str(exc))
+    elif "base_url" not in missing:
         try:
             endpoint = urlsplit(str(config.base_url))
             valid_address = endpoint.scheme in {"http", "https"} and bool(endpoint.hostname)
@@ -33,6 +44,10 @@ def service_availability(config) -> ServiceAvailability:
         if not valid_address:
             missing.append("base_url")
             labels.append("有效的 HTTP(S) 服务地址")
+    try:
+        resolve_output_tokens(provider, getattr(config, "max_output_tokens", 0))
+    except ValueError as exc:
+        return ServiceAvailability(model, False, (*missing, "max_output_tokens"), str(exc))
     message = "请在设置 → AI 服务中配置" + "、".join(labels) + "。" if missing else "AI 服务配置就绪。"
     return ServiceAvailability(model, not missing, tuple(missing), message)
 

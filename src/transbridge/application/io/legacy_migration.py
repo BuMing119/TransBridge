@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from transbridge.application.contracts import OperationOutcome, RequestContext
+from transbridge.config.text_encoding import DEFAULT_TEXT_ENCODING, XTRANSLATOR_READ_POLICY, language_from_suffix
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.parser.strings_file import PluginStringsLookup
 from transbridge.parser.xt import XT_XmlParser
@@ -36,6 +37,9 @@ def prepare_legacy_migration(
     strings_lang: str = "english",
     context: RequestContext | None = None,
     overwrite_strings: bool = False,
+    input_encoding: str = DEFAULT_TEXT_ENCODING,
+    source_language: str | None = None,
+    text_read_policy: str = XTRANSLATOR_READ_POLICY,
 ) -> LegacyMigrationDraft:
     """Preserve EET → XT → Strings matching/overwrite order without publishing.
 
@@ -53,7 +57,14 @@ def prepare_legacy_migration(
             _require_xml_format(Path(xt_path), FormatId.XML_XT)
             applied_count += candidate.apply_xt_entries(XT_XmlParser.from_file(xt_path).entries)
         if strings_dir:
-            lookup = _read_strings(Path(strings_dir), plugin_stem, strings_lang, context)
+            if source_language is None:
+                source_language = language_from_suffix(strings_lang)
+            read_options = (
+                ("input_encoding", input_encoding),
+                ("source_language", source_language),
+                ("text_read_policy", text_read_policy),
+            )
+            lookup = _read_strings(Path(strings_dir), plugin_stem, strings_lang, context, read_options)
             if lookup:
                 applied_count += candidate.update_from_strings_lookup(lookup, overwrite=overwrite_strings)
     except MigrationImportError:
@@ -79,7 +90,7 @@ def _require_xml_format(path: Path, format_id: FormatId) -> None:
 
 
 def _read_strings(
-    directory: Path, stem: str, language: str, context: RequestContext | None
+    directory: Path, stem: str, language: str, context: RequestContext | None, read_options: tuple[tuple[str, str], ...]
 ) -> PluginStringsLookup | None:
     if not directory.is_dir():
         raise MigrationImportError("MIGRATION_STRINGS_DIRECTORY_INVALID", f"Strings 目录不可用：{directory}")
@@ -94,7 +105,11 @@ def _read_strings(
         if not path.exists():
             continue
         result = LocalizedStringsAdapter(format_id).parse(
-            ParseRequest(SourceDescriptor(str(path), path.name), context or RequestContext("ui.migration-import"))
+            ParseRequest(
+                SourceDescriptor(str(path), path.name),
+                context or RequestContext("ui.migration-import"),
+                options=read_options,
+            )
         )
         if result.outcome is not OperationOutcome.COMPLETED:
             diagnostic = result.diagnostics[0] if result.diagnostics else None

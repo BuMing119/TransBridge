@@ -50,6 +50,9 @@ class AppContext(QObject):
         *,
         project_projection: ProjectionStore | None = None,
         project_commands=None,
+        project_source_references=None,
+        project_text_encodings=None,
+        text_encoding_defaults=None,
         project_remote_bindings=None,
         runtime_context=None,
         effective_terminology_factory=None,
@@ -87,6 +90,9 @@ class AppContext(QObject):
         self.paratranz_project_id: int | None = None  # Story 15: 当前选中的 ParaTranz 项目 ID（会话内有效）
         self._project_projection = project_projection
         self._project_commands = project_commands
+        self.project_source_references = project_source_references
+        self.project_text_encodings = project_text_encodings
+        self.text_encoding_defaults = text_encoding_defaults
         self._project_remote_bindings = project_remote_bindings
         self._runtime_context = runtime_context
         self._effective_terminology_factory = effective_terminology_factory

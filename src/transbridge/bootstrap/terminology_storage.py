@@ -48,13 +48,18 @@ class ProjectTerminologyRepositories:
         self._deleting: set[str] = set()
         self._deleted: set[str] = set()
         self._lock = RLock()
+        # GUI path lookup must not wait for SQLite integrity checks performed
+        # under the repository lock. Lifecycle transitions take both locks;
+        # the short state lock never protects database I/O.
+        self._state_lock = RLock()
 
     def for_project(self, project_id: str) -> SqliteTerminologyRepository:
         with self._lock:
             if project_id in self._deleted:
                 # A later archive import may legitimately restore the same identity.
                 if self._projects.exists(ProjectRef(ProjectId(project_id))):
-                    self._deleted.remove(project_id)
+                    with self._state_lock:
+                        self._deleted.remove(project_id)
             if project_id in self._deleting or project_id in self._deleted:
                 raise DomainError(
                     ErrorCategory.CONFLICT,
@@ -70,12 +75,24 @@ class ProjectTerminologyRepositories:
                 self._items[project_id] = repository
             return repository
 
+    def alignment_cache_path(self, project_id: str) -> Path:
+        """Resolve the owning project database without opening it on the GUI thread."""
+        with self._state_lock:
+            if project_id in self._deleting or project_id in self._deleted:
+                raise DomainError(
+                    ErrorCategory.CONFLICT,
+                    "PROJECT_TERMINOLOGY_CLOSED",
+                    "工程正在删除或已经删除，无法访问项目定位缓存。",
+                )
+        return self._projects.store_for(ProjectId(project_id)).path
+
     @contextmanager
     def deletion_scope(self, project_id: str):
         with self._lock:
             if project_id in self._deleting:
                 raise DomainError(ErrorCategory.CONFLICT, "PROJECT_DELETE_IN_PROGRESS", "工程正在删除，请稍候。")
-            self._deleting.add(project_id)
+            with self._state_lock:
+                self._deleting.add(project_id)
             repository = self._items.get(project_id)
         try:
             scope = nullcontext() if repository is None else repository.deletion_scope()
@@ -83,10 +100,12 @@ class ProjectTerminologyRepositories:
                 yield
             with self._lock:
                 self._items.pop(project_id, None)
-                self._deleted.add(project_id)
+                with self._state_lock:
+                    self._deleted.add(project_id)
         finally:
             with self._lock:
-                self._deleting.remove(project_id)
+                with self._state_lock:
+                    self._deleting.remove(project_id)
 
     def close(self) -> None:
         with self._lock:

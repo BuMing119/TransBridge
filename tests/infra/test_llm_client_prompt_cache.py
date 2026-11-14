@@ -6,7 +6,7 @@
 - 自动前缀模型：干净标准消息 + prompt_cache_key 经 extra_body 传递；无内部元数据泄漏。
 - 非官方兼容端点：只收到清理后的标准消息，无任何私有字段。
 - 普通 chat 与 chat_stream 共用同一转换器（参数形态一致）。
-- 缓存参数被 Provider 拒绝（401/400 含 cache）时，仅去掉缓存参数重试一次。
+- Provider 以 HTTP 400/422 拒绝已发送的缓存参数时，仅去掉缓存参数重试一次。
 - Anthropic：内部指令 system 转为带 ephemeral cache_control 的 content blocks + user_messages。
 
 用 mock 的 OpenAI / Anthropic client 提供服务，不真实联网。
@@ -19,6 +19,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from transbridge.infra.llm_client import AnthropicClient, OpenAICompatibleClient
+from transbridge.infra.llm_request_config import TRANSLATION_OUTPUT_TOKENS
 from transbridge.infra.prompt_cache import (
     PROMPT_CACHE_METADATA_KEY,
     _encoding_for_model,
@@ -95,6 +96,7 @@ def _make_openai_client(**overrides) -> OpenAICompatibleClient:
 def _make_anthropic_client(**overrides) -> AnthropicClient:
     client = AnthropicClient.__new__(AnthropicClient)
     client._api_key = overrides.get("api_key", "k")
+    client._base_url = overrides.get("base_url", "https://api.anthropic.com")
     client._model = overrides.get("model", "claude-3-7-sonnet-latest")
     client._max_retries = 2
     client._lock = type("_L", (), {"__enter__": lambda s: None, "__exit__": lambda *a: None})()
@@ -174,14 +176,14 @@ class TestOpenAIExplicitBreakpoint(_OfflineTokenizerTestCase):
 
 class TestOpenAICacheValidation(_OfflineTokenizerTestCase):
     @patch("transbridge.infra.prompt_cache.tiktoken")
-    def test_tokenizer_failure_disables_cache(self, tokenizer_mock):
+    def test_tokenizer_failure_omits_explicit_breakpoints(self, tokenizer_mock):
         tokenizer_mock.encoding_for_model.side_effect = KeyError("unknown")
         tokenizer_mock.get_encoding.side_effect = RuntimeError("offline")
         _encoding_for_model.cache_clear()
         messages = _stable_prefix_messages()
 
         request = prepare_openai_chat_cache_request(
-            model="unavailable-model-for-test",
+            model="gpt-5.6",
             base_url="https://api.openai.com/v1",
             messages=messages,
         )
@@ -319,6 +321,21 @@ class TestOpenAIAutomaticPrefix(_OfflineTokenizerTestCase):
         for m in call_kwargs["messages"]:
             self.assertNotIn(PROMPT_CACHE_METADATA_KEY, m)
 
+    @patch("transbridge.infra.prompt_cache.estimate_prompt_tokens")
+    def test_short_prefix_still_sends_stable_routing_key(self, estimate):
+        client = _make_openai_client(model="gpt-5.4")
+        client._client.chat.completions.create.return_value = _fake_response("ok")
+
+        for text in ("first", "second"):
+            client.chat(_stable_prefix_messages(system_text="short prefix", user_text=text), max_tokens=64)
+
+        first, second = [call.kwargs for call in client._client.chat.completions.create.call_args_list]
+        key = build_prompt_cache_key("pp.v1", "short prefix")
+        self.assertEqual(first["extra_body"], second["extra_body"])
+        self.assertEqual(first["extra_body"], {"prompt_cache_key": key})
+        self.assertEqual(first["messages"][0], {"role": "system", "content": "short prefix"})
+        estimate.assert_not_called()
+
 
 class TestOpenAINonOfficial(_OfflineTokenizerTestCase):
     """非官方兼容端点：只收到清理后的标准消息，无任何私有字段。"""
@@ -384,7 +401,7 @@ class TestOpenAICacheRejectionRetry(_OfflineTokenizerTestCase):
         messages = _stable_prefix_messages()
 
         def fake_create(**kwargs):
-            raise self.CacheReject(400, "cache invalid")
+            raise self.CacheReject(400, "prompt_cache_key invalid")
 
         client._client.chat.completions.create.side_effect = fake_create
 
@@ -410,26 +427,35 @@ class TestOpenAICacheRejectionRetry(_OfflineTokenizerTestCase):
 
 
 class TestAnthropic(_OfflineTokenizerTestCase):
-    def test_chat_requires_a_configured_positive_output_limit_before_provider_call(self):
+    def test_zero_means_automatic_output_limit(self):
+        client = _make_anthropic_client()
+        client._client.messages.create.return_value = SimpleNamespace(content=[SimpleNamespace(text="ok")])
+
+        self.assertEqual(client.chat(_plain_messages(), max_tokens=0), "ok")
+        self.assertEqual(client._client.messages.create.call_args.kwargs["max_tokens"], TRANSLATION_OUTPUT_TOKENS)
+
+    def test_chat_rejects_an_invalid_output_limit_before_provider_call(self):
         client = _make_anthropic_client()
 
-        for limit in (0, -1):
+        for limit in (-1, True, False):
             with self.subTest(limit=limit):
-                with self.assertRaisesRegex(ValueError, "Anthropic API requires a positive max_tokens"):
+                with self.assertRaisesRegex(ValueError, "max_tokens.*非负整数"):
                     client.chat(_plain_messages(), max_tokens=limit)
 
         client._client.messages.create.assert_not_called()
 
-    def test_stream_requires_a_configured_positive_output_limit_before_provider_call(self):
+    def test_stream_rejects_an_invalid_output_limit_before_provider_call(self):
         client = _make_anthropic_client()
 
-        with self.assertRaisesRegex(ValueError, "'输出 Token'.*greater than 0|greater than 0.*'输出 Token'"):
-            client.chat_stream(_plain_messages(), max_tokens=0, chunk_callback=lambda _chunk: None)
+        for limit in (-1, True, False):
+            with self.subTest(limit=limit):
+                with self.assertRaisesRegex(ValueError, "max_tokens.*非负整数"):
+                    client.chat_stream(_plain_messages(), max_tokens=limit, chunk_callback=lambda _chunk: None)
 
         client._client.messages.stream.assert_not_called()
 
     def test_short_prefix_uses_system_blocks_without_cache_control(self):
-        client = _make_anthropic_client()
+        client = _make_anthropic_client(model="claude-sonnet-4-6")
         messages = _stable_prefix_messages(system_text="short stable prefix")
         client._client.messages.create.return_value = SimpleNamespace(content=[SimpleNamespace(text="ok")])
 
@@ -438,6 +464,24 @@ class TestAnthropic(_OfflineTokenizerTestCase):
         system = client._client.messages.create.call_args.kwargs["system"]
         self.assertTrue(system)
         self.assertFalse(any("cache_control" in block for block in system))
+
+    def test_unknown_anthropic_minimum_uses_server_length_check(self):
+        client = _make_anthropic_client(model="future-model")
+        client._client.messages.create.return_value = SimpleNamespace(content=[SimpleNamespace(text="ok")])
+
+        client.chat(_stable_prefix_messages(system_text="short stable prefix"), max_tokens=64)
+
+        system = client._client.messages.create.call_args.kwargs["system"]
+        self.assertEqual(system[0]["cache_control"], {"type": "ephemeral"})
+
+    def test_custom_anthropic_endpoint_omits_cache_control_even_for_known_model(self):
+        client = _make_anthropic_client(model="claude-sonnet-4-6", base_url="https://gateway.example")
+        client._client.messages.create.return_value = SimpleNamespace(content=[SimpleNamespace(text="ok")])
+
+        client.chat(_stable_prefix_messages(), max_tokens=64)
+
+        system = client._client.messages.create.call_args.kwargs["system"]
+        self.assertNotIn("cache_control", system[0])
 
     def test_chat_system_blocks_with_cache_control(self):
         client = _make_anthropic_client()

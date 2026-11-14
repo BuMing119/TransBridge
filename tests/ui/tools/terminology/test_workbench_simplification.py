@@ -32,6 +32,9 @@ def test_shared_header_actions_reveal_their_destination_from_other_pages(workben
     else:
         window.schemes_view.edit_button.click()
         _wait(lambda: window.terms_view.pages.currentWidget() is window.draft_view)
+        _wait(lambda: window._draft_writes.pending_count == 0)
+        _wait(lambda: not window._asset_refresh._active and not window._asset_refresh._dirty)
+        _wait(lambda: not window.draft_model.is_loading)
     assert window.workspace.current_area() is TerminologyArea.TERMS
 
 
@@ -72,16 +75,24 @@ def test_browsing_header_keeps_import_and_table_space_at_supported_sizes(workben
     window.show()
     settle_layout(layout_app)
     assert window.width() == width
-    assert window.terms_view.workflow.isHidden()
+    assert not window.terms_view.workflow.isHidden()
     assert window.terms_view.content_context.isHidden()
-    assert window.terms_view._project_panel.isHidden()
+    assert not window.terms_view._project_panel.isHidden()
     assert "0 个" not in window.workspace.project_caption.toolTip()
-    for widget in (window.schemes_view.scheme_combo, window.schemes_view.import_button, window.terms_view.pages):
+    for widget in (
+        window.schemes_view.scheme_combo,
+        window.schemes_view.import_button,
+        window.terms_view.browse_button,
+    ):
         origin = widget.mapTo(window, QPoint())
         assert 0 <= origin.x() < width and 0 <= origin.y() < height
         assert origin.x() + widget.width() <= width
         assert origin.y() + widget.height() <= height
-    assert window.terms_view.pages.height() > height / 2
+    assert window.terms_view.editor_dialog.isHidden()
+    window.terms_view.browse_button.click()
+    settle_layout(layout_app)
+    assert window.effective_view.window() is window.terms_view.editor_dialog
+    assert window.terms_view.pages.height() > window.terms_view.editor_dialog.height() / 2
 
 
 def test_normal_browsing_does_not_show_extraction_failure_until_requested(workbench):
@@ -100,7 +111,7 @@ def test_normal_browsing_does_not_show_extraction_failure_until_requested(workbe
     )
     assert window.workspace.project_name.text() == "真实工程"
     assert window.workspace.project_caption.toolTip() == "51 个来源"
-    assert window.terms_view._project_panel.isHidden()
+    assert not window.terms_view._project_panel.isHidden()
     assert window.operation_notice.isHidden()
     window.schemes_view.extract_action.trigger()
     assert not window.terms_view._project_panel.isHidden()

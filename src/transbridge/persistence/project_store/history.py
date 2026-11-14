@@ -8,6 +8,7 @@ import sqlite3
 
 from transbridge.application.projects.models import LifecycleSnapshot
 from transbridge.application.projects.snapshots import ProjectSnapshotInfo
+from transbridge.config.text_encoding import TEXT_INPUT_ENCODING, TEXT_OUTPUT_ENCODING
 from transbridge.persistence.v2.ids import VariantRef
 from transbridge.persistence.v2.variant import SourceFingerprint, VariantSnapshot
 
@@ -68,11 +69,18 @@ class ProjectHistory:
             """)
 
 
-def write_snapshot(connection: sqlite3.Connection, snapshot: LifecycleSnapshot, identity: str) -> None:
+def write_snapshot(
+    connection: sqlite3.Connection,
+    snapshot: LifecycleSnapshot,
+    identity: str,
+    *,
+    legacy_encoding_settings: bool = False,
+) -> None:
     settings = json.loads(connection.execute("SELECT settings FROM project").fetchone()[0])
-    sources = {
-        key: settings[key] for key in ("sources", "source_relations", "source_registry_diagnostics") if key in settings
-    }
+    source_keys = ("sources", "source_relations", "source_registry_diagnostics")
+    if legacy_encoding_settings:
+        source_keys += (TEXT_INPUT_ENCODING, TEXT_OUTPUT_ENCODING)
+    sources = {key: settings[key] for key in source_keys if key in settings}
     connection.execute(
         "INSERT INTO named_snapshot VALUES (?, ?, ?, ?, ?, ?)",
         (

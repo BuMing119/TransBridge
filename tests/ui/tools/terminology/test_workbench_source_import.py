@@ -37,8 +37,9 @@ class _Preview(QWidget):
 
 
 @pytest.mark.parametrize("policy", tuple(TerminologyProfileImportPolicy))
+@pytest.mark.parametrize("existing", [False, True])
 def test_real_window_binding_forwards_policy_through_shared_reader_preview_and_profile_service(
-    tmp_path, monkeypatch, policy
+    tmp_path, monkeypatch, policy, existing
 ):
     service = TerminologyProfileService(InMemoryTerminologyProfileRepository())
     base = EffectiveTerminologySnapshot(
@@ -55,6 +56,12 @@ def test_real_window_binding_forwards_policy_through_shared_reader_preview_and_p
     context, bar, preview_widget = _Context(), TerminologyProfileBar(), _Preview()
     profiles = TerminologyProfileUiController(context, factory, bar, preview_widget)
     wait_profile(profiles)
+    target = None
+    if existing:
+        target = service.create("project", "用户创建的空方案")
+        service.publish(target.profile_id, expected_draft_revision=0)
+        profiles.select(target.profile_id)
+        wait_profile(profiles)
     presenter = TerminologyPresenter(
         TerminologyUiServices(), RequestContext("operator", project_id="project", variant_id="variant")
     )
@@ -68,9 +75,13 @@ def test_real_window_binding_forwards_policy_through_shared_reader_preview_and_p
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_args: (str(source_path), ""))
 
     class PolicyDialog:
-        def __init__(self, selection, _parent):
+        def __init__(self, selection, _parent, **options):
             assert selection.request.file_path == str(source_path)
             self.policy = policy
+            self.target_profile_id = None if target is None else target.profile_id
+            self.profile_name = "用户输入的新方案名称"
+            if existing:
+                assert options["target"].profile_id == target.profile_id
 
         def exec(self):
             return QDialog.DialogCode.Accepted
@@ -106,9 +117,13 @@ def test_real_window_binding_forwards_policy_through_shared_reader_preview_and_p
         assert profiles.state.applied_revision is None
         published = profiles.state.selected_revision
         assert published is not None
+        assert len(service.list_profiles("project")) == 1
+        assert published.name == ("用户创建的空方案" if existing else "用户输入的新方案名称")
+        if existing:
+            assert published.profile_id == target.profile_id
         mappings = {item.original: item for item in published.content.mappings}
         assert mappings["A"].translation == (
-            "已有译名" if policy is TerminologyProfileImportPolicy.KEEP_EXISTING else "导入译名"
+            "已有译名" if not existing and policy is TerminologyProfileImportPolicy.KEEP_EXISTING else "导入译名"
         )
         assert mappings["B"].translation == "来源独有" and mappings["B"].scheme_owned
     finally:

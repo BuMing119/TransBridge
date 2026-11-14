@@ -82,6 +82,7 @@ class ConflictRisk(StrEnum):
 
 class ConflictStatus(StrEnum):
     UNRESOLVED = "unresolved"
+    EQUIVALENT = "equivalent"
     UNIFIED = "unified"
     PLUGIN_EXCEPTION = "plugin_exception"
     IGNORED = "ignored"
@@ -102,6 +103,7 @@ class ManualActionType(StrEnum):
     CHANGE_ATTRIBUTES = "change_attributes"
     RESOLVE_CONFLICT = "resolve_conflict"
     IGNORE_CONFLICT = "ignore_conflict"
+    UNDO_CONFLICT = "undo_conflict"
     SUPPRESS = "suppress"
     REENABLE = "reenable"
 
@@ -314,6 +316,11 @@ class ConflictGroup:
         object.__setattr__(self, "status", ConflictStatus(self.status))
         if self.status is ConflictStatus.UNIFIED and not self.recommended_translation:
             raise ValueError("a unified conflict requires a recommended translation")
+        if self.status is ConflictStatus.EQUIVALENT and (
+            self.recommended_translation not in {item.normalized_translation for item in variants}
+            or not self.notes.strip()
+        ):
+            raise ValueError("equivalent terminology requires an existing representative translation and a reason")
 
 
 @dataclass(frozen=True, slots=True)

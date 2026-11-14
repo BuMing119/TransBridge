@@ -62,6 +62,7 @@ def preflight_json_export(draft: JsonExportDraft, projection_service) -> JsonExp
     targets = set()
     frozen = projection_service.freeze_projection(draft.sources[0])
     for index, source in enumerate(draft.sources):
+        projection = source.entry_projection if source.entry_projection is not None else frozen
         target = source.target_path
         valid_target = bool(target.strip()) and Path(target).suffix.lower() == ".json"
         canonical = os.path.normcase(fs.canonicalize(target)) if target.strip() else ""
@@ -87,8 +88,8 @@ def preflight_json_export(draft: JsonExportDraft, projection_service) -> JsonExp
             )
         )
         entries = _translation_entries(source.entries)
-        if frozen is not None:
-            entries, diagnostics = frozen.project_entries(entries)
+        if projection is not None:
+            entries, diagnostics = projection.project_entries(entries)
             checks.extend(WritePreflightCheck(item.code, False, item.message, warning=True) for item in diagnostics)
         request = WriteRequest(
             SourceDescriptor(target or "unselected.json"),

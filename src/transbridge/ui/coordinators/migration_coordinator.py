@@ -16,6 +16,7 @@ from transbridge.application.io.translation_import import prepare_translation_im
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 from transbridge.ui.source_input_state import SourceInputScope, ensure_source_input
+from transbridge.ui.text_encoding import context_text_encodings
 from transbridge.ui.workers import ApiWorker
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
     host.workbench.show_step2_progress(0, "正在导入译文…" if single_source else "验证迁移源中…")
 
     def prepare():
+        read_options = context_text_encodings(context).read_options()
         prepared = []
         states = {}
         labels = []
@@ -120,6 +122,7 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
                     strings_lang=cfg.strings_lang,
                     context=runtime_context,
                     target_snapshot=target.source_snapshot,
+                    **read_options,
                 )
             elif (eet_source and not binary_eet) or xt_source or strings_source:
                 legacy = legacy_migration.prepare_legacy_migration(
@@ -130,13 +133,16 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
                     plugin_stem=Path(esp_path).stem if esp_path else "",
                     strings_lang=cfg.strings_lang,
                     context=runtime_context,
+                    **read_options,
                 )
             else:
                 legacy = legacy_migration.LegacyMigrationDraft(candidate)
             candidate = legacy.collection
             structured_sources = sources + (((cfg.eet_path, FormatId.BINARY_EET),) if binary_eet else ())
             if target.slot is slot and structured_sources:
-                candidate, formats, unmatched = _prepare_structured(structured_sources, candidate, runtime_context)
+                candidate, formats, unmatched = _prepare_structured(
+                    structured_sources, candidate, runtime_context, read_options
+                )
                 labels.extend(formats)
                 skipped += unmatched
             previous = {entry.identity: (entry.translation, entry.stage) for entry in target.entries}
@@ -237,12 +243,14 @@ def _authority(context):
     )
 
 
-def _prepare_structured(sources, target, context):
+def _prepare_structured(sources, target, context, read_options):
     proposals = {}
     formats = []
     skipped = 0
     for path, hint in sources:
-        draft = migration_import.prepare_migration_import(path, target, format_hint=hint, context=context)
+        draft = migration_import.prepare_migration_import(
+            path, target, format_hint=hint, context=context, **read_options
+        )
         formats.append(draft.format_id.value)
         skipped += draft.skipped_unmatched + draft.skipped_conflicts
         for key, state in draft.states:

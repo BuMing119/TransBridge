@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from weakref import WeakSet
 
 from PyQt6 import sip
@@ -18,6 +19,7 @@ class ApiWorkerRegistry(QObject):
     def __init__(self, application: QCoreApplication) -> None:
         super().__init__(application)
         self._active: dict[int, object] = {}
+        self._read_cancellations: dict[int, Callable[[], None]] = {}
         self._observed: WeakSet = WeakSet()
         self._settling: set[int] = set()
         self._reap_timer = QTimer(self)
@@ -35,9 +37,11 @@ class ApiWorkerRegistry(QObject):
     def is_pending(self, worker) -> bool:
         return id(worker) in self._active
 
-    def retain(self, worker) -> None:
+    def retain(self, worker, *, cancel_read_on_close: Callable[[], None] | None = None) -> None:
         identity = id(worker)
         self._active[identity] = worker
+        if cancel_read_on_close is not None:
+            self._read_cancellations[identity] = cancel_read_on_close
         if worker not in self._observed:
             self._observed.add(worker)
             # Forward only an integer identity. Never run Python cleanup from
@@ -45,8 +49,16 @@ class ApiWorkerRegistry(QObject):
             worker.finished.connect(lambda: self._native_finished.emit(identity), Qt.ConnectionType.DirectConnection)
 
     def release(self, worker) -> None:
-        self._active.pop(id(worker), None)
-        self._settling.discard(id(worker))
+        identity = id(worker)
+        self._active.pop(identity, None)
+        self._read_cancellations.pop(identity, None)
+        self._settling.discard(identity)
+
+    def cancel_reads_for_close(self) -> None:
+        """Signal opted-in reads while retaining their workers through settlement."""
+        cancellations, self._read_cancellations = self._read_cancellations, {}
+        for cancel in cancellations.values():
+            cancel()
 
     @pyqtSlot(object)
     def _finished(self, identity: int) -> None:

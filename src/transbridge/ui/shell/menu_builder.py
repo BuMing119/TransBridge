@@ -10,6 +10,7 @@ from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QMainWindow, QMenu
 
 from .action_catalog import DEFAULT_ACTION_CATALOG, ActionCatalog, IntentId
+from .alignment_cache_actions import bind_alignment_cache_action
 
 VoidCallback = Callable[[], None]
 
@@ -47,8 +48,11 @@ class MenuCallbacks:
     open_terminology: VoidCallback = lambda: None
     show_context_help: VoidCallback = lambda: None
     show_task_activity: VoidCallback = lambda: None
+    show_terminology_alignment: VoidCallback = lambda: None
+    clear_alignment_cache: VoidCallback = lambda: None
     rename_project: VoidCallback = lambda: None
     update_source: VoidCallback = lambda: None
+    change_text_encoding: VoidCallback = lambda: None
     delete_project: VoidCallback = lambda: None
     delete_snapshot: VoidCallback = lambda: None
     exit_app: VoidCallback | None = None
@@ -137,6 +141,14 @@ class MenuBuilder:
         self._intent_action(project_menu, IntentId.PROJECT_SAVE, callbacks.manual_save)
         self._intent_action(project_menu, IntentId.PROJECT_RENAME, callbacks.rename_project)
         self._intent_action(project_menu, IntentId.PROJECT_SOURCE_UPDATE, callbacks.update_source)
+        encoding = self._intent_action(project_menu, IntentId.PROJECT_TEXT_ENCODING, callbacks.change_text_encoding)
+
+        def sync_encoding() -> None:
+            coordinator = getattr(self._window, "project_text_encoding_coordinator", None)
+            encoding.setEnabled(coordinator is not None and coordinator.availability()[0])
+
+        project_menu.aboutToShow.connect(sync_encoding)
+        sync_encoding()
         self._intent_action(project_menu, IntentId.PROJECT_DELETE, callbacks.delete_project)
         project_menu.addSeparator()
         variant_menu = project_menu.addMenu(self._gettext("翻译版本"))
@@ -197,6 +209,13 @@ class MenuBuilder:
         appearance = self._intent_action(settings_menu, IntentId.SETTINGS_APPEARANCE, callbacks.show_appearance)
         settings_menu.addSeparator()
         self._intent_action(settings_menu, IntentId.SETTINGS_SERVICES, callbacks.show_config)
+        self._intent_action(
+            settings_menu, IntentId.SETTINGS_TERMINOLOGY_ALIGNMENT, callbacks.show_terminology_alignment
+        )
+        clear_cache = self._intent_action(
+            settings_menu, IntentId.SETTINGS_ALIGNMENT_CACHE_CLEAR, callbacks.clear_alignment_cache
+        )
+        bind_alignment_cache_action(clear_cache, settings_menu, self._window)
         settings_menu.addSeparator()
         self._intent_action(settings_menu, IntentId.SETTINGS_ACCOUNT, callbacks.show_user)
         self._intent_action(settings_menu, IntentId.SETTINGS_MESSAGES, callbacks.show_mails)

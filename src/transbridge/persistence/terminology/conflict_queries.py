@@ -2,6 +2,7 @@
 """SQLite conflict filtering before keyset pagination and row counting."""
 
 from dataclasses import replace
+import json
 import sqlite3
 
 from transbridge.application.terminology.conflict_queries import ConflictFilter
@@ -20,9 +21,29 @@ def conflict_page(
     filters: ConflictFilter,
     *,
     snapshot_digest: str | None = None,
+    resolutions: tuple[ConflictGroup, ...] = (),
 ) -> Page[ConflictGroup]:
     conditions = []
     parameters: list[str] = []
+    if filters.start_at is not None:
+        conditions.append("stable_id >= ?")
+        parameters.append(filters.start_at)
+    status = "json_extract(payload_json, '$.fields.status.value')"
+    status_parameters = []
+    if resolutions:
+        status = f"COALESCE((SELECT value FROM json_each(?) WHERE key = stable_id), {status})"
+        status_parameters = [json.dumps({item.conflict_group_id: item.status.value for item in resolutions})]
+    if not filters.include_equivalent:
+        conditions.append(f"{status} != 'equivalent'")
+        parameters.extend(status_parameters)
+    if filters.review_state != "all":
+        predicate = {
+            "pending": "= 'unresolved'",
+            "equivalent": "= 'equivalent'",
+            "resolved": "IN ('unified', 'plugin_exception', 'ignored')",
+        }[filters.review_state]
+        conditions.append(f"{status} {predicate}")
+        parameters.extend(status_parameters)
     if filters.risk is not None:
         conditions.append("json_extract(payload_json, '$.fields.risk.value') = ?")
         parameters.append(filters.risk.value)
@@ -57,6 +78,8 @@ def review_conflict_page(connection, build, draft, effective, request, filters):
     elif effective is not None and effective.build_ref == build.ref:
         resolutions, owner_ref = effective.conflicts, effective.ref
     snapshot_digest = canonical_digest((build.ref, owner_ref), namespace="terminology.review-conflicts.v1")
-    page = conflict_page(connection, build.ref, request, filters, snapshot_digest=snapshot_digest)
+    page = conflict_page(
+        connection, build.ref, request, filters, snapshot_digest=snapshot_digest, resolutions=resolutions
+    )
     by_id = {item.conflict_group_id: item for item in resolutions}
     return replace(page, items=tuple(by_id.get(item.conflict_group_id, item) for item in page.items))

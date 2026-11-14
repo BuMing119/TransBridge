@@ -7,10 +7,14 @@
 
 from __future__ import annotations
 
+from datetime import date
 from functools import lru_cache
 import hashlib
 import logging
+import re
 from typing import Literal, TypedDict
+
+from transbridge.infra.llm_request_config import is_official_anthropic_endpoint
 
 try:
     import tiktoken
@@ -26,19 +30,41 @@ CacheProfile = Literal["translation_layered", "single_stable_prefix", "assistant
 CacheBreakpoint = Literal["A", "B", "FINAL"]
 
 _OPENAI_EXPLICIT_MIN_TOKENS = 1024
-# 旧模型的官方门槛因模型而异（1024～2048）；未知旧模型按上限保守处理。
-_OPENAI_AUTOMATIC_MIN_TOKENS = 2048
 # Anthropic 没有离线官方 tokenizer。使用 o200k 估算时额外保留 25% 安全余量。
 _ANTHROPIC_ESTIMATE_SAFETY_NUMERATOR = 5
 _ANTHROPIC_ESTIMATE_SAFETY_DENOMINATOR = 4
+# Claude API 的已知最低长度。未列出的模型由服务端判断。
+_ANTHROPIC_CACHE_MIN_TOKENS = {
+    "claude-fable-5": 512,
+    "claude-fable-5-1": 512,
+    "claude-fable-5-2": 512,
+    "claude-haiku-5-5": 512,
+    "claude-mythos-5": 512,
+    "claude-mythos-5-1": 512,
+    "claude-mythos-5-2": 512,
+    "claude-opus-5": 512,
+    "claude-opus-5-5": 512,
+    "claude-sonnet-5-5": 512,
+    "claude-mythos-preview": 2048,
+    "claude-opus-4-7": 2048,
+    "claude-haiku-4-5": 4096,
+    "claude-opus-4-5": 4096,
+    "claude-opus-4-6": 4096,
+    "claude-opus-4": 1024,
+    "claude-opus-4-1": 1024,
+    "claude-opus-4-8": 1024,
+    "claude-sonnet-4": 1024,
+    "claude-sonnet-4-5": 1024,
+    "claude-sonnet-4-6": 1024,
+    "claude-sonnet-5": 1024,
+}
 
-# 显式断点能力采用集中式保守表。未知模型继续走 automatic_prefix。
-_EXPLICIT_BREAKPOINT_PREFIXES = (
-    "gpt-5.6",
-    "gpt-5.7",
-    "gpt-5.8",
-    "gpt-5.9",
-    "gpt-6",
+# 显式断点能力采用集中式规则。未知模型继续走 automatic_prefix。
+_OPENAI_EXPLICIT_MODEL = re.compile(r"^gpt-(?:5\.[6-9]|6(?:\.[0-9]+)?)(?:-|$)")
+_REJECTED_PARAMETER = re.compile(
+    r"\b(?:invalid|unknown|unrecognized|unsupported|unexpected|forbidden|extra_forbidden|rejected|"
+    r"not (?:supported|permitted|allowed|recognized|valid|accepted))\b",
+    re.IGNORECASE,
 )
 
 
@@ -56,6 +82,36 @@ class OpenAIPromptCacheRequest(TypedDict):
     messages: list[dict]
     request_options: dict
     cache_mode: Literal["explicit_breakpoints", "automatic_prefix", "disabled"]
+
+
+def log_prompt_cache_strategy(*, provider: str, model: str, profile: str, strategy: str, reason: str) -> None:
+    logger.debug(
+        "Prompt cache request strategy: provider=%s model=%s profile=%s strategy=%s reason=%s",
+        provider,
+        model,
+        profile,
+        strategy,
+        reason,
+    )
+
+
+def is_cache_parameter_rejection(exc: Exception, *, fields: tuple[str, ...]) -> bool:
+    """Require a client error that identifies a cache parameter."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if not fields or status not in (400, 422):
+        return False
+    field_pattern = r"\b(?:" + "|".join(re.escape(field) for field in fields) + r")\b"
+    param = getattr(exc, "param", None)
+    if isinstance(param, str) and param:
+        return bool(re.search(field_pattern, param, re.IGNORECASE))
+    message = getattr(exc, "message", None)
+    message = message if isinstance(message, str) else str(exc)
+    return any(
+        re.search(field_pattern, detail, re.IGNORECASE) and _REJECTED_PARAMETER.search(detail)
+        for detail in re.split(r"[;\n]", message)
+    )
 
 
 def _sha24(text: str) -> str:
@@ -181,7 +237,7 @@ def _validate_single_topology(
 
 
 def _log_invalid_topology(profile: CacheProfile | str) -> None:
-    logger.warning("Prompt cache directives 不符合 %s 拓扑，降级为无缓存请求", profile)
+    logger.warning("Prompt cache directives 不符合 %s 拓扑，请求将省略缓存参数", profile)
 
 
 def _validated_directives(
@@ -212,7 +268,7 @@ def openai_cache_capability(
     normalized = (model or "").strip().lower()
     if not normalized:
         return "disabled"
-    if any(normalized.startswith(prefix) for prefix in _EXPLICIT_BREAKPOINT_PREFIXES):
+    if _OPENAI_EXPLICIT_MODEL.match(normalized):
         return "explicit_breakpoints"
     return "automatic_prefix"
 
@@ -220,7 +276,7 @@ def openai_cache_capability(
 @lru_cache(maxsize=32)
 def _encoding_for_model(model: str):
     if tiktoken is None:
-        logger.warning("未安装 tiktoken，当前进程将禁用 prompt cache")
+        logger.warning("未安装 tiktoken，无法在本地验证显式缓存门槛")
         return None
     try:
         try:
@@ -228,20 +284,20 @@ def _encoding_for_model(model: str):
         except KeyError:
             return tiktoken.get_encoding("o200k_base")
     except Exception:
-        logger.warning("无法加载 prompt cache tokenizer，当前进程将禁用显式缓存", exc_info=True)
+        logger.warning("无法加载 prompt cache tokenizer，无法在本地验证显式缓存门槛", exc_info=True)
         return None
 
 
 @lru_cache(maxsize=512)
 def estimate_prompt_tokens(model: str, text: str) -> int | None:
-    """使用 OpenAI tokenizer 统计文本 token；编码不可用时返回 None 并安全禁用缓存。"""
+    """使用 OpenAI tokenizer 统计文本 token；编码不可用时返回 None。"""
     encoding = _encoding_for_model(model)
     if encoding is None:
         return None
     try:
         return len(encoding.encode(text))
     except Exception:
-        logger.warning("无法计算 prompt cache token 数，当前请求将禁用缓存", exc_info=True)
+        logger.warning("无法计算 prompt cache token 数，无法在本地验证显式缓存门槛", exc_info=True)
         return None
 
 
@@ -266,52 +322,42 @@ def _stable_prefixes(clean: list[dict], profile: CacheProfile) -> tuple[str, ...
     return (_message_text(clean[0]),)
 
 
-def _anthropic_cache_min_tokens(model: str) -> int:
-    normalized = (model or "").lower()
-    if "fable-5" in normalized or "mythos-5" in normalized:
-        return 512
-    if "mythos-preview" in normalized or "opus-4-7" in normalized or "haiku-3-5" in normalized:
-        return 2048
-    if "opus-4-6" in normalized or "opus-4-5" in normalized or "haiku-4-5" in normalized:
-        return 4096
-    return 1024
+def _anthropic_cache_min_tokens(model: str) -> int | None:
+    normalized = model.strip().lower()
+    family, _, suffix = normalized.rpartition("-")
+    if suffix == "latest":
+        normalized = family
+    elif re.fullmatch(r"20[0-9]{6}", suffix):
+        try:
+            date.fromisoformat(suffix)
+        except ValueError:
+            return None
+        normalized = family
+    return _ANTHROPIC_CACHE_MIN_TOKENS.get(normalized)
 
 
-def _prefixes_are_cacheable(
-    *,
-    provider: Literal["openai", "anthropic"],
-    model: str,
-    capability: Literal["explicit_breakpoints", "automatic_prefix"] | None,
-    profile: CacheProfile,
-    clean: list[dict],
-) -> bool:
+def _prefixes_are_cacheable(prefixes: tuple[str, ...], threshold: int, *, tokenizer_model: str) -> bool:
+    counts = (estimate_prompt_tokens(tokenizer_model, prefix) for prefix in prefixes)
+    return all(count is not None and count >= threshold for count in counts)
+
+
+def _anthropic_breakpoint_eligibility(
+    model: str, base_url: str, profile: CacheProfile, clean: list[dict]
+) -> tuple[bool, str]:
+    if not is_official_anthropic_endpoint(base_url):
+        return False, "endpoint_not_official"
     prefixes = _stable_prefixes(clean, profile)
-    if provider == "openai":
-        threshold = (
-            _OPENAI_EXPLICIT_MIN_TOKENS if capability == "explicit_breakpoints" else _OPENAI_AUTOMATIC_MIN_TOKENS
-        )
-        required_prefixes = prefixes if capability == "explicit_breakpoints" else prefixes[-1:]
-        tokenizer_model = model
-    else:
-        provider_threshold = _anthropic_cache_min_tokens(model)
-        threshold = (
-            provider_threshold * _ANTHROPIC_ESTIMATE_SAFETY_NUMERATOR + _ANTHROPIC_ESTIMATE_SAFETY_DENOMINATOR - 1
-        ) // _ANTHROPIC_ESTIMATE_SAFETY_DENOMINATOR
-        required_prefixes = prefixes
-        tokenizer_model = "gpt-5.6"
-
-    counts = tuple(estimate_prompt_tokens(tokenizer_model, prefix) for prefix in required_prefixes)
-    eligible = all(count is not None and count >= threshold for count in counts)
-    if not eligible:
-        logger.debug(
-            "Prompt cache prefix below threshold: provider=%s model=%s profile=%s tokens=%s threshold=%d",
-            provider,
-            model,
-            profile,
-            counts,
-            threshold,
-        )
-    return eligible
+    if not all(_message_text(message) for message in clean[: len(prefixes)]):
+        return False, "empty_breakpoint"
+    provider_threshold = _anthropic_cache_min_tokens(model)
+    if provider_threshold is None:
+        # The official API processes short prompts without caching or returning an error.
+        return True, "server_checks_unknown_model_minimum"
+    threshold = (
+        provider_threshold * _ANTHROPIC_ESTIMATE_SAFETY_NUMERATOR + _ANTHROPIC_ESTIMATE_SAFETY_DENOMINATOR - 1
+    ) // _ANTHROPIC_ESTIMATE_SAFETY_DENOMINATOR
+    eligible = _prefixes_are_cacheable(prefixes, threshold, tokenizer_model="gpt-5.6")
+    return eligible, "local_minimum_met" if eligible else "local_minimum_not_met_or_unavailable"
 
 
 def prepare_openai_chat_cache_request(
@@ -321,12 +367,19 @@ def prepare_openai_chat_cache_request(
     messages: list[dict],
     cache_key: str | None = None,
 ) -> OpenAIPromptCacheRequest:
-    """验证并转换 OpenAI 普通/流式请求；任何不确定性都降级为标准消息。"""
+    """验证并转换 OpenAI 普通/流式请求的客户端缓存参数。"""
     clean, directives = _validated_directives(messages)
-    if not is_official_openai_base_url(base_url) or not directives:
+    if not directives:
         return _disabled_openai_request(clean)
 
-    if directives[0]["profile"] == "assistant_stable":
+    profile = directives[0]["profile"]
+    if not is_official_openai_base_url(base_url):
+        log_prompt_cache_strategy(
+            provider="openai", model=model, profile=profile, strategy="standard_request", reason="endpoint_not_official"
+        )
+        return _disabled_openai_request(clean)
+
+    if profile == "assistant_stable":
         from transbridge.infra.assistant_prompt_cache import prepare_assistant_openai
 
         return prepare_assistant_openai(messages=clean, model=model, base_url=base_url, key=directives[0]["key"])
@@ -335,23 +388,30 @@ def prepare_openai_chat_cache_request(
     if capability == "disabled":
         return _disabled_openai_request(clean)
 
-    profile = directives[0]["profile"]
-    if not _prefixes_are_cacheable(
-        provider="openai",
-        model=model,
-        capability=capability,
-        profile=profile,
-        clean=clean,
-    ):
-        return _disabled_openai_request(clean)
-
     key = directives[0]["key"] or cache_key or ""
     if capability == "automatic_prefix":
+        log_prompt_cache_strategy(
+            provider="openai", model=model, profile=profile, strategy=capability, reason="server_checks_prefix_length"
+        )
         return {
             "messages": clean,
             "request_options": {"prompt_cache_key": key},
             "cache_mode": "automatic_prefix",
         }
+    eligible = _prefixes_are_cacheable(
+        _stable_prefixes(clean, profile),
+        _OPENAI_EXPLICIT_MIN_TOKENS,
+        tokenizer_model=model,
+    )
+    log_prompt_cache_strategy(
+        provider="openai",
+        model=model,
+        profile=profile,
+        strategy=capability if eligible else "standard_request",
+        reason="local_minimum_met" if eligible else "local_minimum_not_met_or_unavailable",
+    )
+    if not eligible:
+        return _disabled_openai_request(clean)
     return _build_openai_explicit(clean, profile, key)
 
 
@@ -407,25 +467,25 @@ def build_anthropic_system_blocks(
     *,
     cache_key: str = "",
     model: str = "",
+    base_url: str = "",
     enable_cache: bool = True,
 ) -> tuple[list[dict], list[dict]]:
     """转换 Anthropic system blocks；非法或不够长的前缀不附加 cache_control。"""
     del cache_key  # Anthropic 按完整前缀匹配，不接收应用侧 key。
     clean, directives = _validated_directives(messages)
     profile = directives[0]["profile"] if directives else None
-    cacheable = bool(
-        enable_cache
-        and profile
-        and profile != "assistant_stable"
-        and _prefixes_are_cacheable(
+    breakpoint_indexes = set()
+    if enable_cache and profile and profile != "assistant_stable":
+        cacheable, reason = _anthropic_breakpoint_eligibility(model, base_url, profile, clean)
+        if cacheable:
+            breakpoint_indexes = {0, 1} if profile == "translation_layered" else {0}
+        log_prompt_cache_strategy(
             provider="anthropic",
             model=model,
-            capability=None,
             profile=profile,
-            clean=clean,
+            strategy="explicit_breakpoints" if cacheable else "standard_request",
+            reason=reason,
         )
-    )
-    breakpoint_indexes = ({0, 1} if profile == "translation_layered" else {0}) if cacheable else set()
 
     system_blocks: list[dict] = []
     user_messages: list[dict] = []

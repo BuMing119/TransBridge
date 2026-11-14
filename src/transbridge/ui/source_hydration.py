@@ -43,18 +43,21 @@ def slot_from_hydration(source, *, plugin=None, projection_update=None) -> Colle
     format_id = source.format_id
     reference = getattr(source, "reference_location", None)
     reference = source.location if reference is None else reference
+    descriptor = getattr(source.source_snapshot, "source", None)
+    output_reference = "" if str(getattr(descriptor, "uri", "")).startswith("project-source:") else reference
     return CollectionSlot(
         label=PureWindowsPath(source.location).stem,
         collection=collection_from_hydration(source, projection_update=projection_update),
-        esp_path=reference or None if format_id is FormatId.PLUGIN_SSE else None,
-        eet_path=reference or None if format_id in {FormatId.XML_EET, FormatId.BINARY_EET} else None,
-        xt_path=reference or None if format_id is FormatId.XML_XT else None,
+        esp_path=output_reference or None if format_id is FormatId.PLUGIN_SSE else None,
+        eet_path=output_reference or None if format_id in {FormatId.XML_EET, FormatId.BINARY_EET} else None,
+        xt_path=output_reference or None if format_id is FormatId.XML_XT else None,
         plugin=plugin,
         source_snapshot=source.source_snapshot,
         format_id=format_id,
         source_id=getattr(source, "source_id", None),
         source_namespace=source.entries[0].entry_key.namespace.value if source.entries else None,
         reading_source_entries=reading_entries_from_hydration(source),
+        reference_path=reference or "",
     )
 
 
@@ -95,7 +98,7 @@ def prepare_project_slots(hydrations, snapshot, *, existing_slots=()) -> tuple[t
         registration = matches[0] if len(matches) == 1 else None
         if registration is not None:
             registered_id = registration["source_id"]
-            reference_location = registration.get("location") or ""
+            reference_location = registration.get("location") or getattr(source, "reference_location", None) or ""
             if source_id != registered_id or getattr(source, "reference_location", None) != reference_location:
                 source = replace(source, source_id=registered_id, reference_location=reference_location)
         key = source_slot_key(source)

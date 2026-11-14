@@ -8,6 +8,7 @@ from transbridge.application.preflight.inputs import (
     SourceInputFacts,
     missing_source_keys as _missing_source_keys,
 )
+from transbridge.config.text_encoding import TextEncodings
 from transbridge.ui.project_rows import ProjectRowsCollection
 
 
@@ -68,6 +69,7 @@ class SourceInputScope:
     context: object
     source_keys: tuple[str, ...]
     snapshots: dict = field(default_factory=dict)
+    text_encodings: TextEncodings | None = None
 
     @property
     def slots(self):

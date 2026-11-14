@@ -42,6 +42,7 @@ class IntentId(StrEnum):
     PROJECT_REFRESH = "project.refresh"
     PROJECT_RENAME = "project.rename"
     PROJECT_SOURCE_UPDATE = "project.source-update"
+    PROJECT_TEXT_ENCODING = "project.text-encoding"
     PROJECT_DELETE = "project.delete"
     PROJECT_VARIANT_CREATE = "project.variant.create"
     PROJECT_VARIANT_COPY = "project.variant.copy"
@@ -69,6 +70,8 @@ class IntentId(StrEnum):
     VIEW_SMART_ASSISTANT = "view.smart-assistant"
     SETTINGS_APPEARANCE = "settings.appearance"
     SETTINGS_SERVICES = "settings.services"
+    SETTINGS_TERMINOLOGY_ALIGNMENT = "settings.terminology-alignment"
+    SETTINGS_ALIGNMENT_CACHE_CLEAR = "settings.alignment-cache-clear"
     SETTINGS_ACCOUNT = "settings.account"
     SETTINGS_MESSAGES = "settings.messages"
     HELP_CONTEXT = "help.context"
@@ -163,6 +166,7 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ActionDescriptor(IntentId.PROJECT_SAVE, "保存当前工程", ActionSection.PROJECT, shortcut="Ctrl+S"),
     ActionDescriptor(IntentId.PROJECT_RENAME, "重命名当前工程…", ActionSection.PROJECT),
     ActionDescriptor(IntentId.PROJECT_SOURCE_UPDATE, "更新源文件…", ActionSection.PROJECT),
+    ActionDescriptor(IntentId.PROJECT_TEXT_ENCODING, "文本编码…", ActionSection.PROJECT),
     ActionDescriptor(
         IntentId.PROJECT_DELETE,
         "删除本地工程…",
@@ -311,6 +315,18 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
         "服务与 API 配置…",
         ActionSection.SETTINGS,
         status_tip="配置 ParaTranz 与 AI 服务连接",
+    ),
+    ActionDescriptor(
+        IntentId.SETTINGS_TERMINOLOGY_ALIGNMENT,
+        "AI 术语位置判断…",
+        ActionSection.SETTINGS,
+        status_tip="更改自动 AI 术语位置判断及启动询问偏好",
+    ),
+    ActionDescriptor(
+        IntentId.SETTINGS_ALIGNMENT_CACHE_CLEAR,
+        "清除当前版本定位缓存",
+        ActionSection.SETTINGS,
+        status_tip="清除当前翻译版本的定位判断，不修改译文或其他版本的缓存",
     ),
     ActionDescriptor(IntentId.SETTINGS_ACCOUNT, "ParaTranz 账户信息", ActionSection.SETTINGS),
     ActionDescriptor(IntentId.SETTINGS_MESSAGES, "ParaTranz 私信", ActionSection.SETTINGS),

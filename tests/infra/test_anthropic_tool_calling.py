@@ -7,7 +7,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from transbridge.infra import anthropic_tool_calling as adapter
+from transbridge.infra.assistant_prompt_cache import decorate_assistant_messages
 from transbridge.infra.llm_tool_calling import LlmToolDefinition, LlmToolProtocolError
+from transbridge.infra.prompt_cache import attach_prompt_cache_directive
 
 
 def test_usage_start_delta_and_final_snapshot_are_not_added():
@@ -101,14 +103,14 @@ def _block(block_type: str, **values):
     return SimpleNamespace(type=block_type, **values)
 
 
-def _owner(stream_side_effect):
+def _owner(stream_side_effect, *, model="claude-sonnet-4-6"):
     messages_api = MagicMock()
     messages_api.stream.side_effect = stream_side_effect
     return SimpleNamespace(
         _lock=threading.Lock(),
-        _client=SimpleNamespace(messages=messages_api),
+        _client=SimpleNamespace(messages=messages_api, base_url="https://api.anthropic.com"),
         _active_requests=0,
-        _model="claude-sonnet-4-6",
+        _model=model,
     )
 
 
@@ -277,67 +279,62 @@ def test_old_sdk_system_blocks_fall_back_to_text(monkeypatch):
     assert second.kwargs["system"] == "stable"
 
 
-def test_cache_rejection_retry_preserves_tools_and_uses_no_cache_messages(monkeypatch):
-    calls: list[bool] = []
+class CacheRejected(RuntimeError):
+    status_code = 400
 
-    def fake_build(messages, *, model, enable_cache=True):
-        del messages, model
-        calls.append(enable_cache)
-        system = [{"type": "text", "text": "stable"}]
-        if enable_cache:
-            system[0]["cache_control"] = {"type": "ephemeral"}
-        return system, [{"role": "user", "content": "hello"}]
 
-    monkeypatch.setattr(adapter, "build_anthropic_system_blocks", fake_build)
-
-    class CacheRejected(Exception):
-        status_code = 400
-        message = "cache_control is unsupported"
-
+def test_cache_rejection_retry_preserves_tools_and_uses_no_cache_messages():
     final = SimpleNamespace(stop_reason="end_turn", content=[_block("text", text="ok")])
-    owner = _owner([CacheRejected(), _Stream([], final)])
+    owner = _owner([CacheRejected("cache_control is unsupported"), _Stream([], final)], model="future-model")
+    stable = attach_prompt_cache_directive(
+        {"role": "system", "content": "stable"},
+        cache_key="stable",
+        profile="single_stable_prefix",
+        breakpoint="FINAL",
+    )
 
     turn = adapter.chat_stream_with_tools(
         owner,
-        [{"role": "system", "content": "stable"}, {"role": "user", "content": "hello"}],
+        [stable, {"role": "user", "content": "hello"}],
         128,
         [_tool()],
         lambda _text: None,
     )
 
     assert turn.text == "ok"
-    assert calls == [True, False]
     first, second = owner._client.messages.stream.call_args_list
-    assert first.kwargs["tools"] == second.kwargs["tools"]
-    assert "cache_control" in first.kwargs["system"][0]
-    assert "cache_control" not in second.kwargs["system"][0]
+    assert first.kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert second.kwargs == {**first.kwargs, "system": [{"type": "text", "text": "stable"}]}
 
 
-def test_cache_rejection_after_text_is_not_retried(monkeypatch):
-    monkeypatch.setattr(
-        adapter,
-        "build_anthropic_system_blocks",
-        lambda *_args, **_kwargs: (
-            [{"type": "text", "text": "stable", "cache_control": {"type": "ephemeral"}}],
-            [{"role": "user", "content": "hello"}],
-        ),
+def _assistant_messages():
+    return decorate_assistant_messages(
+        [{"role": "system", "content": "stable"}, {"role": "user", "content": "hello"}],
+        namespace="session",
     )
 
+
+def test_unrelated_error_about_cache_does_not_trigger_compatibility_retry():
+    owner = _owner([CacheRejected("Invalid cached account state")], model="claude-sonnet-5-5")
+    with pytest.raises(CacheRejected, match="account state"):
+        adapter.chat_stream_with_tools(owner, _assistant_messages(), 128, [_tool()], lambda _: None)
+    assert owner._client.messages.stream.call_args.kwargs["cache_control"] == {"type": "ephemeral"}
+    assert owner._client.messages.stream.call_count == 1
+
+
+def test_cache_rejection_after_text_is_not_retried():
     class PartialStream(_Stream):
         def __iter__(self):
             yield _block("content_block_delta", delta=_block("text_delta", text="partial"))
-            exc = RuntimeError("cache_control failed after output")
-            exc.status_code = 400
-            exc.message = "cache_control failed after output"
-            raise exc
+            raise CacheRejected("cache_control is unsupported after output")
 
-    owner = _owner([PartialStream([], None)])
+    owner = _owner([PartialStream([], None)], model="claude-sonnet-5-5")
     chunks: list[str] = []
 
-    with pytest.raises(RuntimeError, match="after output"):
+    with pytest.raises(CacheRejected, match="after output"):
         adapter.chat_stream_with_tools(
             owner,
-            [{"role": "user", "content": "hello"}],
+            _assistant_messages(),
             128,
             [_tool()],
             chunks.append,
@@ -346,29 +343,17 @@ def test_cache_rejection_after_text_is_not_retried(monkeypatch):
     assert owner._client.messages.stream.call_count == 1
 
 
-def test_tool_event_prevents_cache_retry(monkeypatch):
-    monkeypatch.setattr(
-        adapter,
-        "build_anthropic_system_blocks",
-        lambda *_args, **_kwargs: (
-            [{"type": "text", "text": "stable", "cache_control": {"type": "ephemeral"}}],
-            [{"role": "user", "content": "hello"}],
-        ),
-    )
-
+def test_tool_event_prevents_cache_retry():
     class PartialToolStream(_Stream):
         def __iter__(self):
             yield _block("content_block_delta", delta=_block("input_json_delta", partial_json="{"))
-            exc = RuntimeError("cache_control failed after tool delta")
-            exc.status_code = 400
-            exc.message = "cache_control failed after tool delta"
-            raise exc
+            raise CacheRejected("cache_control is unsupported after tool delta")
 
-    owner = _owner([PartialToolStream([], None)])
-    with pytest.raises(RuntimeError, match="after tool delta"):
+    owner = _owner([PartialToolStream([], None)], model="claude-sonnet-5-5")
+    with pytest.raises(CacheRejected, match="after tool delta"):
         adapter.chat_stream_with_tools(
             owner,
-            [{"role": "user", "content": "hello"}],
+            _assistant_messages(),
             128,
             [_tool()],
             lambda _text: None,

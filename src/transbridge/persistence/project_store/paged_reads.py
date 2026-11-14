@@ -8,6 +8,7 @@ import json
 
 from transbridge.application.io.contracts import FormatId, SourceDescriptor, SourceSnapshot
 from transbridge.application.projects.models import ActiveProject
+from transbridge.application.projects.source_content import registered_source_ids
 from transbridge.application.projects.source_extraction import reconstructed_source_snapshot
 from transbridge.application.projects.storage_contracts import ProjectReadToken, SourceInfo, StoredEntry
 from transbridge.persistence.v2.deferred_variant_rows import DeferredVariantRows
@@ -15,7 +16,7 @@ from transbridge.persistence.v2.variant import SourceFingerprint, VariantAggrega
 
 from .connection import project_connection
 from .reads import read_format_records, read_page, read_sources, require_variant
-from .records import CandidateRecords, read_project, registered_source_ids, revision_marker
+from .records import CandidateRecords, read_project, revision_marker
 
 WORKBENCH_PAGE_SIZE = 100
 

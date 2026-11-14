@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from transbridge.ai_translator.structured_schemas import TRANSLATION_OUTPUT_SCHEMA
 from transbridge.infra.llm_client import AnthropicClient
+from transbridge.infra.llm_request_config import TRANSLATION_OUTPUT_TOKENS
 from transbridge.infra.llm_structured_outputs import (
     STRUCTURED_OUTPUT_METADATA_KEY,
     LlmOutputSchema,
@@ -131,6 +134,38 @@ def test_stream_sends_native_schema_uses_final_message_and_preserves_callbacks()
     kwargs = client._client.messages.stream.call_args.kwargs
     assert kwargs["output_config"] == _expected_output_config()
     assert client._active_requests == 0
+
+
+def test_automatic_translation_budget_allows_a_large_structured_stream() -> None:
+    client = _client()
+    messages = [
+        attach_structured_output_directive({"role": "system", "content": "Translate."}, TRANSLATION_OUTPUT_SCHEMA),
+        {"role": "user", "content": "Translate a batch of book excerpts."},
+    ]
+    payload = {
+        "results": [
+            {"entry_id": str(index), "translation": "the dragon has returned to the city. " * 20} for index in range(36)
+        ]
+    }
+    serialized = json.dumps(payload)
+    simulated_output_tokens = 6000
+
+    def respond(*, max_tokens, **kwargs):
+        assert "format" in kwargs["output_config"]
+        if max_tokens < simulated_output_tokens:
+            return _Stream([serialized[: len(serialized) // 2]], stop_reason="max_tokens")
+        return _Stream([serialized[:1000], serialized[1000:]])
+
+    client._client.messages.stream.side_effect = respond
+    with pytest.raises(LlmStructuredOutputTruncatedError):
+        client.chat_stream(messages, 4096, lambda _chunk: None)
+
+    chunks = []
+    result = client.chat_stream(messages, 0, chunks.append)
+
+    assert json.loads(result) == payload
+    assert "".join(chunks) == result
+    assert client._client.messages.stream.call_args.kwargs["max_tokens"] == TRANSLATION_OUTPUT_TOKENS
 
 
 class _ProviderError(Exception):

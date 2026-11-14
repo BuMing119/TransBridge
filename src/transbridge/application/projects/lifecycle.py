@@ -24,6 +24,7 @@ from transbridge.application.contracts import (
     RequestContext,
 )
 from transbridge.persistence.v2.ids import VariantRef
+from transbridge.persistence.v2.translation_epochs import publish_alignment_epochs
 from transbridge.persistence.v2.variant import VariantChangeSet, VariantSnapshot
 
 from .models import (
@@ -45,9 +46,15 @@ from .ports import (
     NullLifecycleLeasePort,
 )
 from .provisioning import ProjectProvisioningCommit
-from .save_changes import acknowledge_saved_changes, rebase_committed_variant_save
+from .save_changes import acknowledge_saved_changes, project_needs_encoding_defaults, rebase_committed_variant_save
 from .save_result import active_save_result, translations_were_saved
 from .source_inputs import MissingProjectSourceInput
+from .source_references import (
+    PendingSourceReferences,
+    PendingSourceReferenceUpdate,
+    capture_pending_references,
+    update_pending_reference,
+)
 from .transition_preparation import (
     ActiveSignature,
     PreparedState,
@@ -99,6 +106,28 @@ class ProjectLifecycleService:
             if active is None or active.variant is None:
                 return None
             return active.variant.snapshot(), active.project.envelope.revision
+
+    def capture_pending_source_references(self, signature: ActiveSignature) -> PendingSourceReferences | None:
+        with self._lock:
+            active = self._active
+            if active is None or self._save_in_flight or self._variant_save_needs_confirmation(active):
+                return None
+            return capture_pending_references(active, self._generation, signature)
+
+    def update_pending_source_reference(self, update: PendingSourceReferenceUpdate) -> bool:
+        with self._lock:
+            active = self._active
+            if active is None or self._save_in_flight or self._variant_save_needs_confirmation(active):
+                return False
+            updated = update_pending_reference(active, self._generation, update)
+            if updated is None:
+                return False
+            self._active = updated
+            return True
+
+    def _variant_save_needs_confirmation(self, active: ActiveProject) -> bool:
+        pending = self._pending_variant_check
+        return pending is not None and pending[0] == active.formal_variant_ref
 
     def defer_variant_save_check(
         self, variant_ref: VariantRef, check: Callable[[RequestContext], OperationResult]
@@ -485,7 +514,7 @@ class ProjectLifecycleService:
                 if checked is not None and not checked.is_success:
                     return checked
                 active = self._active
-            if active is None or not active.dirty:
+            if active is None or (not active.dirty and not project_needs_encoding_defaults(active.project)):
                 return active_save_result(active, context)
             if self._save_in_flight:
                 return _failed(
@@ -762,6 +791,7 @@ class ProjectLifecycleService:
             def publish() -> None:
                 if before_publish is not None:
                     before_publish()
+                publish_alignment_epochs(active.variant, candidate.variant)
                 self._active = candidate
                 self._generation += 1
 
@@ -842,7 +872,9 @@ class ProjectLifecycleService:
 
             def publish() -> None:
                 verify()
-                self._active = rebase_committed_variant_save(active, save, observed_revision, observed_entries)
+                candidate = rebase_committed_variant_save(active, save, observed_revision, observed_entries)
+                publish_alignment_epochs(active.variant, candidate.variant)
+                self._active = candidate
                 self._generation += 1
 
             try:
@@ -860,6 +892,9 @@ class ProjectLifecycleService:
         project,
         expected_project_revision: int,
         context: RequestContext,
+        *,
+        expected_generation: int | None = None,
+        require_clean: bool = False,
     ) -> OperationResult[dict[str, Any]]:
         """Atomically replace only the active Project document.
 
@@ -868,6 +903,10 @@ class ProjectLifecycleService:
         """
 
         with self._lock:
+            if expected_generation is not None and expected_generation != self._generation:
+                return _failed(
+                    "PROJECT_UPDATE_STALE", "预览后工程状态已变化，请重新预览。", ErrorCategory.CONFLICT, context
+                )
             active = self._active
             if active is None:
                 return _failed(
@@ -876,6 +915,8 @@ class ProjectLifecycleService:
                     ErrorCategory.PREREQUISITE,
                     context,
                 )
+            if require_clean and active.dirty:
+                return _failed("PROJECT_UPDATE_STALE", "请先保存当前工程的修改。", ErrorCategory.CONFLICT, context)
             if context.project_id is not None and context.project_id != active.project_ref.identity.value:
                 return _failed(
                     "PROJECT_CONTEXT_MISMATCH",

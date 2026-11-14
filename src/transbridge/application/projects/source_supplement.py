@@ -11,12 +11,14 @@ from threading import RLock
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
 from transbridge.application.io import FormatId
 from transbridge.application.io.identity import SourceNamespace
+from transbridge.config.text_encoding import TextEncodings
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef
 from transbridge.persistence.v2.models import ProjectDto
 from transbridge.persistence.v2.schema import parse_json_bytes
 
 from .provisioning import ProjectSourceRequest
 from .source_content import source_content_identity
+from .source_encoding import with_source_read_options
 from .source_input_publication import PreparedSourcePublication, publish_source_input
 from .source_registry import SourceRegistrySnapshot, migrate_legacy_source_registry
 from .source_supplement_mapping import remap_rows, supplement_rows, supplement_variants
@@ -67,6 +69,8 @@ class ProjectSourceSupplementService:
                 source.format_id if source is not None else FormatId(format_id) if format_id else None,
                 options=tuple(options.items()),
             )
+            encodings = TextEncodings.from_project_data(expected.project.envelope.data)
+            request = with_source_read_options(request, encodings)
             prepared = self._preparer.prepare_source(request, context, role="primary", common_options=())
             rows, choices = supplement_rows(
                 expected.variants,

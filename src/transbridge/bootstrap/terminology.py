@@ -14,7 +14,7 @@ from transbridge.application.io import default_format_catalog
 from transbridge.application.projects import ProjectLifecycleService
 from transbridge.application.terminology.browse_queries import TerminologyBrowseQueries
 from transbridge.application.terminology.effective import SnapshotEffectiveTerminologyPort
-from transbridge.application.terminology.input_capture import BuildInputCaptureService
+from transbridge.application.terminology.input_capture import BuildInputCaptureService, TerminologyBuildInputPort
 from transbridge.application.terminology.ports import PageRequest
 from transbridge.application.terminology.runtime import TerminologyTaskEntrypoint, TerminologyWorkloadRegistry
 from transbridge.application.terminology.workloads import TerminologyWorkloadType
@@ -59,6 +59,8 @@ if TYPE_CHECKING:
     from transbridge.application.translation.terminology_run_snapshot import TerminologyRunSnapshotRef
     from transbridge.paratranz.terms_service import ParaTranzTermsService
 
+from .alignment_cache import AlignmentCacheRegistry
+from .terminology_extraction import ProductionTerminologyBuildInputs
 from .terminology_sources import ProjectSourceLeases
 from .terminology_storage import (
     FormatCapabilities,
@@ -81,7 +83,7 @@ from .terminology_workloads import (
 @dataclass(frozen=True, slots=True)
 class ProductionTerminologyComposition:
     repositories: ProjectTerminologyRepositories
-    build_inputs: BuildInputCaptureService
+    build_inputs: TerminologyBuildInputPort
     workloads: TerminologyWorkloadRegistry
     tasks: TerminologyTaskEntrypoint
     commands: ProductionTerminologyCommands
@@ -95,6 +97,7 @@ class ProductionTerminologyComposition:
     _profile_services: dict[str, TerminologyProfileService] = field(default_factory=dict, compare=False, repr=False)
     _sync_resources: list[ParaTranzTermsService] = field(default_factory=list, compare=False, repr=False)
     _sync_lock: RLock = field(default_factory=RLock, compare=False, repr=False)
+    _alignment_caches: AlignmentCacheRegistry = field(default_factory=AlignmentCacheRegistry, compare=False, repr=False)
 
     def services_for(self, context: RequestContext):
         from transbridge.ui.tools.terminology.presenter import TerminologyUiServices
@@ -179,7 +182,11 @@ class ProductionTerminologyComposition:
         repository = self.repositories.for_project(project_id)
         return SqliteEffectiveTerminologySnapshotPort(repository).snapshot(project_id, variant_id)
 
+    def alignment_cache_for(self, project_id: str, variant_id: str):
+        return self._alignment_caches.for_variant(self.repositories, self.lifecycle, project_id, variant_id)
+
     def close(self) -> None:
+        self._alignment_caches.close()
         with self._sync_lock:
             resources = tuple(self._sync_resources)
             self._sync_resources.clear()
@@ -192,6 +199,7 @@ class ProductionTerminologyComposition:
     @contextmanager
     def deletion_scope(self, project_id: str):
         with self.repositories.deletion_scope(project_id):
+            self._alignment_caches.close_project(project_id)
             yield
         with self._sync_lock:
             self._profile_services.pop(project_id, None)
@@ -660,6 +668,7 @@ def build_production_terminology(
         max_unstreamed_source_bytes=max_unstreamed_source_bytes,
         max_unstreamed_total_bytes=max_unstreamed_total_bytes,
     )
+    build_inputs = ProductionTerminologyBuildInputs(build_inputs)
     commit_port = ProductionTerminologyCommitPort(lifecycle, repositories, state, leases)
     registry = TerminologyWorkloadRegistry()
     registry.bind(TerminologyWorkloadType.BUILD, BuildRunner(repositories, state, capabilities.catalog, ids, lifecycle))

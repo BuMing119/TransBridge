@@ -15,6 +15,7 @@ from transbridge.application.projects.source_commands import (
     ProjectSourceMutationService,
     source_request_with_initial_entry_states,
 )
+from transbridge.config.text_encoding import TextEncodings
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.persistence.v2 import (
     ProjectDto,
@@ -73,7 +74,16 @@ class _Preparer:
 def _hydrate_fixture(descriptor, baseline):
     location = descriptor["location"]
     fingerprint = baseline.fingerprint.sha256
-    snapshot = SourceSnapshot(SourceDescriptor(location), FormatId.PLUGIN_SSE, fingerprint, 0, lease_id="test-input")
+    read_options = TextEncodings().read_options()
+    snapshot = SourceSnapshot(
+        SourceDescriptor(location),
+        FormatId.PLUGIN_SSE,
+        fingerprint,
+        0,
+        lease_id="test-input",
+        encoding=read_options["input_encoding"],
+        metadata=tuple((key, read_options[key]) for key in ("source_language", "text_read_policy")),
+    )
     entries = tuple(
         TranslationEntry(
             state.entry_key.local_key,
@@ -242,7 +252,7 @@ def test_add_source_applies_initial_import_states_in_the_same_authoritative_comm
     assert lifecycle.active.variant is not None
     entry = lifecycle.active.variant.snapshot().entries[0]
     assert (entry.translation, entry.stage.value, entry.revision.value) == ("导入译文", 3, 1)
-    assert service._preparer.last_request.options == ()
+    assert dict(service._preparer.last_request.options) == TextEncodings().read_options()
 
 
 @pytest.mark.parametrize("key_mode", ["qualified", "legacy", "bare", "wrong_original", "wrong_namespace"])

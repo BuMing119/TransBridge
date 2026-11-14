@@ -85,7 +85,8 @@ def test_plugin_picker_and_clear_require_separate_output_selection_without_parsi
     assert not any(editor.text() in {"true", "false"} for editor in dialog.findChildren(QLineEdit))
     dialog._select_plugin("")
     assert dict(dialog.edited_values())["plugin_path"] == ""
-    assert dict(dialog.edited_values())["target_path"] == ""
+    assert "target_path" not in dict(dialog.edited_values())
+    assert dialog._field_edits["output_directory"].isVisible()
     assert not case.workers
 
 
@@ -93,7 +94,7 @@ def test_output_picker_keeps_selected_plugin_and_requires_explicit_overwrite(tra
     case = transfer_ui
     dialog = case.dialog
     dialog._select_plugin(str(case.target))
-    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_args, **_kwargs: (str(case.target), ""))
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: str(case.target.parent))
     dialog._browse_output()
     assert dict(dialog.edited_values())["plugin_path"] == str(case.target)
     assert dict(dialog.edited_values())["target_path"] == str(case.target)

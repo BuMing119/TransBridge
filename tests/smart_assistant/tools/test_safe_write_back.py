@@ -10,11 +10,15 @@ from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 import pytest
 
 from tests.contracts.io.test_localized_hydrated_publication import localized as localized_fixture
+from tests.plugin_fixtures import write_plugin
 from tests.smart_assistant.tools.test_source_import_authority import load_source, project as project_fixture
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import FormatId, ParseRequest, SourceDescriptor, TranslationIoUseCase
 from transbridge.application.projects.prepared_source_results import prepare_parsed_source
+from transbridge.application.projects.remote_binding import ParaTranzProjectBinding
+from transbridge.application.projects.source_references import ProjectSourceReferences
 from transbridge.application.tasks import TaskRuntime
+from transbridge.smart_assistant.request_scope import apply_captured_scope, execution_version
 from transbridge.smart_assistant.tools.task_manager import TaskManager
 from transbridge.smart_assistant.tools.tool_parser import _tool_parse_esp, _tool_parse_xt
 from transbridge.smart_assistant.tools.tool_writer import _tool_write_back
@@ -89,6 +93,104 @@ def _load_localized_translated(project, localized):
     assert next(iter(project.ctx.collection)).string_id == 1
     assert project.ctx.active_slot.source_snapshot is not None
     _translate_active(project)
+
+
+def _load_referenced_plugin(project, *, save=True):
+    source = write_plugin(project.root / "Source.esp", [(0x800, "Greeter", "Welcome")])
+    project.ctx.project_source_references = ProjectSourceReferences(
+        project.services.projects, project.services.project_lifecycle
+    )
+    context = ExecutionContext(app_context=project.ctx)
+    result = _tool_parse_esp({"path": str(source)}, context)
+    assert result.success, result.message
+    _translate_active(project)
+    active = project.services.project_lifecycle.active
+    store = project.services.projects.store_for(active.project_ref.identity)
+    if save is True:
+        saved = project.services.gui_project_commands.save(project.request)
+        assert saved.is_success, saved.diagnostics
+        assert store.sources(native_fields=False)[0].reference_path == str(source)
+    elif save == "metadata":
+        binding = ParaTranzProjectBinding(42, "Linked project", "https://paratranz.cn")
+        saved = project.services.project_remote_bindings.set_paratranz_binding(binding, project.request)
+        assert saved.is_success, saved.diagnostics
+    return source, store, ExecutionContext(app_context=project.ctx)
+
+
+@pytest.mark.parametrize("save", [True, False, "metadata"])
+def test_agent_uses_project_plugin_reference_only_as_input(project, manager, save):
+    source, store, context = _load_referenced_plugin(project, save=save)
+    original = source.read_bytes()
+    request = SimpleNamespace(source_message_ids=(), execution_version_json=execution_version(context))
+    apply_captured_scope(request, (), context)
+    assert context.active_slot is None
+
+    missing_output = _tool_write_back({"target": "esp"}, context)
+    assert missing_output.error_code == "OUTPUT"
+    assert manager.list_all() == []
+    destination = project.root / "translated.esp"
+    result = _wait_for_result(manager, _tool_write_back({"target": "esp", "path": str(destination)}, context))
+
+    assert result["written_count"] == 1
+    assert destination.is_file()
+    assert source.read_bytes() == original
+    assert bool(store.sources(native_fields=False)) is (save is True)
+
+
+@pytest.mark.parametrize("wrong_content", [False, True])
+@pytest.mark.parametrize("save", [True, False, "metadata"])
+def test_agent_remembers_explicit_match_only_after_preflight(project, manager, wrong_content, save):
+    source, store, context = _load_referenced_plugin(project, save=save)
+    lifecycle = project.services.project_lifecycle
+    relocated = project.root / "relocated"
+    relocated.mkdir()
+    replacement = source.rename(relocated / source.name)
+    if wrong_content:
+        write_plugin(source, [(0x800, "Greeter", "Different plugin content")])
+    destination = project.root / "translated.esp"
+    args = {"target": "esp", "path": str(destination)}
+
+    missing = _tool_write_back(args, context)
+    assert missing.error_code == "WRITE_PLUGIN_INPUT_REQUIRED"
+    destination.write_bytes(b"existing target")
+    blocked = _tool_write_back({**args, "input_plugin": str(replacement)}, context)
+    assert blocked.error_code == "OVERWRITE_CONFIRMED"
+    before = store.sources(native_fields=False) if save is True else lifecycle.active.source_additions
+    assert before[0].reference_path == str(source)
+    assert manager.list_all() == []
+
+    _wait_for_result(manager, _tool_write_back({**args, "input_plugin": str(replacement), "overwrite": True}, context))
+    after = store.sources(native_fields=False) if save is True else lifecycle.active.source_additions
+    assert after[0].reference_path == str(replacement)
+    second_output = project.root / "translated-again.esp"
+    _wait_for_result(manager, _tool_write_back({**args, "path": str(second_output)}, context))
+    assert second_output.is_file()
+    if save is not True:
+        assert not store.sources(native_fields=False)
+        saved = project.services.gui_project_commands.save(project.request)
+        assert saved.is_success, saved.diagnostics
+        assert store.sources(native_fields=False)[0].reference_path == str(replacement)
+
+
+def test_agent_rejects_saved_plugin_outside_grant_before_binding(project, manager, monkeypatch):
+    source, store, _context = _load_referenced_plugin(project)
+    output = project.root / "allowed-output"
+    output.mkdir()
+    context = ExecutionContext(
+        app_context=project.ctx, request_context=replace(project.request, authorized_roots=(str(output),))
+    )
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("An unauthorized saved plugin must not reach the parser")
+
+    monkeypatch.setattr("transbridge.smart_assistant.tools.write_back_preparation.bind_plugin_write_input", unexpected)
+    result = _tool_write_back({"target": "esp", "path": str(output / source.name)}, context)
+
+    assert result.error_code == "WRITE_PLUGIN_INPUT_REQUIRED"
+    assert str(source) not in result.message
+    assert store.sources(native_fields=False)[0].reference_path == str(source)
+    assert not tuple(output.iterdir())
+    assert manager.list_all() == []
 
 
 def test_localized_request_preparation_keeps_companions_for_current_operation(localized):

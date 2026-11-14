@@ -148,6 +148,8 @@ class WindowLifecycle:
         if not self._is_attempt(attempt):
             return
         self._input_guard.suspend()
+        api_workers = get_api_worker_registry()
+        api_workers.cancel_reads_for_close()
         # Issue cancellation immediately, including while legacy workers finish.
         runtime_ready = self._check_runtime_tasks()
         if not self._is_attempt(attempt):
@@ -171,7 +173,7 @@ class WindowLifecycle:
         if self._running(self._host.foreground_worker):
             self._schedule(100, self.begin_background_close)
             return
-        if get_api_worker_registry().busy or self._input_guard.awaiting_dialog:
+        if api_workers.busy or self._input_guard.awaiting_dialog:
             self._host.workbench.show_step2_progress(0, "正在等待后台任务完成…")
             self._schedule(100, self.begin_background_close)
             return
@@ -223,6 +225,8 @@ class WindowLifecycle:
         attempt = self._attempt_id
         if not self._close_pending:
             return False
+        api_workers = get_api_worker_registry()
+        api_workers.cancel_reads_for_close()
         if not self._check_runtime_tasks():
             if self._is_attempt(attempt):
                 self._schedule(100, lambda: self.finish_background_close(saved))
@@ -233,7 +237,7 @@ class WindowLifecycle:
         # Saving itself is an ApiWorker. Also drain native completion handlers,
         # follow-up workers, and durable AI records queued by its observers.
         if (
-            get_api_worker_registry().busy
+            api_workers.busy
             or self._input_guard.awaiting_dialog
             or self._running(self._host.project_open_worker)
             or getattr(self._host.context, "project_opening", False)

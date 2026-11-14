@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import re
@@ -28,6 +28,8 @@ from transbridge.application.projects.source_registry import (
 )
 from transbridge.persistence.v2.models import ProjectDto
 from transbridge.persistence.v2.variant import VariantSnapshot
+
+from .extraction_execution import PreparedExtractionPort
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -134,6 +136,7 @@ class BuildInputSnapshot:
     decision_digest: str
     effective_content_digest: str = hashlib.sha256(b"").hexdigest()
     draft_base_content_digest: str = hashlib.sha256(b"").hexdigest()
+    extraction: PreparedExtractionPort | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.project_revision < 0 or self.variant_revision < 0 or self.draft_revision < 0:

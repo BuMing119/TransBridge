@@ -56,6 +56,7 @@ class TerminologyPreflightViewState:
     technical_details: tuple[TechnicalDetail, ...] = ()
     action_label: str = "创建术语库"
     source_count: int | None = None
+    extraction_label: str = ""
 
     @classmethod
     def unavailable(
@@ -76,6 +77,7 @@ class TerminologySummaryViewState:
     technical_details: tuple[TechnicalDetail, ...] = ()
     term_count: int | None = None
     attention_count: int | None = None
+    llm_status: str = ""
 
 
 @dataclass(frozen=True, slots=True)

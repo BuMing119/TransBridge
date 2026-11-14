@@ -72,8 +72,9 @@ class _Context(QObject):
 class _Worker(QObject):
     result = pyqtSignal(object)
     error = pyqtSignal(str)
+    finished = pyqtSignal()
 
-    def __init__(self, fn):
+    def __init__(self, fn, **_kwargs):
         super().__init__()
         self.fn = fn
 

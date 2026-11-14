@@ -10,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from transbridge.application.contracts import RequestContext
+from transbridge.config.text_encoding import DEFAULT_TEXT_ENCODING, XTRANSLATOR_READ_POLICY
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 from . import legacy_migration, migration_import
@@ -32,6 +33,9 @@ def prepare_translation_import(
     context: RequestContext | None = None,
     target_snapshot: SourceSnapshot | None = None,
     require_original_match: bool = False,
+    input_encoding: str = DEFAULT_TEXT_ENCODING,
+    source_language: str | None = None,
+    text_read_policy: str = XTRANSLATOR_READ_POLICY,
 ) -> LegacyMigrationDraft:
     """Apply uniquely matched proposals, retaining protected and unmatched entries."""
     path = Path(source_path)
@@ -44,6 +48,9 @@ def prepare_translation_import(
             strings_lang=strings_lang,
             context=context,
             overwrite_strings=replace_existing,
+            input_encoding=input_encoding,
+            source_language=source_language,
+            text_read_policy=text_read_policy,
         )
     else:
         try:
@@ -76,6 +83,9 @@ def prepare_translation_import(
                 format_hint=format_id,
                 context=context,
                 require_original_match=require_original_match,
+                input_encoding=input_encoding,
+                source_language=source_language,
+                text_read_policy=text_read_policy,
             )
             proposals = draft.state_mapping()
 

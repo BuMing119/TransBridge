@@ -61,7 +61,9 @@ class TerminologySchemesView(QFrame):
         self.paratranz_button.setEnabled(False)
         self.edit_button = QPushButton("编辑当前术语…", self)
         self.edit_button.hide()
-        for button in (self.import_button, self.paratranz_button, self.edit_button):
+        self.manage_button = QPushButton("管理方案…", self)
+        self.manage_button.setToolTip("在独立窗口中新建、复制、重命名或删除译名方案")
+        for button in (self.import_button, self.paratranz_button, self.edit_button, self.manage_button):
             ComponentStyle.apply_static(button, ComponentKind.BUTTON)
             layout.addWidget(button)
         self.actions_button = QPushButton("更多…", self)
@@ -89,6 +91,7 @@ class TerminologySchemesView(QFrame):
         self.import_button.clicked.connect(self.create_requested)
         self.paratranz_button.clicked.connect(self.paratranz_requested)
         self.manage_action.triggered.connect(self.manage_requested)
+        self.manage_button.clicked.connect(self.manage_requested)
         self.new_action.triggered.connect(self.create_from_base_requested)
         self.edit_button.clicked.connect(self.edit_requested)
         self.rename_action.triggered.connect(self.rename_requested)
@@ -112,6 +115,7 @@ class TerminologySchemesView(QFrame):
         self._can_import = state.can_manage
         self.set_import_busy(self._import_busy)
         self.manage_action.setEnabled(state.can_manage)
+        self.manage_button.setEnabled(state.can_manage)
         self.new_action.setEnabled(state.can_manage)
         self.edit_button.setEnabled(state.can_manage)
         self.edit_button.setText("编辑当前方案…" if state.selected_profile_id is not None else "编辑当前术语…")

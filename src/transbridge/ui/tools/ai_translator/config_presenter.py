@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Protocol
 
+from transbridge.application.security.diagnostic_logging import diagnostic_exception_text
 from transbridge.application.translation.ai_execution_profile import (
     AiExecutionProfile,
     AiWorkflowPreset,
@@ -282,4 +283,4 @@ def check_llm_connection(config: LLMConfig) -> ConnectionTestResult:
         )
         return ConnectionTestResult("info", "LLM 连接成功", f"模型回复：{reply}")
     except Exception as exc:
-        return ConnectionTestResult("critical", "LLM 连接失败", str(exc))
+        return ConnectionTestResult("critical", "LLM 连接失败", diagnostic_exception_text(exc))

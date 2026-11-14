@@ -105,7 +105,9 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         ctx.project_changed.connect(self._dialogue_reading_order.invalidate_context)
         ctx.variant_changed.connect(self._dialogue_reading_order.invalidate_context)
         self._terminology_preview = TerminologyPreviewCoordinator(
-            self, identity=lambda: preview_identity(ctx, self._filter_scope)
+            self,
+            identity=lambda: preview_identity(ctx, self._filter_scope),
+            alignment_identity=lambda: preview_identity(ctx, None),
         )
         self._terminology_preview.changed.connect(
             lambda: (
@@ -503,6 +505,11 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
         if self._terminology_preview.set_profile(profile, base_snapshot, source_profile=source_profile):
             self._populate_table()
+
+    @property
+    def terminology_preview(self):
+        """Expose the bounded preview coordinator to scheme actions."""
+        return self._terminology_preview
 
     @property
     def _terminology_profile(self):

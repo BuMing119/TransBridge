@@ -139,8 +139,8 @@ class DecisionService:
     def _stage(self, current: TerminologyDraft, command: DecisionCommand, actor: ManualActor) -> TerminologyDraft:
         require_reviewed_edit(current, command, self._conflicts)
         decisions, action_type, action_term_id, replacement_term_id = self._apply_operation(current, command)
-        before = _decision_digest(current.decisions)
-        after = _decision_digest(decisions)
+        before = decision_state_digest(current.decisions)
+        after = decision_state_digest(decisions)
         occurred_at = self._clock.now()
         if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
             raise ValueError("manual action clock must return a timezone-aware datetime")
@@ -390,8 +390,11 @@ def _replace(
     return tuple(updated if item.term_id == updated.term_id else item for item in decisions)
 
 
-def _decision_digest(decisions: tuple[TermDecision, ...]) -> str:
-    return canonical_digest(decisions, namespace="terminology.manual-decision-state.v1")
+def decision_state_digest(decisions: tuple[TermDecision, ...]) -> str:
+    """Audit the same canonical order persisted by TerminologyDraft."""
+    return canonical_digest(
+        tuple(sorted(decisions, key=lambda item: item.term_id)), namespace="terminology.manual-decision-state.v1"
+    )
 
 
 def _upsert_conflict_resolution(
@@ -409,4 +412,5 @@ __all__ = [
     "DecisionService",
     "ManualActor",
     "ManualActorPort",
+    "decision_state_digest",
 ]

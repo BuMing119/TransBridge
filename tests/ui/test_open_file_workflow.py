@@ -1,5 +1,6 @@
 """Real worker, project publication and snapshot restoration for the new entry."""
 
+import struct
 import threading
 import time
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from tests.contracts.io.test_open_translation_file import FORMATS, source_file
 from tests.smart_assistant.tools import test_source_import_authority as source_fixtures
 from transbridge.application.io.open_file_options import OpenFileOptions
 from transbridge.application.projects import ProjectSourceRequest
+from transbridge.config.text_encoding import TextEncodings
 from transbridge.ui.coordinators import open_file_coordinator as opening
 from transbridge.ui.coordinators.parse_coordinator import ParseCoordinator
 
@@ -93,6 +95,35 @@ def test_batch_retains_successes_and_reports_corrupt_and_duplicate_files(project
     assert not project.ctx.authoritative_projection_diverged()
     assert "部分文件已打开" in host.messages[-1]
     assert "broken.json" in host.messages[-1]
+
+
+@pytest.mark.parametrize("suffix", ["strings", "dlstrings", "ilstrings"])
+def test_open_standalone_strings_with_project_encoding(project, host, suffix):
+    path = project.root / f"Example_Chinese.{suffix}"
+    payload = "汉字".encode("cp936") + b"\x00"
+    chunk = payload if suffix == "strings" else struct.pack("<I", len(payload)) + payload
+    path.write_bytes(struct.pack("<IIII", 1, len(chunk), 5, 0) + chunk)
+    service = project.services.project_text_encodings
+    project.ctx.project_text_encodings = service
+    active_path = service.active_project_path(project.request)
+    prepared = service.prepare(active_path, TextEncodings("cp936", "utf-8"), project.request)
+    assert prepared.is_success, prepared.diagnostics
+    committed = service.commit(prepared.value.token, project.request)
+    assert committed.is_success, committed.diagnostics
+    project.app.processEvents()
+
+    dialog = host.opener.open()
+    assert dialog.format_combo.findData(f"strings.{suffix}") >= 0
+    assert dialog.translation_format_combo.findData(f"strings.{suffix}") < 0
+    dialog.reject()
+    start(project, host, [path])
+    wait(project, lambda: not host.opener._running)
+
+    slot = project.ctx.active_slot
+    assert slot is not None, host.messages
+    assert slot.format_id.value == f"strings.{suffix}"
+    assert [entry.original for entry in slot.collection] == ["汉字"]
+    assert project.ctx.project_sources[0]["format_options"]["input_encoding"] == "cp936"
 
 
 def test_optional_translation_is_committed_with_initial_source(project, host):

@@ -25,7 +25,9 @@ from transbridge.application.projects.durable_variant import DurableVariantCommi
 from transbridge.application.projects.profile_entry_inputs import ProfileEntryInputReader
 from transbridge.application.projects.snapshots import ProjectSnapshotCommands
 from transbridge.application.projects.source_update import ProjectSourceUpdateService
+from transbridge.application.projects.text_encoding import ProjectTextEncodingService
 from transbridge.application.sessions import GuiSessionCommandFacade, SessionLifecycleService
+from transbridge.config.text_encoding import TextEncodingDefaults
 from transbridge.persistence.project_lifecycle_uow import RepositoryLifecycleUnitOfWorkFactory
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
 from transbridge.persistence.project_store.archive import ProjectPackage
@@ -72,6 +74,7 @@ class PersistenceV2Services:
     project_snapshots: ProjectSnapshotCommands
     project_archive: ProjectPackage
     project_source_updates: ProjectSourceUpdateService
+    project_text_encodings: ProjectTextEncodingService
     session_lifecycle: SessionLifecycleService
     gui_session_commands: GuiSessionCommandFacade
     project_projection: ProjectionStore
@@ -92,6 +95,7 @@ def build_persistence_v2_services(
     timestamp_factory,
     filesystem: PersistenceFilesystemPort | None = None,
     source_preparer: ProjectSourcePreparationPort | None = None,
+    text_encoding_defaults: TextEncodingDefaults | None = None,
 ) -> PersistenceV2Services:
     resolved_root = str(Path(root).resolve(strict=False))
     adapter = filesystem or OsPersistenceFilesystem()
@@ -132,6 +136,7 @@ def build_persistence_v2_services(
         project_store,
         id_factory=id_factory,
         token_factory=id_factory,
+        text_encoding_defaults=(text_encoding_defaults or TextEncodingDefaults()).load,
     )
     project_source_mutations = ProjectSourceMutationService(
         project_lifecycle,
@@ -145,6 +150,7 @@ def build_persistence_v2_services(
         baselines,
         resolved_source_preparer,
     )
+    project_text_encodings = ProjectTextEncodingService(project_lifecycle, projects, source_update_store)
     project_remote_bindings = ProjectRemoteBindingService(project_lifecycle)
     from transbridge.application.projects.categorized_upload import ProjectCategorizedUploadService
 
@@ -226,6 +232,7 @@ def build_persistence_v2_services(
         project_snapshots=project_snapshots,
         project_archive=project_archive,
         project_source_updates=project_source_updates,
+        project_text_encodings=project_text_encodings,
         session_lifecycle=session_lifecycle,
         gui_session_commands=gui_session_commands,
         project_projection=project_projection,

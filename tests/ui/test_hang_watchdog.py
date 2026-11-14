@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import faulthandler
 import os
 import subprocess
 import sys
@@ -19,46 +20,36 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-@pytest.fixture
-def native_timer(monkeypatch):
-    """Enforce descriptor lifetime without replacing pytest's own fault handlers."""
-    active = []
+@pytest.fixture(autouse=True)
+def forbid_native_timer(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("GUI diagnostics must not change the process-wide native timer")
 
-    def arm(timeout, *, repeat, file, exit):
-        assert not active
-        assert timeout > 0 and not repeat and not exit
-        assert not file.closed
-        active.append(file)
-
-    def cancel():
-        assert len(active) == 1
-        assert not active.pop().closed
-
-    monkeypatch.setattr(hang_watchdog.faulthandler, "dump_traceback_later", arm)
-    monkeypatch.setattr(hang_watchdog.faulthandler, "cancel_dump_traceback_later", cancel)
-    return active
+    monkeypatch.setattr(faulthandler, "dump_traceback_later", forbidden)
+    monkeypatch.setattr(faulthandler, "cancel_dump_traceback_later", forbidden)
 
 
-def test_heartbeat_rearms_and_close_cancels_before_descriptor_release(qapp, tmp_path, native_timer):
+def test_heartbeat_rearms_and_close_joins_before_descriptor_release(qapp, tmp_path):
     watchdog = UiHangWatchdog(tmp_path)
     try:
         watchdog.start()
-        original = native_timer[0]
+        original = watchdog._file
+        monitor = watchdog._monitor
         for _ in range(5):
             watchdog._heartbeat()
-            assert native_timer == [original]
+            assert watchdog._file is original and monitor.is_alive()
         assert "GUI thread: 0x" in watchdog.path.read_text(encoding="utf-8")
         assert "heartbeat resumed" not in watchdog.path.read_text(encoding="utf-8")
     finally:
         watchdog.close()
-    assert original.closed and not native_timer
+    assert original.closed and not monitor.is_alive()
     assert not watchdog._timer.isActive()
     watchdog.close()
     watchdog.start()
-    assert not native_timer
+    assert watchdog._file is None and not monitor.is_alive()
 
 
-def test_rotation_preserves_latest_dumps_and_never_closes_an_armed_file(qapp, tmp_path, native_timer, monkeypatch):
+def test_rotation_preserves_latest_dumps(qapp, tmp_path, monkeypatch):
     watchdog = UiHangWatchdog(tmp_path)
     monkeypatch.setattr(watchdog, "MAX_LOG_BYTES", 1)
     try:
@@ -73,37 +64,38 @@ def test_rotation_preserves_latest_dumps_and_never_closes_an_armed_file(qapp, tm
         assert "synthetic-dump-0" not in text and "synthetic-dump-2" not in text
     finally:
         watchdog.close()
-    assert not native_timer
+    assert not watchdog._monitor.is_alive()
 
 
-def test_unwritable_destination_does_not_block_gui(qapp, tmp_path, native_timer, caplog):
+def test_unwritable_destination_does_not_block_gui(qapp, tmp_path, caplog):
     destination = tmp_path / "not-a-directory"
     destination.write_text("existing file", encoding="utf-8")
     watchdog = UiHangWatchdog(destination)
     watchdog.start()
-    assert not native_timer and not watchdog._timer.isActive()
+    assert watchdog._monitor is None and not watchdog._timer.isActive()
     assert "could not start" in caplog.text
     assert destination.read_text(encoding="utf-8") == "existing file"
     watchdog.close()
 
 
-def test_arm_failure_closes_file_and_leaves_gui_running(qapp, tmp_path, native_timer, monkeypatch, caplog):
+def test_monitor_start_failure_closes_file_and_leaves_gui_running(qapp, tmp_path, monkeypatch, caplog):
     def fail(*args, **kwargs):
         raise RuntimeError("watchdog unavailable")
 
-    monkeypatch.setattr(hang_watchdog.faulthandler, "dump_traceback_later", fail)
+    monkeypatch.setattr(hang_watchdog.threading.Thread, "start", fail)
     watchdog = UiHangWatchdog(tmp_path)
     watchdog.start()
     assert watchdog._file is None and not watchdog._timer.isActive()
     assert "watchdog unavailable" in caplog.text
 
 
-@pytest.mark.parametrize("hold_gil", [False, True], ids=["python-wait", "native-gil-block"])
-def test_native_capture_during_gui_stall_and_recovery_in_subprocess(tmp_path, hold_gil):
-    if hold_gil and os.name != "nt":
+@pytest.mark.parametrize("mode", ["wait", "frame-churn", "native-gil-block"])
+def test_safe_capture_during_gui_stall_and_recovery_in_subprocess(tmp_path, mode):
+    if mode == "native-gil-block" and os.name != "nt":
         pytest.skip("The GIL-holding Sleep probe uses the Windows API")
     script = textwrap.dedent("""
         import ctypes
+        import faulthandler
         from pathlib import Path
         import sys
         import time
@@ -112,6 +104,10 @@ def test_native_capture_during_gui_stall_and_recovery_in_subprocess(tmp_path, ho
         from transbridge.ui.hang_watchdog import UiHangWatchdog
 
         app = QApplication([])
+        def forbidden(*args, **kwargs):
+            raise AssertionError("unsafe native watchdog called")
+        faulthandler.dump_traceback_later = forbidden
+        faulthandler.cancel_dump_traceback_later = forbidden
         watchdog = UiHangWatchdog(Path(sys.argv[1]), app, timeout_seconds=0.15)
         failures = []
         def exception_hook(kind, value, traceback):
@@ -121,17 +117,24 @@ def test_native_capture_during_gui_stall_and_recovery_in_subprocess(tmp_path, ho
         counts = []
         def stall():
             private_local = "LOCAL_VALUE_MUST_NOT_APPEAR_IN_STACK"
-            if sys.argv[2] == "1":
+            if sys.argv[2] == "native-gil-block":
                 # PyDLL deliberately retains the GIL across the native call.
                 kernel = ctypes.PyDLL("kernel32")
                 kernel.Sleep.argtypes = [ctypes.c_ulong]
                 kernel.Sleep.restype = None
                 kernel.Sleep(450)
+            elif sys.argv[2] == "frame-churn":
+                def churn():
+                    return sum(value for value in range(200))
+                until = time.monotonic() + 0.6
+                while time.monotonic() < until:
+                    churn()
             else:
-                time.sleep(0.45)
+                time.sleep(0.6)
             content = watchdog.path.read_text(encoding="utf-8")
             assert private_local not in content
-            assert "stall" in content
+            if sys.argv[2] != "native-gil-block":
+                assert "stall" in content
             counts.append(content.count("Timeout ("))
             if len(counts) == 1:
                 QTimer.singleShot(100, stall)
@@ -151,7 +154,8 @@ def test_native_capture_during_gui_stall_and_recovery_in_subprocess(tmp_path, ho
         finally:
             watchdog.close()
         assert not failures, failures
-        assert counts == [1, 2], counts
+        if sys.argv[2] != "native-gil-block":
+            assert counts == [1, 2], counts
         content = watchdog.path.read_text(encoding="utf-8")
         assert "previous heartbeat UTC:" in content
         assert "GUI thread: 0x" in content
@@ -162,7 +166,7 @@ def test_native_capture_during_gui_stall_and_recovery_in_subprocess(tmp_path, ho
         print("healthy heartbeat, two stalls, recovery and clean shutdown verified")
     """)
     result = subprocess.run(
-        [sys.executable, "-c", script, str(tmp_path), "1" if hold_gil else "0"],
+        [sys.executable, "-c", script, str(tmp_path), mode],
         capture_output=True,
         text=True,
         env=dict(os.environ, QT_QPA_PLATFORM="offscreen"),

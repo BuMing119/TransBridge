@@ -23,6 +23,7 @@ from .conflicts_view import ConflictsView
 from .draft_view import DraftView
 from .history_view import HistoryView
 from .source_browser import SourceBrowser
+from .task_dialog import TerminologyTaskDialog
 from .workflow_bar import TerminologyWorkflowBar
 
 
@@ -47,12 +48,19 @@ class TermsView(QWidget):
         layout.addWidget(self.workflow)
         self._draft = draft
         self._build = build
+        self.editor_dialog = TerminologyTaskDialog("查看与编辑术语", self)
+        self.conflict_dialog = TerminologyTaskDialog(
+            "处理术语冲突",
+            self,
+            description="选择译名并保存到草稿；返回主界面应用后生效。",
+        )
+        self.conflict_dialog.content.addWidget(conflicts, 1)
+        self.conflict_dialog.content.addWidget(self.conflict_dialog.close_button, 0, Qt.AlignmentFlag.AlignRight)
         self._project_actions = QWidget(self)
         heading = QHBoxLayout(self._project_actions)
         heading.setContentsMargins(0, 0, 0, 0)
         for button in (build.preflight_button, build.cancel_button):
             heading.addWidget(button)
-        heading.addWidget(draft.add_button)
         heading.addWidget(build.build_button)
         heading.addStretch(1)
         self.build_details_button = QPushButton("来源检查与整理详情", self)
@@ -63,12 +71,10 @@ class TermsView(QWidget):
 
         self._project_panel = QScrollArea(self)
         self._project_panel.setWidgetResizable(True)
-        self._project_panel.setMaximumHeight(210)
-        self._project_panel.setMinimumHeight(170)
         self._project_panel.setWidget(build)
         self._project_panel.hide()
         self.build_details_button.toggled.connect(self._show_build_details)
-        layout.addWidget(self._project_panel)
+        layout.addWidget(self._project_panel, 1)
         self._project_actions.hide()
 
         self._view_actions = QWidget(self)
@@ -105,10 +111,15 @@ class TermsView(QWidget):
         choices.addStretch(1)
         choices.addWidget(self.review_button)
         choices.addWidget(self.attention_button)
+        self.judgment_history_button = QPushButton("查看全部冲突判断…", self)
+        ComponentStyle.apply_static(self.judgment_history_button, ComponentKind.BUTTON)
+        self.judgment_history_button.clicked.connect(conflicts.show_equivalent_results)
+        self.judgment_history_button.clicked.connect(self.show_attention)
+        choices.addWidget(self.judgment_history_button)
         choices.addWidget(draft.add_button)
         self.review_button.hide()
         self.attention_button.hide()
-        layout.addWidget(self._view_actions)
+        self.editor_dialog.content.addWidget(self._view_actions)
 
         card = QFrame(self)
         card_layout = QVBoxLayout(card)
@@ -119,15 +130,32 @@ class TermsView(QWidget):
         card_layout.addWidget(self.content_context)
         self.pages = QStackedWidget(card)
         self.pages.setAccessibleName("术语内容")
-        self.source_browser = SourceBrowser(self)
+        self.source_browser = SourceBrowser(self, defer_hidden=True)
         self.source_browser.draft_requested.connect(lambda: self._set_page(1))
         self.pages.addWidget(effective or QWidget(self))
         self.pages.addWidget(draft)
-        self.pages.addWidget(conflicts)
+        self.pages.addWidget(QWidget(self))
         self.pages.addWidget(self.source_browser)
         card_layout.addWidget(self.pages)
-        layout.addWidget(card, 1)
-        self._set_page(0)
+        self.editor_dialog.content.addWidget(card, 1)
+        self.editor_dialog.content.addWidget(self.editor_dialog.close_button)
+        actions = QHBoxLayout()
+        self.browse_button = QPushButton("查看与编辑术语…", self)
+        self.browse_button.clicked.connect(lambda: self._set_page(0))
+        self.discard_button = QPushButton("丢弃本次结果…", self)
+        self.discard_button.setEnabled(False)
+        for button in (self.browse_button, self.discard_button):
+            ComponentStyle.apply_static(button, ComponentKind.BUTTON)
+        actions.addWidget(self.attention_button)
+        actions.addWidget(self.review_button)
+        actions.addWidget(self.discard_button)
+        actions.addStretch(1)
+        actions.addWidget(self.browse_button)
+        layout.addLayout(actions)
+        self.pages.setCurrentIndex(0)
+        self.effective_button.setChecked(True)
+        self._update_content_context()
+        self.build_details_button.setChecked(True)
 
     def show_attention(self) -> None:
         self._set_page(2)
@@ -142,18 +170,16 @@ class TermsView(QWidget):
         self.build_details_button.setChecked(True)
 
     def _show_build_details(self, visible: bool) -> None:
-        self._project_actions.setVisible(visible)
+        self._project_actions.show()
         self._project_panel.setVisible(visible)
-        self.build_details_button.setText("收起提取详情" if visible else "从项目提取术语…")
+        self.build_details_button.setText("收起提取设置" if visible else "提取设置与进度…")
 
     def render_workflow(self, state) -> None:
         self._workflow_state = state
         self.workflow.render(state)
         self._draft.add_button.setVisible(state.has_draft and self.pages.currentIndex() == 1)
-        self._build.build_button.setText(
-            "重新提取并生成草稿" if state.has_draft or state.has_version else "提取并生成草稿"
-        )
-        self._build.build_button.setToolTip("读取项目已登记来源，整理术语并生成或更新待审核草稿。")
+        self._build.build_button.setText("重新提取术语" if state.has_draft or state.has_version else "提取术语")
+        self._build.build_button.setToolTip("从项目词条提取术语；应用前不改变当前使用的术语。")
         for action, button in (
             ("build", self._build.build_button),
             ("review", self.review_button),
@@ -163,9 +189,10 @@ class TermsView(QWidget):
             button.style().unpolish(button)
             button.style().polish(button)
         self.review_button.setText(f"复核术语（{state.review_count}）")
-        self.attention_button.setText(f"处理异译（{state.conflict_count}）")
+        self.attention_button.setText(f"继续处理冲突（{state.conflict_count}）")
         self.review_button.setVisible(state.has_draft and state.review_count > 0)
         self.attention_button.setVisible(state.has_draft and state.conflict_count > 0)
+        self.judgment_history_button.setVisible(state.has_draft or state.has_version)
         self.all_terms_button.setText("编辑草稿" if state.has_draft else "开始编辑")
         self._update_content_context()
 
@@ -175,13 +202,18 @@ class TermsView(QWidget):
         if button is not None:
             button.setChecked(True)
         self._update_content_context()
+        if index == 2:
+            self.editor_dialog.hide()
+            self.conflict_dialog.open_task()
+        else:
+            self.editor_dialog.open_task()
 
     def _update_content_context(self) -> None:
         has_draft = self._workflow_state is not None and self._workflow_state.has_draft
         index = self.pages.currentIndex()
         editing = index in {1, 2}
-        self.workflow.setVisible(has_draft or editing)
-        self.workflow.set_editing(index == 1)
+        self.workflow.show()
+        self.workflow.set_editing(False)
         self.content_title.setVisible(index == 0 and not has_draft)
         self.effective_button.setVisible(has_draft or index != 0)
         self.effective_button.setText("返回可用术语" if index != 0 else "当前可用术语")

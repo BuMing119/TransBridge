@@ -42,7 +42,17 @@ def test_adapter_projects_progress_and_immediate_cancelling_state_without_qthrea
     runtime.update_progress(
         ref,
         owner,
-        {"phase": "extract", "completed": 2, "total": 5, "current_object": "plugin.esm"},
+        {
+            "phase": "extract",
+            "completed": 2,
+            "total": 5,
+            "current_object": "plugin.esm",
+            "llm_submitted": 3,
+            "llm_completed": 2,
+            "llm_waiting": 1,
+            "llm_retries": 1,
+            "llm_elapsed_ms": 1200,
+        },
     )
 
     assert adapter.cancel(ref)
@@ -50,6 +60,8 @@ def test_adapter_projects_progress_and_immediate_cancelling_state_without_qthrea
     assert latest.state is JobState.CANCELLING
     assert latest.message == "正在停止"
     assert (latest.completed, latest.total, latest.current_object) == (2, 5, "plugin.esm")
+    assert (latest.llm_submitted, latest.llm_completed, latest.llm_waiting) == (3, 2, 1)
+    assert (latest.llm_retries, latest.llm_elapsed_ms) == (1, 1200)
 
     adapter.close()
     assert adapter.closed

@@ -60,10 +60,10 @@ def test_bundle_parses_the_source_once_but_still_reparses_staged_plugin(bsa_sour
     real_from_file = SSEPluginWithContext.from_file
     staged_reads = []
 
-    def read_plugin(path):
+    def read_plugin(path, **kwargs):
         if ".transbridge-publish-" in str(path):
             staged_reads.append(path)
-        return real_from_file(path)
+        return real_from_file(path, **kwargs)
 
     monkeypatch.setattr(SSEPluginWithContext, "from_file", read_plugin)
 
@@ -80,11 +80,11 @@ def test_decoded_source_is_released_before_full_output_reparse(bsa_source, monke
     source_refs = []
     verified = []
 
-    def read_plugin(path):
+    def read_plugin(path, **kwargs):
         if ".transbridge-publish-" in str(path):
             assert source_refs and all(reference() is None for reference in source_refs)
             verified.append(path)
-        plugin = original(path)
+        plugin = original(path, **kwargs)
         if "transbridge-plugin-snapshot-" in str(path):
             source_refs.append(weakref.ref(plugin))
         return plugin
@@ -184,11 +184,11 @@ def test_nested_publications_restore_outer_source_and_release_parsers(bsa_source
     calls = _source_parse_counter(monkeypatch)
     snapshot = bsa_source.parsed.source_snapshot
     with plugin_source_scope():
-        outer = prepared_plugin_source(snapshot, {})
+        outer = prepared_plugin_source(snapshot)
         with plugin_source_scope():
-            inner = prepared_plugin_source(snapshot, {})
+            inner = prepared_plugin_source(snapshot)
             assert inner.parser is not outer.parser
-        assert prepared_plugin_source(snapshot, {}) is outer
+        assert prepared_plugin_source(snapshot) is outer
     parser_refs = (weakref.ref(outer.parser), weakref.ref(inner.parser))
     del outer, inner
     gc.collect()
@@ -203,8 +203,8 @@ def test_concurrent_publications_do_not_share_mutable_plugin_objects(bsa_source,
 
     def prepare():
         with plugin_source_scope():
-            first = prepared_plugin_source(snapshot, {})
-            assert prepared_plugin_source(snapshot, {}) is first
+            first = prepared_plugin_source(snapshot)
+            assert prepared_plugin_source(snapshot) is first
             return first.parser.get_plugin()
 
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -231,8 +231,8 @@ def test_same_plugin_hash_with_different_captured_strings_is_not_a_cache_hit(bsa
     calls = _source_parse_counter(monkeypatch)
 
     with plugin_source_scope():
-        original = prepared_plugin_source(bsa_source.parsed.source_snapshot, {})
-        other = prepared_plugin_source(parsed.source_snapshot, {})
+        original = prepared_plugin_source(bsa_source.parsed.source_snapshot)
+        other = prepared_plugin_source(parsed.source_snapshot)
 
     assert len(calls) == 2
     assert next(entry.original for entry in original.entries if entry.string_id == 1) == "Original name"

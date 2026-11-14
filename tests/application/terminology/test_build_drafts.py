@@ -15,6 +15,8 @@ from transbridge.application.terminology.models import (
     BuildSummary,
     ConflictStatus,
     DecisionStatus,
+    ExtractionMethod,
+    ManualAction,
     TermDecision,
     TermScope,
 )
@@ -151,3 +153,84 @@ def test_obsolete_resolutions_are_removed_when_conflict_disappears():
     assert result.conflict_resolutions == ()
     assert result.decisions[0].evidence_ids == ()
     assert result.decisions[0].is_effective
+
+
+def _llm_candidate(original, translation, evidence):
+    return replace(_candidate(original, translation, evidence), extraction_method=ExtractionMethod.LLM_TEXT)
+
+
+def test_llm_candidates_only_require_review_when_they_differ_from_existing_decisions():
+    previous = _decision("Dragon", "巨龙", evidence_ids=("old",))
+    result = _reconcile(
+        _build(_llm_candidate("Dragon", "龙", "new"), _llm_candidate("Sword", "剑", "sword")),
+        decisions=(previous,),
+    )
+    actual = {item.original: item for item in result.decisions}
+    assert actual["Dragon"].translation == "巨龙"
+    assert actual["Dragon"].status is DecisionStatus.REVIEW_REQUIRED
+    assert actual["Sword"].status is DecisionStatus.ADOPTED
+
+
+def test_llm_alternative_translations_remain_an_unresolved_conflict():
+    build = _build(_llm_candidate("Dragon", "龙", "one"), _llm_candidate("Dragon", "巨龙", "two"))
+    assert build.conflicts[0].status is ConflictStatus.UNRESOLVED
+    assert decisions_from_build(build) == ()
+
+
+@pytest.mark.parametrize(
+    "translation,expected", [("龙", DecisionStatus.ADOPTED), ("巨龙", DecisionStatus.REVIEW_REQUIRED)]
+)
+def test_rebuild_clears_old_blanket_llm_review_only_when_the_translation_agrees(translation, expected):
+    previous = replace(_decision("Dragon", "龙", evidence_ids=("old",)), status=DecisionStatus.REVIEW_REQUIRED)
+    current = new_draft(
+        draft_id="existing",
+        project_id="project-1",
+        variant_id="variant-1",
+        base_version_id="version-1",
+        base_content_digest="version-content-1",
+        decisions=(previous,),
+    )
+    result = _reconcile(_build(_llm_candidate("Dragon", translation, "new")), current=current)
+    assert result.decisions[0].translation == "龙"
+    assert result.decisions[0].status is expected
+
+
+@pytest.mark.parametrize("reason", ["suppressed", "manual", "conflict", "no_evidence"])
+def test_rebuild_does_not_clear_protected_or_unresolved_reviews(reason):
+    previous = replace(
+        _decision("Dragon", "龙", evidence_ids=("old",)),
+        status=DecisionStatus.REVIEW_REQUIRED,
+        suppressed=reason == "suppressed",
+    )
+    current = new_draft(
+        draft_id="existing",
+        project_id="project-1",
+        variant_id="variant-1",
+        base_version_id="version-1",
+        base_content_digest="version-content-1",
+        decisions=(previous,),
+    )
+    if reason == "manual":
+        current = replace(
+            current,
+            actions=(
+                ManualAction(
+                    "action",
+                    previous.term_id,
+                    "change_translation",
+                    "reviewer",
+                    "2026-11-13T00:00:00Z",
+                    "version-1",
+                    "before",
+                    "after",
+                ),
+            ),
+        )
+    candidates = [_llm_candidate("Dragon", "龙", "new")]
+    if reason == "conflict":
+        candidates.append(_llm_candidate("Dragon", "巨龙", "other"))
+    elif reason == "no_evidence":
+        candidates = []
+    result = _reconcile(_build(*candidates), current=current)
+    assert result.decisions[0].status is DecisionStatus.REVIEW_REQUIRED
+    assert result.decisions[0].suppressed == previous.suppressed

@@ -72,8 +72,10 @@ class SourceBrowser(QWidget):
     draft_requested = pyqtSignal()
     edit_requested = pyqtSignal(object)
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, defer_hidden=False) -> None:
         super().__init__(parent)
+        self._defer_hidden = defer_hidden
+        self._pending_state = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
@@ -147,12 +149,25 @@ class SourceBrowser(QWidget):
             self.edit_requested.emit(index.data(Qt.ItemDataRole.UserRole))
 
     def render(self, state) -> None:
+        loader = getattr(self, "context_loader", None)
+        if loader is not None:
+            loader.invalidate()
+            return
+        if self._defer_hidden and not self.isVisible():
+            self._pending_state = state
+            return
         revision = getattr(state, "selected_revision", None) if state.enabled else None
         self._empty_text = "此方案没有映射" if revision is not None else "使用项目默认译名，没有方案映射。"
         if not state.enabled:
             self._empty_text = state.detail
         self.model.set_mappings(() if revision is None else revision.content.mappings)
         self._search.set_rows(self.model.mappings, _search_document)
+
+    def showEvent(self, event):  # noqa: N802 - Qt API
+        super().showEvent(event)
+        if self._pending_state is not None:
+            state, self._pending_state = self._pending_state, None
+            self.render(state)
 
     def render_context(self, context) -> None:
         self._empty_text = "此方案没有映射" if context.profile_id else "使用项目默认译名，没有方案映射。"

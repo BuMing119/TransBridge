@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.config.text_encoding import TextEncodingDefaults
 from transbridge.config.ui_preferences import DEFAULT_THEME_ID, ThemeMode
 
 from .foundation.accessibility import update_accessible_state
@@ -82,6 +83,7 @@ class SettingsDialog(QDialog):
         reload_llm: Callable[[], object] | None = None,
         on_paratranz_saved: Callable[[object], None] | None = None,
         task_result_preferences=None,
+        text_encoding_defaults: TextEncodingDefaults | None = None,
     ) -> None:
         super().__init__(parent)
         configure_dialog(self)
@@ -94,6 +96,7 @@ class SettingsDialog(QDialog):
         self._initial_section = SettingsSection.parse(initial_section)
         self._paratranz_config = paratranz_config
         self._task_result_preferences = task_result_preferences
+        self._text_encoding_defaults = text_encoding_defaults or TextEncodingDefaults()
         self._config_draft = SettingsConfigDraft(
             llm_config,
             paratranz_config,
@@ -153,6 +156,13 @@ class SettingsDialog(QDialog):
         self.set_draft(ThemePreference(ThemeMode.SYSTEM, DEFAULT_THEME_ID))
 
     def apply_draft(self) -> bool:
+        encoding_page = self._settings_pages[SettingsSection.TEXT_ENCODING]
+        if self.current_section is SettingsSection.TEXT_ENCODING and encoding_page.dirty:
+            if not self._save_text_encodings():
+                return False
+            self._show_notice(self._tr("默认文本编码已保存。"))
+            self._sync_controls()
+            return True
         preference = self._state.draft_preference
         candidate = self._preview_candidate(preference)
         if candidate is None or candidate.theme_id != preference.theme_id:
@@ -177,6 +187,8 @@ class SettingsDialog(QDialog):
             except Exception as exc:
                 self._show_notice(f"无法保存冲突处理设置：{exc}。请重试。", error=True)
                 return False
+        if not self._save_text_encodings():
+            return False
         result = self._theme_service.set_preference(preference, persist=True)
         if result.status is ThemeApplyStatus.FAILED:
             message = _safe_apply_message(result, self._gettext)
@@ -219,6 +231,14 @@ class SettingsDialog(QDialog):
         self.done(QDialog.DialogCode.Accepted)
         return True
 
+    def _save_text_encodings(self) -> bool:
+        try:
+            self._settings_pages[SettingsSection.TEXT_ENCODING].save()
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._show_notice(f"无法保存默认文本编码：{exc}。请重试。", error=True)
+            return False
+        return True
+
     def reject(self) -> None:
         self.done(QDialog.DialogCode.Rejected)
 
@@ -258,6 +278,7 @@ class SettingsDialog(QDialog):
             or self._config_draft.has_llm
             or self._config_draft.has_paratranz
             or self._task_result_preferences is not None
+            or self._settings_pages[SettingsSection.TEXT_ENCODING].dirty
         )
 
     def _refresh_preview(self) -> None:

@@ -105,7 +105,7 @@ def test_discard_requires_review_and_refreshes_only_after_success(flow, monkeypa
     controller.discard()
     _finish_read(reads)
     assert "0 条术语决定、0 条人工调整记录和 0 项冲突处理" in observed[0][2]
-    assert "已发布版本和历史会保留" in observed[0][2]
+    assert "当前生效术语和历史会保留" in observed[0][2]
     assert "refresh" not in presenter.events
     if accepted:
         assert len(reads) == 1

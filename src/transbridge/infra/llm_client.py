@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
+from contextlib import ExitStack
 import logging
 import threading
-import time
 from typing import TYPE_CHECKING
 
 import httpx
@@ -25,6 +25,7 @@ from transbridge.infra.llm_reasoning_protocols import (
     AnthropicReasoningProtocolMixin,
     OpenAIReasoningProtocolMixin,
 )
+from transbridge.infra.llm_request_config import resolve_anthropic_endpoint, resolve_output_tokens
 from transbridge.infra.llm_structured_outputs import (
     anthropic_output_config,
     ensure_anthropic_structured_output_completion,
@@ -49,22 +50,8 @@ _DEFAULT_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 # SDK 内置重试次数默认值（429/5xx/连接错误自动重试）
 _DEFAULT_MAX_RETRIES = 2
 
-# Provider cache 参数被 Provider 拒绝时，仅去掉缓存参数降级重试一次的信号。
-_PROMPT_CACHE_REJECTION_KEYWORDS = ("prompt_cache", "prompt cache", "cache_control", "cache")
-
-
-def _is_cache_rejection(exc: Exception) -> bool:
-    """判断异常是否为 Provider 拒绝缓存参数（400/422 且信息含缓存关键字）。
-
-    仅用于触发「去掉缓存参数重试一次」的降级；其他错误原样上抛。
-    """
-    status = getattr(exc, "status_code", None)
-    if status not in (400, 422):
-        return False
-    message = getattr(exc, "message", None)
-    text = message if isinstance(message, str) else str(exc)
-    lowered = text.lower()
-    return any(k in lowered for k in _PROMPT_CACHE_REJECTION_KEYWORDS)
+_OPENAI_CACHE_FIELDS = ("prompt_cache_key", "prompt_cache_options", "prompt_cache_breakpoint", "prompt_cache")
+_ANTHROPIC_CACHE_FIELDS = ("cache_control",)
 
 
 def _is_system_blocks_unsupported(exc: Exception) -> bool:
@@ -90,14 +77,6 @@ def _anthropic_system_text(system_blocks: list[dict]) -> str:
     )
 
 
-def _require_anthropic_max_tokens(max_tokens: int) -> None:
-    if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens <= 0:
-        raise ValueError(
-            "Anthropic API requires a positive max_tokens value; "
-            "configure a value greater than 0 in the AI translator's '输出 Token' setting."
-        )
-
-
 def _reject_structured_output_tool_request(messages: list[dict]) -> None:
     """Keep Structured Outputs metadata out of the independent tool-calling protocol."""
 
@@ -107,9 +86,12 @@ def _reject_structured_output_tool_request(messages: list[dict]) -> None:
 
 
 class LLMClient(ABC):
+    def close(self) -> None:
+        """Release resources when a run-owned client will no longer be reused."""
+
     @abstractmethod
     def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
-        """发送消息并返回模型回复文本。供应商支持时，max_tokens=0 表示不限制。"""
+        """发送消息并返回模型回复文本。max_tokens=0 表示自动。"""
 
     def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
         """流式调用，每收到一个 chunk 即调用 chunk_callback(text)，最终返回完整文本。
@@ -148,6 +130,9 @@ class LLMClient(ABC):
 
 
 class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
+    def close(self) -> None:
+        self._http_client.close()
+
     def __init__(self, api_key: str, base_url: str, model: str, max_retries: int = _DEFAULT_MAX_RETRIES):
         self._api_key = api_key
         self._base_url = base_url
@@ -178,18 +163,12 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
             old_http = self._http_client
             self._http_client = httpx.Client(timeout=_DEFAULT_TIMEOUT)
             self._client = self._make_client()
-        # QA-007 修复：等待进行中的请求完成，缩小 cancel() 关闭连接时
-        # 打断 API 调用的竞态窗口。
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
-            with self._lock:
-                if self._active_requests == 0:
-                    break
-            time.sleep(0.05)
+        # Cancellation deliberately interrupts old requests; new calls already
+        # use the replacement transport captured under the lock above.
         try:
             old_http.close()
         except Exception:
-            pass
+            logger.warning("Could not close cancelled OpenAI transport", exc_info=True)
 
     def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
         return self._chat(messages, max_tokens, reasoning_patch=None)
@@ -198,9 +177,11 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
     def _chat(self, messages: list[dict], max_tokens: int, *, reasoning_patch) -> str:
         from transbridge.infra.prompt_cache import (
             extract_prompt_cache_directives,
+            is_cache_parameter_rejection,
             prepare_openai_chat_cache_request,
         )
 
+        max_tokens = resolve_output_tokens("openai_compatible", max_tokens)
         with self._lock:
             client = self._client
             self._active_requests += 1
@@ -225,7 +206,7 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
                 try:
                     resp = client.responses.create(**kwargs)
                 except Exception as exc:
-                    if not _is_cache_rejection(exc):
+                    if not req["request_options"] or not is_cache_parameter_rejection(exc, fields=_OPENAI_CACHE_FIELDS):
                         raise
                     clean, _ = extract_prompt_cache_directives(clean_messages)
                     retry_kwargs = build_structured_response_kwargs(
@@ -255,9 +236,7 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
             try:
                 resp = client.chat.completions.create(**kwargs)
             except Exception as exc:
-                # 缓存参数被 Provider 拒绝（401/400 含 cache 相关错误）时，
-                # 仅去掉缓存参数（干净标准消息）重试一次；第二次失败原样上抛。
-                if _is_cache_rejection(exc):
+                if req["request_options"] and is_cache_parameter_rejection(exc, fields=_OPENAI_CACHE_FIELDS):
                     clean, _ = extract_prompt_cache_directives(clean_messages)
                     retry_kwargs: dict = dict(model=self._model, messages=clean)
                     if reasoning_patch is not None:
@@ -301,6 +280,7 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
     ) -> LlmTurn:
         from transbridge.infra.openai_tool_calling import chat_stream_with_tools
 
+        max_tokens = resolve_output_tokens("openai_compatible", max_tokens)
         _reject_structured_output_tool_request(messages)
         return chat_stream_with_tools(
             self, messages, max_tokens, tools, chunk_callback, usage_callback=usage_callback, purpose=purpose
@@ -310,9 +290,11 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
     def _chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback, *, reasoning_patch) -> str:
         from transbridge.infra.prompt_cache import (
             extract_prompt_cache_directives,
+            is_cache_parameter_rejection,
             prepare_openai_chat_cache_request,
         )
 
+        max_tokens = resolve_output_tokens("openai_compatible", max_tokens)
         with self._lock:
             client = self._client
             self._active_requests += 1
@@ -336,11 +318,9 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
                     stream=True,
                 )
                 try:
-                    full_text, terminal_response = consume_structured_response_stream(
-                        client.responses.create(**kwargs), chunk_callback
-                    )
+                    stream = client.responses.create(**kwargs)
                 except Exception as exc:
-                    if not _is_cache_rejection(exc):
+                    if not req["request_options"] or not is_cache_parameter_rejection(exc, fields=_OPENAI_CACHE_FIELDS):
                         raise
                     clean, _ = extract_prompt_cache_directives(clean_messages)
                     retry_kwargs = build_structured_response_kwargs(
@@ -355,9 +335,8 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
                     logger.warning(
                         "OpenAI Responses 流式缓存参数被拒绝(%s)，降级为无缓存重试: model=%s", exc, self._model
                     )
-                    full_text, terminal_response = consume_structured_response_stream(
-                        client.responses.create(**retry_kwargs), chunk_callback
-                    )
+                    stream = client.responses.create(**retry_kwargs)
+                full_text, terminal_response = consume_structured_response_stream(stream, chunk_callback)
                 return validate_structured_response(terminal_response, output_schema, raw_text=full_text)
 
             kwargs: dict = dict(model=self._model, messages=req["messages"], stream=True)
@@ -370,18 +349,10 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
                 kwargs["extra_body"] = extra_body
             if max_tokens > 0:
                 kwargs["max_tokens"] = max_tokens
-            full_text = ""
             try:
-                with client.chat.completions.create(**kwargs) as stream:
-                    for chunk in stream:
-                        choice = chunk.choices[0]
-                        delta_object = choice.delta
-                        delta = delta_object.content or ""
-                        if delta:
-                            full_text += delta
-                            chunk_callback(delta)
+                stream = client.chat.completions.create(**kwargs)
             except Exception as exc:
-                if _is_cache_rejection(exc):
+                if req["request_options"] and is_cache_parameter_rejection(exc, fields=_OPENAI_CACHE_FIELDS):
                     clean, _ = extract_prompt_cache_directives(clean_messages)
                     retry_kwargs: dict = dict(model=self._model, messages=clean, stream=True)
                     if reasoning_patch is not None:
@@ -395,16 +366,17 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
                         exc,
                         self._model,
                     )
-                    with client.chat.completions.create(**retry_kwargs) as stream:
-                        for chunk in stream:
-                            choice = chunk.choices[0]
-                            delta_object = choice.delta
-                            delta = delta_object.content or ""
-                            if delta:
-                                full_text += delta
-                                chunk_callback(delta)
+                    stream = client.chat.completions.create(**retry_kwargs)
                 else:
                     raise
+            full_text = ""
+            with stream as chunks:
+                for chunk in chunks:
+                    choice = chunk.choices[0]
+                    delta = choice.delta.content or ""
+                    if delta:
+                        full_text += delta
+                        chunk_callback(delta)
         except Exception as exc:
             if output_schema is not None:
                 raise_if_structured_output_unsupported(exc, provider="openai")
@@ -417,9 +389,15 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
 
 
 class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
-    def __init__(self, api_key: str, model: str, max_retries: int = _DEFAULT_MAX_RETRIES):
+    def close(self) -> None:
+        self._http_client.close()
+
+    def __init__(
+        self, api_key: str, model: str, max_retries: int = _DEFAULT_MAX_RETRIES, *, base_url: str | None = None
+    ):
         self._api_key = api_key
         self._model = model
+        self._base_url = resolve_anthropic_endpoint(base_url)
         self._max_retries = max_retries
         self._lock = threading.Lock()
         self._http_client = httpx.Client(timeout=_DEFAULT_TIMEOUT)
@@ -435,6 +413,7 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
 
         return anthropic.Anthropic(
             api_key=self._api_key,
+            base_url=self._base_url,
             http_client=self._http_client,
             max_retries=self._max_retries,
         )
@@ -444,24 +423,21 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
             old_http = self._http_client
             self._http_client = httpx.Client(timeout=_DEFAULT_TIMEOUT)
             self._client = self._make_client()
-        # QA-007 修复：等待进行中的请求完成，缩小 cancel() 关闭连接时
-        # 打断 API 调用的竞态窗口。
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
-            with self._lock:
-                if self._active_requests == 0:
-                    break
-            time.sleep(0.05)
+        # Cancellation deliberately interrupts old requests; new calls already
+        # use the replacement transport captured under the lock above.
         try:
             old_http.close()
         except Exception:
-            pass
+            logger.warning("Could not close cancelled Anthropic transport", exc_info=True)
+
+    def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
+        return self._chat(messages, max_tokens, reasoning_patch=None)
 
     @credential_diagnostics
-    def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
-        from transbridge.infra.prompt_cache import build_anthropic_system_blocks
+    def _chat(self, messages: list[dict], max_tokens: int, *, reasoning_patch) -> str:
+        from transbridge.infra.prompt_cache import build_anthropic_system_blocks, is_cache_parameter_rejection
 
-        _require_anthropic_max_tokens(max_tokens)
+        max_tokens = resolve_output_tokens("anthropic", max_tokens)
         with self._lock:
             client = self._client
             self._active_requests += 1
@@ -473,6 +449,7 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
             system_blocks, user_messages = build_anthropic_system_blocks(
                 clean_messages,
                 model=self._model,
+                base_url=getattr(self, "_base_url", ""),
             )
             kwargs: dict = dict(
                 model=self._model,
@@ -481,12 +458,16 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
             )
             if system_blocks:
                 kwargs["system"] = system_blocks
+            if reasoning_patch is not None:
+                kwargs.update(reasoning_patch.standard)
             if output_schema is not None:
-                kwargs["output_config"] = anthropic_output_config(output_schema)
+                kwargs["output_config"] = {**kwargs.get("output_config", {}), **anthropic_output_config(output_schema)}
             try:
                 resp = client.messages.create(**kwargs)
             except Exception as exc:
-                if _is_cache_rejection(exc) and _has_anthropic_cache_control(system_blocks):
+                if _has_anthropic_cache_control(system_blocks) and is_cache_parameter_rejection(
+                    exc, fields=_ANTHROPIC_CACHE_FIELDS
+                ):
                     no_cache_blocks, no_cache_messages = build_anthropic_system_blocks(
                         clean_messages,
                         model=self._model,
@@ -514,7 +495,7 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
                 else:
                     raise
             if output_schema is None:
-                return resp.content[0].text if resp.content else ""
+                return next((block.text for block in resp.content if getattr(block, "type", "text") == "text"), "")
             ensure_anthropic_structured_output_completion(stop_reason=getattr(resp, "stop_reason", None))
             content = "".join(
                 block.text
@@ -523,7 +504,9 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
             )
             return validate_structured_output(content, output_schema)
         except Exception as exc:
-            if output_schema is not None:
+            if output_schema is not None and (
+                reasoning_patch is None or not self.is_reasoning_control_rejection(exc, reasoning_patch)
+            ):
                 raise_if_structured_output_unsupported(exc, provider="anthropic")
             logger.exception("Anthropic chat() 调用失败: model=%s, messages_count=%d", self._model, len(messages))
             raise
@@ -531,11 +514,14 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
             with self._lock:
                 self._active_requests -= 1
 
-    @credential_diagnostics
     def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
-        from transbridge.infra.prompt_cache import build_anthropic_system_blocks
+        return self._chat_stream(messages, max_tokens, chunk_callback, reasoning_patch=None)
 
-        _require_anthropic_max_tokens(max_tokens)
+    @credential_diagnostics
+    def _chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback, *, reasoning_patch) -> str:
+        from transbridge.infra.prompt_cache import build_anthropic_system_blocks, is_cache_parameter_rejection
+
+        max_tokens = resolve_output_tokens("anthropic", max_tokens)
         with self._lock:
             client = self._client
             self._active_requests += 1
@@ -546,6 +532,7 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
             system_blocks, user_messages = build_anthropic_system_blocks(
                 clean_messages,
                 model=self._model,
+                base_url=getattr(self, "_base_url", ""),
             )
             kwargs: dict = dict(
                 model=self._model,
@@ -554,63 +541,41 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
             )
             if system_blocks:
                 kwargs["system"] = system_blocks
+            if reasoning_patch is not None:
+                kwargs.update(reasoning_patch.standard)
             if output_schema is not None:
-                kwargs["output_config"] = anthropic_output_config(output_schema)
+                kwargs["output_config"] = {**kwargs.get("output_config", {}), **anthropic_output_config(output_schema)}
 
             full_text = ""
-            stop_reason = None
-            try:
-                with client.messages.stream(**kwargs) as stream:
-                    for text in stream.text_stream:
-                        full_text += text
-                        chunk_callback(text)
-                    if output_schema is not None:
-                        final_message = stream.get_final_message()
-                        stop_reason = getattr(final_message, "stop_reason", None)
-            except Exception as exc:
-                if _is_cache_rejection(exc) and _has_anthropic_cache_control(system_blocks):
-                    no_cache_blocks, no_cache_messages = build_anthropic_system_blocks(
-                        clean_messages,
-                        model=self._model,
-                        enable_cache=False,
-                    )
-                    retry_kwargs = {
-                        **kwargs,
-                        "system": no_cache_blocks,
-                        "messages": no_cache_messages,
-                    }
-                    logger.warning(
-                        "Anthropic chat_stream 缓存参数被拒绝(%s)，降级为无缓存重试: model=%s",
-                        exc,
-                        self._model,
-                    )
-                    with client.messages.stream(**retry_kwargs) as stream:
-                        for text in stream.text_stream:
-                            full_text += text
-                            chunk_callback(text)
-                        if output_schema is not None:
-                            final_message = stream.get_final_message()
-                            stop_reason = getattr(final_message, "stop_reason", None)
-                elif _is_system_blocks_unsupported(exc) and system_blocks:
-                    kwargs["system"] = _anthropic_system_text(system_blocks)
-                    logger.warning(
-                        "Anthropic chat_stream 不支持 system content blocks，降级为字符串 system 重试: model=%s",
-                        self._model,
-                    )
-                    with client.messages.stream(**kwargs) as stream:
-                        for text in stream.text_stream:
-                            full_text += text
-                            chunk_callback(text)
-                        if output_schema is not None:
-                            final_message = stream.get_final_message()
-                            stop_reason = getattr(final_message, "stop_reason", None)
-                else:
-                    raise
+            with ExitStack() as streams:
+                try:
+                    stream = streams.enter_context(client.messages.stream(**kwargs))
+                except Exception as exc:
+                    if _has_anthropic_cache_control(system_blocks) and is_cache_parameter_rejection(
+                        exc, fields=_ANTHROPIC_CACHE_FIELDS
+                    ):
+                        kwargs["system"], kwargs["messages"] = build_anthropic_system_blocks(
+                            clean_messages, model=self._model, enable_cache=False
+                        )
+                        logger.warning("Anthropic 流式缓存参数被拒绝(%s)，降级重试: model=%s", exc, self._model)
+                    elif _is_system_blocks_unsupported(exc) and system_blocks:
+                        kwargs["system"] = _anthropic_system_text(system_blocks)
+                        logger.warning("Anthropic 流式改用字符串 system 重试: model=%s", self._model)
+                    else:
+                        raise
+                    stream = streams.enter_context(client.messages.stream(**kwargs))
+                for chunk in stream.text_stream:
+                    full_text += chunk
+                    chunk_callback(chunk)
+                if output_schema is not None:
+                    stop_reason = getattr(stream.get_final_message(), "stop_reason", None)
             if output_schema is not None:
                 ensure_anthropic_structured_output_completion(stop_reason=stop_reason)
                 return validate_structured_output(full_text, output_schema)
         except Exception as exc:
-            if output_schema is not None:
+            if output_schema is not None and (
+                reasoning_patch is None or not self.is_reasoning_control_rejection(exc, reasoning_patch)
+            ):
                 raise_if_structured_output_unsupported(exc, provider="anthropic")
             logger.exception(
                 "Anthropic chat_stream() 调用失败: model=%s, messages_count=%d",
@@ -645,7 +610,12 @@ def create_llm_client(config: LLMConfig) -> LLMClient:
     """工厂函数，按 provider 返回对应实现。"""
     max_retries = getattr(config, "llm_max_retries", _DEFAULT_MAX_RETRIES)
     if config.provider == "anthropic":
-        return AnthropicClient(api_key=config.api_key, model=config.model, max_retries=max_retries)
+        return AnthropicClient(
+            api_key=config.api_key,
+            model=config.model,
+            max_retries=max_retries,
+            base_url=getattr(config, "base_url", None),
+        )
     # 默认 openai_compatible
     return OpenAICompatibleClient(
         api_key=config.api_key,

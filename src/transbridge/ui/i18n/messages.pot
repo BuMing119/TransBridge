@@ -166,6 +166,18 @@ msgstr ""
 msgid "服务与 API 配置…"
 msgstr ""
 
+msgid "AI 术语位置判断…"
+msgstr ""
+
+msgid "清除当前版本定位缓存"
+msgstr ""
+
+msgid "清除当前翻译版本的定位判断，不修改译文或其他版本的缓存"
+msgstr ""
+
+msgid "更改自动 AI 术语位置判断及启动询问偏好"
+msgstr ""
+
 #: ui/shell/menu_builder.py
 msgid "ParaTranz 账户信息"
 msgstr ""

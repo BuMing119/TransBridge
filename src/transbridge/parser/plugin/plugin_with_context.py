@@ -17,6 +17,7 @@ from sse_plugin_interface.subrecord import TRDT, StringSubrecord
 from transbridge.parser.strings_file import PluginStringsLookup
 from transbridge.parser.utils.fromid_trans import formid_bytes_to_complete, formid_bytes_to_hex
 
+from .binary_io import PluginBinaryIO
 from .item import (
     BaseContext,
     DialContext,
@@ -57,7 +58,7 @@ class _UnresolvedStrings:
             )
 
 
-class SSEPluginWithContext(SSEPlugin):
+class SSEPluginWithContext(PluginBinaryIO):
     """
     Extended SSE Plugin parser that extracts strings with NPC context.
     Based on sse_plugin_interface.SSEPlugin with additional context extraction.

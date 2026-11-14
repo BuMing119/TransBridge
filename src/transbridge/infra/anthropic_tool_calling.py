@@ -11,6 +11,7 @@ from typing import Any
 
 from transbridge.application.security.diagnostic_logging import credential_diagnostics
 from transbridge.infra.assistant_prompt_cache import anthropic_assistant_cache_options, is_assistant_context
+from transbridge.infra.llm_request_config import ASSISTANT_OUTPUT_TOKENS, resolve_output_tokens
 from transbridge.infra.llm_tool_calling import (
     LlmToolCall,
     LlmToolDefinition,
@@ -19,11 +20,9 @@ from transbridge.infra.llm_tool_calling import (
     require_complete_tool_call,
 )
 from transbridge.infra.llm_usage import UsageAttempt, single_attempt_client
-from transbridge.infra.prompt_cache import build_anthropic_system_blocks
+from transbridge.infra.prompt_cache import build_anthropic_system_blocks, is_cache_parameter_rejection
 
 logger = logging.getLogger(__name__)
-
-_CACHE_REJECTION_KEYWORDS = ("prompt_cache", "prompt cache", "cache_control", "cache")
 
 
 @credential_diagnostics
@@ -44,8 +43,7 @@ def chat_stream_with_tools(
     accounting without leaking Anthropic SDK objects into the public contract.
     """
 
-    if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens <= 0:
-        raise ValueError("Anthropic tool calling requires a positive max_tokens value")
+    max_tokens = resolve_output_tokens("anthropic", max_tokens, default=ASSISTANT_OUTPUT_TOKENS)
 
     with owner._lock:
         client = single_attempt_client(owner._client)
@@ -64,7 +62,10 @@ def chat_stream_with_tools(
 
     try:
         stable_layout = is_assistant_context(messages)
-        system_blocks, non_system_messages = build_anthropic_system_blocks(messages, model=owner._model)
+        base_url = str(getattr(client, "base_url", ""))
+        system_blocks, non_system_messages = build_anthropic_system_blocks(
+            messages, model=owner._model, base_url=base_url
+        )
         kwargs = _request_kwargs(
             owner,
             system_blocks,
@@ -72,38 +73,25 @@ def chat_stream_with_tools(
             tools,
             max_tokens,
         )
-        kwargs.update(
-            anthropic_assistant_cache_options(
-                messages,
-                model=owner._model,
-                base_url=str(getattr(client, "base_url", "")),
-            )
-        )
+        kwargs.update(anthropic_assistant_cache_options(messages, model=owner._model, base_url=base_url))
         try:
             return _run_stream(client, kwargs, emit_text, mark_event, attempt)
         except Exception as exc:
             if (
                 not saw_event
-                and _is_cache_rejection(exc)
                 and (_has_cache_control(system_blocks) or "cache_control" in kwargs)
+                and is_cache_parameter_rejection(exc, fields=("cache_control",))
             ):
                 attempt.finish(outcome="error", degradation="cache_parameter_unsupported")
                 attempt = UsageAttempt("anthropic", owner._model, purpose, usage_callback, retry_of=attempt.attempt_id)
-                no_cache_system, no_cache_messages = build_anthropic_system_blocks(
-                    messages,
-                    model=owner._model,
-                    enable_cache=False,
-                )
-                retry_kwargs = _request_kwargs(
-                    owner,
-                    no_cache_system,
-                    _convert_messages(no_cache_messages, merge_following_user=not stable_layout),
-                    tools,
-                    max_tokens,
-                )
+                retry_kwargs = {key: value for key, value in kwargs.items() if key != "cache_control"}
+                if _has_cache_control(system_blocks):
+                    retry_kwargs["system"] = [
+                        {key: value for key, value in block.items() if key != "cache_control"}
+                        for block in system_blocks
+                    ]
                 logger.warning(
-                    "Anthropic tool stream cache parameters rejected (%s); retrying without cache: model=%s",
-                    exc,
+                    "Anthropic tool stream cache parameter rejected; retrying without cache_control: model=%s",
                     owner._model,
                 )
                 return _run_stream(client, retry_kwargs, emit_text, mark_event, attempt)
@@ -257,6 +245,7 @@ def _run_stream(client: Any, kwargs: dict[str, Any], chunk_callback, event_callb
             if text:
                 chunk_callback(text)
         message = stream.get_final_message()
+        event_callback()
         attempt.observe(_field(message, "usage"), final=True)
     turn = _turn_from_message(message)
     return replace(turn, usage=attempt.finish())
@@ -333,15 +322,6 @@ def _field(value: Any, name: str) -> Any:
 
 def _has_cache_control(system_blocks: list[dict[str, Any]]) -> bool:
     return any(isinstance(block, dict) and "cache_control" in block for block in system_blocks)
-
-
-def _is_cache_rejection(exc: Exception) -> bool:
-    if getattr(exc, "status_code", None) not in (400, 422):
-        return False
-    message = getattr(exc, "message", None)
-    text = message if isinstance(message, str) else str(exc)
-    lowered = text.lower()
-    return any(keyword in lowered for keyword in _CACHE_REJECTION_KEYWORDS)
 
 
 def _is_system_blocks_unsupported(exc: Exception) -> bool:

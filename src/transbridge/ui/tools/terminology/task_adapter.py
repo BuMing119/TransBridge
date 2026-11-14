@@ -26,6 +26,11 @@ class TerminologyTaskViewState:
     message: str
     revision: int
     sequence: int
+    llm_submitted: int = 0
+    llm_completed: int = 0
+    llm_waiting: int = 0
+    llm_retries: int = 0
+    llm_elapsed_ms: int = 0
 
     @property
     def is_terminal(self) -> bool:
@@ -88,6 +93,11 @@ class TerminologyTaskAdapter:
             message=_state_message(activity.state),
             revision=activity.revision,
             sequence=activity.sequence,
+            llm_submitted=_counter(progress, "llm_submitted"),
+            llm_completed=_counter(progress, "llm_completed"),
+            llm_waiting=_counter(progress, "llm_waiting"),
+            llm_retries=_counter(progress, "llm_retries"),
+            llm_elapsed_ms=_counter(progress, "llm_elapsed_ms"),
         )
         with self._lock:
             if self._binding.closed:

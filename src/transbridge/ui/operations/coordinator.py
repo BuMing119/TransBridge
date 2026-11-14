@@ -34,6 +34,7 @@ class OperationPlanCoordinator:
         dialog_factory=OperationPlanDialog,
         dialog_factories: Mapping[OperationKind, OperationContextDialogFactory] | None = None,
         execution_observer: Callable[[object, str, object], None] | None = None,
+        parent=None,
     ) -> None:
         self._presenter = presenter
         self._draft_factories = dict(draft_factories)
@@ -44,6 +45,7 @@ class OperationPlanCoordinator:
         self._dialog_factory = dialog_factory
         self._dialog_factories = dict(dialog_factories or {})
         self._execution_observer = execution_observer
+        self._dialog_parent = parent
         self._owned_windows: dict[str, object] = {}
         self._preflight_workers: dict[str, object] = {}
 
@@ -58,6 +60,7 @@ class OperationPlanCoordinator:
         return self._begin(OperationKind.FOMOD, context, batch=batch, values=values, parent=parent)
 
     def _begin(self, kind, context, *, batch, values, parent=None, prepare_inputs=None):
+        parent = self._dialog_parent if parent is None else parent
         factory = self._draft_factories.get(kind)
         if factory is None:
             raise OperationPlanError("DRAFT_FACTORY_UNAVAILABLE", f"no draft factory is registered for {kind.value}")
@@ -71,6 +74,10 @@ class OperationPlanCoordinator:
             else context_dialog_factory(plan, context, parent)
         )
         self._owned_windows[plan.session_id] = dialog
+        if kind is OperationKind.WRITE and hasattr(dialog, "scheme_comparison_requested"):
+            from .scheme_comparison_controller import install_scheme_comparison
+
+            install_scheme_comparison(dialog, lambda fields: self._edit_factories[kind](draft_holder[0], fields))
         released = False
         execution_running = False
         preparing_inputs = False
@@ -164,7 +171,7 @@ class OperationPlanCoordinator:
                 check(fields)
 
             try:
-                prepare_inputs(dict(fields), ready, unavailable)
+                prepare_inputs(dict(fields), ready, unavailable, lambda: not released, parent=dialog)
             except (RuntimeError, TypeError, ValueError) as exc:
                 unavailable(str(exc))
 
@@ -292,9 +299,6 @@ class OperationPlanCoordinator:
         destroyed_signal = getattr(dialog, "destroyed", None)
         if destroyed_signal is not None and hasattr(destroyed_signal, "connect"):
             destroyed_signal.connect(destroyed)
-        set_modal = getattr(dialog, "setModal", None)
-        if callable(set_modal):
-            set_modal(False)
         dialog.show()
         raise_window = getattr(dialog, "raise_", None)
         if callable(raise_window):

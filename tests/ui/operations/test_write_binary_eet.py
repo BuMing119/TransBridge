@@ -83,18 +83,16 @@ def test_mixed_gui_batch_writes_native_eet_and_plugin_without_conversion(tmp_pat
     assert source.read_bytes() == document.to_bytes()
 
 
-def test_native_binary_eet_save_dialog_offers_eet_filter(qapp, tmp_path, feature, monkeypatch):
-    slot, _ = _binary_slot(tmp_path / "dictionary.eet")
+@pytest.mark.parametrize("source_suffix", [".eet", ".xml"])
+def test_native_binary_eet_directory_picker_uses_eet_extension(qapp, tmp_path, feature, monkeypatch, source_suffix):
+    slot, _ = _binary_slot(tmp_path / f"dictionary{source_suffix}")
     context = SimpleNamespace(active_slot=slot, slots={"eet": slot}, collection=slot.collection)
     draft = feature.feature.create_draft(context, False, {})
     dialog = WritePlanDialog(feature.feature.mapper.present("eet", 1, draft), context)
-    filters = []
-
-    def choose(_parent, _title, _path, file_filter, **_kwargs):
-        filters.append(file_filter)
-        return "", ""
-
-    monkeypatch.setattr("transbridge.ui.operations.write_dialog.QFileDialog.getSaveFileName", choose)
+    destination = tmp_path / "exports"
+    monkeypatch.setattr(
+        "transbridge.ui.operations.write_dialog.QFileDialog.getExistingDirectory", lambda *_a: str(destination)
+    )
     dialog._browse_output()
-    assert filters == ["ESP-ESM Translator EET (*.eet)"]
+    assert dict(dialog.edited_values())["target_path"] == str(destination / "dictionary.eet")
     dialog.close()

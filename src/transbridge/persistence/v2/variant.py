@@ -28,6 +28,7 @@ from transbridge.application.io.stage_policy import Stage
 from .deferred_variant_rows import DeferredVariantRows
 from .ids import VariantRef
 from .models import SCHEMA_VERSION, SchemaEnvelope, VariantDto
+from .translation_epochs import TranslationEpochTracker, changed_translation_keys
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -266,6 +267,7 @@ class VariantAggregate:
         self._base_revision = snapshot.revision
         self._changes: dict[EntryKey, int] = {}
         self._applications = dict(applications)
+        self.alignment_epochs = TranslationEpochTracker()
 
     @property
     def revision(self) -> int:
@@ -346,6 +348,7 @@ class VariantAggregate:
         )
         result._base_revision = saved.revision
         result._changes = {row.entry_key: revision for row in changes}
+        result.alignment_epochs = self.alignment_epochs.fork()
         return result
 
     def fork(self) -> VariantAggregate:
@@ -353,6 +356,7 @@ class VariantAggregate:
         copy._base_revision = self._base_revision
         copy._changes = dict(self._changes)
         copy._applications = dict(self._applications)
+        copy.alignment_epochs = self.alignment_epochs.fork()
         return copy
 
     def commit(
@@ -403,33 +407,48 @@ class VariantAggregate:
             self._revision + 1,
             change_set.label_library,
         )
+        alignment_changes = (
+            changed_translation_keys(self._snapshot.entries, projected.entries, sparse=change_set.sparse_entries)
+            if isinstance(projected.entries, DeferredVariantRows)
+            else None
+        )
         if before_commit is not None:
             before_commit(change_set)
         self._fingerprints = projected.source_fingerprints
-        self._record_entries(projected, change_set.sparse_entries)
+        recorded_changes = self._record_entries(projected, change_set.sparse_entries)
+        if alignment_changes is None:
+            alignment_changes = recorded_changes
         self._label_library = projected.label_library
         self._revision = projected.revision
         self._snapshot = projected
         if operation_id is not None:
             self._applications[operation_id] = change_set.application_outcomes
+        self.alignment_epochs.invalidate(alignment_changes)
         return self._revision
 
     def _record_entries(self, projected, sparse):
         if isinstance(projected.entries, DeferredVariantRows):
             self._changes.update((entry.entry_key, projected.revision) for entry in sparse)
-            return
+            return ()
         entries = {entry.entry_key: entry for entry in projected.entries}
         previous = self._entries
         if previous is None:
             previous = {entry.entry_key: entry for entry in self._snapshot.entries}
-        if previous.keys() - entries.keys():
+        removed = previous.keys() - entries.keys()
+        changed, alignment_changes = [], list(removed)
+        for key, entry in entries.items():
+            old = previous.get(key)
+            if old != entry:
+                changed.append(key)
+                if old is None or (old.translation, old.tombstone) != (entry.translation, entry.tombstone):
+                    alignment_changes.append(key)
+        if removed:
             self._base_revision = projected.revision
             self._changes.clear()
         else:
-            self._changes.update({
-                key: projected.revision for key, entry in entries.items() if previous.get(key) != entry
-            })
+            self._changes.update((key, projected.revision) for key in changed)
         self._entries = entries
+        return tuple(alignment_changes)
 
 
 def _retain_late_entry_fields(persisted, observed, current):

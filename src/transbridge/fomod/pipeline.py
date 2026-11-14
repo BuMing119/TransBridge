@@ -183,6 +183,7 @@ class FomodPipeline:
             FomodTranslationCandidate,
         )
         from transbridge.application.io import EntryKey, Provenance
+        from transbridge.config.text_encoding import TextEncodingDefaults
         from transbridge.converter.translation_entry_collection import TranslationEntryCollection
         from transbridge.fomod.plugin_publishing import prepare_plugin_source
         from transbridge.migrator import KeyMigrationPlan, plan_migration
@@ -193,6 +194,7 @@ class FomodPipeline:
         )
 
         parser = PluginParser()
+        encodings = TextEncodingDefaults().load()
         if not target_locale or not target_locale.strip():
             raise ValueError("target_locale is required for FOMOD translation planning")
         if not run_id or not run_id.strip():
@@ -208,7 +210,9 @@ class FomodPipeline:
             rel = esp_path.relative_to(new_dir)
             # 解析新版
             namespace = _plugin_namespace(rel)
-            publication_source = prepare_plugin_source(esp_path, namespace=namespace, cancellation=stop_event)
+            publication_source = prepare_plugin_source(
+                esp_path, namespace=namespace, cancellation=stop_event, encodings=encodings
+            )
             new_entries = publication_source.collection_entries()
             new_collection = TranslationEntryCollection(new_entries)
             new_fingerprint = publication_source.snapshot.sha256
@@ -219,7 +223,9 @@ class FomodPipeline:
                 if old_esp.exists():
                     old_entries = tuple(
                         replace(entry, entry_key=EntryKey(namespace, entry.key, entry.identity.original))
-                        for entry in parser.parse_plugin(old_esp)
+                        for entry in parser.parse_plugin(
+                            old_esp, **publication_source.encodings.read_options(), raise_on_error=True
+                        )
                     )
                     migration = plan_migration(
                         old_entries,

@@ -50,7 +50,7 @@ def _localized_plugin_fixture(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
     strings_dir.mkdir()
     originals: dict[str, bytes] = {}
     for suffix in (".strings", ".dlstrings", ".ilstrings"):
-        payload = (FIXTURES / f"integrity{suffix}").read_bytes()
+        payload = (FIXTURES / f"utf8-integrity{suffix}").read_bytes()
         target = strings_dir / f"localized_English{suffix}"
         target.write_bytes(payload)
         originals[suffix] = payload
@@ -60,9 +60,9 @@ def _localized_plugin_fixture(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
 @pytest.mark.parametrize(
     ("fixture", "format_id"),
     [
-        ("integrity.strings", FormatId.STRINGS),
-        ("integrity.dlstrings", FormatId.DLSTRINGS),
-        ("integrity.ilstrings", FormatId.ILSTRINGS),
+        ("utf8-integrity.strings", FormatId.STRINGS),
+        ("utf8-integrity.dlstrings", FormatId.DLSTRINGS),
+        ("utf8-integrity.ilstrings", FormatId.ILSTRINGS),
     ],
 )
 def test_real_fixture_untouched_round_trip_is_byte_identical(
@@ -89,9 +89,9 @@ def test_real_fixture_untouched_round_trip_is_byte_identical(
 @pytest.mark.parametrize(
     ("fixture", "format_id"),
     [
-        ("integrity.strings", FormatId.STRINGS),
-        ("integrity.dlstrings", FormatId.DLSTRINGS),
-        ("integrity.ilstrings", FormatId.ILSTRINGS),
+        ("utf8-integrity.strings", FormatId.STRINGS),
+        ("utf8-integrity.dlstrings", FormatId.DLSTRINGS),
+        ("utf8-integrity.ilstrings", FormatId.ILSTRINGS),
     ],
 )
 def test_real_fixture_modify_rebuild_preserves_id_order_encoding_and_unmodified_bytes(
@@ -117,18 +117,18 @@ def test_real_fixture_modify_rebuild_preserves_id_order_encoding_and_unmodified_
     assert [record.string_id for record in rebuilt_records] == [record.string_id for record in original_records]
     assert reparsed.entries[0].original == "Translated ✓"
     assert reparsed.entries[1].original == parsed.entries[1].original
-    assert rebuilt_records[1].encoding == original_records[1].encoding == "utf-8-sig"
+    assert rebuilt_records[1].encoding == original_records[1].encoding == "utf-8"
     assert rebuilt_records[1].raw_payload == original_records[1].raw_payload
-    assert rebuilt_records[2].encoding == original_records[2].encoding == "cp1252"
+    assert rebuilt_records[2].encoding == original_records[2].encoding == "utf-8"
     assert rebuilt_records[2].raw_payload == original_records[2].raw_payload
 
 
 @pytest.mark.parametrize(
     ("fixture", "format_id"),
     [
-        ("integrity.strings", FormatId.STRINGS),
-        ("integrity.dlstrings", FormatId.DLSTRINGS),
-        ("integrity.ilstrings", FormatId.ILSTRINGS),
+        ("utf8-integrity.strings", FormatId.STRINGS),
+        ("utf8-integrity.dlstrings", FormatId.DLSTRINGS),
+        ("utf8-integrity.ilstrings", FormatId.ILSTRINGS),
     ],
 )
 def test_locked_empty_preserves_source_bytes_without_modifying_entry(
@@ -170,8 +170,8 @@ def test_duplicate_string_id_is_failed_with_record_indices(tmp_path: Path) -> No
 
 
 def test_invalid_stage_and_cp1252_encoding_loss_block_before_artifact(tmp_path: Path) -> None:
-    source = tmp_path / "integrity.strings"
-    shutil.copyfile(FIXTURES / "integrity.strings", source)
+    source = tmp_path / "utf8-integrity.strings"
+    shutil.copyfile(FIXTURES / "utf8-integrity.strings", source)
     adapter = LocalizedStringsAdapter(FormatId.STRINGS)
     parsed = adapter.parse(_parse_request(source, FormatId.STRINGS))
     invalid = replace(parsed.entries[0], translation="translated", stage=4)
@@ -181,7 +181,10 @@ def test_invalid_stage_and_cp1252_encoding_loss_block_before_artifact(tmp_path: 
     invalid_result = adapter.write(_write_request(invalid_target, FormatId.STRINGS, parsed, (invalid,)))
     encoding_target = tmp_path / "encoding.strings"
     encoding_result = adapter.write(
-        _write_request(encoding_target, FormatId.STRINGS, parsed, (cp1252_unrepresentable,))
+        replace(
+            _write_request(encoding_target, FormatId.STRINGS, parsed, (cp1252_unrepresentable,)),
+            options=(("output_encoding", "cp1252"),),
+        )
     )
 
     assert invalid_result.outcome is OperationOutcome.FAILED
@@ -195,9 +198,9 @@ def test_invalid_stage_and_cp1252_encoding_loss_block_before_artifact(tmp_path: 
 @pytest.mark.parametrize(
     ("fixture", "format_id"),
     [
-        ("integrity.strings", FormatId.STRINGS),
-        ("integrity.dlstrings", FormatId.DLSTRINGS),
-        ("integrity.ilstrings", FormatId.ILSTRINGS),
+        ("utf8-integrity.strings", FormatId.STRINGS),
+        ("utf8-integrity.dlstrings", FormatId.DLSTRINGS),
+        ("utf8-integrity.ilstrings", FormatId.ILSTRINGS),
     ],
 )
 @pytest.mark.parametrize("source_state", ["removed", "changed"])
@@ -235,7 +238,7 @@ def test_only_hydrated_writes_are_independent_of_the_original_source(
 
 
 def test_hydrated_snapshot_rejects_same_size_content_corruption(tmp_path: Path) -> None:
-    source = tmp_path / "integrity.strings"
+    source = tmp_path / "utf8-integrity.strings"
     shutil.copyfile(FIXTURES / source.name, source)
     adapter = LocalizedStringsAdapter(FormatId.STRINGS)
     parsed = adapter.parse(_parse_request(source, FormatId.STRINGS))

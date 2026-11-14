@@ -14,6 +14,7 @@ from transbridge.application.terminology.errors import TerminologyNotFoundError
 from transbridge.application.terminology.ports import PageRequest
 from transbridge.application.terminology.publish import terminology_version_content_digest
 
+from .browse_pages import EffectiveBrowsePages
 from .connection import StorageMode, TerminologyStorageError
 from .repository import SqliteTerminologyRepository
 
@@ -25,6 +26,10 @@ class SqliteEffectiveTerminologySnapshotPort:
         self._repository = repository
         self._cache: OrderedDict[object, EffectiveTerminologySnapshot] = OrderedDict()
         self._token: object = None
+        self._browse = EffectiveBrowsePages(repository)
+
+    def browse_page(self, query, request, profile, cancellation=None):
+        return self._browse.page(query, request, profile, cancellation)
 
     def read_cache_token(self) -> object:
         return self._repository.read_cache_token()

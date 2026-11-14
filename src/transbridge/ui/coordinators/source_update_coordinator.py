@@ -84,13 +84,16 @@ class SourceUpdateCoordinator:
         source = sources[labels.index(choice)]
         filters = {
             "plugin.sse": "插件 (*.esp *.esm *.esl)",
+            "strings.strings": "Skyrim STRINGS (*.strings)",
+            "strings.dlstrings": "Skyrim DLSTRINGS (*.dlstrings)",
+            "strings.ilstrings": "Skyrim ILSTRINGS (*.ilstrings)",
             "xml.eet": "ESP-ESM Translator XML (*.xml)",
             "binary.eet": "ESP-ESM Translator EET (*.eet)",
             "xml.xt": "xTranslator XML (*.xml)",
         }
         replacement, _ = QFileDialog.getOpenFileName(
             self._host,
-            "选择新版源文件",
+            "选择源文件（可选择原文件应用新的读取设置）",
             str(Path(source.location).parent),
             filters.get(str(source.format_id), "源文件 (*)") + ";;所有文件 (*)",
         )
@@ -104,7 +107,7 @@ class SourceUpdateCoordinator:
                 return
             self._dispatch(
                 lambda: self._service().prepare(path, source.source_id, replacement, context),
-                "正在解析新版来源并比较全部翻译版本…",
+                "正在按项目读取设置解析来源并比较全部翻译版本…",
                 lambda prepared: self._preview(prepared, context, recovery=recovery),
             )
 

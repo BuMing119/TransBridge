@@ -123,9 +123,9 @@ def test_decoded_variant_tables_are_retained_without_reparsing_resource_bytes(tm
     original = SkyrimStringsFile.from_bytes
     calls = []
 
-    def parse(cls, data, ext, source=""):
+    def parse(cls, data, ext, source="", **read_options):
         calls.append(ext)
-        return original(data, ext, source=source)
+        return original(data, ext, source=source, **read_options)
 
     monkeypatch.setattr(SkyrimStringsFile, "from_bytes", classmethod(parse))
     lookup = PluginStringsLookup.from_plugin(plugin)

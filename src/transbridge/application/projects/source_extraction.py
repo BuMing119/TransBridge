@@ -14,6 +14,7 @@ from transbridge.converter.sst_entries import SST_CODEC_VERSION
 
 from .native_source_formats import SST_FORMATS, extract_native_fields, reconstruct_native
 from .provisioning_models import PreparedProjectSource, PreparedSourceHydration
+from .source_encoding import TEXT_ENCODING_FORMATS
 from .source_fields import entry_fields, format_fields, parse_options, source_name
 from .storage_contracts import ExtractedSource, SourceInfo, StoredEntry
 from .translation_templates import STRINGS_FORMATS, XML_FORMATS, extract_xml_records, rebuild_strings, rebuild_xml
@@ -34,8 +35,10 @@ def extract_source(prepared: PreparedProjectSource) -> ExtractedSource:
         fields["encoding"] = source.encoding
     if source.bom:
         fields["bom"] = source.bom.hex()
+    metadata = dict(source.metadata)
+    if source.format_id in TEXT_ENCODING_FORMATS:
+        fields.update({name: metadata[name] for name in ("source_language", "text_read_policy") if name in metadata})
     if source.format_id is FormatId.PLUGIN_SSE:
-        metadata = dict(source.metadata)
         for name in (
             METADATA_KEY,
             "localized_language",
@@ -88,6 +91,7 @@ def extract_source(prepared: PreparedProjectSource) -> ExtractedSource:
         tuple(parse_options((descriptor.get("format_options") or {}).items()).items()),
         tuple(format_fields(fields.items()).items()),
         format_records,
+        reference_path=hydration.reference_location or hydration.location,
     )
 
 
@@ -98,7 +102,17 @@ def reconstructed_source_snapshot(
     descriptor = SourceDescriptor(f"project-source:{info.namespace.value}", info.name)
     fields = dict(info.format_fields)
     metadata = {"source_namespace": info.namespace.value}
-    encoding = fields.get("encoding") or "utf-8"
+    encoding = fields.get("encoding")
+    if info.format_id in TEXT_ENCODING_FORMATS:
+        saved_options = dict(info.options)
+        encoding = encoding or saved_options.get("input_encoding")
+        metadata.update(
+            (name, fields.get(name, saved_options.get(name)))
+            for name in ("source_language", "text_read_policy")
+            if name in fields or name in saved_options
+        )
+        if info.format_id is FormatId.PLUGIN_SSE and "language" in saved_options:
+            metadata["localized_language"] = saved_options["language"]
     bom = bytes.fromhex(fields.get("bom", ""))
     if info.format_id is FormatId.BINARY_EET or info.format_id in SST_FORMATS:
         prefix, codec = (
@@ -111,6 +125,7 @@ def reconstructed_source_snapshot(
             raise ValueError("native translation fields do not reconstruct the verified source")
         return snapshot
     if info.format_id in XML_FORMATS:
+        encoding = encoding or "utf-8"
         content = rebuild_xml(fields["xml_header"], format_records, encoding, bom)
         metadata["translation_source_fingerprint"] = info.fingerprint
         return SourceSnapshot.from_bytes(
@@ -124,7 +139,7 @@ def reconstructed_source_snapshot(
             "strings.records": records,
         })
         return SourceSnapshot.from_bytes(
-            descriptor, info.format_id, content, encoding="per-entry", metadata=tuple(metadata.items())
+            descriptor, info.format_id, content, encoding=encoding, metadata=tuple(metadata.items())
         )
     if info.format_id is FormatId.PLUGIN_SSE:
         metadata.update({
@@ -144,7 +159,7 @@ def reconstructed_source_snapshot(
         info.fingerprint,
         0,
         lease_id="project-translation-content",
-        encoding=fields.get("encoding"),
+        encoding=encoding,
         metadata=tuple(metadata.items()),
     )
 
@@ -167,5 +182,5 @@ def hydrate_extracted(source: ExtractedSource, source_id: str | None) -> Prepare
             for entry in source.entries
         ),
         source_id,
-        reference_location="",
+        reference_location=source.reference_path,
     )

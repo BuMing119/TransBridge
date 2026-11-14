@@ -181,9 +181,13 @@ class DurableVariantCommitService:
             written = False
 
             def persist():
-                nonlocal written
+                nonlocal save, written
                 if written:
                     raise DomainError(ErrorCategory.INTERNAL, "DURABLE_SAVE_REPEATED", "当前保存请求已执行。")
+                # A reference repair can update pending sources without changing the captured content revision.
+                current = self._lifecycle.active
+                assert current is not None
+                save = replace(save, source_additions=current.source_additions)
                 observed_entries = ()
                 if change_set.operation_id is not None:
                     keys = {

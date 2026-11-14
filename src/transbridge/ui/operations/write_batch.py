@@ -18,9 +18,11 @@ from transbridge.application.io.operation_write_batch import (
 from transbridge.application.io.plugin_localized_sources import _snapshot_localized_sources
 from transbridge.application.io.publish import ConflictPolicy as PublishConflictPolicy
 from transbridge.application.io.write_formats import SST_FORMATS
+from transbridge.ui.text_encoding import TEXT_FORMATS, export_encoding_summary
 
 from .mappers import OperationPlanDraft
 from .plan_view import EditableControl, EditableFieldState
+from .write_destinations import DESTINATION_MODE, DIRECTORY, ORIGINAL, destination_mode_field, retarget_plugin
 
 # Preserve the existing UI import while both entrypoints use application execution.
 _HydratedWriteBatchWorkload = HydratedWriteBatchWorkload
@@ -32,6 +34,7 @@ class _HydratedWriteBatch:
     failures: tuple[_WriteBatchFailure, ...] = ()
     output_directory: str = ""
     output_format: str = "auto"
+    destination_mode: str = DIRECTORY
 
     def __post_init__(self) -> None:
         if not self.drafts and not self.failures:
@@ -52,13 +55,25 @@ def retarget_write_batch(
     overwrite: bool,
     pack_bsa: bool | None = None,
     output_format: str | None = None,
+    destination_mode: str | None = None,
 ) -> _HydratedWriteBatch:
     mode = request.output_format if output_format is None else output_format
     if mode not in {"auto", "sst.ssu9"}:
         raise ValueError("批量输出格式必须为 auto 或 sst.ssu9")
     if mode == "sst.ssu9" and not _can_export_sst(request):
         raise ValueError("批量 SST 输出仅支持已确认的插件和 SST 来源；其他格式请保留原格式")
-    changed = output_directory != request.output_directory or mode != request.output_format
+    destination = request.destination_mode if destination_mode is None else destination_mode
+    if destination not in {DIRECTORY, ORIGINAL}:
+        raise ValueError("请选择有效的插件输出方式。")
+    if mode != "auto":
+        destination = DIRECTORY
+    if destination == ORIGINAL and not _all_plugins(request):
+        raise ValueError("批量写回原插件仅支持全为游戏插件的来源。")
+    changed = (
+        output_directory != request.output_directory
+        or mode != request.output_format
+        or destination != request.destination_mode
+    )
 
     def retarget(item):
         source_format = item.source_snapshot.format_id
@@ -72,11 +87,12 @@ def retarget_write_batch(
         elif normalize_eet_suffix:
             source = source.with_suffix(".eet")
         options = dict(item.options)
+        options.pop(DESTINATION_MODE, None)
         if target_format in SST_FORMATS:
             options["pack_bsa"] = False
         elif pack_bsa is not None:
             options["pack_bsa"] = pack_bsa
-        return replace(
+        updated = replace(
             item,
             format_id=target_format,
             target_path=batch_write_target(source, output_directory)
@@ -85,6 +101,11 @@ def retarget_write_batch(
             conflict_policy=PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL,
             options=tuple(options.items()),
         )
+        if target_format is FormatId.PLUGIN_SSE and (
+            destination == ORIGINAL or output_directory or changed or not item.target_path
+        ):
+            return retarget_plugin(updated, destination, output_directory)
+        return updated
 
     return replace(
         request,
@@ -97,6 +118,7 @@ def retarget_write_batch(
         ),
         output_directory=output_directory,
         output_format=mode,
+        destination_mode=destination,
     )
 
 
@@ -105,6 +127,12 @@ def _can_export_sst(request: _HydratedWriteBatch) -> bool:
         bool(request.drafts)
         and not request.failures
         and all(item.source_snapshot.format_id in {FormatId.PLUGIN_SSE, *SST_FORMATS} for item in request.drafts)
+    )
+
+
+def _all_plugins(request: _HydratedWriteBatch) -> bool:
+    return not request.failures and all(
+        item.source_snapshot.format_id is FormatId.PLUGIN_SSE for item in request.drafts
     )
 
 
@@ -129,6 +157,8 @@ def _write_batch_plan(request: _HydratedWriteBatch) -> OperationPlanDraft:
     projection = next((item.entry_projection for item in request.drafts if item.entry_projection is not None), None)
     profile = getattr(projection, "profile", None)
     scheme_mode = "" if projection is None else f"；译名方案：{profile.name if profile else '项目默认译名'}"
+    text_draft = next((item for item in request.drafts if item.source_snapshot.format_id in TEXT_FORMATS), None)
+    encoding_summary = "" if text_draft is None else export_encoding_summary(text_draft, native=True)
     fingerprint = hashlib.sha256(
         "\0".join([
             *(f"{item.source_snapshot.sha256}:{item.variant_revision}" for item in request.drafts),
@@ -138,19 +168,26 @@ def _write_batch_plan(request: _HydratedWriteBatch) -> OperationPlanDraft:
     ).hexdigest()
     return OperationPlanDraft(
         request=request,
-        target="；".join(path for path in targets if path) or "请选择输出目录",
+        target=(
+            "；".join(path for path in targets if path)
+            or ("定位后写回原插件" if request.destination_mode == ORIGINAL else "请选择输出目录")
+        ),
         target_revision=f"{len(existing)} existing / {len(targets) - len(existing)} missing",
         input_fingerprint=fingerprint,
         scope_summary=f"{len(targets)} 个来源文件，{len(entries)} 个条目",
         mode_summary=(
             "插件生成 xTranslator SST SSU9（实验性）；已有 SST 保留原格式与原名"
             if request.output_format == "sst.ssu9"
+            else "覆盖各已定位的原插件，覆盖前备份"
+            if request.destination_mode == ORIGINAL
             else "另存到指定目录，保留各来源原名"
             if request.output_directory
             else "选择输出目录，保留各来源原名"
         )
         + resource_mode
-        + scheme_mode,
+        + scheme_mode
+        + (f"；{encoding_summary}" if request.output_format == "auto" and encoding_summary else ""),
+        text_encoding_summary=encoding_summary,
         conflict_summary="全部覆盖已确认" if overwrite else "保留已有输出，继续写出其他文件",
         backup_summary="覆盖输出文件前创建备份",
         is_batch=True,
@@ -169,6 +206,7 @@ def _write_batch_plan(request: _HydratedWriteBatch) -> OperationPlanDraft:
                 if _can_export_sst(request)
                 else ()
             ),
+            *((destination_mode_field(request.destination_mode),) if _all_plugins(request) else ()),
             EditableFieldState("output_directory", "输出目录", request.output_directory, required=True),
             *(
                 (

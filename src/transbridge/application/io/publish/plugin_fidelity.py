@@ -14,6 +14,7 @@ from transbridge.application.io.plugin_localized_sources import localized_entry_
 from transbridge.application.io.plugin_publication_source import prepared_plugin_source
 from transbridge.application.io.plugin_write import _snapshot_localized_sources
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY, StageOperation
+from transbridge.config.text_encoding import STRICT_READ_POLICY
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.parser.plugin.plugin_with_context import SSEPluginWithContext
 from transbridge.parser.strings_file import PluginStringsLookup
@@ -38,7 +39,9 @@ def validate_plugin_fidelity(request: WriteRequest, staging_path: str) -> Valida
 
     try:
         target = Path(staging_path)
-        plugin = SSEPluginWithContext.from_file(target)
+        encoding = str(dict(request.options).get("output_encoding", "utf-8"))
+        read_options = {"input_encoding": encoding, "text_read_policy": STRICT_READ_POLICY}
+        plugin = SSEPluginWithContext.from_file(target, **read_options)
         lookup = None
         if _snapshot_localized_sources(request.source_snapshot):
             language = str(
@@ -47,9 +50,11 @@ def validate_plugin_fidelity(request: WriteRequest, staging_path: str) -> Valida
                 )
             )
             lookup = (
-                PluginStringsLookup.from_plugin(target, language)
+                PluginStringsLookup.from_plugin(target, language, **read_options)
                 if bsa_output_enabled(request.source_snapshot, request.options)
-                else PluginStringsLookup.from_strings_dir(target.parent / "Strings", target.stem, language)
+                else PluginStringsLookup.from_strings_dir(
+                    target.parent / "Strings", target.stem, language, **read_options
+                )
             )
             if lookup is None:
                 raise ValueError("staged localized strings are unavailable")
@@ -82,7 +87,7 @@ def _source_entries(request: WriteRequest) -> tuple[TranslationEntry, ...]:
         raise ValueError("plugin fidelity requires captured source bytes")
     if hashlib.sha256(snapshot.content).hexdigest() != snapshot.sha256:
         raise ValueError("plugin source snapshot fingerprint differs")
-    return prepared_plugin_source(snapshot, dict(request.options)).physical_entries
+    return prepared_plugin_source(snapshot).physical_entries
 
 
 def _expected_texts(request: WriteRequest, source: tuple[TranslationEntry, ...]) -> tuple[str, ...]:

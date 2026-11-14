@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from collections.abc import Iterator
+from dataclasses import replace
 import hashlib
 from pathlib import Path
-import struct
 
 from transbridge.application.contracts import (
     Diagnostic,
@@ -15,7 +15,14 @@ from transbridge.application.contracts import (
     OperationOutcome,
     OperationResult,
 )
+from transbridge.config.text_encoding import LEGACY_READ_POLICY, normalize_text_encoding
 from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.parser.localized_string_records import (
+    LocalizedStringRecord as LocalizedStringRecord,
+    encode_chunk as _encode_chunk,
+    parse_records as _parse_records,
+    render as _render,
+)
 
 from .contracts import (
     CapabilityLevel,
@@ -35,23 +42,13 @@ from .contracts import (
 )
 from .identity import EntryKey, SourceNamespace
 from .stage_policy import DEFAULT_STAGE_POLICY, StageOperation, StagePolicyPort
+from .text_source_options import request_text_read_options, source_text_fallback_diagnostics, source_text_metadata
 
 _VARIANTS: dict[FormatId, tuple[str, bool]] = {
     FormatId.STRINGS: (".strings", False),
     FormatId.DLSTRINGS: (".dlstrings", True),
     FormatId.ILSTRINGS: (".ilstrings", True),
 }
-
-
-@dataclass(frozen=True, slots=True)
-class LocalizedStringRecord:
-    directory_index: int
-    string_id: int
-    offset: int
-    raw_payload: bytes
-    raw_chunk: bytes
-    text: str
-    encoding: str
 
 
 class LocalizedStringsAdapter:
@@ -85,7 +82,7 @@ class LocalizedStringsAdapter:
         if request.source.suffix != self._suffix:
             return FormatProbe(ProbeStatus.UNSUPPORTED)
         try:
-            _parse_records(request.content, self._length_prefixed)
+            _parse_records(request.content, self._length_prefixed, None)
         except ValueError:
             return FormatProbe(ProbeStatus.UNSUPPORTED)
         return FormatProbe(
@@ -110,7 +107,7 @@ class LocalizedStringsAdapter:
             return _failed_parse(request, self, exc)
         return self.parse_bytes(request, content)
 
-    def parse_bytes(self, request: ParseRequest, content: bytes) -> ParseResult:
+    def parse_bytes(self, request: ParseRequest, content: bytes, *, legacy_linked: bool = False) -> ParseResult:
         """Parse immutable source bytes without reopening the source descriptor URI."""
         if _cancelled(request.cancellation):
             return ParseResult(
@@ -124,7 +121,10 @@ class LocalizedStringsAdapter:
                 capability=self.capabilities(),
             )
         try:
-            records = _parse_records(content, self._length_prefixed)
+            read_options = request_text_read_options(request.options)
+            records = _parse_records(
+                content, self._length_prefixed, read_options=read_options, legacy_linked=legacy_linked
+            )
         except ValueError as exc:
             return _failed_parse(request, self, exc)
 
@@ -164,13 +164,14 @@ class LocalizedStringsAdapter:
             request.source,
             self.format_id,
             content,
-            encoding="per-entry",
+            encoding=None if read_options.text_read_policy == LEGACY_READ_POLICY else read_options.input_encoding,
             metadata=(
                 ("source_namespace", namespace.value),
                 ("stage_policy_version", DEFAULT_STAGE_POLICY.version),
                 ("strings.variant", self._suffix),
                 ("strings.order", tuple(record.string_id for record in records)),
                 ("strings.records", records),
+                *source_text_metadata(read_options),
             ),
         )
         return ParseResult.completed(
@@ -178,6 +179,7 @@ class LocalizedStringsAdapter:
             request.source,
             snapshot,
             entries,
+            diagnostics=source_text_fallback_diagnostics(sum(record.used_fallback(read_options) for record in records)),
             adapter_id=self.adapter_id,
             adapter_version=self.adapter_version,
             capability=self.capabilities(),
@@ -259,67 +261,41 @@ class LocalizedStringsAdapter:
                 request.context.run_id,
             )
         try:
-            records = _snapshot_records(snapshot)
-            namespace = _snapshot_namespace(snapshot)
-            entries = _index_write_entries(request.entries, namespace)
-            policy = request.stage_policy or DEFAULT_STAGE_POLICY
+            output_encoding = normalize_text_encoding(dict(request.options).get("output_encoding", "utf-8"))
             chunks: list[tuple[int, bytes]] = []
-            consumed: set[int] = set()
+            expected: list[tuple[int, str]] = []
             lossy_stages: set[int] = set()
-            for record in records:
-                entry = entries.get(record.string_id)
-                if entry is None:
-                    chunks.append((record.string_id, record.raw_chunk))
-                    continue
-                consumed.add(record.string_id)
-                decision = policy.evaluate(
-                    getattr(entry, "stage", None),
-                    getattr(entry, "translation", ""),
-                    StageOperation.PUBLISH,
-                    original=getattr(entry, "original", ""),
-                )
-                if decision.publish_text is None:
-                    raise ValueError("blocking stage decision passed validation")
-                if decision.preserve_source:
-                    chunks.append((record.string_id, record.raw_chunk))
-                    continue
-                if decision.stage is not None and decision.stage.value != 0:
-                    lossy_stages.add(decision.stage.value)
-                chunk = record.raw_chunk
-                if decision.publish_text != record.text:
-                    chunk = _encode_chunk(
-                        decision.publish_text,
-                        record.encoding,
-                        self._length_prefixed,
-                    )
-                chunks.append((record.string_id, chunk))
-            missing = tuple(sorted(set(entries).difference(consumed)))
-            if missing:
-                return _failed_write(
-                    (
-                        Diagnostic(
-                            "SOURCE_LOCATOR_NOT_FOUND",
-                            "One or more localized string IDs are absent from the source snapshot.",
-                            details=(("string_ids", missing),),
-                        ),
-                    ),
-                    request.context.run_id,
-                )
+            for record, text, stage in strings_write_plan(request):
+                chunks.append((record.string_id, _encode_record(record, text, output_encoding, self._length_prefixed)))
+                expected.append((record.string_id, text))
+                if stage:
+                    lossy_stages.add(stage)
             rendered = _render(chunks)
-            reparsed = _parse_records(rendered, self._length_prefixed)
-            if tuple(record.string_id for record in reparsed) != tuple(record.string_id for record in records):
-                raise ValueError("localized strings fidelity check changed the ID order")
+            reparsed = _parse_records(rendered, self._length_prefixed, output_encoding)
+            if [(record.string_id, record.text) for record in reparsed] != expected:
+                raise ValueError("localized strings fidelity check changed IDs, order, or text")
             if _cancelled(request.cancellation):
                 return OperationResult.cancelled(run_id=request.context.run_id)
             target = _local_path(request.target.uri)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(rendered)
+        except _MissingStringIds as exc:
+            return _failed_write(
+                (
+                    Diagnostic(
+                        "SOURCE_LOCATOR_NOT_FOUND",
+                        "One or more localized string IDs are absent from the source snapshot.",
+                        details=(("string_ids", exc.string_ids),),
+                    ),
+                ),
+                request.context.run_id,
+            )
         except (OSError, TypeError, ValueError) as exc:
             return _failed_write(
                 (
                     Diagnostic(
                         "LOCALIZED_STRINGS_WRITE_FAILED",
-                        f"The localized strings write failed ({type(exc).__name__}).",
+                        f"The localized strings write failed: {request.target.uri} ({exc}).",
                     ),
                 ),
                 request.context.run_id,
@@ -339,83 +315,58 @@ class LocalizedStringsAdapter:
         return OperationResult.completed(
             (artifact,),
             diagnostics=warnings,
-            counts=OperationCounts(succeeded=len(records)),
+            counts=OperationCounts(succeeded=len(expected)),
             artifact_refs=(artifact,),
             run_id=request.context.run_id,
         )
 
 
-def _parse_records(data: bytes, length_prefixed: bool) -> tuple[LocalizedStringRecord, ...]:
-    if len(data) < 8:
-        raise ValueError("localized strings header is truncated")
-    count, data_size = struct.unpack_from("<II", data, 0)
-    directory_end = 8 + count * 8
-    if directory_end > len(data) or directory_end + data_size != len(data):
-        raise ValueError("localized strings header size is inconsistent")
-    records: list[LocalizedStringRecord] = []
-    for index in range(count):
-        string_id, offset = struct.unpack_from("<II", data, 8 + index * 8)
-        position = directory_end + offset
-        if position < directory_end or position >= len(data):
-            raise ValueError("localized strings record offset is out of range")
-        if length_prefixed:
-            if position + 4 > len(data):
-                raise ValueError("localized strings record length is truncated")
-            length = struct.unpack_from("<I", data, position)[0]
-            end = position + 4 + length
-            if length < 1 or end > len(data) or data[end - 1] != 0:
-                raise ValueError("localized strings length-prefixed record is invalid")
-            raw_payload = data[position + 4 : end - 1]
-            raw_chunk = data[position:end]
-        else:
-            try:
-                end = data.index(b"\x00", position, directory_end + data_size)
-            except ValueError as exc:
-                raise ValueError("localized strings record has no terminator") from exc
-            raw_payload = data[position:end]
-            raw_chunk = data[position : end + 1]
-        text, encoding = _decode_payload(raw_payload)
-        records.append(
-            LocalizedStringRecord(
-                index,
-                string_id,
-                offset,
-                raw_payload,
-                raw_chunk,
-                text,
-                encoding,
-            )
+class _MissingStringIds(ValueError):
+    def __init__(self, string_ids: tuple[int, ...]) -> None:
+        self.string_ids = string_ids
+        super().__init__("localized string IDs are absent from the source snapshot")
+
+
+def strings_write_plan(request: WriteRequest) -> Iterator[tuple[LocalizedStringRecord, str, int]]:
+    """Apply the stage policy in physical ID order, including unreferenced text."""
+    snapshot = request.source_snapshot
+    if snapshot is None:
+        raise ValueError("localized strings writes require a source snapshot")
+    records = _snapshot_records(snapshot)
+    entries = _index_write_entries(request.entries, _snapshot_namespace(snapshot))
+    policy = request.stage_policy or DEFAULT_STAGE_POLICY
+    for record in records:
+        entry = entries.pop(record.string_id, None)
+        if entry is None:
+            yield record, record.text, 0
+            continue
+        decision = policy.evaluate(
+            getattr(entry, "stage", None),
+            getattr(entry, "translation", ""),
+            StageOperation.PUBLISH,
+            original=getattr(entry, "original", ""),
         )
-    return tuple(records)
+        if decision.publish_text is None:
+            raise ValueError("blocking stage decision passed validation")
+        text = record.text if decision.preserve_source else decision.publish_text
+        stage = decision.stage.value if decision.stage is not None and not decision.preserve_source else 0
+        yield record, text, stage
+    if entries:
+        raise _MissingStringIds(tuple(sorted(entries)))
 
 
-def _decode_payload(payload: bytes) -> tuple[str, str]:
-    if payload.startswith(b"\xef\xbb\xbf"):
-        return payload.decode("utf-8-sig"), "utf-8-sig"
+def _encode_record(record: LocalizedStringRecord, text: str, encoding: str, length_prefixed: bool) -> bytes:
+    if text == record.text and encoding == record.encoding:
+        try:
+            if record.raw_payload.decode(encoding) == text:
+                return record.raw_chunk
+        except UnicodeDecodeError:
+            # A legacy linked table may have contained a replacement character.
+            pass
     try:
-        return payload.decode("utf-8"), "utf-8"
-    except UnicodeDecodeError:
-        return payload.decode("cp1252"), "cp1252"
-
-
-def _encode_chunk(text: str, encoding: str, length_prefixed: bool) -> bytes:
-    try:
-        payload = text.encode(encoding)
-    except UnicodeEncodeError as exc:
-        raise ValueError("translation cannot be represented in the source encoding") from exc
-    terminated = payload + b"\x00"
-    return struct.pack("<I", len(terminated)) + terminated if length_prefixed else terminated
-
-
-def _render(chunks: list[tuple[int, bytes]]) -> bytes:
-    directory: list[bytes] = []
-    payload: list[bytes] = []
-    offset = 0
-    for string_id, chunk in chunks:
-        directory.append(struct.pack("<II", string_id, offset))
-        payload.append(chunk)
-        offset += len(chunk)
-    return struct.pack("<II", len(chunks), offset) + b"".join(directory) + b"".join(payload)
+        return _encode_chunk(text, encoding, length_prefixed)
+    except ValueError as exc:
+        raise ValueError(f"String ID {record.string_id}: {exc}") from exc
 
 
 def _duplicate_id_diagnostics(records: tuple[LocalizedStringRecord, ...]) -> tuple[Diagnostic, ...]:
@@ -503,7 +454,7 @@ def _failed_parse(
         diagnostics=(
             Diagnostic(
                 "LOCALIZED_STRINGS_PARSE_FAILED",
-                f"The localized strings source is invalid ({type(error).__name__}).",
+                f"The localized strings source is invalid: {request.source.uri} ({error}).",
             ),
         ),
         stats=ParseStats(failed=1),

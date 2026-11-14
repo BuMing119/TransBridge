@@ -20,6 +20,7 @@ from .models import (
     TerminologyProfileSelection,
     logical_term_key,
 )
+from .publication import ProfilePublicationPreview
 from .service import TerminologyProfileService
 
 
@@ -146,6 +147,7 @@ class TerminologyProfileImportPreview:
     policy: TerminologyProfileImportPolicy = TerminologyProfileImportPolicy.KEEP_EXISTING
     adopted_mapping_count: int = 0
     kept_mapping_count: int = 0
+    target_publication: ProfilePublicationPreview | None = None
 
     def __post_init__(self) -> None:
         for name in ("project_id", "variant_id"):
@@ -215,6 +217,7 @@ class TerminologyProfileImportService:
         source: TerminologySourceSnapshot,
         *,
         policy: TerminologyProfileImportPolicy = TerminologyProfileImportPolicy.KEEP_EXISTING,
+        existing_mappings: tuple[ProfileTermMapping, ...] | None = None,
     ) -> TerminologyProfileImportPreview:
         project_id = _required(project_id, "project ID")
         variant_id = _required(variant_id, "variant ID")
@@ -235,6 +238,23 @@ class TerminologyProfileImportService:
                 decision.original, scope_kind=decision.scope.kind.value, plugin_id=decision.scope.plugin_id
             )
             base_by_key[key] = decision
+
+        if existing_mappings is not None:
+            from transbridge.application.terminology.models import DecisionStatus, TermScope
+
+            base_by_key = {
+                item.term_key: TermDecision(
+                    item.term_key,
+                    project_id,
+                    variant_id,
+                    item.original,
+                    normalize_original(item.original),
+                    item.translation,
+                    TermScope.project() if item.plugin_id is None else TermScope.plugin(item.plugin_id),
+                    DecisionStatus.ADOPTED,
+                )
+                for item in existing_mappings
+            }
 
         source_by_key: dict[str, list[TerminologySourceEntry]] = defaultdict(list)
         for entry in source.entries:

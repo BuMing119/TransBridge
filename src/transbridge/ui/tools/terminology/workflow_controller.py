@@ -11,10 +11,12 @@ class TerminologyWorkflowController:
         self.window = window
         self.state = None
         self.follow_build = False
+        self.task_busy = False
         terms = window.terms_view
         terms.workflow.edit_requested.connect(window._draft_actions.continue_editing)
         terms.workflow.publish_requested.connect(window._publish)
         terms.workflow.build_requested.connect(self.open_build)
+        terms.discard_button.clicked.connect(window._version_actions.discard)
         window.versions_view.workflow_requested.connect(self.continue_workflow)
         window.schemes_view.edit_requested.connect(self.edit_current)
         window.schemes_view.source_requested.connect(self.show_source)
@@ -35,9 +37,17 @@ class TerminologyWorkflowController:
         view.terms_view.render_workflow(self.state)
         view.schemes_view.set_project_editable(self.state.has_draft or self.state.has_version)
         context = assets.browse_context
-        view.effective_view.set_workflow(self.state, has_profile=bool(context and context.profile_id))
+        profiles = view._profile_controller
+        selected_profile = None if profiles is None else profiles.state.selected_profile_id
+        view.effective_view.set_workflow(
+            self.state, has_profile=bool(context.profile_id if context is not None else selected_profile)
+        )
         view.versions_view.discard_button.setEnabled(self.state.has_draft)
         self.saving_changed(view._draft_writes.pending_count)
+        if self.follow_build:
+            self.follow_build = False
+            if self.state.has_draft and self.state.conflict_count:
+                view.terms_view.show_attention()
 
     def prepared(self, _draft):
         original = self.window._draft_actions.focus_original
@@ -121,7 +131,7 @@ class TerminologyWorkflowController:
         self.window._draft_actions.continue_editing(original=original)
 
     def saving_changed(self, pending):
-        ready = self.state is not None and self.state.can_publish and not pending
+        ready = self.state is not None and self.state.can_publish and not pending and not self.task_busy
         self.window.terms_view.workflow.set_pending(pending)
         if pending:
             self.window.terms_view.workflow.show()
@@ -129,12 +139,16 @@ class TerminologyWorkflowController:
             self.window.versions_view.render_workflow(self.state, pending)
         self.window.terms_view.workflow.publish_button.setEnabled(ready)
         self.window.versions_view.publish_button.setEnabled(ready)
-        self.window.versions_view.discard_button.setEnabled(bool(self.state and self.state.has_draft and not pending))
+        can_discard = bool(self.state and self.state.has_draft and not pending and not self.task_busy)
+        self.window.versions_view.discard_button.setEnabled(can_discard)
+        self.window.terms_view.discard_button.setEnabled(can_discard)
+
+    def set_task_busy(self, busy):
+        self.task_busy = busy
+        self.saving_changed(self.window._draft_writes.pending_count)
 
     def build_completed(self):
-        if self.follow_build:
-            self.follow_build = False
-            self.window.terms_view.show_draft()
+        self.follow_build = True
 
     def save_finished(self, succeeded):
         if not succeeded:

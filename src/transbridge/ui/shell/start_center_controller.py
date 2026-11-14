@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QFileDialog
 from transbridge.ui.coordinators.guided_project_coordinator import GuidedDraftPhase, GuidedProjectCoordinator
 from transbridge.ui.coordinators.project_creation_operation import ProjectCreationOperation
 from transbridge.ui.shell.action_catalog import IntentId
-from transbridge.ui.workbench.file_source_formats import FILE_FILTER_HINTS, FILE_SOURCE_FILTER
+from transbridge.ui.workbench.file_source_formats import FILE_FILTER_HINTS, FILE_SOURCE_FILTER, TRANSLATION_FILE_FILTER
 
 from .project_window_launcher import launch_project_in_new_window
 from .start_center import StartCenterViewState, StartCenterWidget, StartDestinationState
@@ -228,7 +228,7 @@ class StartCenterController:
             paths = (path,) if path else ()
         else:
             paths, selected_filter = QFileDialog.getOpenFileNames(
-                self._host, "选择已有译文（可多选）", state.translation_path or "", FILE_SOURCE_FILTER
+                self._host, "选择已有译文（可多选）", state.translation_path or "", TRANSLATION_FILE_FILTER
             )
             hint = FILE_FILTER_HINTS.get(selected_filter)
         if paths:

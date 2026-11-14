@@ -56,3 +56,12 @@ def test_auto_and_legacy_explicit_capacity_round_trip(tmp_path, window):
 
 def test_absent_capacity_defaults_to_auto(tmp_path):
     assert LLMConfig.load_from_file(repository=_repository(tmp_path), environment={}).assistant_context_window == 0
+
+
+def test_empty_anthropic_base_url_round_trips_as_automatic(tmp_path):
+    repository = _repository(tmp_path)
+    config = LLMConfig(provider="anthropic", base_url="", model="claude")
+    config.save_to_file(repository=repository)
+    assert repository.load().value("llm", "base_url") == ""
+    restored = LLMConfig.load_from_file(repository=repository, environment={})
+    assert (restored.provider, restored.base_url, restored.model) == ("anthropic", "", "claude")

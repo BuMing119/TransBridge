@@ -24,6 +24,7 @@ from transbridge.application.contracts import (
     OperationResult,
     RequestContext,
 )
+from transbridge.config.text_encoding import TextEncodings
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantId, VariantRef
 from transbridge.persistence.v2.models import SCHEMA_VERSION, ProjectDto, SchemaEnvelope
 from transbridge.persistence.v2.variant import VariantAggregate, VariantSnapshot
@@ -77,12 +78,14 @@ class ProjectProvisioningService:
         *,
         id_factory: Callable[[], str],
         token_factory: Callable[[], str] | None = None,
+        text_encoding_defaults: Callable[[], TextEncodings] | None = None,
     ) -> None:
         self._lifecycle = lifecycle
         self._sources = sources
         self._identities = identities
         self._id_factory = id_factory
         self._token_factory = token_factory or (lambda: secrets.token_urlsafe(24))
+        self._text_encoding_defaults = text_encoding_defaults or TextEncodings
         self._prepared: dict[str, _PreparedProvisioning] = {}
         self._hydrations: dict[str, _OwnedProvisioningHydration] = {}
         self._issued_tokens: set[str] = set()
@@ -103,7 +106,8 @@ class ProjectProvisioningService:
                 if self._identities.project_name_exists(name_key):
                     raise DomainError(ErrorCategory.CONFLICT, "PROJECT_NAME_EXISTS", "已存在同名工程。")
                 project_ref, variant_ref = self._allocate_refs()
-                prepared_sources = prepare_project_sources(self._sources, request, context)
+                encodings = self._text_encoding_defaults()
+                prepared_sources = prepare_project_sources(self._sources, request, context, encodings)
                 baselines = prepared_sources.baselines
                 registry = prepared_sources.registry(project_ref.identity.value)
                 extracted_sources = ()
@@ -131,6 +135,7 @@ class ProjectProvisioningService:
                         0,
                         {
                             "name": request.project_name,
+                            **encodings.to_project_data(),
                             **registry.to_project_data(),
                             "variant_ids": [variant_ref.identity.value],
                             "active_variant_id": variant_ref.identity.value,

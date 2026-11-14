@@ -113,6 +113,7 @@ class ApiWorker(QThread):
         fn: Callable,
         *args,
         route_http_errors: bool = True,
+        cancel_read_on_close: Callable[[], None] | None = None,
         **kwargs,
     ):
         super().__init__()
@@ -120,6 +121,7 @@ class ApiWorker(QThread):
         self._args = args
         self._kwargs = kwargs
         self._route_http_errors = route_http_errors
+        self._cancel_read_on_close = cancel_read_on_close
         # Resolve both buses on the owning GUI thread.  Module-level QObjects
         # created before QApplication are destroyed too late during interpreter
         # shutdown and can leave SIP wrapping an already torn-down Qt object.
@@ -128,7 +130,7 @@ class ApiWorker(QThread):
         self._registry = get_api_worker_registry()
 
     def start(self, priority=QThread.Priority.InheritPriority) -> None:
-        self._registry.retain(self)
+        self._registry.retain(self, cancel_read_on_close=self._cancel_read_on_close)
         try:
             super().start(priority)
         except Exception:

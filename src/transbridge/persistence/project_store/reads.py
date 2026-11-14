@@ -25,6 +25,7 @@ from .entry_codec import (
     unpack_text,
 )
 from .format import ProjectStoreError
+from .source_references import installed as references_installed
 
 ENTRY_COLUMNS = f"""
     ps.namespace, e.local_key, e.identity_original, e.has_identity_original,
@@ -51,6 +52,9 @@ def read_sources(
     source_filter = "" if namespace is None else " WHERE ps.namespace = ?"
     args = () if namespace is None else (namespace.value,)
     fields = "s.format_fields" if native_fields else "'{}'"
+    has_references = references_installed(connection)
+    reference = "COALESCE(sr.path, '')" if has_references else "''"
+    join = "LEFT JOIN source_reference AS sr ON sr.source_id = s.id" if has_references else ""
     return tuple(
         SourceInfo(
             SourceNamespace(row["namespace"]),
@@ -59,11 +63,14 @@ def read_sources(
             row["fingerprint"],
             tuple(json.loads(row["options"]).items()),
             tuple((key, immutable_json(value)) for key, value in json.loads(row["format_fields"]).items()),
+            unpack_text(row["reference_path"]),
         )
         for row in connection.execute(
             f"""
-            SELECT s.namespace, s.name, s.format, s.fingerprint, s.options, {fields} AS format_fields
-            FROM project_source AS ps JOIN source AS s ON s.id = ps.source_id {source_filter} ORDER BY ps.ordinal
+            SELECT s.namespace, s.name, s.format, s.fingerprint, s.options,
+                {fields} AS format_fields, {reference} AS reference_path
+            FROM project_source AS ps JOIN source AS s ON s.id = ps.source_id {join}
+            {source_filter} ORDER BY ps.ordinal
             """,
             args,
         )

@@ -11,10 +11,11 @@ from tests.plugin_fixtures import write_plugin
 from tests.smart_assistant.tools.test_safe_write_back import manager as manager_fixture
 from tests.smart_assistant.tools.test_source_import_authority import project as project_fixture
 from tests.smart_assistant.tools.test_write_back_publication_boundary import _finish
-from transbridge.application.contracts import OperationOutcome, RequestContext
+from transbridge.application.contracts import OperationOutcome, OperationResult, RequestContext
 from transbridge.application.io import FormatId, ParseRequest, SourceDescriptor, TranslationIoUseCase
 from transbridge.application.io.file_undo import FileUndoAdapter
 from transbridge.application.io.operation_write import HydratedWriteWorkload
+from transbridge.config.text_encoding import TextEncodings
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.smart_assistant.guardrails.input_validator import InputValidationGuard
 from transbridge.smart_assistant.tool_registry import ToolRegistry
@@ -74,6 +75,54 @@ def test_assistant_plugin_to_sst_uses_shared_publication(sources, manager):
     assert result["artifacts"] == [str(target)]
     assert len(SstDocument.from_bytes(target.read_bytes()).records) == len(sources.ctx.active_slot.collection)
     assert sources.plugin.read_bytes() == original
+
+
+def test_assistant_write_uses_project_encoding_for_real_output_bytes(sources, manager):
+    from transbridge.parser.plugin_parser import PluginParser
+
+    sources.ctx.project_text_encodings = SimpleNamespace(
+        active_project_path=lambda request: "project.sqlite3",
+        read=lambda path, request: OperationResult.completed(TextEncodings("utf-8", "cp936")),
+    )
+    slot = sources.ctx.active_slot
+    slot.collection = TranslationEntryCollection([
+        replace(entry, translation="中文译文", stage=1) for entry in slot.collection
+    ])
+    output = sources.root / "encoded-output"
+    started = tool_writer._tool_write_back({"target": "esp", "output_dir": str(output)}, sources.ctx)
+    result = _result(manager, started)
+    target = output / sources.plugin.name
+    assert result["artifacts"] == [str(target)]
+    assert "中文译文".encode("cp936") + b"\0" in target.read_bytes()
+    assert PluginParser().parse_plugin(target, input_encoding="cp936")[0].original == "中文译文"
+
+
+@pytest.mark.parametrize("format_id", [FormatId.STRINGS, FormatId.DLSTRINGS, FormatId.ILSTRINGS])
+def test_assistant_auto_writes_standalone_strings_in_project_encoding(sources, manager, format_id):
+    from transbridge.parser.localized_string_records import encode_chunk, parse_records, render
+
+    suffix = format_id.value.split(".")[-1]
+    source = sources.root / f"standalone.{suffix}"
+    source.write_bytes(render([(7, encode_chunk("原文", "utf-8", format_id is not FormatId.STRINGS))]))
+    slot = _slot(source, format_id, sources.request)
+    slot.collection = TranslationEntryCollection([
+        replace(entry, translation="译文", stage=1) for entry in slot.collection
+    ])
+    sources.ctx.slots = {"strings-key": slot}
+    sources.ctx.active_slot = slot
+    sources.ctx.active_key = "strings-key"
+    sources.ctx.project_text_encodings = SimpleNamespace(
+        active_project_path=lambda request: "project.sqlite3",
+        read=lambda path, request: OperationResult.completed(TextEncodings("utf-8", "cp936")),
+    )
+    output = sources.root / "strings-output"
+    started = tool_writer._tool_write_back(
+        {"target": "auto", "source_keys": ["strings-key"], "output_dir": str(output)}, sources.ctx
+    )
+    result = _result(manager, started)
+    target = output / source.name
+    assert result["artifacts"] == [str(target)]
+    assert parse_records(target.read_bytes(), format_id is not FormatId.STRINGS, "cp936")[0].text == "译文"
 
 
 def test_restored_plugin_sst_output_uses_saved_display_name(project, manager):

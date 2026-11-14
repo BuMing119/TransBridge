@@ -54,6 +54,8 @@ def _workbench(app, context, monkeypatch):
     try:
         yield window, harness
     finally:
+        _wait(lambda: window._draft_writes.pending_count == 0)
+        _wait(lambda: not window._asset_refresh._active and not window._asset_refresh._dirty)
         window.close()
         window._actions._pool.waitForDone(3000)
         _APP.processEvents()
@@ -68,16 +70,22 @@ def workbench(project_runtime, monkeypatch):
 def test_first_use_explains_empty_result_and_hides_inapplicable_paging(workbench):
     window, _harness = workbench
     window._bind_existing_assets()
+    _wait(lambda: window._workflow.state is not None)
+    assert not window.terms_view.editor_dialog.isVisible()
+    window.terms_view.browse_button.click()
     _wait(lambda: window.effective_model.pagination.total == 0)
+    window.terms_view.editor_dialog.close()
     assert "还没有可用术语" in window.effective_view.empty.text()
     assert not window.effective_view.empty.isHidden()
     assert window.effective_view.pagination.isHidden()
     assert window.draft_view.add_button.isHidden()
     assert window.terms_view.workflow.publish_button.isHidden()
     assert window.effective_view.empty_action.isHidden()
-    assert window.terms_view.workflow.isHidden()
+    assert not window.terms_view.workflow.isHidden()
     assert window.terms_view.content_context.isHidden()
-    assert window.terms_view._project_actions.isHidden()
+    assert not window.terms_view._project_actions.isHidden()
+    assert not window.terms_view.editor_dialog.isVisible()
+    assert not window.terms_view.conflict_dialog.isVisible()
 
 
 def test_published_content_can_continue_editing_from_the_main_page(workbench):
@@ -86,12 +94,14 @@ def test_published_content_can_continue_editing_from_the_main_page(workbench):
     harness.build()
     version = harness.publish()
     window._bind_existing_assets()
-    _wait(lambda: window.effective_model.rowCount() == 1 and window._workflow.state is not None)
-    assert window.terms_view.workflow.isHidden()
+    _wait(lambda: window._workflow.state is not None and window._workflow.state.has_version)
+    assert window.effective_model.rowCount() == 0  # Advanced content is still unopened.
+    assert not window.terms_view.workflow.isHidden()
     window.schemes_view.edit_button.click()
     _wait(lambda: harness.repository.active_ref(project_id, variant_id) is not None)
     _wait(lambda: window.draft_model.rowCount() == 1)
     assert window.terms_view.pages.currentWidget() is window.draft_view
+    assert window.terms_view.editor_dialog.isVisible()
     assert window._workflow.state.has_draft
     assert window.terms_view.workflow.publish_button.isEnabled()
     assert harness.repository.effective_version(project_id, variant_id).ref == version.ref
@@ -102,6 +112,7 @@ def test_filtered_empty_state_preserves_search_and_explains_no_matches(workbench
     harness.build()
     harness.publish()
     window._bind_existing_assets()
+    window.terms_view.browse_button.click()
     _wait(lambda: window.effective_model.rowCount() == 1)
     window.effective_view.filters.search.setText("no such term")
     window.effective_view.filters.apply()
@@ -120,7 +131,7 @@ def test_incomplete_or_stale_build_is_not_presented_as_publish_ready(completenes
         )
     )
     assert not state.can_publish
-    assert state.title == "需要重新整理来源"
+    assert state.title == "需要重新提取"
 
 
 def test_later_success_does_not_erase_failed_write_summary(workbench):
@@ -205,11 +216,15 @@ def scheme_workbench(project_runtime, monkeypatch, entry, scope):
 def test_scheme_edit_routes_the_selected_scope_for_each_real_row_type(scheme_workbench, entry, scope):
     window, published = scheme_workbench
     requests = []
-    window._profile_controller = SimpleNamespace(open_manager=lambda **intent: requests.append(intent))
+    window._profile_controller = SimpleNamespace(
+        open_manager=lambda **intent: requests.append(intent),
+        state=SimpleNamespace(selected_profile_id=published.profile_id),
+    )
     window._bind_existing_assets()
-    _wait(lambda: window._workflow.state is not None and window.terms_view.source_browser.model.rowCount() == 2)
+    _wait(lambda: window._workflow.state is not None)
 
     if entry == "effective":
+        window.terms_view.browse_button.click()
         view = window.effective_view
         _wait(lambda: window.effective_model.rowCount() == 2)
         row = next(
@@ -222,8 +237,11 @@ def test_scheme_edit_routes_the_selected_scope_for_each_real_row_type(scheme_wor
         view.scheme_edit_button.click()
     else:
         view = window.terms_view.source_browser
+        window.terms_view.show_source()
+        _wait(lambda: view.model.rowCount() == 2)
         if entry == "published_mapping":
             view.render(SimpleNamespace(enabled=True, selected_revision=published))
+            _wait(lambda: view.table.isEnabled())
         row = next(
             index
             for index in range(view.filtered.rowCount())

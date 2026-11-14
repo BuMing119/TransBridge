@@ -143,7 +143,7 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
                 parse_unmapped=list(parsed_json.unmapped),
             )
         elif "format_id" in dispatch or file_type in {"sst", "eet"}:
-            from transbridge.application.contracts import OperationOutcome, RequestContext
+            from transbridge.application.contracts import OperationOutcome
             from transbridge.application.io import (
                 FormatId,
                 ParseRequest,
@@ -152,15 +152,20 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
             )
             from transbridge.entrypoints.agent import parse_translation_source
 
+            from .text_encoding import effective_text_encodings
+
             source = Path(path)
             format_id = None if file_type in {"sst", "eet"} else FormatId(dispatch["format_id"])
+            parse_options = options
+            if format_id is FormatId.PLUGIN_SSE:
+                encodings = effective_text_encodings(task.app, task.context)
+                options = tuple(encodings.read_options().items())
+                parse_options = (*options, ("capture_sst_export_facts", True)) if action == "create_slot" else options
             request = ParseRequest(
                 SourceDescriptor(str(source), source.name, source.stat().st_size),
-                RequestContext("smart-assistant-parser"),
+                task.context,
                 format_id,
-                options=(("capture_sst_export_facts", True),)
-                if format_id is FormatId.PLUGIN_SSE and action == "create_slot"
-                else (),
+                options=parse_options,
             )
             if file_type == "eet":
                 from transbridge.application.io.eet_source import parse_eet_source

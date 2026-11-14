@@ -96,12 +96,12 @@ def _scheme(identifier, mappings, revision=1):
 def test_actual_scheme_is_the_source_not_target_historical_base_and_repeats_all_change():
     source = _scheme("A", [ProfileTermMapping("Whiterun", "雪漫")])
     target = _scheme("B", [ProfileTermMapping("Whiterun", "白漫", "不相关的历史译名")])
-    matched = TranslationEntry("1", "1", "Visit Whiterun", "雪漫通往雪漫", 1, None)
+    matched = TranslationEntry("1", "1", "Visit Whiterun from Whiterun", "雪漫通往雪漫", 1, None)
     unrelated = TranslationEntry("2", "2", "Visit another city", "雪漫通往雪漫", 1, None)
     projector = ProfileEntryProjector(target, None, source_profile=source)
     assert projector.project(matched).translation == "白漫通往白漫"
     assert projector.project(unrelated).translation == unrelated.translation
-    assert matched.original == "Visit Whiterun"
+    assert matched.original == "Visit Whiterun from Whiterun"
     assert matched.translation == "雪漫通往雪漫"
     written, diagnostics = FrozenProfileWriteProjection(
         "project", "variant", target, TerminologyProfileProjector(), source_profile=source
@@ -123,10 +123,24 @@ def test_actual_scheme_missing_spelling_or_empty_translation_is_a_quiet_noop(tex
 
 
 def test_transition_is_simultaneous_and_same_profile_revision_roundtrip_returns_saved_body():
+    from types import SimpleNamespace
+
+    from transbridge.application.terminology_profiles.occurrence_alignment import AlignmentDecision
+
     source = _scheme("A", [ProfileTermMapping("One", "甲"), ProfileTermMapping("Two", "乙")])
     target = _scheme("B", [ProfileTermMapping("One", "乙"), ProfileTermMapping("Two", "丙")])
     entry = TranslationEntry("1", "1", "One and Two", "甲和乙", 1, None)
-    assert ProfileEntryProjector(target, None, source_profile=source).project(entry).translation == "乙和丙"
+    resolver = SimpleNamespace(
+        resolve=lambda request: AlignmentDecision(tuple(range(len(request.candidates))), True, "甲对应 One，乙对应 Two")
+    )
+    assert (
+        ProfileEntryProjector(
+            target, None, source_profile=source, projector=TerminologyProfileProjector(resolver=resolver)
+        )
+        .project(entry)
+        .translation
+        == "乙和丙"
+    )
     assert ProfileEntryProjector(source, None, source_profile=source).project(entry).translation == "甲和乙"
     revised = _scheme("A", [ProfileTermMapping("One", "新甲"), ProfileTermMapping("Two", "乙")], revision=2)
     assert ProfileEntryProjector(revised, None, source_profile=source).project(entry).translation == "新甲和乙"
@@ -168,11 +182,44 @@ def test_unassociated_body_uses_current_base_spelling_not_target_creation_histor
             ),
         ),
     )
-    entry = TranslationEntry("1", "1", "Dragon", "龙与龙", 1, None)
+    entry = TranslationEntry("1", "1", "Dragon and Dragon", "龙与龙", 1, None)
     result = ProfileEntryProjector(target, base).project(entry)
     assert result.translation == "巨龙与巨龙"
     assert result.diagnostics == ()
     assert entry.translation == "龙与龙"
+
+
+def test_return_to_base_preserves_explicit_unchanged_long_target_inside_sentence():
+    source = _scheme(
+        "A", [ProfileTermMapping("Conjuration Staff", "召唤法杖"), ProfileTermMapping("Conjuration", "召唤")]
+    )
+    base = EffectiveTerminologySnapshot(
+        "project",
+        "variant",
+        EffectiveSnapshotStatus.READY,
+        "base",
+        "base-digest",
+        tuple(
+            TermDecision(
+                key,
+                "project",
+                "variant",
+                original,
+                original.lower(),
+                translation,
+                TermScope.project(),
+                DecisionStatus.ADOPTED,
+            )
+            for key, original, translation in (
+                ("long", "Conjuration Staff", "召唤法杖"),
+                ("short", "Conjuration", "召唤系"),
+            )
+        ),
+    )
+    entry = TranslationEntry("1", "1", "Use Conjuration Staff and Conjuration", "使用召唤法杖进行召唤", 1, None)
+    result = ProfileEntryProjector(None, base, source_profile=source).project(entry)
+    assert result.translation == "使用召唤法杖进行召唤系"
+    assert not result.diagnostics
 
 
 def test_base_transition_converts_only_common_keys_and_preserves_missing_and_target_only_terms():

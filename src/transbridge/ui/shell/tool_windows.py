@@ -84,6 +84,7 @@ class ToolWindows:
             if runtime is not None and "task_result_preferences" in runtime.use_cases.names()
             else None
         )
+        text_encoding_defaults = getattr(context, "text_encoding_defaults", None)
 
         def paratranz_saved(config) -> None:
             if context is not None:
@@ -101,6 +102,7 @@ class ToolWindows:
             reload_llm=LLMConfig.load_from_file,
             on_paratranz_saved=paratranz_saved,
             task_result_preferences=task_result_preferences,
+            text_encoding_defaults=text_encoding_defaults,
         )
         dialog.exec()
         if context is not None and context.config.token and not context.current_user:

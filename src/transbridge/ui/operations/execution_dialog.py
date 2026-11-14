@@ -18,6 +18,7 @@ class ExecutionPlanDialog(OperationPlanDialog):
     requires_async_preflight = True
     operation_label = "写回"
     show_transfer_counts = True
+    show_plan_summary = True
 
     def __init__(self, plan, parent=None):
         self._execution_running = False
@@ -46,8 +47,8 @@ class ExecutionPlanDialog(OperationPlanDialog):
 
     def render_plan(self, plan):
         super().render_plan(plan)
-        self._summary.show()
-        self._summary_scroll.show()
+        self._summary.setVisible(self.show_plan_summary)
+        self._summary_scroll.setVisible(self.show_plan_summary)
         if hasattr(self, "_details"):
             self._clear_details()
             self._progress.hide()

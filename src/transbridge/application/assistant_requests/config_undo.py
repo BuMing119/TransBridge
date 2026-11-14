@@ -1,7 +1,7 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Inverse commands for the assistant's explicit non-secret configuration fields."""
 
-from transbridge.config.repository import ConfigRepositoryError
+from transbridge.config.repository import ConfigRepositoryError, validate_llm_endpoint_update
 
 FIELDS = frozenset({
     "provider",
@@ -61,18 +61,13 @@ def preflight_config_undo(repository, receipt):
         raise ConfigRepositoryError(
             "config_revision_conflict", "configuration changed after this round; no fields restored"
         )
-    endpoints = {"provider", "base_url", "model"}
-    restoring_endpoints = endpoints.intersection(receipt["before"])
-    if restoring_endpoints and (
-        restoring_endpoints != endpoints
-        or any(
-            value is not None and not str(value).strip() for key, value in receipt["before"].items() if key in endpoints
-        )
-    ):
+    try:
+        validate_llm_endpoint_update(receipt["before"])
+    except ConfigRepositoryError as exc:
         raise ConfigRepositoryError(
             "config_undo_endpoint_unsupported",
             "previous endpoint values do not satisfy the current atomic endpoint write contract; no fields restored",
-        )
+        ) from exc
 
 
 def apply_config_undo(repository, receipt):

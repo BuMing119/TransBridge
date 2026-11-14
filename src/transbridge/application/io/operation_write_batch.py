@@ -18,6 +18,7 @@ from transbridge.application.contracts import (
 )
 
 from .operation_write import HydratedWriteDraft, HydratedWritePreflight, HydratedWriteWorkload, WritePreflightCheck
+from .plugin_transfer import PluginTransferPreflight, PluginTransferWorkload
 
 
 def batch_output_conflicts(preflights) -> tuple[str, ...]:
@@ -184,7 +185,12 @@ def _run_batch_member(checked: HydratedWritePreflight | WriteBatchFailure, run_c
             run_id=run_context.ref.run_id,
         )
     try:
-        return HydratedWriteWorkload(checked)(run_context)
+        workload = (
+            PluginTransferWorkload(checked)
+            if isinstance(checked, PluginTransferPreflight)
+            else HydratedWriteWorkload(checked)
+        )
+        return workload(run_context)
     except (OSError, TypeError, ValueError) as exc:
         return OperationResult.failed(
             DomainError(

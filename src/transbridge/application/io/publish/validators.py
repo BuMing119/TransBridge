@@ -20,14 +20,20 @@ from transbridge.application.io.contracts import (
     WriteRequest,
 )
 from transbridge.application.io.identity import EntryKey, SourceNamespace
+from transbridge.application.io.legacy_adapters import SsePluginAdapter
+from transbridge.application.io.plugin_destination import PLUGIN_DESTINATION_MODE
 from transbridge.application.io.ports import FormatAdapter
 from transbridge.application.io.source_preservation import source_entry_texts
 from transbridge.application.io.sst_adapter import SstAdapter
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY, StageOperation
+from transbridge.application.io.strings_adapter import strings_write_plan
+from transbridge.config.text_encoding import STRICT_READ_POLICY
 
 from .filesystem import PublishFilesystemPort
 from .models import ValidationReport
 from .plugin_fidelity import validate_plugin_fidelity
+
+_STRINGS_FORMATS = {FormatId.STRINGS, FormatId.DLSTRINGS, FormatId.ILSTRINGS}
 
 
 class ArtifactRenderer(Protocol):
@@ -51,6 +57,9 @@ class FormatAdapterRenderer:
                 staging_path, display_name=request.target.display_name or Path(request.target.uri).name
             ),
         )
+        copy_plugin = dict(request.options).get(PLUGIN_DESTINATION_MODE) == "directory"
+        if copy_plugin and isinstance(self._adapter, SsePluginAdapter):
+            return self._adapter.write(staged_request, copy_source=True)
         return self._adapter.write(staged_request)
 
 
@@ -104,7 +113,13 @@ class FormatRoundTripValidator:
                 request.context,
                 request.format_id,
                 namespace,
-                options=request.options,
+                options=tuple(
+                    {
+                        **dict(request.options),
+                        "input_encoding": dict(request.options).get("output_encoding", "utf-8"),
+                        "text_read_policy": STRICT_READ_POLICY,
+                    }.items()
+                ),
                 cancellation=request.cancellation,
             )
         )
@@ -120,11 +135,12 @@ class FormatRoundTripValidator:
                 message="staged artifact could not be reparsed completely",
             )
         try:
-            expected = _expected_summary(request)
-            actual = _parsed_summary(
-                parsed.entries,
-                frozenset(item[0] for item in expected),
-            )
+            if request.format_id in _STRINGS_FORMATS:
+                expected = tuple((record.string_id, text) for record, text, _stage in strings_write_plan(request))
+                actual = tuple((entry.string_id, entry.original) for entry in parsed.entries)
+            else:
+                expected = _expected_summary(request)
+                actual = _parsed_summary(parsed.entries, frozenset(item[0] for item in expected))
         except (TypeError, ValueError) as exc:
             return _invalid(request, "FIDELITY_SUMMARY_FAILED", type(exc).__name__, structure=True, reparse=True)
         valid = expected == actual
@@ -177,34 +193,18 @@ def _expected_summary(request: WriteRequest) -> tuple[tuple[str, str, str], ...]
         if decision.publish_text is None:
             raise ValueError("blocking stage reached fidelity validation")
         preserved_fields = None
-        if decision.preserve_source and request.format_id in {
-            FormatId.XML_EET,
-            FormatId.XML_XT,
-            FormatId.STRINGS,
-            FormatId.DLSTRINGS,
-            FormatId.ILSTRINGS,
-        }:
+        if decision.preserve_source and request.format_id in {FormatId.XML_EET, FormatId.XML_XT}:
             if preserved is None:
                 preserved = source_entry_texts(request)
             if identity.local_key not in preserved:
                 raise ValueError("protected entry has no unique source record")
             preserved_fields = preserved[identity.local_key]
-        if request.format_id in {
-            FormatId.PLUGIN_SSE,
-            FormatId.STRINGS,
-            FormatId.DLSTRINGS,
-            FormatId.ILSTRINGS,
-        }:
-            text = preserved_fields[0] if preserved_fields is not None else decision.publish_text
-            values.append((identity.serialize(), text, ""))
-        else:
-            # Bilingual exchange formats persist the translation field itself,
-            # including empty or draft translations, rather than game-ready text.
-            values.append((
-                identity.serialize(),
-                preserved_fields[0] if preserved_fields is not None else str(getattr(entry, "original", "")),
-                preserved_fields[1] if preserved_fields is not None else str(getattr(entry, "translation", "")),
-            ))
+        # Bilingual exchange formats persist draft and empty translations.
+        values.append((
+            identity.serialize(),
+            preserved_fields[0] if preserved_fields is not None else str(getattr(entry, "original", "")),
+            preserved_fields[1] if preserved_fields is not None else str(getattr(entry, "translation", "")),
+        ))
     return tuple(sorted(values))
 
 
@@ -225,7 +225,7 @@ def _parsed_summary(
     return tuple(sorted(values))
 
 
-def _summary_hash(summary: tuple[tuple[str, str, str], ...]) -> str:
+def _summary_hash(summary: tuple[tuple, ...]) -> str:
     payload = json.dumps(summary, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 

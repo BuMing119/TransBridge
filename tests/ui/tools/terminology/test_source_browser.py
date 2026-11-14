@@ -182,15 +182,21 @@ def test_draft_actions_require_a_selected_row_and_follow_its_enabled_state() -> 
 
 def test_profile_refresh_preserves_navigation_and_project_actions_remain_available() -> None:
     build = BuildView()
-    view = TermsView(DraftView(QStandardItemModel()), QWidget(), build)
+    conflicts = QWidget()
+    conflicts.show_equivalent_results = lambda: None
+    view = TermsView(DraftView(QStandardItemModel()), conflicts, build)
     view.render_source(_state(ProfileTermMapping("Dragon", "巨龙")))
     view.source_button.click()
     view.show()
     _APP.processEvents()
     build.show()  # A delayed project preflight/build completion requests visibility.
     assert view.source_browser.isVisible()
+    assert build.isVisible()
+    assert view._project_actions.isVisible()
+    assert view.source_browser.window() is view.editor_dialog
+    view.build_details_button.click()
     assert not build.isVisible()
-    assert not view._project_actions.isVisible()
+    assert view._project_actions.isVisible()
     view.build_details_button.click()
     assert build.isVisible()
     view.all_terms_button.click()

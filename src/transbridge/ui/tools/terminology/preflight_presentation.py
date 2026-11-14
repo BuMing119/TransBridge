@@ -17,6 +17,7 @@ def preflight_ready(snapshot: BuildInputSnapshot, context: RequestContext) -> Te
     project_name = metadata.get("project_name") or "项目名称待确认"
     variant_name = metadata.get("variant_name") or "翻译版本名称待确认"
     action_label = "更新术语库" if snapshot.effective_version_id else "创建术语库"
+    extraction = getattr(snapshot, "extraction", None)
     return TerminologyPreflightViewState(
         True,
         f"可以{action_label}",
@@ -43,6 +44,7 @@ def preflight_ready(snapshot: BuildInputSnapshot, context: RequestContext) -> Te
             TechnicalDetail("配置摘要", snapshot.config_digest),
         ),
         action_label=action_label,
+        extraction_label=("仅规则整理，不调用 LLM" if extraction is None else f"使用模型：{extraction.display_label}"),
     )
 
 
@@ -62,6 +64,9 @@ def preflight_failed(
         title, explanation = _source_limit_copy(details, count)
         if can_import:
             explanation += "也可以直接导入已有术语，不必先从项目提取。"
+    elif code == "TERMINOLOGY_LLM_CONFIG_INVALID":
+        title = "LLM 抽取尚未就绪"
+        explanation = f"{notice.message} 请在设置 → AI 服务中检查模型与连接配置，或切换为“仅规则整理”后重试。"
     elif code in {"TERMINOLOGY_SOURCE_REQUIRED", "SOURCE_REQUIRED"}:
         explanation = "当前项目没有已启用的来源。请先添加并启用项目来源，再重新检查；已有历史保持不变。"
         if can_import:

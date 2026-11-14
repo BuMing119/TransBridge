@@ -52,6 +52,7 @@ class OperationPlanViewState:
     submit_enabled: bool = False
     submit_disabled_reason: str = "请先运行预检"
     is_batch: bool = False
+    text_encoding_summary: str = ""
 
     def __post_init__(self) -> None:
         if not self.session_id.strip() or not self.title.strip() or not self.target.strip():

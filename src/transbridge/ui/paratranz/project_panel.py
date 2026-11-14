@@ -4,6 +4,7 @@ ProjectListPanel: ParaTranz 管理模式左侧项目列表面板。
 支持「全部项目」/ 「我参与的」视图切换、关键词搜索、新建项目。
 """
 
+from contextlib import closing
 from datetime import datetime
 
 from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
@@ -24,9 +25,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError
 from transbridge.application.projects import ParaTranzProjectBinding
 from transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
-from transbridge.paratranz.project_catalog import ParaTranzCatalogKey, ParaTranzProjectCatalog
+from transbridge.paratranz.project_catalog import (
+    ParaTranzCatalogCancellation,
+    ParaTranzCatalogKey,
+    ParaTranzProjectCatalog,
+)
 from transbridge.paratranz.service import ParaTranzService
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 
@@ -130,7 +136,9 @@ class ProjectListPanel(QWidget):
         super().__init__(parent)
         self._ctx = ctx
         self._all_projects: list[dict] = []
-        self._load_status: str | None = None
+        self._load_pending = bool(ctx.config.token)
+        self._load_status: str | None = None if self._load_pending else "未配置 Token"
+        self._load_cancellation: ParaTranzCatalogCancellation | None = None
         self._workers: list[ApiWorker] = []
         self._gen = 0
         self._bind_gen = 0
@@ -140,7 +148,7 @@ class ProjectListPanel(QWidget):
         self.setMaximumWidth(300)
         self._init_ui()
         ctx.config_changed.connect(self._on_config_changed)
-        ctx.project_list_changed.connect(self.load_projects)
+        ctx.project_list_changed.connect(self._request_project_list)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -150,7 +158,7 @@ class ProjectListPanel(QWidget):
         self._tab_bar = QTabBar()
         self._tab_bar.addTab("全部项目")
         self._tab_bar.addTab("我参与的")
-        self._tab_bar.currentChanged.connect(self.load_projects)
+        self._tab_bar.currentChanged.connect(self._request_project_list)
         layout.addWidget(self._tab_bar)
 
         # 搜索
@@ -188,14 +196,28 @@ class ProjectListPanel(QWidget):
         self._bind_btn.clicked.connect(self._bind_selected_project)
         layout.addWidget(self._bind_btn)
 
-        self._status = QLabel("加载中…")
+        self._status = QLabel(self._load_status or "")
         self._status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._status.setWordWrap(True)
         layout.addWidget(self._status)
 
-        self.load_projects()
+    def showEvent(self, event):  # noqa: N802 - Qt API
+        super().showEvent(event)
+        if self._load_pending:
+            self.load_projects()
+
+    def _request_project_list(self):
+        if self.isVisible() or not self._ctx.config.token:
+            self.load_projects()
+        else:
+            self._load_pending = True
+            if self._load_cancellation is not None:
+                self._load_cancellation.cancel()
 
     def load_projects(self):
+        self._load_pending = False
+        if self._load_cancellation is not None:
+            self._load_cancellation.cancel()
         config = self._ctx.config
         self._gen += 1
         gen = self._gen
@@ -214,34 +236,55 @@ class ProjectListPanel(QWidget):
 
         self._load_status = "加载中…"
         self._apply_filter()
+        cancellation = ParaTranzCatalogCancellation()
+        self._load_cancellation = cancellation
 
         def _fetch():
-            api = ParatranzProjectAPI(token=config.token, config=config)
             projects = []
-            page = 1
-            while True:
-                current = _extract_list(api.list_projects(page=page, page_size=200, uid=uid))
-                projects.extend(current)
-                if len(current) < 200:
-                    break
-                page += 1
+            try:
+                cancellation.raise_if_cancelled()
+                with closing(ParatranzProjectAPI(config=config)) as api:
+                    page = 1
+                    while True:
+                        cancellation.raise_if_cancelled()
+                        current = _extract_list(
+                            api.list_projects(page=page, page_size=200, uid=uid, cancellation=cancellation)
+                        )
+                        projects.extend(current)
+                        if len(current) < 200:
+                            break
+                        page += 1
+            except ExternalServiceError as exc:
+                if exc.category != ExternalServiceCategory.CANCELLED:
+                    raise
+                return None
             return projects
 
         def _on_done(projects):
             if self._gen != gen:
                 return
-            self._on_projects_loaded(projects, is_mine=show_mine)
+            if projects is None or cancellation.is_cancelled:
+                self._load_status = "项目加载已取消，可点击刷新重试"
+                self._update_status()
+            else:
+                self._on_projects_loaded(projects, is_mine=show_mine)
 
         def _on_error(error):
             if self._gen == gen:
                 self._load_status = f"加载失败：{error}"
                 self._update_status()
 
-        w = ApiWorker(_fetch)
+        def _on_finished():
+            if self._load_cancellation is cancellation:
+                self._load_cancellation = None
+            self._workers.remove(w)
+
+        w = ApiWorker(_fetch, cancel_read_on_close=cancellation.cancel)
         w.result.connect(_on_done)
         w.error.connect(_on_error)
-        w.start()
+        w.finished.connect(_on_finished)
         self._workers.append(w)
+        w.start()
 
     def _on_projects_loaded(self, projects: list, is_mine: bool = False):
         self._all_projects = projects
@@ -412,9 +455,9 @@ class ProjectListPanel(QWidget):
     def switch_to_mine(self):
         """切换到「我参与的」视图并刷新列表。"""
         if self._tab_bar.currentIndex() == 1:
-            self.load_projects()  # 已在该标签，currentChanged 不会触发，手动刷新
+            self._request_project_list()  # 已在该标签，currentChanged 不会触发，手动刷新
         else:
-            self._tab_bar.setCurrentIndex(1)  # 触发 currentChanged -> load_projects
+            self._tab_bar.setCurrentIndex(1)
 
     def _on_config_changed(self, _):
         self._config_revision += 1
@@ -422,4 +465,4 @@ class ProjectListPanel(QWidget):
         self._catalog.clear()
         self._list.setEnabled(True)
         self._bind_btn.setEnabled(False)
-        self.load_projects()
+        self._request_project_list()

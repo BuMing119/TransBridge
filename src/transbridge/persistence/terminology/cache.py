@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from enum import StrEnum
 import hashlib
@@ -78,6 +79,13 @@ class TerminologyCache:
             self._connection.commit()
         return CacheEntry(key, digest, payload, touched_at)
 
+    def discard(self, kind: CacheKind, key: str) -> None:
+        """Replace one disposable batch after a forced refresh or corrupt payload."""
+        owns_transaction = not self._connection.in_transaction
+        self._connection.execute(f"DELETE FROM {_TABLES[CacheKind(kind)]} WHERE cache_key = ?", (key,))
+        if owns_transaction:
+            self._connection.commit()
+
     def gc(self, kind: CacheKind, *, max_entries: int) -> int:
         owns_transaction = not self._connection.in_transaction
         if max_entries < 0:
@@ -96,13 +104,16 @@ class TerminologyCache:
         return remove_count
 
     def clear(self, kind: CacheKind) -> int:
-        owns_transaction = not self._connection.in_transaction
-        table = _TABLES[CacheKind(kind)]
-        count = int(self._connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
-        self._connection.execute(f"DELETE FROM {table}")
-        if owns_transaction:
-            self._connection.commit()
-        return count
+        # Keep count/delete/commit together with the project's existing lock.
+        # Raw SQLite connections used by standalone cache callers need no wrapper.
+        with getattr(self._connection, "lock", nullcontext()):
+            owns_transaction = not self._connection.in_transaction
+            table = _TABLES[CacheKind(kind)]
+            count = int(self._connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+            self._connection.execute(f"DELETE FROM {table}")
+            if owns_transaction:
+                self._connection.commit()
+            return count
 
 
 __all__ = ["CacheEntry", "CacheKind", "TerminologyCache"]

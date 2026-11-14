@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from transbridge.application.io.contracts import FormatId
@@ -11,12 +12,41 @@ from transbridge.application.io.plugin_localized_sources import _snapshot_locali
 from transbridge.application.io.plugin_transfer import PluginTransferDraft
 from transbridge.application.io.publish import BackupPolicy, ConflictPolicy as PublishConflictPolicy
 from transbridge.application.io.write_formats import SST_FORMATS, write_artifact_paths
+from transbridge.ui.text_encoding import export_encoding_summary
 
 from .mappers import OperationPlanDraft
 from .plan_view import EditableControl, EditableFieldState
+from .write_destinations import (
+    DESTINATION_MODE,
+    DIRECTORY,
+    ORIGINAL,
+    plugin_destination_fields,
+    plugin_transfer_field,
+    retarget_plugin,
+)
 
 
-def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPlanDraft:
+def single_write_plan(request, plugin_path, values, directory=""):
+    options = dict(request.options)
+    previous_mode = options.pop(DESTINATION_MODE, "")
+    request = replace(request, options=tuple(options.items()))
+    if request.format_id is not FormatId.PLUGIN_SSE:
+        return _write_plan(request)
+    if plugin_path:
+        return _write_plan(PluginTransferDraft(request, plugin_path))
+    directory = str(values.get("output_directory", directory) or "").strip()
+    mode = values.get("destination_mode")
+    if not mode:
+        if "output_directory" in values:
+            mode = DIRECTORY
+        elif not values.get("target_path") and (previous_mode or not request.target_path):
+            mode = previous_mode or DIRECTORY
+    if mode:
+        request = retarget_plugin(request, mode, directory)
+    return _write_plan(request, directory)
+
+
+def _write_plan(value: HydratedWriteDraft | PluginTransferDraft, directory: str = "") -> OperationPlanDraft:
     transfer = isinstance(value, PluginTransferDraft)
     request = value.write if transfer else value
     artifact_paths = (
@@ -30,11 +60,11 @@ def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPla
     )
     target_exists = any(Path(path).exists() for path in artifact_paths)
     stages = tuple(item.stage for item in request.entries)
-    plugin_fields = (
-        (EditableFieldState("plugin_path", "套用到其他插件（可选）", value.plugin_path if transfer else ""),)
-        if request.format_id is FormatId.PLUGIN_SSE
-        else ()
-    )
+    plugin_source = request.source_snapshot.format_id is FormatId.PLUGIN_SSE
+    destination_mode = dict(request.options).get(DESTINATION_MODE, "")
+    plugin_fields = (plugin_transfer_field(value.plugin_path if transfer else ""),) if plugin_source or transfer else ()
+    if not directory and destination_mode == DIRECTORY and request.target_path:
+        directory = str(Path(request.target_path).parent)
     resource_mode = (
         "；本地化资源打包为 BSA"
         if request.format_id is FormatId.PLUGIN_SSE and dict(request.options).get("pack_bsa", False)
@@ -45,15 +75,20 @@ def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPla
     projection = request.entry_projection
     profile = getattr(projection, "profile", None)
     scheme_mode = "" if projection is None else f"；译名方案：{profile.name if profile else '项目默认译名'}"
+    encoding_summary = export_encoding_summary(request)
     return OperationPlanDraft(
         request=value,
-        target=request.target_path if request.target_path.strip() else "请选择输出位置",
+        target=request.target_path or ("定位后写回原插件" if destination_mode == ORIGINAL else "请选择输出位置"),
         target_revision="existing" if target_exists else "missing",
         input_fingerprint=request.source_snapshot.sha256 + ("" if projection is None else f":{projection.identity}"),
         scope_summary=f"{len(request.entries)} 个项目条目",
         mode_summary=(
             "将当前译文匹配到所选插件，预检后写出"
             if transfer
+            else "覆盖已定位的原插件，覆盖前备份"
+            if destination_mode == ORIGINAL
+            else "保留原插件文件名，另存到所选目录"
+            if destination_mode == DIRECTORY
             else "写出 xTranslator SST（实验性），完整回读验证后写出"
             if request.format_id in SST_FORMATS
             else "按原格式写出 ESP-ESM Translator EET（实验性），完整回读验证后写出"
@@ -61,7 +96,9 @@ def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPla
             else "导出当前文件的译文，验证后写出"
         )
         + resource_mode
-        + scheme_mode,
+        + scheme_mode
+        + (f"；{encoding_summary}" if encoding_summary else ""),
+        text_encoding_summary=export_encoding_summary(request, native=True),
         conflict_summary="已确认覆盖现有文件"
         if request.conflict_policy is PublishConflictPolicy.EXPLICIT_OVERWRITE
         else "目标已存在时停止",
@@ -82,11 +119,14 @@ def _write_plan(value: HydratedWriteDraft | PluginTransferDraft) -> OperationPla
                         options=(("plugin.sse", "原插件格式"), ("sst.ssu9", "xTranslator SST SSU9（实验性）")),
                     ),
                 )
-                if request.source_snapshot.format_id is FormatId.PLUGIN_SSE and not transfer
+                if plugin_source
                 else ()
             ),
             *plugin_fields,
-            EditableFieldState("target_path", "输出路径", request.target_path, required=True),
+            *(plugin_destination_fields(directory, destination_mode) if plugin_source else ()),
+            EditableFieldState(
+                "target_path", "输出路径", "" if destination_mode else request.target_path, required=True
+            ),
             *(
                 (
                     EditableFieldState(

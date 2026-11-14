@@ -15,6 +15,7 @@ from .coordinators import (
     SourceUpdateCoordinator,
     VariantCoordinator,
 )
+from .coordinators.project_text_encoding_coordinator import ProjectTextEncodingCoordinator
 from .coordinators.source_input_coordinator import SourceInputCoordinator
 from .foundation.adapters import ThemeView
 from .foundation.components import ComponentKind, ComponentStyle
@@ -65,6 +66,7 @@ class MainWindow(QMainWindow):
     project_coordinator = _composition_port("_project_coordinator")
     project_management_coordinator = _composition_port("_project_management_coordinator")
     source_update_coordinator = _composition_port("_source_update_coordinator")
+    project_text_encoding_coordinator = _composition_port("_project_text_encoding_coordinator")
     source_input_coordinator = _composition_port("_source_input_coordinator")
     parse_coordinator = _composition_port("_parse_coordinator")
     operation_coordinator = _composition_port("_operation_coordinator")
@@ -137,6 +139,7 @@ class MainWindow(QMainWindow):
         self._project_coordinator = ProjectCoordinator(self)
         self._project_management_coordinator = ProjectManagementCoordinator(self)
         self._source_update_coordinator = SourceUpdateCoordinator(self)
+        self._project_text_encoding_coordinator = ProjectTextEncodingCoordinator(self)
         self._source_input_coordinator = SourceInputCoordinator(self)
         self._ctx.source_input_coordinator = self._source_input_coordinator
         self._variant_coordinator = VariantCoordinator(self)
@@ -145,7 +148,7 @@ class MainWindow(QMainWindow):
         if runtime is not None and runtime_context is not None:
             from .operations.production import build_operation_plan_facade
 
-            self._operation_plan_facade = build_operation_plan_facade(runtime, runtime_context)
+            self._operation_plan_facade = build_operation_plan_facade(runtime, runtime_context, parent=self)
         self.update_controller = UpdateController(self)
         self._intent_composition = ShellIntentComposition(self)
 
@@ -279,6 +282,7 @@ class MainWindow(QMainWindow):
         pb.new_project_requested.connect(self._intent_composition.callback(IntentId.PROJECT_CREATE))
         pb.open_project_requested.connect(self._intent_composition.callback(IntentId.PROJECT_OPEN))
         pb.source_update_requested.connect(self._intent_composition.callback(IntentId.PROJECT_SOURCE_UPDATE))
+        pb.text_encoding_requested.connect(self._intent_composition.callback(IntentId.PROJECT_TEXT_ENCODING))
         pb.variant_switch_requested.connect(self._variant_coordinator.switch_variant)
         pb.save_requested.connect(self._intent_composition.callback(IntentId.PROJECT_SAVE))
         pb.variant_add_requested.connect(self._intent_composition.callback(IntentId.PROJECT_VARIANT_CREATE))
@@ -359,9 +363,9 @@ class MainWindow(QMainWindow):
 
     def _on_navigate_to(self, index: int):
         self.show_workbench()
-        self._mode_tabs.setCurrentIndex(index)
         if index == 1:
             self._pt_widget.switch_to_mine()
+        self._mode_tabs.setCurrentIndex(index)
 
     def _on_collection_changed(self, collection):
         if collection:

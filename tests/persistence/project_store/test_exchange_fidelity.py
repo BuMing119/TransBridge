@@ -169,7 +169,7 @@ def test_reopened_dsd_export_preserves_duplicate_locators_with_distinct_original
 def test_reopened_strings_export_preserves_directory_order_and_untouched_payloads(tmp_path, format_id):
     extension = format_id.value.rsplit(".", 1)[1]
     source = tmp_path / f"input.{extension}"
-    shutil.copyfile(_FIXTURES / "strings" / f"integrity.{extension}", source)
+    shutil.copyfile(_FIXTURES / "strings" / f"utf8-integrity.{extension}", source)
     original = _parse(source, format_id)
     edits = ((0, "Translated ✓", Stage.REVIEWED), (1, "Do not publish", Stage.HIDDEN))
     previous, entries, snapshot = _reopen_after_edits(tmp_path, source, format_id, edits)

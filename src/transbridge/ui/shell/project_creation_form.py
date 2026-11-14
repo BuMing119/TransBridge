@@ -33,7 +33,7 @@ from transbridge.ui.foundation.components import (
 )
 from transbridge.ui.foundation.tabler_icons import tabler_icon
 from transbridge.ui.operations.export_format_combo import ExportFormatComboBox
-from transbridge.ui.workbench.file_source_formats import FILE_SOURCE_FORMATS
+from transbridge.ui.workbench.file_source_formats import FILE_SOURCE_FORMATS, TRANSLATION_FILE_FORMATS
 
 
 class ProjectCreationForm(QWidget):
@@ -150,7 +150,7 @@ class ProjectCreationForm(QWidget):
         path_row.addWidget(self.translation_browse)
         path_row.addWidget(self.translation_clear)
         donor.addRow("译文来源", path_row)
-        self.translation_format = self._format_choice("译文来源格式")
+        self.translation_format = self._format_choice("译文来源格式", TRANSLATION_FILE_FORMATS)
         self.translation_format.addItem("Strings 目录", "strings-directory")
         self.translation_format.currentIndexChanged.connect(self._translation_changed)
         donor.addRow("来源格式", self.translation_format)
@@ -222,10 +222,10 @@ class ProjectCreationForm(QWidget):
         return editor
 
     @staticmethod
-    def _format_choice(name):
+    def _format_choice(name, formats=FILE_SOURCE_FORMATS):
         choice = ExportFormatComboBox()
         choice.setAccessibleName(name)
-        for text, value in FILE_SOURCE_FORMATS:
+        for text, value in formats:
             choice.addItem(text, value)
         return choice
 

@@ -71,7 +71,9 @@ def test_coalesced_assets_keep_build_publish_comparison_and_both_report_feedback
     monkeypatch.setattr(window.build_view, "set_summary", lambda value: calls.append(value.title))
     monkeypatch.setattr(window.history_view, "set_comparison", lambda value: calls.append(value))
     monkeypatch.setattr(window.reports_view, "set_artifact", lambda value: calls.append(value))
-    window._profile_controller = SimpleNamespace(refresh=lambda: calls.append("profile-refresh"))
+    window._profile_controller = SimpleNamespace(
+        refresh=lambda: calls.append("profile-refresh"), state=SimpleNamespace(selected_profile_id=None)
+    )
     assets = WorkbenchAssets(
         build=SimpleNamespace(completeness="full", freshness="current"),
         comparison="comparison",

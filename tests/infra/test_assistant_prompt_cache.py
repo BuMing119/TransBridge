@@ -67,27 +67,30 @@ def test_append_after_tool_result_does_not_merge_new_user_into_old_anthropic_blo
     assert before[1][-1]["content"] == [{"type": "tool_result", "tool_use_id": "call-1", "content": "Synthetic result"}]
 
 
-def test_unknown_endpoints_and_models_get_no_guessed_cache_fields():
+def test_unknown_endpoints_get_no_guessed_cache_fields(caplog):
+    caplog.set_level("DEBUG", logger="transbridge.infra.prompt_cache")
     messages = decorate_assistant_messages(_history(), namespace="stable")
     assert "extra_body" not in _openai(messages, base_url="https://proxy.invalid/v1")
     assert "extra_body" not in _openai(messages, model="unknown-model")
-    assert anthropic_assistant_cache_options(messages, model="unknown", base_url="https://api.anthropic.com") == {}
     assert (
         anthropic_assistant_cache_options(messages, model="claude-sonnet-4-6", base_url="https://proxy.invalid") == {}
     )
+    assert "strategy=standard_request reason=endpoint_not_official" in caplog.text
 
 
-def test_known_anthropic_uses_top_level_automatic_history_cache():
+@pytest.mark.parametrize("model", ["claude-sonnet-4-6", "claude-haiku-5-5", "future-model"])
+def test_official_anthropic_uses_top_level_automatic_history_cache(model, caplog):
+    caplog.set_level("DEBUG", logger="transbridge.infra.prompt_cache")
     messages = decorate_assistant_messages(_history(), namespace="stable")
-    options = anthropic_assistant_cache_options(
-        messages, model="claude-sonnet-4-6", base_url="https://api.anthropic.com/"
-    )
+    options = anthropic_assistant_cache_options(messages, model=model, base_url="https://api.anthropic.com/")
     assert options == {"cache_control": {"type": "ephemeral"}}
+    assert "strategy=automatic_history reason=official_messages_api" in caplog.text
     system, body = _anthropic(messages)
     assert "cache_control" not in str(system + body)
 
 
-def test_disabling_cache_removes_explicit_markers_without_changing_history_grouping():
+def test_disabling_cache_removes_explicit_markers_without_changing_history_grouping(caplog):
+    caplog.set_level("DEBUG", logger="transbridge.infra.prompt_cache")
     messages = decorate_assistant_messages(_history(), namespace="stable")
     disabled = decorate_assistant_messages(messages, namespace="stable", enabled=False)
     assert not any(PROMPT_CACHE_METADATA_KEY in m for m in disabled)
@@ -97,6 +100,7 @@ def test_disabling_cache_removes_explicit_markers_without_changing_history_group
         anthropic_assistant_cache_options(disabled, model="claude-sonnet-4-6", base_url="https://api.anthropic.com")
         == {}
     )
+    assert "strategy=standard_request reason=assistant_cache_disabled" in caplog.text
 
 
 def test_translation_profile_does_not_accept_assistant_history():
@@ -114,6 +118,7 @@ def test_late_system_message_disables_assistant_cache():
         model="gpt-4.1", base_url="https://api.openai.com/v1", messages=messages
     )
     assert request["request_options"] == {}
+    assert anthropic_assistant_cache_options(messages, model="future-model", base_url="https://api.anthropic.com") == {}
 
 
 @pytest.mark.parametrize("model", ["gpt-4.1", "gpt-5.6", "gpt-6"])
@@ -165,7 +170,7 @@ def test_anthropic_top_level_cache_rejection_retries_once_with_same_layout():
     owner = SimpleNamespace(
         _lock=threading.Lock(),
         _active_requests=0,
-        _model="claude-sonnet-4-6",
+        _model="claude-sonnet-5-5",
         _client=SimpleNamespace(messages=SimpleNamespace(stream=stream), base_url="https://api.anthropic.com"),
     )
     records = []
@@ -179,7 +184,7 @@ def test_anthropic_top_level_cache_rejection_retries_once_with_same_layout():
     )
     first, second = [call.kwargs for call in stream.call_args_list]
     assert first["cache_control"] == {"type": "ephemeral"}
-    assert "cache_control" not in second
-    assert first["messages"] == second["messages"]
-    assert first["system"] == second["system"]
+    assert second == {key: value for key, value in first.items() if key != "cache_control"}
+    assert records[0].degradation == "cache_parameter_unsupported"
+    assert records[0].cache_read_tokens is None
     assert records[1].retry_of == records[0].attempt_id

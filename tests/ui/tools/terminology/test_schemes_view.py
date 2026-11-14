@@ -44,7 +44,7 @@ class _Profiles(QObject):
         self.manager_intents.append(intent)
 
 
-def test_scheme_switcher_keeps_selection_visible_and_management_in_a_menu() -> None:
+def test_scheme_switcher_keeps_selection_and_management_visible() -> None:
     profiles = _Profiles()
     view = TerminologySchemesView()
     controller = TerminologySchemesController(view, SimpleNamespace(), profiles, view)
@@ -58,11 +58,13 @@ def test_scheme_switcher_keeps_selection_visible_and_management_in_a_menu() -> N
     assert view.import_button.property("tbTerminologyPrimary")
     assert controller._imports._select_after_create
     assert view.actions_button.isEnabled()
+    assert view.manage_button.text() == "管理方案…"
+    assert not view.manage_button.isHidden()
     assert view.status_label.isHidden()
     assert view.scheme_combo.accessibleDescription() == "经典译名"
 
     view.scheme_combo.setCurrentIndex(0)
-    view.manage_action.trigger()
+    view.manage_button.click()
 
     assert profiles.selected == [None]
     assert profiles.manager_opened == 1

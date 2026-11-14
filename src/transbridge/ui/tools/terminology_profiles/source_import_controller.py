@@ -59,6 +59,7 @@ class TerminologySourceImportController(QObject):
         self._policy = TerminologyProfileImportPolicy.KEEP_EXISTING
         self._expected_identity: tuple[str, str] | None = None
         self._closed = False
+        self._target_profile_id = None
 
     def dispose(self) -> None:
         self._closed = True
@@ -77,6 +78,7 @@ class TerminologySourceImportController(QObject):
         default_name: str,
         reader_factory: Callable[[], object] | None = None,
         policy=TerminologyProfileImportPolicy.KEEP_EXISTING,
+        target_profile_id=None,
     ) -> None:
         if self._closed or self._active_task is not None:
             return
@@ -88,6 +90,7 @@ class TerminologySourceImportController(QObject):
             QMessageBox.warning(self._parent, "无法创建译名方案", "请先打开一个已保存的工程翻译版本。")
             return
         self._default_name = default_name
+        self._target_profile_id = target_profile_id
         self._policy = TerminologyProfileImportPolicy(policy)
         self._button.setEnabled(False)
         self._button.setText("正在读取外部来源…")
@@ -111,9 +114,10 @@ class TerminologySourceImportController(QObject):
             QMessageBox.warning(self._parent, "工程已变化", "读取期间工程或翻译版本发生了变化，请重新操作。")
             return
         try:
-            preview = self._profiles.preview_source_import(source, policy=self._policy)
+            options = {} if self._target_profile_id is None else {"target_profile_id": self._target_profile_id}
+            preview = self._profiles.preview_source_import(source, policy=self._policy, **options)
         except Exception as exc:  # noqa: BLE001 - application error belongs in the user flow
-            QMessageBox.warning(self._parent, "无法创建译名方案", str(exc))
+            QMessageBox.warning(self._parent, "无法导入术语", str(exc))
             return
         from transbridge.ui.tools.terminology_profiles import TerminologySourceImportDialog
 
@@ -134,9 +138,17 @@ class TerminologySourceImportController(QObject):
                 select=dialog.select_after_create,
             )
         except Exception as exc:  # noqa: BLE001 - persistence failures remain visible and recoverable
-            QMessageBox.warning(self._parent, "创建译名方案失败", str(exc))
+            QMessageBox.warning(self._parent, "导入术语失败", str(exc))
             return
         kept = preview.kept_mapping_count
+        if self._target_profile_id is not None:
+            QMessageBox.information(
+                self._parent,
+                "术语已导入",
+                f"已导入到“{result.profile.name}”：新增 {preview.source_only_term_count} 条，"
+                f"覆盖 {preview.overwritten_mapping_count} 条，保留 {kept} 条。可在“编辑当前方案”中查看。",
+            )
+            return
         suffix = "，并已用于当前翻译版本" if result.selection is not None else "，现在可在译名方案中选择"
         QMessageBox.information(
             self._parent,

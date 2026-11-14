@@ -78,6 +78,7 @@ def test_project_package_rejects_unsupported_contents_without_rewriting_or_publi
     [
         (("UPDATE project SET settings = ?", ('{"prepared_source":{"plugin_bytes":"forbidden"}}',)),),
         (("UPDATE source SET name = ?", ("C:/private/Historical.esp",)),),
+        (("UPDATE source_reference SET path = ?", ("invalid\x00path",)),),
         (("UPDATE source_entry SET metadata = ?", ('{"io.locator":["record",["C:/private/Historical.esp"]]}',)),),
         (("INSERT INTO source_format_record SELECT id, 0, '<ESP/>', NULL FROM source", ()),),
         (
@@ -89,7 +90,14 @@ def test_project_package_rejects_unsupported_contents_without_rewriting_or_publi
             ),
         ),
     ],
-    ids=["unknown-settings", "historical-source-name", "nested-source-path", "plugin-template", "wrong-history-source"],
+    ids=[
+        "unknown-settings",
+        "historical-source-name",
+        "invalid-reference-text",
+        "nested-source-path",
+        "plugin-template",
+        "wrong-history-source",
+    ],
 )
 def test_valid_sqlite_schema_still_rejects_unapproved_portable_content(tmp_path, tampering):
     plugin = write_plugin(tmp_path / "Source.esp", [(0x800, "Greeter", "Welcome")])

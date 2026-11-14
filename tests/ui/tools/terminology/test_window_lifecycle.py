@@ -90,7 +90,9 @@ def test_window_uses_horizontal_object_navigation_without_workflow_tabs() -> Non
 
     window.workspace.set_current_area(TerminologyArea.VERSIONS)
 
-    assert window.workspace.current_area() is TerminologyArea.VERSIONS
+    assert window.workspace.current_area() is TerminologyArea.TERMS
+    assert window.workspace._dialogs[1].isVisible()
+    assert window.versions_view.window() is window.workspace._dialogs[1]
     window.workspace.set_current_area(TerminologyArea.SCHEMES)
     assert window.workspace.current_area() is TerminologyArea.TERMS
     window.workspace.set_current_area(TerminologyArea.OVERVIEW)
@@ -150,6 +152,8 @@ def test_completed_build_refreshes_the_overview_summary() -> None:
         summary=SimpleNamespace(source_count=3, candidate_count=42, conflict_count=2),
         completeness=SimpleNamespace(value="complete"),
         freshness=SimpleNamespace(value="current"),
+        llm_status="skipped",
+        candidates=(),
         ref=SimpleNamespace(build_key="build-key", content_digest="digest"),
         diagnostics=(),
     )
@@ -192,9 +196,9 @@ def test_completed_build_refreshes_the_overview_summary() -> None:
         _APP.processEvents()
         time.sleep(0.01)
 
-    assert window.build_view.result.text() == "从 3 个来源整理出 42 个术语候选。"
+    assert window.build_view.result.text().startswith("从 3 个来源整理出 42 个术语候选。")
     assert "2 组同名异译" in window.build_view.decisions.text()
-    assert window.build_view.result_title.text() == "待审核"
+    assert window.build_view.result_title.text() == "有冲突待处理"
     window.close()
 
 
@@ -220,7 +224,7 @@ def test_overview_hides_empty_and_technical_sections_until_they_are_useful() -> 
     assert not view.alert.isHidden()
     assert not view.preflight_button.isHidden()
     assert view.preflight_button.text() == "重新检查"
-    assert view.build_button.text() == "开始整理"
+    assert view.build_button.text() == "提取术语"
     assert not view.isHidden()
 
     view.set_summary(
@@ -238,7 +242,7 @@ def test_overview_hides_empty_and_technical_sections_until_they_are_useful() -> 
     assert not view.metrics.isHidden()
     assert not view.result_group.isHidden()
     assert not view.isHidden()
-    assert view.result_title.text() == "草稿已整理 · 待发布"
+    assert view.result_title.text() == "结果已就绪 · 可应用"
     assert view.decisions.isHidden()
     assert not view.impact.isHidden()
     assert not view.next_action.isHidden()

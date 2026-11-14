@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from transbridge.application.terminology_profiles.projection import TerminologyProfileProjector
 from transbridge.ui.coordinators import profile_variant_save as save_module
 from transbridge.ui.coordinators.profile_variant_save import ProfileVariantSaveCoordinator
 
@@ -14,6 +15,7 @@ def _host(*, dirty=False, preview=True, targets=()):
         profile=SimpleNamespace(name="B"),
         source_profile=SimpleNamespace(name="A"),
         base_snapshot=None,
+        projector=TerminologyProfileProjector(),
     )
     controller = SimpleNamespace(
         refresh_pending=False, state=SimpleNamespace(is_preview=preview), capture_write_projection=lambda: projection
@@ -77,6 +79,7 @@ def test_new_preview_save_first_saves_dirty_source_then_commits_source_and_targe
         target_profile=projection.profile,
         source_profile=projection.source_profile,
         base_snapshot=None,
+        projection_projector=projection.projector,
         target_variant_id=None,
         expected_target_revision=None,
         expected_project_revision=2,

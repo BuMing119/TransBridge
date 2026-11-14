@@ -8,7 +8,9 @@ from transbridge.application.io.identity import SourceNamespace
 from transbridge.application.io.paratranz_context_order import context_orders
 from transbridge.persistence.v2.variant import VariantSnapshot
 
-from .provisioning import PreparedProjectSource
+from .provisioning_models import PreparedProjectSource
+
+type LocalEntryKey = tuple[str, str | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,18 +23,25 @@ class SourceChanges:
     reordered: frozenset[tuple[str, str | None]]
 
 
-def compare_source(old_keys, old: PreparedProjectSource | None, new: PreparedProjectSource) -> SourceChanges:
+def compare_source(
+    old_keys,
+    old: PreparedProjectSource | None,
+    new: PreparedProjectSource,
+    *,
+    matched_keys: dict[LocalEntryKey, LocalEntryKey] | None = None,
+) -> SourceChanges:
     if new.hydration is None:
         raise ValueError("新版源文件未提供可比较的词条数据。")
+    remapped = matched_keys or {}
     current = {(item.entry_key.local_key, item.entry_key.original): item for item in new.hydration.entries}
     if len(current) != len(new.hydration.entries):
         raise ValueError("新版源文件有重复词条键，无法可靠迁移。")
     previous = (
         {}
         if old is None or old.hydration is None
-        else {(item.entry_key.local_key, item.entry_key.original): item for item in old.hydration.entries}
+        else {remapped.get(_local_key(item), _local_key(item)): item for item in old.hydration.entries}
     )
-    keys = set(old_keys) | set(previous)
+    keys = {remapped.get(key, key) for key in old_keys} | set(previous)
     common = keys & current.keys()
     changed = set()
     unchanged = set()
@@ -44,7 +53,7 @@ def compare_source(old_keys, old: PreparedProjectSource | None, new: PreparedPro
         if old is None or old.hydration is None
         else dict(
             zip(
-                ((item.entry_key.local_key, item.entry_key.original) for item in old.hydration.entries),
+                (remapped.get(_local_key(item), _local_key(item)) for item in old.hydration.entries),
                 context_orders(old.hydration.entries),
                 strict=True,
             )
@@ -63,10 +72,16 @@ def compare_source(old_keys, old: PreparedProjectSource | None, new: PreparedPro
 
 
 def migrate_variant(
-    snapshot: VariantSnapshot, namespace: SourceNamespace, new: PreparedProjectSource, changes: SourceChanges
+    snapshot: VariantSnapshot,
+    namespace: SourceNamespace,
+    new: PreparedProjectSource,
+    changes: SourceChanges,
+    *,
+    matched_keys: dict[LocalEntryKey, LocalEntryKey] | None = None,
 ) -> VariantSnapshot:
+    remapped = matched_keys or {}
     old = {
-        (item.entry_key.local_key, item.entry_key.original): item
+        remapped.get(_local_key(item), _local_key(item)): item
         for item in snapshot.entries
         if item.entry_key.namespace == namespace
     }
@@ -81,6 +96,8 @@ def migrate_variant(
             retained.append(baseline)
             continue
         review = key in changes.changed or key in changes.unverified
+        if matched_keys is not None and before.stage in {Stage.HIDDEN, Stage.LOCKED}:
+            review = False
         retained.append(
             replace(
                 before,
@@ -99,3 +116,7 @@ def migrate_variant(
         snapshot.revision + 1,
         snapshot.label_library,
     )
+
+
+def _local_key(entry) -> LocalEntryKey:
+    return entry.entry_key.local_key, entry.entry_key.original

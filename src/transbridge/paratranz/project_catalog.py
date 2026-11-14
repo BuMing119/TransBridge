@@ -4,13 +4,39 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from threading import RLock
+from threading import Event, RLock
 import time
 
-from transbridge.application.ports.paratranz import CancellationPort, ParaTranzProject
+from transbridge.application.ports.paratranz import (
+    CancellationPort,
+    ExternalServiceCategory,
+    ExternalServiceError,
+    ParaTranzProject,
+)
 from transbridge.application.projects import normalize_paratranz_endpoint
 
 from .service import ParaTranzService
+
+
+class ParaTranzCatalogCancellation:
+    """Cooperative cancellation for an in-progress project catalog read."""
+
+    def __init__(self) -> None:
+        self._event = Event()
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self._event.is_set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        return self._event.wait(timeout)
+
+    def cancel(self) -> None:
+        self._event.set()
+
+    def raise_if_cancelled(self) -> None:
+        if self.is_cancelled:
+            raise ExternalServiceError(ExternalServiceCategory.CANCELLED, "ParaTranz project catalog request cancelled")
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +98,7 @@ class ParaTranzProjectCatalog:
 
 
 __all__ = [
+    "ParaTranzCatalogCancellation",
     "ParaTranzCatalogKey",
     "ParaTranzCatalogSnapshot",
     "ParaTranzProjectCatalog",

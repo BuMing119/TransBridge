@@ -10,7 +10,7 @@ process ``TaskRuntime`` identity.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from threading import RLock
 from typing import Protocol
@@ -115,10 +115,14 @@ class OperationPlanFacade:
         dialog_factory=OperationPlanDialog,
         dialog_factories: Mapping[OperationKind, Callable[[object, object, object | None], object]] | None = None,
         execution_result_reader: Callable[[JobRef, OwnerRef], OperationResult | None] | None = None,
+        parent=None,
+        write_encodings=None,
     ) -> None:
         self._runtime = runtime
         self._runtime_context = runtime_context
         self._execution_result_reader = execution_result_reader
+        self._dialog_parent = parent
+        self._write_encodings = write_encodings
         self._upload_launcher = upload_launcher
         self._upload_windows = {}
         self._download_launcher = download_launcher
@@ -146,6 +150,7 @@ class OperationPlanFacade:
             dialog_factory=dialog_factory,
             dialog_factories=dialog_factories,
             execution_observer=self._observe_execution,
+            parent=parent,
         )
 
     @property
@@ -191,6 +196,10 @@ class OperationPlanFacade:
         slots = getattr(context, "slots", {})
         keys = tuple(slots) if batch else tuple(key for key, slot in slots.items() if slot is context.active_slot)
         scope = SourceInputScope(owner, keys) if hasattr(context, "slots") else context
+        if isinstance(context, SourceInputScope):
+            scope = replace(context, source_keys=keys)
+        if isinstance(scope, SourceInputScope) and scope.text_encodings is None and self._write_encodings is not None:
+            scope = replace(scope, text_encodings=self._write_encodings(self._runtime_context(scope)))
         output_format = values.get("output_format")
         if output_format in JSON_EXPORT_FORMATS:
             return self._coordinator.begin_write(scope, batch=batch, **values)
@@ -206,6 +215,7 @@ class OperationPlanFacade:
                     lambda ready: self._coordinator.begin_write(ready, batch=batch, **values),
                     output_format=output_format,
                     select_plugins=batch or not str(values.get("plugin_path") or "").strip(),
+                    parent=self._dialog_parent,
                 )
             return None
         destination = values.get("output_directory") if batch else values.get("target_path")
@@ -216,7 +226,9 @@ class OperationPlanFacade:
             "template",
             source_keys=tuple(scope.slots) if batch else keys,
             resume=lambda: self.begin_write(scope, batch=batch, **values),
-            on_scope_ready=lambda selected: self.begin_write(SourceInputScope(owner, selected), batch=batch, **values),
+            on_scope_ready=lambda selected: self.begin_write(
+                replace(scope, source_keys=selected), batch=batch, **values
+            ),
             allow_partial=batch,
             operation_label=operation_label,
         ):
@@ -230,9 +242,11 @@ class OperationPlanFacade:
 
         owner = scope.context
         identity = owner.active_version_identity, owner.project_revision, owner.variant_revision
-        prepared = {}
+        prepared = None
 
-        def prepare(fields, ready, unavailable):
+        def prepare(fields, ready, unavailable, is_current, *, parent=None):
+            nonlocal prepared
+            previous, prepared = prepared, None
             if (owner.active_version_identity, owner.project_revision, owner.variant_revision) != identity:
                 unavailable("工程版本已变化，请重新发起导出。")
                 return
@@ -240,21 +254,34 @@ class OperationPlanFacade:
             if output_format in JSON_EXPORT_FORMATS or not requires_write_inputs(scope, output_format):
                 ready(None)
                 return
-            key = output_format, bool(fields.get("plugin_path", "").strip())
-            if key in prepared:
-                ready(prepared[key])
+            plugin_path = fields.get("plugin_path", "").strip()
+            overwrite = fields.get("overwrite_confirmed") == "true"
+            inputs = (
+                output_format,
+                plugin_path,
+                fields.get("destination_mode"),
+                fields.get("target_path"),
+                fields.get("output_directory"),
+                fields.get("scheme_directory"),
+            )
+            if overwrite and previous is not None and previous[0] == inputs:
+                ready(previous[1])
                 return
 
             def bound(ready_scope):
-                prepared[key] = ready_scope
+                nonlocal prepared
+                if not overwrite:
+                    prepared = inputs, ready_scope
                 ready(ready_scope)
 
             coordinator.select_write_inputs(
                 scope,
                 bound,
                 output_format=output_format,
-                select_plugins=not key[1],
+                select_plugins=not plugin_path,
                 on_unavailable=unavailable,
+                is_current=is_current,
+                parent=parent,
             )
 
         return prepare

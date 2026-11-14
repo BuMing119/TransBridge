@@ -26,6 +26,7 @@ def _details(count=2):
         plugin_ids=("Main.esm", "Other.esp"),
         evidence=tuple(
             SimpleNamespace(
+                evidence_id="a" if index % 2 == 0 else "b",
                 original="Dragon",
                 translation="巨龙",
                 plugin_scope="Main.esm",

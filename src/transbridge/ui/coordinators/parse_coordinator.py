@@ -8,6 +8,7 @@ from transbridge.converter.translation_entry_collection import TranslationEntryC
 
 from ..context import CollectionSlot
 from ..source_hydration import reading_entries_from_hydration, source_slot_key
+from ..text_encoding import context_text_encodings
 from ..workers import ApiWorker
 from .parse_migration import prepare_parse_migrations
 
@@ -114,15 +115,26 @@ class ParseCoordinator:
         esp_path = cfg.esp_paths[0]
         authority = self._capture_authoritative_target()
         publication = [authority]
+        try:
+            read_options = context_text_encodings(self._host.context).read_options()
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._host.show_message(f"无法读取项目文本编码：{exc}", error=True)
+            return
         self._host.workbench.show_step2_progress(0, "解析中…")
         self._host.workbench.set_step2_parsing(True)
 
         def _do():
             parser = PluginParser()
-            entries = parser.parse_plugin(Path(esp_path), skip_empty=cfg.skip_empty, raise_on_error=True)
+            entries = parser.parse_plugin(
+                Path(esp_path), skip_empty=cfg.skip_empty, raise_on_error=True, **read_options
+            )
             collection = TranslationEntryCollection(entries)
             migration = prepare_parse_migrations(
-                collection, cfg, plugin_path=esp_path, context=self._host.context.runtime_context
+                collection,
+                cfg,
+                plugin_path=esp_path,
+                context=self._host.context.runtime_context,
+                **read_options,
             )
             collection = migration.collection
             # 自动套用词典（全局词典兜底，填空译文）
@@ -194,6 +206,11 @@ class ParseCoordinator:
 
         esp_paths = cfg.esp_paths
         total = len(esp_paths)
+        try:
+            encodings = context_text_encodings(self._host.context)
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._host.show_message(f"无法读取项目文本编码：{exc}", error=True)
+            return
         self._host.workbench.show_step2_progress(total, f"批量解析中 (0/{total})…")
         self._host.workbench.set_step2_parsing(True)
 
@@ -222,10 +239,19 @@ class ParseCoordinator:
 
             def _do():
                 parser = PluginParser()
-                entries = parser.parse_plugin(Path(esp_path), skip_empty=cfg.skip_empty, raise_on_error=True)
+                entries = parser.parse_plugin(
+                    Path(esp_path),
+                    skip_empty=cfg.skip_empty,
+                    raise_on_error=True,
+                    **encodings.read_options(),
+                )
                 collection = TranslationEntryCollection(entries)
                 migration = prepare_parse_migrations(
-                    collection, cfg, plugin_path=esp_path, context=self._host.context.runtime_context
+                    collection,
+                    cfg,
+                    plugin_path=esp_path,
+                    context=self._host.context.runtime_context,
+                    **encodings.read_options(),
                 )
                 collection = migration.collection
                 # 自动套用词典（全局词典兜底，填空译文）
@@ -338,7 +364,12 @@ class ParseCoordinator:
             from transbridge.ui.eet_source import parse_eet_collection
 
             collection, parsed = parse_eet_collection(eet_path, self._host.context.runtime_context)
-            migration = prepare_parse_migrations(collection, cfg, context=self._host.context.runtime_context)
+            migration = prepare_parse_migrations(
+                collection,
+                cfg,
+                context=self._host.context.runtime_context,
+                **context_text_encodings(self._host.context).read_options(),
+            )
             collection = migration.collection
             collection, hydration = self._commit_authoritative_source(
                 eet_path,
@@ -473,7 +504,9 @@ class ParseCoordinator:
             committed_authority[0] = identity, added.value.project_revision, added.value.variant_revision
 
         hydration = replace(
-            added.value.hydration, source_id=added.value.source_id, reference_location=added.value.location
+            added.value.hydration,
+            source_id=added.value.source_id,
+            reference_location=added.value.location or added.value.hydration.reference_location,
         )
         return collection_from_hydration(hydration), hydration
 

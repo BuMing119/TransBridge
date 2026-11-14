@@ -13,40 +13,57 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QWidget,
 )
 
 from transbridge.application.preflight.sources import existing_reference
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
+from transbridge.ui.text_encoding import TEXT_FORMATS
 
 from .execution_dialog import ExecutionPlanDialog
 from .export_format_combo import ExportFormatComboBox
 from .preflight_view import PreflightCheckStatus
+from .write_destinations import DIRECTORY, ORIGINAL
 from .write_json_export import FORMAT_NAMES
+from .write_scheme_fields import configure_scheme_fields
+from .write_schemes import PREFIX
+from .write_window_layout import install_write_layout
 
 
 class WritePlanDialog(ExecutionPlanDialog):
     """Keep task results on the GUI thread and require fresh preflight for retries."""
 
     plan_input_changed = pyqtSignal()
+    scheme_comparison_requested = pyqtSignal(object)
     operation_label = "导出"
     show_transfer_counts = False
+    show_plan_summary = False
     choice_editor_type = ExportFormatComboBox
 
     def __init__(self, plan, _context=None, parent=None) -> None:
         self._rendering = False
         self._path_buttons = []
+        self._path_rows = {}
+        self._has_selected_schemes = False
         self._overwrite = None
         self._save_original_button = None
         self._automatic_export = False
+        self._legacy_plugin_target = False
         source = getattr(getattr(_context, "active_slot", None), "source_snapshot", None)
         self._source_reference = source.source.uri if source is not None else ""
         self._source_format = str(getattr(source, "format_id", ""))
+        self._source_name = (
+            source.source.display_name or Path(self._source_reference).name if source is not None else "export"
+        )
         super().__init__(plan, parent)
+        if parent is not None:
+            self.setWindowModality(Qt.WindowModality.WindowModal)
         self.setWindowTitle("导出文件")
         self.setMinimumWidth(580)
         self._fields_group.setTitle("导出选项")
         self._source_label = QLabel(self)
+        self._source_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self._source_label.setWordWrap(True)
         self._source_label.setTextFormat(Qt.TextFormat.PlainText)
         source_name = (
@@ -57,7 +74,6 @@ class WritePlanDialog(ExecutionPlanDialog):
             if plan.is_batch
             else f"当前文件：{source_name}\n{FORMAT_NAMES.get(self._source_format, self._source_format)}"
         )
-        self.layout().insertWidget(0, self._source_label)
         self._preflight_button.hide()
         self._edit_button.hide()
         self._confirm_button.setText("导出文件")
@@ -68,29 +84,42 @@ class WritePlanDialog(ExecutionPlanDialog):
         footer.removeWidget(self._confirm_button)
         buttons = self.findChild(QDialogButtonBox)
         buttons.addButton(self._confirm_button, QDialogButtonBox.ButtonRole.ActionRole)
-        self._summary_scroll.hide()
-        self._checks_scroll.hide()
         self._transfer_summary = QLabel(self)
         self._transfer_summary.setWordWrap(True)
         self._transfer_summary.setTextFormat(Qt.TextFormat.PlainText)
         self._transfer_summary.setAccessibleName("套用匹配统计")
         ComponentStyle.apply_static(self._transfer_summary, ComponentKind.NOTIFICATION)
         ComponentStyle.apply_state(self._transfer_summary, SemanticState.INFO)
-        self.layout().insertWidget(self.layout().indexOf(self._checks_scroll), self._transfer_summary)
         self._transfer_summary.hide()
+        self._encoding_label = QLabel(self)
+        self._encoding_label.setWordWrap(True)
+        self._encoding_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._encoding_label.setAccessibleName("本次导出的文本编码")
+        self._options_scroll, self._feedback = install_write_layout(self)
+        self._sync_encoding_label()
 
     def render_plan(self, plan) -> None:
         self._rendering = True
         self._path_buttons = []
+        self._path_rows = {}
+        self._has_selected_schemes = any(
+            field.field_id.startswith(PREFIX) and field.value == "true" for field in plan.editable_fields
+        )
         self._overwrite = None
         self._save_original_button = None
         if hasattr(self, "_transfer_summary"):
             self._transfer_summary.hide()
         try:
             super().render_plan(plan)
-            self._summary_scroll.hide()
-            self._checks_scroll.hide()
+            if hasattr(self, "_feedback"):
+                self._feedback.show_status(False)
             self._confirm_button.setEnabled(True)
+            self._legacy_plugin_target = (
+                self._native_plugin_destination()
+                and self._field_edits.get("target_path") is not None
+                and not self._field_edits["plugin_path"].text()
+                and bool(self._field_edits["target_path"].text())
+            )
             for field_id, editor in tuple(self._field_edits.items()):
                 row, _role = self._fields.getWidgetPosition(editor)
                 if field_id == "overwrite_confirmed":
@@ -99,6 +128,8 @@ class WritePlanDialog(ExecutionPlanDialog):
                     editor.toggled.connect(self._options_changed)
                 elif field_id == "output_format":
                     editor.currentIndexChanged.connect(self._output_format_changed)
+                elif field_id == "destination_mode":
+                    editor.currentIndexChanged.connect(self._destination_changed)
                 elif field_id == "pack_bsa":
                     editor.setText("将 STRINGS 打包为 BSA（默认不勾选）")
                     editor.setToolTip("仅打包本次本地化字符串资源；不勾选时生成散装文件。")
@@ -111,10 +142,8 @@ class WritePlanDialog(ExecutionPlanDialog):
                     layout = QHBoxLayout(container)
                     layout.setContentsMargins(0, 0, 0, 0)
                     layout.addWidget(editor, 1)
-                    browse = QPushButton("浏览…" if field_id == "plugin_path" else "另存为…", container)
-                    browse.setAccessibleName(
-                        "选择要套用的插件" if field_id == "plugin_path" else "批量另存为" if plan.is_batch else "另存为"
-                    )
+                    browse = QPushButton("浏览…" if field_id == "plugin_path" else "选择目录…", container)
+                    browse.setAccessibleName("选择要套用的插件" if field_id == "plugin_path" else "选择输出目录")
                     ComponentStyle.apply_static(browse, ComponentKind.BUTTON)
                     browse.clicked.connect(
                         self._browse_plugin
@@ -134,24 +163,27 @@ class WritePlanDialog(ExecutionPlanDialog):
                         self._path_buttons.append(clear)
                         editor.textEdited.connect(self._plugin_path_changed)
                     else:
-                        restore = QPushButton("清空输出位置" if plan.is_batch else "保存回原文件", container)
-                        restore.setAccessibleName(restore.text())
-                        if not plan.is_batch:
-                            self._save_original_button = restore
-                        ComponentStyle.apply_static(restore, ComponentKind.BUTTON)
-                        restore.clicked.connect(self._restore_output)
-                        layout.addWidget(restore)
-                        self._path_buttons.append(restore)
                         if field_id == "output_directory":
-                            editor.setPlaceholderText("选择目录，将多个文件按原名另存到一起")
+                            editor.setPlaceholderText("保留原文件名")
                         else:
-                            editor.setPlaceholderText("请选择输出位置")
+                            editor.setPlaceholderText("选择目录后自动填入文件名，也可修改完整路径")
+                        if field_id != "output_directory" or plan.is_batch:
+                            restore = QPushButton("清空输出位置" if plan.is_batch else "保存回原文件", container)
+                            if not plan.is_batch:
+                                self._save_original_button = restore
+                            ComponentStyle.apply_static(restore, ComponentKind.BUTTON)
+                            restore.clicked.connect(self._restore_output)
+                            layout.addWidget(restore)
+                            self._path_buttons.append(restore)
                         editor.textChanged.connect(self._clear_overwrite)
                     editor.textChanged.connect(self._options_changed)
                     self._fields.insertRow(row, label, container)
+                    self._path_rows[field_id] = container
+            configure_scheme_fields(self)
         finally:
             self._rendering = False
-        self._sync_save_original()
+        self._sync_destination_fields()
+        self._sync_encoding_label()
 
     def _options_changed(self, *_args) -> None:
         if self._rendering or self._execution_running or self._preflight_running:
@@ -163,13 +195,14 @@ class WritePlanDialog(ExecutionPlanDialog):
             editor.setEnabled(True)
         self._clear_details()
         self._progress.hide()
-        self._checks_scroll.hide()
+        self._feedback.show_status(False)
         self._transfer_summary.hide()
-        self._sync_save_original()
+        self._sync_destination_fields()
         self.plan_input_changed.emit()
 
     def _plugin_path_changed(self, value: str) -> None:
         del value
+        self._legacy_plugin_target = False
         self._field_edits["target_path"].clear()
         if self._overwrite is not None:
             self._overwrite.setChecked(False)
@@ -177,6 +210,10 @@ class WritePlanDialog(ExecutionPlanDialog):
     def _output_format_changed(self, *_args) -> None:
         if self._rendering:
             return
+        self._legacy_plugin_target = False
+        mode = self._field_edits.get("destination_mode")
+        if mode is not None:
+            mode.setCurrentIndex(mode.findData(DIRECTORY))
         for field in ("target_path", "output_directory"):
             if field in self._field_edits:
                 self._field_edits[field].clear()
@@ -185,6 +222,59 @@ class WritePlanDialog(ExecutionPlanDialog):
             plugin.clear()
         self._clear_overwrite()
         self._options_changed()
+        self._sync_encoding_label()
+
+    def _sync_encoding_label(self) -> None:
+        if hasattr(self, "_encoding_label"):
+            editor = self._field_edits.get("output_format")
+            selected = self._source_format if editor is None else editor.currentData()
+            summary = self._plan.text_encoding_summary if selected in {"auto", *TEXT_FORMATS} else ""
+            self._encoding_label.setText(summary)
+            self._encoding_label.setVisible(bool(summary))
+
+    def _destination_changed(self, *_args) -> None:
+        self._clear_overwrite()
+        self._options_changed()
+
+    def _native_plugin_destination(self) -> bool:
+        if "destination_mode" not in self._field_edits:
+            return False
+        format_editor = self._field_edits.get("output_format")
+        selected = format_editor.currentData() if format_editor is not None else self._source_format
+        return selected == ("auto" if self._plan.is_batch else "plugin.sse")
+
+    def _directory_destination(self) -> bool:
+        plugin = self._field_edits.get("plugin_path")
+        return (
+            self._native_plugin_destination()
+            and not self._legacy_plugin_target
+            and not (plugin is not None and plugin.text().strip())
+        )
+
+    def _sync_destination_fields(self) -> None:
+        multiple = self._has_selected_schemes
+        directory_destination = self._directory_destination()
+        original = directory_destination and self._field_edits["destination_mode"].currentData() == ORIGINAL
+        mode = self._field_edits.get("destination_mode")
+        if mode is not None:
+            self._fields.setRowVisible(mode, directory_destination and not multiple)
+        for field, widget in self._path_rows.items():
+            if field == "plugin_path":
+                self._fields.setRowVisible(widget, mode is None or self._native_plugin_destination())
+            elif field == "output_directory":
+                show_directory = self._plan.is_batch or directory_destination
+                self._fields.setRowVisible(widget, show_directory and not (original or multiple))
+            elif field == "target_path":
+                self._fields.setRowVisible(widget, not (directory_destination or multiple))
+        self._sync_save_original()
+
+    def edited_values(self) -> tuple[tuple[str, str], ...]:
+        fields = super().edited_values()
+        directory_destination = self._directory_destination()
+        excluded = {"target_path"} if directory_destination else {"destination_mode"}
+        if not self._plan.is_batch and not directory_destination:
+            excluded.add("output_directory")
+        return tuple((key, value) for key, value in fields if key not in excluded)
 
     def _select_plugin(self, path: str) -> None:
         if self._execution_running or self._preflight_running:
@@ -206,58 +296,51 @@ class WritePlanDialog(ExecutionPlanDialog):
     def _browse_output(self) -> None:
         if self._execution_running or self._preflight_running:
             return
+        if self._directory_destination():
+            self._browse_directory()
+            return
         plugin = self._field_edits.get("plugin_path")
-        reference = existing_reference(
-            plugin.text().strip() if plugin is not None and plugin.text().strip() else self._source_reference
-        )
+        plugin_path = plugin.text().strip() if plugin is not None else ""
+        filename = Path(plugin_path or self._source_name)
         format_editor = self._field_edits.get("output_format")
         output_format = format_editor.currentData() if format_editor is not None else self._source_format
-        json_output = output_format in {"json.paratranz", "json.dsd"}
-        sst_output = (
-            format_editor is not None and format_editor.currentData() == "sst.ssu9"
-        ) or self._source_reference.lower().endswith(".sst")
-        binary_eet_output = output_format == "binary.eet"
-        suggested = (
-            Path(reference).with_suffix(".json").name
-            if json_output and reference
-            else Path(reference).with_suffix(".sst").name
-            if sst_output and reference
-            else Path(reference).with_suffix(".eet").name
-            if binary_eet_output and reference
-            else Path(reference).name
-            if reference
-            else ""
-        )
-        path, _filter = QFileDialog.getSaveFileName(
+        suffix = {
+            "json.paratranz": ".json",
+            "json.dsd": ".json",
+            "sst.ssu8": ".sst",
+            "sst.ssu9": ".sst",
+            "binary.eet": ".eet",
+            "xml.eet": ".xml",
+            "xml.xt": ".xml",
+        }.get(output_format)
+        if suffix:
+            filename = filename.with_suffix(suffix)
+        current = self._field_edits["target_path"].text().strip()
+        reference = current or existing_reference(plugin_path or self._source_reference)
+        directory = QFileDialog.getExistingDirectory(
             self,
-            "另存为",
-            self._field_edits["target_path"].text() or suggested,
-            f"{'DSD JSON' if output_format == 'json.dsd' else 'ParaTranz JSON'} (*.json);;所有文件 (*)"
-            if json_output
-            else "xTranslator SST (*.sst)"
-            if sst_output
-            else "ESP-ESM Translator EET (*.eet)"
-            if binary_eet_output
-            else "ESP-ESM Translator XML (*.xml);;所有文件 (*)"
-            if output_format == "xml.eet"
-            else "xTranslator XML (*.xml);;所有文件 (*)"
-            if output_format == "xml.xt"
-            else "所有文件 (*)",
-            options=QFileDialog.Option.DontConfirmOverwrite,
+            "选择输出目录",
+            str(Path(reference).parent) if reference else "",
         )
-        if path:
-            self._field_edits["target_path"].setText(path)
+        if directory:
+            self._field_edits["target_path"].setText(str(Path(directory) / filename.name))
             if self._overwrite is not None:
                 self._overwrite.setChecked(False)
 
     def _browse_directory(self) -> None:
         if self._execution_running or self._preflight_running:
             return
+        editor = self._field_edits["output_directory"]
+        initial = editor.text().strip()
+        if not initial and not self._plan.is_batch:
+            reference = existing_reference(self._source_reference)
+            initial = str(Path(reference).parent) if reference else ""
         path = QFileDialog.getExistingDirectory(
-            self, "批量另存为：选择输出目录", self._field_edits["output_directory"].text()
+            self, "选择批量输出目录" if self._plan.is_batch else "选择输出目录", initial
         )
         if path:
-            self._field_edits["output_directory"].setText(path)
+            editor.setText(path)
+            self._clear_overwrite()
 
     def _restore_output(self) -> None:
         if self._execution_running or self._preflight_running:
@@ -318,7 +401,9 @@ class WritePlanDialog(ExecutionPlanDialog):
                 )
             )
             self._checks.setText("\n".join(messages) or "无法导出，请检查所选文件和输出位置。")
-        self._checks_scroll.setVisible(not result.ready)
+        self._feedback.show_status(not result.ready)
+        self._checks_scroll.horizontalScrollBar().setValue(0)
+        self._checks_scroll.verticalScrollBar().setValue(0)
 
     def _sync_controls(self):
         super()._sync_controls()
@@ -347,7 +432,10 @@ class WritePlanDialog(ExecutionPlanDialog):
         overwrite = any(
             "OVERWRITE" in item.check_id and item.status is not PreflightCheckStatus.PASSED for item in result.checks
         )
-        if overwrite and self._overwrite is not None and not self._overwrite.isChecked():
+        blocked = any(
+            item.status is PreflightCheckStatus.BLOCKED and "OVERWRITE" not in item.check_id for item in result.checks
+        )
+        if overwrite and not blocked and self._overwrite is not None and not self._overwrite.isChecked():
             answer = QMessageBox.question(
                 self,
                 "文件已存在",
@@ -358,7 +446,7 @@ class WritePlanDialog(ExecutionPlanDialog):
             if answer == QMessageBox.StandardButton.Yes:
                 self._overwrite.setChecked(True)
                 self._confirm()
-            return
+                return
         if result.ready:
             super()._confirm()
         else:
@@ -368,13 +456,13 @@ class WritePlanDialog(ExecutionPlanDialog):
     def render_preflight_error(self, message):
         self._automatic_export = False
         super().render_preflight_error(message)
-        self._checks_scroll.show()
         self._sync_controls()
 
     def _set_status(self, text, status, semantic):
         text = text.replace("如需重试，请重新运行预检", "如需重试，请再次点击导出文件")
         super()._set_status(text, status, semantic)
-        self._checks_scroll.setVisible(status not in {"checking", "not-run"})
+        self._checks_scroll.horizontalScrollBar().setValue(0)
+        self._feedback.show_status(True)
 
     def render_execution(self, activity, result) -> None:
         if self._execution_running and activity.is_terminal:

@@ -47,6 +47,20 @@ class ConfigMigrationError(ConfigRepositoryError):
     pass
 
 
+def validate_llm_endpoint_update(values: Mapping[str, Any | None]) -> None:
+    """Keep endpoint writes atomic. None removes an existing member during undo."""
+    endpoint_keys = set(values) & _ENDPOINT_KEYS
+    if endpoint_keys and endpoint_keys != _ENDPOINT_KEYS:
+        raise ConfigRepositoryError(
+            "config_endpoint_group_incomplete", "provider, base_url and model must be updated atomically"
+        )
+    required = _ENDPOINT_KEYS - {"base_url"} if values.get("provider") == "anthropic" else _ENDPOINT_KEYS
+    if endpoint_keys and any(values[key] is not None and not str(values[key]).strip() for key in required):
+        raise ConfigRepositoryError(
+            "config_endpoint_group_invalid", "provider and model are required; base_url can be empty for Anthropic"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ConfigSection:
     name: str
@@ -110,17 +124,7 @@ class ConfigRepository:
         *,
         expected_revision: int | None = None,
     ) -> ConfigSnapshot:
-        llm_keys = set(updates.get("llm", {})) & _ENDPOINT_KEYS
-        if llm_keys and llm_keys != _ENDPOINT_KEYS:
-            raise ConfigRepositoryError(
-                "config_endpoint_group_incomplete",
-                "provider, base_url and model must be updated atomically",
-            )
-        if llm_keys and any(not str(updates["llm"][key]).strip() for key in _ENDPOINT_KEYS):
-            raise ConfigRepositoryError(
-                "config_endpoint_group_invalid",
-                "provider, base_url and model must not be empty",
-            )
+        validate_llm_endpoint_update(updates.get("llm", {}))
         for section, values in updates.items():
             forbidden = set(values) & _SECRET_KEYS
             if forbidden:

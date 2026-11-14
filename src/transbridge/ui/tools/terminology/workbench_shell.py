@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 
 from transbridge.ui.foundation.tabler_icons import tabler_icon
 
+from .task_dialog import TerminologyTaskDialog
 from .view_models import TERMINOLOGY_AREAS, TerminologyArea
 
 
@@ -102,6 +103,7 @@ class TerminologyWorkbenchShell(QWidget):
         self._buttons.setExclusive(True)
         self._area_buttons: dict[TerminologyArea, QToolButton] = {}
         self._area_indices: dict[TerminologyArea, int] = {}
+        self._dialogs = {}
         for index, (area, label, _icon_id) in enumerate(TERMINOLOGY_AREAS):
             button = QToolButton(self.navigation)
             button.setText(label)
@@ -117,6 +119,11 @@ class TerminologyWorkbenchShell(QWidget):
             self._area_buttons[area] = button
             self._area_indices[area] = index
             navigation_layout.addWidget(button)
+            if index == 0:
+                button.hide()
+            else:
+                button.setText("历史与同步…" if index == 1 else "报告…")
+                button.setCheckable(False)
         brand.addWidget(self.navigation)
 
         self.pages = QStackedWidget(self.surface)
@@ -179,7 +186,12 @@ class TerminologyWorkbenchShell(QWidget):
 
     def add_area(self, area: TerminologyArea, widget: QWidget) -> None:
         expected = self._area_indices[area]
-        actual = self.pages.addWidget(widget)
+        if expected:
+            dialog = TerminologyTaskDialog("历史与同步" if expected == 1 else "术语报告", self)
+            dialog.content.addWidget(widget, 1)
+            dialog.content.addWidget(dialog.close_button)
+            self._dialogs[expected] = dialog
+        actual = self.pages.addWidget(QWidget(self) if expected else widget)
         if actual != expected:
             raise ValueError(f"术语工作区页面顺序错误：{area.value}")
         if actual == 0:
@@ -191,6 +203,9 @@ class TerminologyWorkbenchShell(QWidget):
         self.set_current_index(self._area_indices[area])
 
     def set_current_index(self, index: int) -> None:
+        if index in self._dialogs:
+            self._dialogs[index].open_task()
+            return
         self.pages.setCurrentIndex(index)
         button = self._buttons.button(index)
         if button is not None:

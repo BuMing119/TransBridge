@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from copy import copy
 from datetime import datetime
-from threading import Event
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -23,9 +22,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError
 from transbridge.application.projects import ParaTranzProjectBinding, normalize_paratranz_endpoint
-from transbridge.paratranz.project_catalog import ParaTranzCatalogKey, ParaTranzProjectCatalog
+from transbridge.paratranz.project_catalog import (
+    ParaTranzCatalogCancellation,
+    ParaTranzCatalogKey,
+    ParaTranzProjectCatalog,
+)
 from transbridge.paratranz.service import ParaTranzService
 from transbridge.ui.foundation.components import (
     ComponentKind,
@@ -38,27 +40,6 @@ from transbridge.ui.foundation.components import (
 from transbridge.ui.workers import ApiWorker
 
 from .remote_target_presenter import RemoteTargetPresenter
-
-
-class _CatalogCancellation:
-    """Small public cancellation source for the dialog-owned catalog request."""
-
-    def __init__(self) -> None:
-        self._event = Event()
-
-    @property
-    def is_cancelled(self) -> bool:
-        return self._event.is_set()
-
-    def wait(self, timeout: float | None = None) -> bool:
-        return self._event.wait(timeout)
-
-    def cancel(self) -> None:
-        self._event.set()
-
-    def raise_if_cancelled(self) -> None:
-        if self.is_cancelled:
-            raise ExternalServiceError(ExternalServiceCategory.CANCELLED, "ParaTranz project catalog request cancelled")
 
 
 class ParaTranzTargetDialog(QDialog):
@@ -86,7 +67,7 @@ class ParaTranzTargetDialog(QDialog):
         self._projects = ()
         self._generation = 0
         self._workers: list[ApiWorker] = []
-        self._cancellation: _CatalogCancellation | None = None
+        self._cancellation: ParaTranzCatalogCancellation | None = None
         self._closing = False
         self.setWindowTitle("选择 ParaTranz 同步目标")
         self.resize(520, 460)
@@ -154,7 +135,7 @@ class ParaTranzTargetDialog(QDialog):
             return
         self._generation += 1
         generation = self._generation
-        cancellation = _CatalogCancellation()
+        cancellation = ParaTranzCatalogCancellation()
         self._cancellation = cancellation
 
         def fetch():

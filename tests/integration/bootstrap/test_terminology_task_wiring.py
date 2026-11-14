@@ -90,7 +90,7 @@ def test_composition_exposes_project_terminology_without_runtime_release_evidenc
         assert isinstance(services.queries, SqliteTerminologyRepository)
         assert services.commands is app.use_cases.resolve("terminology_ui_commands")
         assert services.build_inputs is app.use_cases.resolve("terminology_build_input")
-        assert services.build_inputs._max_unstreamed_source_count == 7
+        assert services.build_inputs._delegate._max_unstreamed_source_count == 7
         assert app.use_cases.resolve("effective_terminology_factory") is app.use_cases.resolve(
             "terminology_ui_services_factory"
         )

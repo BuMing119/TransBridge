@@ -36,7 +36,8 @@ def build_manager_layout(view):
     view.create_button = button("新建空白…", view._create_profile)
     view.copy_button = button("复制…", view._copy_profile)
     view.rename_button = button("重命名…", view._rename_profile)
-    view.archive_button = button("归档", view._archive_profile)
+    view.archive_button = button("删除方案…", view._archive_profile)
+    view.archive_button.setToolTip("将方案移入已删除列表，可恢复；现有翻译版本保留原关联修订。")
     view.restore_button = button("恢复", view._restore_profile)
     for item in (view.create_button, view.copy_button, view.rename_button, view.archive_button, view.restore_button):
         row.addWidget(item)
@@ -46,7 +47,7 @@ def build_manager_layout(view):
     view.base_create_button.setEnabled(view._base_snapshot_reader is not None)
     creation.addWidget(view.base_create_button)
     creation.addStretch(1)
-    view.show_archived = QCheckBox("显示已归档", view)
+    view.show_archived = QCheckBox("显示已删除方案（可恢复）", view)
     view.show_archived.toggled.connect(view._filter_changed)
     creation.addWidget(view.show_archived)
     layout.addLayout(creation)

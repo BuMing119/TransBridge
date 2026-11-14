@@ -28,14 +28,14 @@ def _assets(*, draft=False, version=False, complete="full", freshness="current",
 @pytest.mark.parametrize(
     "assets,action,explanation",
     [
-        (_assets(), "build", "生成草稿"),
-        (_assets(version=True), "edit", "继续编辑"),
-        (_assets(draft=True, complete="partial", review=2), "build", "重新整理来源"),
-        (_assets(draft=True, freshness="stale", conflicts=1), "build", "重新整理来源"),
-        (_assets(draft=True, conflicts=2, review=3), "conflicts", "处理异译"),
-        (_assets(draft=True, review=3), "review", "复核术语"),
-        (_assets(draft=True), "publish", "检查影响"),
-        (_assets(draft=True, version=True), "publish", "检查影响"),
+        (_assets(), "build", "提取或导入术语"),
+        (_assets(version=True), "edit", "查看与编辑术语"),
+        (_assets(draft=True, complete="partial", review=2), "build", "重新提取"),
+        (_assets(draft=True, freshness="stale", conflicts=1), "build", "重新提取"),
+        (_assets(draft=True, conflicts=2, review=3), "conflicts", "请选择冲突项"),
+        (_assets(draft=True, review=3), "review", "已有决定不同"),
+        (_assets(draft=True), "publish", "应用后"),
+        (_assets(draft=True, version=True), "publish", "应用后"),
     ],
 )
 def test_only_the_next_required_action_is_primary(workbench, assets, action, explanation):
@@ -43,22 +43,21 @@ def test_only_the_next_required_action_is_primary(workbench, assets, action, exp
     window._workflow.render(assets)
     terms = window.terms_view
     actions = {
-        "build": terms.workflow.build_button,
+        "build": window.build_view.build_button,
         "edit": terms.workflow.edit_button,
         "conflicts": terms.attention_button,
         "review": terms.review_button,
         "publish": terms.workflow.publish_button,
     }
-    expected = [action] if assets.draft is not None else []
+    expected = [] if action == "edit" else [action]
     assert [
         key
         for key, button in actions.items()
         if not button.isHidden() and button.property("tbTerminologyPrimary") and button.isVisibleTo(terms)
     ] == expected
-    assert terms.workflow.isHidden() is (assets.draft is None)
+    assert not terms.workflow.isHidden()
     assert explanation in terms.workflow.detail.text()
     assert explanation in window.versions_view.draft_status.text()
-    assert "下一步" in terms.workflow.detail.text()
     assert terms.workflow.publish_button.isHidden() is (action != "publish")
     assert terms.workflow.publish_button.isEnabled() is (action == "publish")
     assert window.versions_view.continue_button.isHidden() is (action == "publish")
@@ -74,6 +73,7 @@ def test_switching_content_explains_what_is_edited_and_when_it_takes_effect(work
     window.show()
     settle_layout(layout_app)
     terms = window.terms_view
+    terms.browse_button.click()
     assert terms.content_context.isHidden()
     if entry == "versions":
         window.workspace.set_current_index(1)
@@ -82,8 +82,9 @@ def test_switching_content_explains_what_is_edited_and_when_it_takes_effect(work
         window._workflow.edit_current()
     _wait(lambda: window._workflow.state.has_draft and window.draft_model.rowCount() == 1)
     assert terms.content_context.isHidden()
-    assert terms.workflow.title.text() == "正在编辑术语"
-    assert "发布" in terms.workflow.detail.text()
+    assert terms.editor_dialog.isVisible()
+    assert terms.workflow.title.text() == "结果已就绪，可以应用"
+    assert "应用" in terms.workflow.detail.text()
     project_id, variant_id = harness.context.project_id, harness.context.variant_id
     assert harness.repository.effective_version(project_id, variant_id).ref == published.ref
     QTest.mouseClick(terms.effective_button, Qt.MouseButton.LeftButton)
@@ -117,6 +118,9 @@ def test_version_page_routes_to_the_blocking_step_without_building_or_publishing
         assert window.terms_view.build_details_button.isChecked()
     elif window._workflow.state.next_action == "review":
         assert window.draft_view.filters.search.text() == ""
+        assert window.terms_view.editor_dialog.isVisible()
+    else:
+        assert window.terms_view.conflict_dialog.isVisible()
     project_id, variant_id = harness.context.project_id, harness.context.variant_id
     assert harness.repository.active_draft(project_id, variant_id).ref == original.ref
     assert harness.repository.effective_version(project_id, variant_id) is None
@@ -143,7 +147,7 @@ def test_saving_explains_the_publish_blocker_until_the_write_finishes(workbench,
         assert not window.terms_view.workflow.publish_button.isEnabled()
         assert not window.versions_view.publish_button.isEnabled()
         assert "正在保存" in window.terms_view.workflow.title.text()
-        assert "保存完成" in window.terms_view.workflow.detail.text()
+        assert "完成后可以应用" in window.terms_view.workflow.detail.text()
         assert "正在保存" in window.versions_view.draft_status.text()
         assert window.versions_view.continue_button.isHidden()
     finally:
@@ -164,20 +168,22 @@ def test_guidance_and_required_actions_fit_the_supported_narrow_window(workbench
     window.show()
     settle_layout(layout_app)
     terms = window.terms_view
+    terms.browse_button.click()
     for button, expected in ((terms.all_terms_button, "未发布草稿"), (terms.attention_button, "草稿中的异译")):
         QTest.mouseClick(button, Qt.MouseButton.LeftButton)
         settle_layout(layout_app)
         assert expected in terms.content_context.text()
         assert window.width() == width
         for widget in (terms.workflow, terms.content_context, terms.review_button, terms.attention_button, terms.pages):
-            if not widget.isVisibleTo(window):
+            host = widget.window()
+            if not widget.isVisible():
                 continue
-            top_left = widget.mapTo(window, QPoint())
+            top_left = widget.mapTo(host, QPoint())
             assert top_left.x() >= 0 and top_left.y() >= 0
-            assert top_left.x() + widget.width() <= window.width()
-            assert top_left.y() + widget.height() <= window.height()
+            assert top_left.x() + widget.width() <= host.width()
+            assert top_left.y() + widget.height() <= host.height()
         for label in (terms.workflow.title, terms.workflow.detail, terms.content_context):
-            if label.isVisibleTo(window):
+            if label.isVisible():
                 assert label.height() >= label.heightForWidth(label.width())
         assert not terms.review_button.geometry().intersects(terms.attention_button.geometry())
     window.workspace.set_current_index(1)
@@ -186,8 +192,9 @@ def test_guidance_and_required_actions_fit_the_supported_narrow_window(workbench
     assert versions.draft_status.height() >= versions.draft_status.heightForWidth(versions.draft_status.width())
     controls = (versions.continue_button, versions.publish_button, versions.discard_button)
     for button in controls:
-        top_left = button.mapTo(window, QPoint())
-        assert 0 <= top_left.x() <= window.width() - button.width()
-        assert 0 <= top_left.y() <= window.height() - button.height()
+        host = versions.window()
+        top_left = button.mapTo(host, QPoint())
+        assert 0 <= top_left.x() <= host.width() - button.width()
+        assert 0 <= top_left.y() <= host.height() - button.height()
     assert not controls[0].geometry().intersects(controls[1].geometry())
     assert not controls[1].geometry().intersects(controls[2].geometry())

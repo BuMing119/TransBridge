@@ -152,6 +152,30 @@ def test_archive_reviews_actual_users_and_preserves_association_when_restored(ed
     assert service.published_revision(second.profile_id, 1) is not None
 
 
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_delete_button_removes_unpublished_scheme_and_can_restore_its_draft(editor, monkeypatch, confirmed):
+    service, dialog, _first, second = editor
+    assert dialog.archive_button.text() == "删除方案…"
+    assert not dialog.archive_button.isHidden()
+    monkeypatch.setattr(manager_module, "confirm_archive", lambda *_args: confirmed)
+    dialog.archive_button.click()
+    active_ids = {profile.profile_id for profile in service.list_profiles("project-a")}
+    assert (second.profile_id not in active_ids) is confirmed
+    if confirmed:
+        assert "已删除" in dialog.status_label.text()
+        dialog.show_archived.setChecked(True)
+        dialog.select_profile(second.profile_id)
+        assert "已删除" in dialog.profile_combo.currentText()
+        dialog.restore_button.click()
+    else:
+        assert dialog.current_profile.profile_id == second.profile_id
+    restored = next(
+        profile for profile in service.list_profiles("project-a") if profile.profile_id == second.profile_id
+    )
+    assert restored.draft == second.draft
+    assert restored.latest_published_revision is None
+
+
 def test_archive_dialog_renders_every_affected_variant(editor):
     service, dialog, _first, second = editor
     service.publish(second.profile_id, expected_draft_revision=0)

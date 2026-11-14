@@ -40,9 +40,9 @@ class VersionInteractionController:
         if (
             not _confirm(
                 self._parent,
-                "放弃当前草稿",
-                _discard_impact(draft) + "\n已发布版本和历史会保留。此操作无法撤销。",
-                "放弃草稿",
+                "丢弃本次结果",
+                _discard_impact(draft) + "\n当前生效术语和历史会保留。此操作无法撤销。",
+                "丢弃结果",
             )
             or self._presenter.closed
         ):

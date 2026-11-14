@@ -42,6 +42,14 @@ class PluginTransferDraft:
     write: HydratedWriteDraft
     plugin_path: str
 
+    @property
+    def target_path(self):
+        return self.write.target_path
+
+    @property
+    def source_snapshot(self):
+        return self.write.source_snapshot
+
 
 @dataclass(frozen=True, slots=True)
 class PluginTransferPreflight:
@@ -50,6 +58,10 @@ class PluginTransferPreflight:
     checks: tuple[WritePreflightCheck, ...]
     report: PluginTransferReport
     leases: tuple[TransferFileLease, ...] = ()
+
+    @property
+    def artifact_fingerprints(self):
+        return () if self.write_preflight is None else self.write_preflight.artifact_fingerprints
 
     @property
     def ready(self) -> bool:

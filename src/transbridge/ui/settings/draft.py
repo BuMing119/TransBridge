@@ -9,6 +9,8 @@ from dataclasses import dataclass
 import os
 from urllib.parse import urlsplit
 
+from transbridge.infra.llm_request_config import resolve_anthropic_endpoint
+
 
 @dataclass(slots=True)
 class ParaTranzSettingsDraft:
@@ -75,7 +77,12 @@ class SettingsConfigDraft:
     def validate(self) -> str | None:
         if self.llm is not None:
             base_url = str(getattr(self.llm, "base_url", "") or "").strip()
-            if base_url and not _is_http_url(base_url):
+            if getattr(self.llm, "provider", "") == "anthropic":
+                try:
+                    resolve_anthropic_endpoint(base_url)
+                except ValueError as exc:
+                    return str(exc)
+            elif base_url and not _is_http_url(base_url):
                 return "AI 服务 Base URL 必须是有效的 HTTP(S) 地址。"
             embedding = getattr(self.llm, "embedding", None)
             embedding_url = str(getattr(embedding, "base_url", "") or "").strip()

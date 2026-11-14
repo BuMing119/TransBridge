@@ -6,13 +6,15 @@ from uuid import uuid4
 from PyQt6.QtWidgets import QApplication
 import pytest
 
+from tests.plugin_fixtures import write_plugin
 from transbridge.application.contracts import RequestContext
 from transbridge.application.io import FormatId
 from transbridge.application.io.paratranz_mapping import PARATRANZ_EXTENSION_METADATA
 from transbridge.application.projects import ProjectProvisioningRequest
 from transbridge.bootstrap.persistence import build_persistence_v2_services
+from transbridge.config.text_encoding import TextEncodings
 from transbridge.persistence.task_store import TaskStore
-from transbridge.smart_assistant.tools.tool_parser import _tool_import_json, _tool_parse_eet
+from transbridge.smart_assistant.tools.tool_parser import _tool_import_json, _tool_parse_eet, _tool_parse_esp
 from transbridge.smart_assistant.tools.types import ExecutionContext
 from transbridge.ui.context import AppContext
 
@@ -33,6 +35,7 @@ def project(tmp_path, monkeypatch):
         project_commands=services.gui_project_commands,
         runtime_context=request,
         task_store=TaskStore(tmp_path / "task-store-v1"),
+        project_text_encodings=services.project_text_encodings,
     )
     assert services.gui_project_commands.create_project(ProjectProvisioningRequest("Repair"), request).is_success
     source = tmp_path / "source.xml"
@@ -64,6 +67,48 @@ def test_agent_source_creation_is_saved_with_hydration(project):
     assert project.services.gui_project_commands.save(project.request).is_success
     ref = project.services.project_lifecycle.active.formal_variant_ref
     assert len(project.services.variants.load(ref).value.envelope.data["entries"]) == 1
+
+
+@pytest.mark.parametrize("encoding,original", [("cp1252", "Café"), ("cp936", "武器")])
+def test_agent_plugin_import_uses_active_project_input_encoding(project, encoding, original):
+    service = project.services.project_text_encodings
+    path = service.active_project_path(project.request)
+    preview = service.prepare(path, TextEncodings(input_encoding=encoding), project.request)
+    assert preview.is_success, preview.diagnostics
+    assert service.commit(preview.value.token, project.request).is_success
+
+    source = write_plugin(project.root / "Localized.esp", [(0x800, "Item", original)], encoding=encoding)
+
+    result = _tool_parse_esp({"path": str(source)}, ExecutionContext(app_context=project.ctx))
+    assert result.success, result.message
+    assert [entry.original for entry in project.ctx.collection] == [original]
+    assert project.ctx.active_slot.source_snapshot.encoding == encoding
+    assert [item["format_options"].get("input_encoding") for item in project.ctx.project_sources] == [encoding]
+
+
+@pytest.mark.parametrize("language, succeeds", [("english", True), ("chinese", False)])
+def test_agent_plugin_import_uses_language_fallback_and_preserves_project_on_failure(project, language, succeeds):
+    service = project.services.project_text_encodings
+    preview = service.prepare(
+        service.active_project_path(project.request), TextEncodings(source_language=language), project.request
+    )
+    assert preview.is_success, preview.diagnostics
+    assert service.commit(preview.value.token, project.request).is_success
+    source = write_plugin(project.root / "Invalid.esp", [(0x800, "Item", "Café")], encoding="cp1252")
+    before = project.services.project_lifecycle.active.variant.snapshot()
+
+    result = _tool_parse_esp({"path": str(source)}, ExecutionContext(app_context=project.ctx))
+
+    assert result.success is succeeds, result.message
+    if succeeds:
+        assert [entry.original for entry in project.ctx.collection] == ["Café"]
+        metadata = dict(project.ctx.active_slot.source_snapshot.metadata)
+        assert metadata["source_language"] == language
+        assert metadata["text_read_policy"] == "xtranslator-v1"
+        return
+    assert "FULL" in result.message and "utf-8" in result.message
+    assert not project.ctx.project_sources
+    assert project.services.project_lifecycle.active.variant.snapshot() == before
 
 
 def test_internal_append_commits_existing_complete_entry_key(project):

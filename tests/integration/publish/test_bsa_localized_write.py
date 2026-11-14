@@ -56,7 +56,7 @@ def bsa_source(tmp_path, request):
         + _group("INFO", dialogue)
     )
     strings = {
-        "strings": _strings({1: b"Original name", 4: b"Unselected name", 101: b"Caf\xe9 unreferenced"}, "strings"),
+        "strings": _strings({1: b"Original name", 4: b"Unselected name", 101: "Café unreferenced".encode()}, "strings"),
         "dlstrings": _strings({2: b"Original detail", 102: b"Unreferenced detail"}, "dlstrings"),
         "ilstrings": _strings({3: b"Original dialogue", 103: b"Unreferenced dialogue"}, "ilstrings"),
     }
@@ -140,9 +140,9 @@ def _assert_bundle(case, result):
         assert len(written) == len(original)
         unused = {"strings": 101, "dlstrings": 102, "ilstrings": 103}[suffix]
         assert written.get(unused) == original.get(unused)
-        # The unchanged cp1252 chunk must stay byte-for-byte intact as well.
+        # Unreferenced text must stay byte-for-byte intact with the same codec.
         if suffix == "strings":
-            assert b"Caf\xe9 unreferenced\0" in output.read_bytes()
+            assert "Café unreferenced\0".encode() in output.read_bytes()
 
 
 def test_real_bsa_hydration_publishes_plugin_and_all_three_companions_without_touching_sources(bsa_source):

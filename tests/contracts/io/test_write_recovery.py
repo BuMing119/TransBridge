@@ -59,7 +59,7 @@ def test_locked_empty_xml_keeps_source_translation_and_status_through_publicatio
 @pytest.mark.parametrize("suffix", ["strings", "dlstrings", "ilstrings"])
 def test_locked_empty_strings_preserves_bytes_through_roundtrip_and_nested_output(tmp_path, suffix):
     source = tmp_path / f"source.{suffix}"
-    original = (FIXTURES / "strings" / f"integrity.{suffix}").read_bytes()
+    original = (FIXTURES / "strings" / f"utf8-integrity.{suffix}").read_bytes()
     source.write_bytes(original)
     format_id = FormatId(f"strings.{suffix}")
     parsed = TranslationIoUseCase().parse(

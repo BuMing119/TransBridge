@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
 from transbridge.application.contracts import JobRef
@@ -15,13 +15,17 @@ from transbridge.ui.source_input_state import SourceInputScope, ensure_source_in
 from .asset_presentation import WorkbenchAssetPresentation
 from .asset_refresh import AssetRefreshCoordinator
 from .async_actions import AsyncActionRunner
+from .build_projection import task_detail
 from .build_view import BuildView
+from .conflict_review_controller import ConflictReviewController
 from .conflicts_view import ConflictsView
 from .context_binding import TerminologyWindowContext
 from .draft_interactions import DraftInteractionController
 from .draft_view import DraftView
 from .draft_write_queue import DraftWriteQueue
 from .effective_view import EffectiveTermsView
+from .export_controller import TerminologyExportController
+from .extraction_cache_actions import ExtractionCacheActions
 from .history_view import HistoryView
 from .launcher import TerminologyLauncher
 from .object_views import TermsView, VersionsView
@@ -39,7 +43,7 @@ from .table_models import decision_status_label as _decision_status_label, make_
 from .task_adapter import TerminologyTaskViewState
 from .term_browsing import TermBrowsingController
 from .version_interactions import VersionInteractionController
-from .view_models import TerminologyArea, TerminologyPreflightViewState, business_diagnostic, phase_label
+from .view_models import TerminologyArea, TerminologyPreflightViewState, business_diagnostic
 from .workbench_shell import TerminologyWorkbenchShell
 from .workflow_controller import TerminologyWorkflowController
 
@@ -71,7 +75,7 @@ class TerminologyWindow(QWidget):
         self._task_refs: dict[str, JobRef] = {}
         self._displayed_run_id: str | None = None
         self._finished_runs: set[str] = set()
-        self._conflict_filter = ConflictFilter()
+        self._conflict_filter = ConflictFilter(review_state="pending")
         self._closed = False
         self._invalidated = False
         self._sync_tasks: TerminologySyncTaskAdapter | None = None
@@ -93,6 +97,7 @@ class TerminologyWindow(QWidget):
             self, presenter, self._run_read, self._run_command, self._bind_existing_assets
         )
         self._init_ui()
+        self._exports = TerminologyExportController(self)
         self._asset_view = WorkbenchAssetPresentation(self)
         self._asset_refresh = AssetRefreshCoordinator(
             self,
@@ -109,7 +114,9 @@ class TerminologyWindow(QWidget):
             on_error=self._show_command_error,
         )
         self._workflow = TerminologyWorkflowController(self)
+        self._extraction_cache = ExtractionCacheActions(self)
         self._save_close = DraftSaveCloseGuard(self, self._draft_writes)
+        self._conflict_review = ConflictReviewController(self)
         self._context_binding.invalidated.connect(self.invalidate_context)
         self.task_changed.connect(self._on_task_change, Qt.ConnectionType.QueuedConnection)
         presenter.bind_tasks(self.task_changed.emit)
@@ -144,7 +151,6 @@ class TerminologyWindow(QWidget):
         self._browsing = TermBrowsingController(self.presenter.context, self.effective_model, self.draft_model)
         self.conflicts_view = ConflictsView(self.conflicts_model, self)
         self.conflicts_view.query_changed.connect(self._replace_conflict_query)
-        self.conflicts_view.review_requested.connect(self._draft_actions.review)
 
         self.effective_view = EffectiveTermsView(self.effective_model, self)
         self.effective_view.query_changed.connect(lambda filters: self._browsing.replace_filter("effective", filters))
@@ -160,9 +166,10 @@ class TerminologyWindow(QWidget):
 
         self.build_view = BuildView(self)
         self.build_view.preflight_requested.connect(self.run_preflight)
+        self.build_view.extraction_options.changed.connect(lambda: self.run_preflight(repair=False))
         self.build_view.build_requested.connect(self._start_build)
         self.build_view.cancel_requested.connect(self._cancel_displayed)
-        self.build_view.terms_requested.connect(lambda: self.workspace.set_current_area(TerminologyArea.TERMS))
+        self.build_view.terms_requested.connect(lambda: self.terms_view._set_page(0))
         self.build_view.versions_requested.connect(lambda: self.workspace.set_current_area(TerminologyArea.VERSIONS))
         self.terms_view = TermsView(
             self.draft_view, self.conflicts_view, self.build_view, self, effective=self.effective_view
@@ -215,7 +222,7 @@ class TerminologyWindow(QWidget):
         self.workspace.add_area(TerminologyArea.VERSIONS, self.versions_view)
         self.workspace.add_area(TerminologyArea.REPORTS, self.reports_view)
 
-    def run_preflight(self, *, repair=True) -> None:
+    def run_preflight(self, *, repair=True, refresh_assets=True) -> None:
         if not self.context_is_current:
             return
         if repair:
@@ -226,16 +233,17 @@ class TerminologyWindow(QWidget):
                 self._ui_context, "template", source_keys=tuple(scope.slots), resume=self.run_preflight, parent=self
             ):
                 return
-            if self._ui_context is not None:
-                self.presenter.set_source_scope(
-                    tuple(dict.fromkeys(slot.source_id for slot in scope.slots.values() if slot.source_id))
-                )
         self._preflight_started = True
         self.build_view.preflight_button.setEnabled(False)
         if repair:
             self.operation_notice.show_message("正在检查当前工程、翻译版本和来源…")
+        config = self.build_view.extraction_options.configuration()
+        revision = self.presenter.configure_build(config)
         self._actions.run(
-            self.presenter.preflight, self._preflight_ready, key="preflight", on_error=self._preflight_failed
+            lambda: self.presenter.preflight(config_revision=revision),
+            lambda state: self._preflight_ready(state, refresh_assets=refresh_assets),
+            key="preflight",
+            on_error=self._preflight_failed,
         )
 
     def bind_page(self, section: str, snapshot_ref: object, *, query_fingerprint: str = "all") -> None:
@@ -285,7 +293,7 @@ class TerminologyWindow(QWidget):
             self.closed.emit()
         super().closeEvent(event)
 
-    def _preflight_ready(self, state: object) -> None:
+    def _preflight_ready(self, state: object, *, refresh_assets=True) -> None:
         if self._closed:
             return
         self.build_view.preflight_button.setEnabled(True)
@@ -295,7 +303,8 @@ class TerminologyWindow(QWidget):
         self.workspace.set_context(state.project_display_name, state.variant_display_name, state.source_count)
         if state.ready:
             self.versions_view.set_context(state.current_version_value)
-        self._bind_existing_assets()
+        if refresh_assets:
+            self._bind_existing_assets()
 
     def _preflight_failed(self, error: object) -> None:
         if self._closed:
@@ -324,8 +333,12 @@ class TerminologyWindow(QWidget):
         self._asset_view.apply(assets, workload)
 
     def _start_build(self) -> None:
-        self._workflow.follow_build = True
-        self._run_command(self.presenter.start_build, "构建任务已开始，可在此窗口或任务中心查看进度。")
+        config = self.build_view.extraction_options.configuration(user_action=True)
+        revision = self.presenter.configure_build(config)
+        self._run_command(
+            lambda: self.presenter.start_build(config_revision=revision),
+            "构建任务已开始，可在此窗口或任务中心查看进度。",
+        )
 
     def _publish(self) -> None:
         self._version_actions.publish()
@@ -408,6 +421,7 @@ class TerminologyWindow(QWidget):
         if value.run_id in self._finished_runs:
             return
         self._displayed_run_id = None if value.is_terminal else value.run_id
+        self._workflow.set_task_busy(not value.is_terminal)
         operation = {
             TerminologyWorkloadType.BUILD: "来源整理",
             TerminologyWorkloadType.PUBLISH: "术语发布",
@@ -417,9 +431,7 @@ class TerminologyWindow(QWidget):
         }.get(value.workload_type, "术语任务")
         status = f"{operation}：{value.message}"
         self.operation_notice.show_message(status)
-        detail = f"{phase_label(value.phase)}"
-        if value.current_object:
-            detail += f" · {value.current_object}"
+        detail = task_detail(value)
         self.build_view.set_task_progress(
             status,
             detail,
@@ -455,12 +467,23 @@ class TerminologyWindow(QWidget):
             self.reports_view.set_notice(business_diagnostic(code, reason or ""))
 
     def _replace_conflict_query(self, search: str, risk: str) -> None:
+        if hasattr(self, "_conflict_review") and not self._conflict_review.allow_leave():
+            view = self.conflicts_view
+            with QSignalBlocker(view.tabs), QSignalBlocker(view.search), QSignalBlocker(view.risk):
+                view.tabs.setCurrentIndex(
+                    ("pending", "resolved", "equivalent").index(self._conflict_filter.review_state)
+                )
+                view.search.setText(self._conflict_filter.search)
+                view.risk.setCurrentIndex(view.risk.findData(self._conflict_filter.risk or "all"))
+            return
+        self._conflict_filter = ConflictFilter(
+            search, None if risk == "all" else risk, review_state=self.conflicts_view.review_state
+        )
         query = getattr(self.conflicts_model, "_query", None)
         if query is None:
             return
         ref = query.snapshot_ref
         build_ref = ref.build_ref if isinstance(ref, ConflictQuery) else ref
-        self._conflict_filter = ConflictFilter(search, None if risk == "all" else risk)
         self.bind_page("conflicts", build_ref)
 
 

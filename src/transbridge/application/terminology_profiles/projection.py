@@ -10,6 +10,8 @@ import re
 from types import MappingProxyType
 
 from .models import ProfileOccurrenceBinding, ProfileTermMapping, TerminologyProfileContent, normalize_term
+from .occurrence_alignment import AlignmentResolver, checked_decision
+from .occurrence_matching import analyze_occurrences, candidate_for
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,14 +122,26 @@ def _profile_indexes(content: TerminologyProfileContent) -> _ProfileIndexes:
 class TerminologyProfileProjector:
     """Project text without mutating the authoritative common translation."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, resolver: AlignmentResolver | None = None) -> None:
         self._prepared: tuple[TerminologyProfileContent, PreparedProfileProjector] | None = None
+        self._resolver = resolver
 
-    def prepare(self, content: TerminologyProfileContent, *, ignore_missing: bool = False) -> PreparedProfileProjector:
+    def prepare(
+        self,
+        content: TerminologyProfileContent,
+        *,
+        ignore_missing: bool = False,
+        target_term_keys: frozenset[str] = frozenset(),
+    ) -> PreparedProfileProjector:
         cached = self._prepared
-        if cached is not None and cached[0] is content and cached[1]._ignore_missing == ignore_missing:
+        if (
+            cached is not None
+            and cached[0] is content
+            and cached[1]._ignore_missing == ignore_missing
+            and cached[1]._target_term_keys == target_term_keys
+        ):
             return cached[1]
-        prepared = PreparedProfileProjector(_profile_indexes(content), ignore_missing)
+        prepared = PreparedProfileProjector(_profile_indexes(content), ignore_missing, self._resolver, target_term_keys)
         # Publish the pair together; concurrent callers retain their own frozen result.
         self._prepared = (content, prepared)
         return prepared
@@ -152,6 +166,8 @@ class PreparedProfileProjector:
 
     _indexes: _ProfileIndexes
     _ignore_missing: bool = False
+    _resolver: AlignmentResolver | None = None
+    _target_term_keys: frozenset[str] = frozenset()
 
     def project(
         self, *, entry_key: str, original: str, common_translation: str, plugin_id: str | None = None
@@ -181,8 +197,6 @@ class PreparedProfileProjector:
                     )
                 )
                 continue
-            if mapping.translation == binding.expected_text:
-                continue
             if common_translation[binding.start : binding.end] != binding.expected_text:
                 diagnostics.append(
                     ProjectionDiagnostic(
@@ -193,9 +207,13 @@ class PreparedProfileProjector:
                     )
                 )
                 continue
+            if mapping.translation == binding.expected_text:
+                continue
             replacements.append(_Replacement(binding.start, binding.end, mapping.translation, binding.term_key, True))
 
-        for mapping in indexes.matching(original, plugin_id):
+        matches = indexes.matching(original, plugin_id)
+        candidates = []
+        for mapping in matches:
             if mapping.term_key in bound_keys:
                 continue
             if mapping.translation == mapping.base_translation:
@@ -212,7 +230,7 @@ class PreparedProfileProjector:
                 continue
             spans = _literal_spans(common_translation, mapping.base_translation)
             if not spans:
-                if self._ignore_missing:
+                if self._ignore_missing or mapping.translation in common_translation:
                     continue
                 diagnostics.append(
                     ProjectionDiagnostic(
@@ -223,9 +241,39 @@ class PreparedProfileProjector:
                     )
                 )
                 continue
-            replacements.extend(
-                _Replacement(start, end, mapping.translation, mapping.term_key, False) for start, end in spans
+            candidates.extend(candidate_for(mapping, common_translation, start, end) for start, end in spans)
+
+        if candidates and not diagnostics:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if not any(
+                    candidate.start < explicit.end and explicit.start < candidate.end for explicit in replacements
+                )
+            ]
+            analysis = analyze_occurrences(
+                entry_key, original, common_translation, plugin_id, matches, candidates, self._target_term_keys
             )
+            selected = analysis.automatic
+            if selected is None:
+                decision = None if self._resolver is None else self._resolver.resolve(analysis.request)
+                if decision is not None:
+                    decision = checked_decision(decision, analysis.request)
+                if decision is not None and decision.certain:
+                    selected = decision.selected_ids
+                else:
+                    diagnostics.append(
+                        ProjectionDiagnostic(
+                            "occurrence_alignment_required",
+                            analysis.reason if decision is None else f"位置判断未确定：{decision.rationale}",
+                            entry_key,
+                        )
+                    )
+            for index in selected or ():
+                candidate = analysis.request.candidates[index]
+                replacements.append(
+                    _Replacement(candidate.start, candidate.end, candidate.translation, candidate.term_key, False)
+                )
 
         accepted, rejected = _without_overlaps(replacements)
         for item in rejected:
@@ -259,7 +307,9 @@ def source_contains(source: str, term: str) -> bool:
 
 
 def _normalized_source_contains(source_normalized: str, term_normalized: str) -> bool:
-    if not term_normalized:
+    # Reject absent literals before compiling a term-specific boundary pattern;
+    # large profiles otherwise churn Python's bounded regular-expression cache.
+    if not term_normalized or term_normalized not in source_normalized:
         return False
     if re.fullmatch(r"[\w .'-]+", term_normalized, flags=re.ASCII):
         return re.search(rf"(?<![\w]){re.escape(term_normalized)}(?![\w])", source_normalized) is not None

@@ -223,7 +223,7 @@ class IncrementalTerminologyBuilder:
         current_build_key = build_key(result_snapshot)
         components = self._planner.components(snapshot, llm_enabled=llm_enabled)
         try:
-            exact = self._load_exact(current_build_key, snapshot)
+            exact = None if self._full_builder.judges_conflicts else self._load_exact(current_build_key, snapshot)
         except Exception as exc:  # noqa: BLE001 - corrupted disposable cache is a full-build miss
             return self._fallback_full(
                 snapshot,
@@ -350,6 +350,7 @@ class IncrementalTerminologyBuilder:
             tuple(logical_by_component[item.component_id] for item in components),
             tuple(records_by_source.values()),
             baseline_decisions=baseline_decisions,
+            cancellation=cancellation,
         )
         self._store_exact(current_build_key, outcome.result, diagnostics)
         decision = BuildReuseDecision.INCREMENTAL if reused_components or reused_sources else BuildReuseDecision.FULL
@@ -381,6 +382,9 @@ class IncrementalTerminologyBuilder:
         return result
 
     def _store_exact(self, key: str, result: BuildResult, diagnostics: list[str]) -> None:
+        if self._full_builder.judges_conflicts:
+            # Extraction components remain reusable; a previous judgment is not.
+            return
         payload = _json_bytes({
             "schema": BUILD_CACHE_SCHEMA,
             "input_schema": BUILD_KEY_SCHEMA,

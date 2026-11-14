@@ -4,10 +4,14 @@ import logging
 from pathlib import Path
 
 from sse_plugin_interface.datatypes import RawString
+from sse_plugin_interface.subrecord import StringSubrecord
 
+from transbridge.config.text_encoding import DEFAULT_TEXT_ENCODING, normalize_text_encoding
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.parser.plugin.binary_io import PluginBinaryIO
 from transbridge.parser.plugin.plugin_with_context import SSEPluginWithContext
-from transbridge.parser.strings_file import PluginStringsLookup, PluginStringsWriter
+from transbridge.parser.plugin.text_subrecords import EncodedStringSubrecord
+from transbridge.parser.strings_file import PluginStringsLookup
 
 from .plugin_source import capture_plugin_write_source
 
@@ -29,20 +33,23 @@ class PluginWriter:
         plugin: SSEPluginWithContext,
         strings_lookup: PluginStringsLookup | None = None,
         language: str = "english",
+        *,
+        output_encoding: str = DEFAULT_TEXT_ENCODING,
     ) -> None:
         """
         Args:
             plugin: 已读取的插件实例。
             strings_lookup: 本地化插件的字符串查表，None 表示非本地化模式。
             language: 输出 strings 文件使用的语言标签（默认 "english"）。
+            output_encoding: 写入插件普通显示文本及 Strings 的编码。
         """
         self.plugin = plugin
         self.strings_lookup = strings_lookup
         self._language = language
+        self._output_encoding = normalize_text_encoding(output_encoding)
         self._inline_count = 0  # 本地化模式下 inline 修改的数量
-        self._localized_writer: PluginStringsWriter | None = (
-            PluginStringsWriter() if strings_lookup is not None else None
-        )
+        self._localized_texts: dict[tuple[int, str], str] = {}
+        self._applied = False
 
     def apply_collection(self, collection: TranslationEntryCollection) -> int:
         """
@@ -59,7 +66,8 @@ class PluginWriter:
             requested_groups[entry.key].append(entry)
 
         updated_count = 0
-        self._inline_count = 0
+        inline_texts: dict[StringSubrecord, str] = {}
+        localized_texts: dict[tuple[int, str], str] = {}
         for key, candidates in source_groups.items():
             requests = requested_groups.get(key, ())
             if not requests:
@@ -82,17 +90,37 @@ class PluginWriter:
                 entry = matches[0]
                 text = entry.translation or source.original
                 if isinstance(subrecord.string, int):
-                    if self._localized_writer is None:
+                    if self.strings_lookup is None:
                         continue
-                    self._localized_writer.add(subrecord.string, text, source.dsd_type.split()[-1])
+                    localized_texts[subrecord.string, source.dsd_type.split()[-1]] = text
                 elif isinstance(subrecord.string, RawString):
                     if text == str(subrecord.string):
                         continue
-                    subrecord.set_string(text)
-                    self._inline_count += 1
+                    inline_texts[subrecord] = text
                 else:
                     continue
                 updated_count += 1
+
+        # Validate every physical inline field, even if the matching/editing
+        # stage skipped it. A failed encode must leave the loaded plugin intact.
+        encoded = []
+        inline_fields = (
+            self.plugin.inline_text_fields()
+            if isinstance(self.plugin, PluginBinaryIO)
+            else (field for _, field in source_pairs if isinstance(field, EncodedStringSubrecord))
+        )
+        for subrecord in inline_fields:
+            text = inline_texts.pop(subrecord, str(subrecord.string))
+            data = subrecord.encode_text(text, self._output_encoding)
+            if data != subrecord.data or self._output_encoding != subrecord.string.encoding:
+                encoded.append((subrecord, text, data))
+        self._inline_count = sum(data != subrecord.data for subrecord, _text, data in encoded) + len(inline_texts)
+        for subrecord, text, data in encoded:
+            subrecord.set_encoded_text(text, self._output_encoding, data)
+        for subrecord, text in inline_texts.items():
+            subrecord.set_string(text)
+        self._localized_texts.update(localized_texts)
+        self._applied = True
         log.info("apply_collection: updated=%d, inline=%d", updated_count, self._inline_count)
         return updated_count
 
@@ -112,22 +140,24 @@ class PluginWriter:
         """
         output_path = Path(output_path)
         result = {"esp_saved": False, "strings_written": []}
+        if not self._applied:
+            self.apply_collection(TranslationEntryCollection())
 
         # 非本地化模式：保存 ESP 文件
         # 本地化模式：仅当有 inline 字符串被修改时才保存 ESP
         need_save_esp = self.strings_lookup is None or self._inline_count > 0
-        if need_save_esp:
-            self.plugin.save(output_path)
-            result["esp_saved"] = True
-
-        if self._localized_writer:
-            written = self._localized_writer.write(
+        if self.strings_lookup is not None:
+            localized_writer = self.strings_lookup.create_writer()
+            for (string_id, subrecord_type), text in self._localized_texts.items():
+                localized_writer.add(string_id, text, subrecord_type)
+            result["strings_written"] = localized_writer.write(
                 output_path.parent,
                 output_path.stem,
                 self._language,
+                output_encoding=self._output_encoding,
             )
-            result["strings_written"] = written
-            if not written:
-                log.warning("Localised mode active but no strings were written (empty collection?)")
+        if need_save_esp:
+            self.plugin.save(output_path)
+            result["esp_saved"] = True
 
         return result

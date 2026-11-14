@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -14,11 +15,17 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
+    QRadioButton,
+    QScrollArea,
+    QSplitter,
     QTableView,
     QVBoxLayout,
+    QWidget,
 )
 
+from transbridge.application.terminology.conflict_usage import conflict_usage
 from transbridge.application.terminology.conflicts import ConflictResolutionOperation
 
 from .draft_write_queue import DraftWriteDiscarded
@@ -73,9 +80,15 @@ class ConflictReviewDialog(QDialog):
         self._saving = False
         self._submitted = False
         self._context_active = True
-        self.setWindowTitle("审核同名异译")
+        self.setWindowTitle("选择采用的译名")
         self.resize(960, 620)
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        body = QWidget(scroll)
+        layout = QVBoxLayout(body)
+        scroll.setWidget(body)
+        outer.addWidget(scroll)
         title = QLabel(f"原名：{details.conflict.normalized_original}", self)
         title.setTextFormat(Qt.TextFormat.PlainText)
         title.setWordWrap(True)
@@ -91,11 +104,33 @@ class ConflictReviewDialog(QDialog):
         self.current_label.setTextFormat(Qt.TextFormat.PlainText)
         self.current_label.setWordWrap(True)
         layout.addWidget(self.current_label)
+        self.judgment_label = QLabel(self)
+        self.judgment_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.judgment_label.setWordWrap(True)
+        self.judgment_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        notes = getattr(details.conflict, "notes", "")
+        canonical = getattr(details.conflict, "recommended_translation", None)
+        self.judgment_label.setText(
+            (
+                f"LLM 判定为同一术语，归并译名：{canonical}。原词条译文不变。\n"
+                if str(getattr(details.conflict, "status", "")) == "equivalent"
+                else ""
+            )
+            + (f"判断说明：{notes}" if notes else "")
+        )
+        judgment_scroll = QScrollArea(self)
+        judgment_scroll.setWidgetResizable(True)
+        judgment_scroll.setWidget(self.judgment_label)
+        judgment_scroll.setMaximumHeight(100)
+        judgment_scroll.hide()
+        judgment_toggle = QPushButton("查看 LLM 判断说明", self)
+        judgment_toggle.setCheckable(True)
+        judgment_toggle.setVisible(bool(self.judgment_label.text()))
+        judgment_toggle.toggled.connect(judgment_scroll.setVisible)
+        layout.addWidget(judgment_toggle)
+        layout.addWidget(judgment_scroll)
         self.candidates_label = QLabel(
-            "\n".join(
-                f"{variant.normalized_translation} · {len(variant.evidence_ids)} 条证据"
-                for variant in details.conflict.variants
-            ),
+            "选择采用的译名，再保存；需要自定义译名可展开进阶选项。",
             self,
         )
         self.candidates_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -106,9 +141,24 @@ class ConflictReviewDialog(QDialog):
         self.evidence.setModel(_EvidenceModel(details.evidence, self.evidence))
         self.evidence.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.evidence.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
-        self.evidence.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.evidence.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.evidence, 1)
+        self.evidence.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        for column in (2, 3, 4, 5):
+            self.evidence.hideColumn(column)
+        self.evidence.setMaximumHeight(120)
+        layout.addWidget(self.evidence)
+        self.original_text = QPlainTextEdit(self)
+        self.translation_text = QPlainTextEdit(self)
+        reader = QSplitter(Qt.Orientation.Horizontal, self)
+        for title_text, editor in (("完整原文", self.original_text), ("完整译文", self.translation_text)):
+            editor.setReadOnly(True)
+            pane = QWidget(reader)
+            pane_layout = QVBoxLayout(pane)
+            pane_layout.setContentsMargins(0, 0, 0, 0)
+            pane_layout.addWidget(QLabel(title_text, pane))
+            pane_layout.addWidget(editor)
+            reader.addWidget(pane)
+        layout.addWidget(reader, 1)
+        self.evidence.selectionModel().currentRowChanged.connect(self._read_evidence)
         form = QFormLayout()
         self.operation = QComboBox(self)
         self.operation.addItem("统一采用译名", ConflictResolutionOperation.UNIFY)
@@ -117,6 +167,19 @@ class ConflictReviewDialog(QDialog):
         self.translation = QComboBox(self)
         self.translation.setEditable(True)
         self.translation.addItems([variant.normalized_translation for variant in details.conflict.variants])
+        if canonical:
+            self.translation.setCurrentText(canonical)
+        self.candidate_group = QButtonGroup(self)
+        self.candidate_buttons = []
+        choices = QVBoxLayout()
+        for usage in conflict_usage(details.conflict, details.evidence):
+            button = QRadioButton(f"{usage.translation}（{usage.count} 条去重词条）", self)
+            button.setProperty("translation", usage.translation)
+            button.clicked.connect(lambda _checked=False, text=usage.translation: self.translation.setCurrentText(text))
+            self.candidate_group.addButton(button)
+            self.candidate_buttons.append(button)
+            choices.addWidget(button)
+        layout.insertLayout(layout.indexOf(self.candidates_label) + 1, choices)
         selected_plugin = getattr(details.conflict, "status", "") == "plugin_exception"
         effective = next(
             (
@@ -138,7 +201,15 @@ class ConflictReviewDialog(QDialog):
         form.addRow("处理方式", self.operation)
         form.addRow("采用译名（可输入）", self.translation)
         form.addRow("插件", self.plugin)
-        layout.addLayout(form)
+        self.advanced = QWidget(self)
+        self.advanced.setLayout(form)
+        self.advanced_toggle = QPushButton("进阶选项：自定义译名、插件特例或排除", self)
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.toggled.connect(self.advanced.setVisible)
+        layout.addWidget(self.advanced_toggle)
+        layout.addWidget(self.advanced)
+        self.advanced.setVisible(self.operation.currentIndex() != 0)
+        self.advanced_toggle.setChecked(self.operation.currentIndex() != 0)
         self.keep_button = QPushButton("确认保留当前译名", self)
         self.keep_button.setVisible(effective is not None)
         self.keep_button.clicked.connect(lambda: self._keep(effective))
@@ -158,14 +229,34 @@ class ConflictReviewDialog(QDialog):
         self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("稍后处理")
         self.buttons.accepted.connect(self._save)
         self.buttons.rejected.connect(self.reject)
-        layout.addWidget(self.buttons)
+        outer.addWidget(self.buttons)
         self.operation.currentIndexChanged.connect(self._update_controls)
         self.translation.currentTextChanged.connect(self._update_controls)
         self._update_controls()
         self._initial_inputs = self._inputs()
+        if details.evidence:
+            self.evidence.selectRow(0)
         context_invalidated = getattr(parent, "context_invalidated", None)
         if context_invalidated is not None:
             context_invalidated.connect(self._context_changed)
+
+    def _read_evidence(self, index, _previous):
+        if index.isValid():
+            item = self.details.evidence[index.row()]
+            self.original_text.setPlainText(item.original)
+            self.translation_text.setPlainText(item.translation)
+            self.evidence.setToolTip(f"来源：{' → '.join(item.source_chain)}\n条目：{item.entry_key}")
+
+    def showEvent(self, event):  # noqa: N802 - Qt API
+        super().showEvent(event)
+        available = self.screen().availableGeometry()
+        frame_margin = self.frameGeometry().height() - self.height()
+        self.resize(
+            min(self.width(), available.width() - 24), min(self.height(), available.height() - frame_margin - 24)
+        )
+        frame = self.frameGeometry()
+        frame.moveCenter(available.center())
+        self.move(frame.topLeft())
 
     def _keep(self, decision):
         if decision is None or self._saving or not self._context_active:
@@ -181,6 +272,11 @@ class ConflictReviewDialog(QDialog):
         excluded = operation is ConflictResolutionOperation.IGNORE
         scoped = operation is ConflictResolutionOperation.PLUGIN_EXCEPTION
         editable = not self._saving and self._context_active
+        self.candidate_group.setExclusive(False)
+        for button in self.candidate_buttons:
+            button.setChecked(not excluded and button.property("translation") == self.translation.currentText())
+            button.setEnabled(editable and not excluded)
+        self.candidate_group.setExclusive(True)
         self.operation.setEnabled(editable)
         self.translation.setEnabled(not excluded and (not self._saving or not self._context_active))
         self.plugin.setEnabled(editable and scoped)

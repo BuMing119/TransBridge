@@ -14,6 +14,26 @@ from transbridge.application.terminology_profiles.projection import SourceTermIn
 from transbridge.converter.translation_entry import TranslationEntry
 
 
+@pytest.mark.parametrize(
+    "source,term,expected",
+    [
+        ("Dragonborn", "Dragon", False),
+        ("Dragon Dragonborn", "Dragon", True),
+        ("雪Dragon", "Dragon", False),
+        ("Dragon雪", "Dragon", False),
+        ("_Dragon", "Dragon", False),
+        ("Dragon's", "Dragon", True),
+        ("XC++", "C++", True),
+        ("New    York", "new york", True),
+        ("New York", "new york city", False),
+        ("雪精灵", "精灵", True),
+        ("", "", False),
+    ],
+)
+def test_literal_candidate_filter_preserves_unicode_boundaries(source, term, expected):
+    assert source_contains(source, term) is expected
+
+
 def test_reused_projection_does_not_hash_or_rescan_immutable_content(monkeypatch):
     content = TerminologyProfileContent(
         tuple(ProfileTermMapping(f"Term{index}", f"New{index}", f"Old{index}") for index in range(1000))

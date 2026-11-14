@@ -12,6 +12,8 @@ from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import ParseRequest, ParseResult, SourceNamespace, TranslationIoUseCase
 
 from .build_freshness import build_input_digest
+from .conflict_judgment import ConflictJudgePort, ConflictJudgmentCancelled
+from .conflict_judgment_projection import judged_reduction
 from .corpus import EvidenceAssembler, SourceCorpusFragment
 from .extraction import CancellationPort, TerminologyExtractionService
 from .identity import build_key, canonical_digest
@@ -21,6 +23,8 @@ from .models import (
     BuildResult,
     BuildResultRef,
     BuildSummary,
+    ConflictStatus,
+    LlmExtractionStatus,
     TermCandidate,
     TermDecision,
 )
@@ -105,6 +109,7 @@ class TerminologyFullBuilder:
         extraction: TerminologyExtractionService | None = None,
         reducer: CanonicalTerminologyReducer | None = None,
         reconciler: ManualBaselineReconciler | None = None,
+        conflict_judge: ConflictJudgePort | None = None,
     ) -> None:
         self._parser = parser
         self._repository = repository
@@ -112,6 +117,11 @@ class TerminologyFullBuilder:
         self._extraction = extraction or TerminologyExtractionService()
         self._reducer = reducer or CanonicalTerminologyReducer()
         self._reconciler = reconciler or ManualBaselineReconciler()
+        self._conflict_judge = conflict_judge
+
+    @property
+    def judges_conflicts(self) -> bool:
+        return self._conflict_judge is not None
 
     def build(
         self,
@@ -151,6 +161,7 @@ class TerminologyFullBuilder:
             (logical,),
             tuple(records),
             baseline_decisions=baseline_decisions,
+            cancellation=cancellation,
         )
 
     def build_logical_fragment(
@@ -193,6 +204,7 @@ class TerminologyFullBuilder:
         source_records: tuple[SourceBuildRecord, ...],
         *,
         baseline_decisions: tuple[TermDecision, ...] = (),
+        cancellation: CancellationPort | None = None,
     ) -> FullBuildOutcome:
         global_result = reduce_fragments(
             project_id=snapshot.project_id,
@@ -202,6 +214,20 @@ class TerminologyFullBuilder:
             reducer=self._reducer,
             reconciler=self._reconciler,
         )
+        if _cancelled(cancellation):
+            raise FullBuildCancelled
+        try:
+            global_result = judged_reduction(
+                global_result,
+                self._conflict_judge,
+                baseline=baseline_decisions,
+                reconciler=self._reconciler,
+                cancellation=cancellation,
+            )
+        except ConflictJudgmentCancelled as exc:
+            raise FullBuildCancelled from exc
+        if _cancelled(cancellation):
+            raise FullBuildCancelled
         diagnostics = {diagnostic for record in source_records for diagnostic in record.diagnostics} | set(
             global_result.diagnostics
         )
@@ -213,12 +239,13 @@ class TerminologyFullBuilder:
             ))
             for item in global_result.diagnostics
         )
+        partial = partial or global_result.llm_status in {LlmExtractionStatus.PARTIAL, LlmExtractionStatus.UNAVAILABLE}
         completeness = BuildCompleteness.PARTIAL if partial else BuildCompleteness.FULL
         summary = BuildSummary(
             source_count=len(snapshot.sources),
             evidence_count=len(global_result.evidence),
             candidate_count=len(global_result.candidates),
-            conflict_count=len(global_result.conflicts),
+            conflict_count=sum(item.status is ConflictStatus.UNRESOLVED for item in global_result.conflicts),
             excluded_count=sum(count for _, count in global_result.excluded_reasons),
         )
         stable_diagnostics = tuple(sorted(set(diagnostics)))
@@ -238,7 +265,10 @@ class TerminologyFullBuilder:
             "input_digest": build_input_digest(snapshot),
         }
         content_digest = canonical_digest(semantic_result, namespace="terminology.build-result-content.v1")
-        ref = BuildResultRef(build_key(snapshot), content_digest)
+        # The input key is reusable, but model output and partial failures are not
+        # deterministic. Preserve every frozen result without overwriting history.
+        # Both components are already canonical identities; no additional hash is needed.
+        ref = BuildResultRef(f"{build_key(snapshot)}/{content_digest}", content_digest)
         result = BuildResult(
             ref=ref,
             project_id=snapshot.project_id,

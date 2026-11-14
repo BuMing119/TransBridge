@@ -8,6 +8,7 @@ from pathlib import Path
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.projects.prepared_source_results import prepare_parsed_source
 from transbridge.application.projects.provisioning_models import PreparedProjectSource
+from transbridge.config.text_encoding import DEFAULT_SOURCE_LANGUAGE, DEFAULT_TEXT_ENCODING, XTRANSLATOR_READ_POLICY
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 from .catalog import default_format_catalog
@@ -18,6 +19,9 @@ from .use_case import TranslationIoUseCase
 
 OPEN_FILE_FORMATS = frozenset({
     FormatId.PLUGIN_SSE,
+    FormatId.STRINGS,
+    FormatId.DLSTRINGS,
+    FormatId.ILSTRINGS,
     FormatId.BINARY_EET,
     FormatId.XML_EET,
     FormatId.XML_XT,
@@ -35,7 +39,16 @@ class OpenedTranslationFile:
     note: str = ""
 
 
-def prepare_open_file(path: str, options: OpenFileOptions, context: RequestContext, *, apply_dictionary=None):
+def prepare_open_file(
+    path: str,
+    options: OpenFileOptions,
+    context: RequestContext,
+    *,
+    apply_dictionary=None,
+    input_encoding: str = DEFAULT_TEXT_ENCODING,
+    source_language: str = DEFAULT_SOURCE_LANGUAGE,
+    text_read_policy: str = XTRANSLATOR_READ_POLICY,
+):
     """Capture native content once for publication; never reparse it during commit."""
     source_path = Path(path).resolve(strict=True)
     content = source_path.read_bytes()
@@ -50,9 +63,16 @@ def prepare_open_file(path: str, options: OpenFileOptions, context: RequestConte
     format_id = probe.candidates[0]
     if format_id not in OPEN_FILE_FORMATS:
         raise ValueError("此入口不支持该来源格式。")
+    read_options = {
+        "input_encoding": input_encoding,
+        "source_language": source_language,
+        "text_read_policy": text_read_policy,
+    }
     parse_options = (
-        (("skip_empty", options.skip_empty), ("discover_sibling_strings", True))
+        (("skip_empty", options.skip_empty), ("discover_sibling_strings", True), *read_options.items())
         if format_id is FormatId.PLUGIN_SSE
+        else tuple(read_options.items())
+        if format_id in {FormatId.STRINGS, FormatId.DLSTRINGS, FormatId.ILSTRINGS}
         else ()
     )
     parsed = TranslationIoUseCase(catalog).parse(ParseRequest(descriptor, context, format_id, options=parse_options))
@@ -78,6 +98,7 @@ def prepare_open_file(path: str, options: OpenFileOptions, context: RequestConte
             strings_lang=options.strings_lang,
             context=context,
             target_snapshot=parsed.source_snapshot,
+            **read_options,
         )
         collection, strings_lookup = imported.collection, imported.strings_lookup
         if not imported.applied_count:

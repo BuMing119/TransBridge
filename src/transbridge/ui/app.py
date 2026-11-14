@@ -137,6 +137,9 @@ def main(
         projection = AppContext(
             project_projection=app_runtime.use_cases.resolve("project_projection"),
             project_commands=app_runtime.use_cases.resolve("gui_project_commands"),
+            project_source_references=app_runtime.use_cases.resolve("project_source_references"),
+            project_text_encodings=app_runtime.use_cases.resolve("project_text_encodings"),
+            text_encoding_defaults=app_runtime.use_cases.resolve("text_encoding_defaults"),
             project_catalog=app_runtime.use_cases.resolve("project_catalog"),
             project_remote_bindings=app_runtime.use_cases.resolve("project_remote_bindings"),
             runtime_context=binding.context,

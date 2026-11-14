@@ -6,8 +6,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from transbridge.ai_translator.term_validation import contains_term
 from transbridge.converter.context_categories import AUTO_TERM_CONTEXTS
 
+from .extraction_execution import ExtractionBatchResult, ExtractionBatchRunner
 from .identity import candidate_id, normalize_original, normalize_translation
 from .models import (
     BilingualEvidence,
@@ -76,12 +78,14 @@ class TerminologyExtractionService:
         llm: LlmTerminologyExtractorPort | None = None,
         *,
         batch_size: int = 50,
+        batch_runner: ExtractionBatchRunner | None = None,
     ) -> None:
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
             raise ValueError("LLM terminology batch size must be positive")
         self._deterministic = deterministic or DeterministicTermExtractor()
         self._llm = llm
         self._batch_size = batch_size
+        self._batch_runner = batch_runner
 
     def extract(
         self,
@@ -94,36 +98,38 @@ class TerminologyExtractionService:
         direct = self._deterministic.extract(ordered)
         if not llm_enabled:
             return ExtractionResult(direct, LlmExtractionStatus.SKIPPED, ("LLM_DISABLED",))
-        if self._llm is None:
+        if self._llm is None and self._batch_runner is None:
             return ExtractionResult(direct, LlmExtractionStatus.UNAVAILABLE, ("LLM_UNAVAILABLE",))
 
         text_evidence = tuple(item for item in ordered if _context_base(item.context) not in AUTO_TERM_CONTEXTS)
         if not text_evidence:
-            return ExtractionResult(direct, LlmExtractionStatus.SKIPPED)
+            return ExtractionResult(direct, LlmExtractionStatus.SKIPPED, ("LLM_NO_TEXT",))
         evidence_by_id = {item.evidence_id: item for item in text_evidence}
         accepted: list[TermCandidate] = []
         diagnostics: list[str] = []
         failed = False
-        for offset in range(0, len(text_evidence), self._batch_size):
+        inputs = tuple(
+            LlmEvidenceInput(item.evidence_id, item.original, item.translation, item.context) for item in text_evidence
+        )
+        batches = (
+            self._batch_runner.run(inputs, cancellation)
+            if self._batch_runner is not None
+            else self._batches(inputs, cancellation)
+        )
+        for batch in batches:
             if _cancelled(cancellation):
                 return ExtractionResult(direct, LlmExtractionStatus.PARTIAL, tuple(diagnostics), True)
-            batch_evidence = text_evidence[offset : offset + self._batch_size]
-            payload = tuple(
-                LlmEvidenceInput(item.evidence_id, item.original, item.translation, item.context)
-                for item in batch_evidence
-            )
-            try:
-                proposals = self._llm.extract(payload)
-            except Exception as exc:  # noqa: BLE001 - provider adapter boundary
+            if batch.error is not None:
                 failed = True
-                diagnostics.append(f"LLM_BATCH_FAILED:{type(exc).__name__}")
+                diagnostics.append(f"LLM_BATCH_FAILED:{batch.error}")
                 continue
             if _cancelled(cancellation):
                 diagnostics.append("LLM_LATE_RESULT_DISCARDED")
                 return ExtractionResult(direct, LlmExtractionStatus.PARTIAL, tuple(diagnostics), True)
-            for proposal in proposals:
+            batch_ids = {item.evidence_id for item in batch.inputs}
+            for proposal in batch.proposals:
                 proposal_evidence_id = getattr(proposal, "evidence_id", "")
-                source = evidence_by_id.get(proposal_evidence_id)
+                source = evidence_by_id.get(proposal_evidence_id) if proposal_evidence_id in batch_ids else None
                 if source is None:
                     diagnostics.append(f"LLM_EVIDENCE_UNKNOWN:{proposal_evidence_id}")
                     continue
@@ -146,6 +152,8 @@ class TerminologyExtractionService:
                         LLM_ALGORITHM_VERSION,
                     )
                 )
+        if _cancelled(cancellation):
+            return ExtractionResult(direct, LlmExtractionStatus.PARTIAL, tuple(diagnostics), True)
         status = LlmExtractionStatus.PARTIAL if failed else LlmExtractionStatus.PERFORMED
         combined = {item.candidate_id: item for item in (*direct, *accepted)}
         return ExtractionResult(
@@ -153,6 +161,16 @@ class TerminologyExtractionService:
             status,
             tuple(sorted(diagnostics)),
         )
+
+    def _batches(self, inputs, cancellation):
+        for offset in range(0, len(inputs), self._batch_size):
+            if _cancelled(cancellation):
+                return
+            batch = inputs[offset : offset + self._batch_size]
+            try:
+                yield ExtractionBatchResult(batch, self._llm.extract(batch))
+            except Exception as exc:  # noqa: BLE001 - provider adapter boundary
+                yield ExtractionBatchResult(batch, error=type(exc).__name__)
 
 
 def _candidate(
@@ -187,7 +205,9 @@ def _candidate(
 def _located_in_same_evidence(proposal: LlmTermProposal, evidence: BilingualEvidence) -> bool:
     source = normalize_original(evidence.original)
     target = normalize_translation(evidence.translation)
-    return normalize_original(proposal.original) in source and normalize_translation(proposal.translation) in target
+    return contains_term(source, normalize_original(proposal.original)) and contains_term(
+        target, normalize_translation(proposal.translation)
+    )
 
 
 def _context_base(value: str) -> str:

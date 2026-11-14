@@ -8,7 +8,6 @@ from uuid import uuid4
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from transbridge.application.io.identity import EntryKey
 from transbridge.application.tasks.result_application import ResultApplication, prior_merge_plan
 from transbridge.application.tasks.storage_contracts import ApplicationState
 from transbridge.application.translation.result_merge import ResultConflictPolicy, ResultEntryChange, ResultEntryState
@@ -17,20 +16,8 @@ from transbridge.application.translation.task_recovery import TaskRecoveryStore
 from transbridge.ui.version_persistence import VersionPersistence
 
 from .task_result_preparation import TaskResultPreparation
-from .task_session_merge import entry_state
+from .task_review_snapshot import freeze_current_reads, prepare_review, review_stamp, saved_state as saved_state
 from .version_operations import require_success
-
-
-def saved_state(value):
-    return ResultEntryState(
-        EntryKey.from_dict(value["entry_key"]),
-        value["original"],
-        value["translation"],
-        value["stage"],
-        value.get("context", ""),
-        value.get("deleted", False),
-        value.get("source_locator"),
-    )
 
 
 class TaskMergeReview(QObject):
@@ -63,6 +50,7 @@ class TaskMergeReview(QObject):
         self.evidence_writer = None
         self._confirmation = None
         self._finish_confirmation = None
+        self._read_stamp = None
 
     @property
     def busy(self):
@@ -76,6 +64,10 @@ class TaskMergeReview(QObject):
         if self.busy or self.shutting_down or self.closed:
             return
         finish = self._finish_confirmation
+        stamp = review_stamp(self.ctx)
+        reads = freeze_current_reads(self.ctx)
+        self._read_stamp = None
+        self.current = {}
 
         def read():
             if finish is not None:
@@ -91,34 +83,24 @@ class TaskMergeReview(QObject):
             evidence = []
             for run_id in record.get("execution_runs", (self.task_id,)):
                 evidence.extend(TaskMergeEvidenceStore(self.directory / "ai-task-recovery", run_id).load())
-            return record, payload, evidence
+            return prepare_review(record, payload, evidence, reads, stamp[0])
 
         def ready(value):
+            if self.closed or self.shutting_down:
+                return
             if finish is not None:
                 self._confirmation = self._finish_confirmation = None
-            self.record, payload, evidence = value
+            self.record, self.rows, self.previous, current = value
             self.identity = (self.record["project_id"], self.record["variant_id"])
-            self.rows = {EntryKey.from_dict(row["entry_key"]): row for row in (payload or {}).get("rows", ())}
-            self.previous = {}
-            for item in evidence:
-                applied = {EntryKey.from_dict(key) for key in item.get("applied_keys", ())}
-                for conflict in item["conflicts"]:
-                    key = EntryKey.from_dict(conflict["entry_key"])
-                    if key in applied and conflict["current"] is not None and conflict["decision"] == "prefer_incoming":
-                        # File order is presentation chronology only. The actual
-                        # write is authorized separately by decision_states.
-                        self.previous.setdefault(key, []).insert(0, saved_state(conflict["current"]))
             self.current = {}
-            if self.ctx.active_version_identity == self.identity:
-                self.error = ""
-                for key in self.rows:
-                    for slot in self.ctx.slots.values():
-                        entry = slot.collection.get(key)
-                        if entry is not None:
-                            self.current[key] = entry_state(entry)
-                            break
-            else:
+            if self.ctx.active_version_identity != self.identity:
                 self.error = "请返回任务对应的工程版本后处理结果；已保存的成果仍可查看。"
+            elif review_stamp(self.ctx) != stamp:
+                self.error = "读取期间工程内容已变化，请刷新当前内容后再处理结果。"
+            else:
+                self.error = ""
+                self.current = current
+                self._read_stamp = stamp
             self.changed.emit()
 
         self.preparation.start(read, on_success=ready, on_error=self._failed)
@@ -146,6 +128,9 @@ class TaskMergeReview(QObject):
             return
         if self.record is None or self.ctx.active_version_identity != self.identity:
             self._failed("请返回任务对应的工程版本后处理结果。")
+            return
+        if self._read_stamp is None:
+            self._failed("工程内容已变化，请刷新当前内容后再处理结果。")
             return
         selected = {key: dict(self.rows[key]) for key in keys}
         if not selected:

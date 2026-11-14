@@ -4,10 +4,11 @@ from types import SimpleNamespace
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QFileDialog, QPushButton, QStyle, QStyleOptionComboBox
+from PyQt6.QtWidgets import QFileDialog, QMessageBox, QPushButton, QStyle, QStyleOptionComboBox
 import pytest
 
 from tests.contracts.io.test_localized_hydrated_publication import localized as localized_fixture
+from tests.ui.operations.test_export_json_dialog import _finish_export
 from tests.ui.operations.test_strict_write_routes import (
     _context,
     _submit,
@@ -83,7 +84,7 @@ def test_batch_plugin_sst_choice_publishes_each_dictionary(tmp_path, feature, in
 
 
 @pytest.mark.parametrize("batch", [False, True])
-def test_default_write_requires_output_selection_before_explicit_overwrite(tmp_path, feature, batch):
+def test_original_write_requires_mode_selection_and_explicit_overwrite(tmp_path, feature, batch):
     context = _context(tmp_path, 2 if batch else 1)
     originals = {path: Path(path).read_bytes() for path in context.slots}
     draft = feature.feature.create_draft(context, batch, {})
@@ -95,8 +96,10 @@ def test_default_write_requires_output_selection_before_explicit_overwrite(tmp_p
     assert feature.tasks.list(feature.owner) == ()
     assert all(Path(path).read_bytes() == content for path, content in originals.items())
 
-    target_field = ("output_directory", str(tmp_path)) if batch else ("target_path", next(iter(context.slots)))
-    draft = feature.feature.edit_draft(draft, (target_field, ("overwrite_confirmed", "true")))
+    draft = feature.feature.edit_draft(draft, (("destination_mode", "original"),))
+    assert not feature.feature.mapper.preflight(draft).ready
+    assert all(Path(path).read_bytes() == content for path, content in originals.items())
+    draft = feature.feature.edit_draft(draft, (("overwrite_confirmed", "true"),))
     result = _submit(feature, draft)
 
     assert result.outcome is OperationOutcome.COMPLETED, result.diagnostics
@@ -241,27 +244,31 @@ def write_dialog(tmp_path, feature, qapp, request):
     dialog.close()
 
 
-def test_single_save_as_button_preserves_filename_and_restore_requires_new_confirmation(write_dialog, monkeypatch):
+def test_single_directory_uses_no_filename_input_and_original_mode_clears_confirmation(write_dialog, monkeypatch):
     case = write_dialog
     source = Path(next(iter(case.context.slots)))
     destination = source.parent / "output" / source.name
     seen = []
 
-    def choose(_parent, title, initial, _filter, **_kwargs):
+    def choose(_parent, title, initial, **_kwargs):
         seen.append((title, initial))
-        return str(destination), ""
+        return str(destination.parent)
 
-    monkeypatch.setattr(QFileDialog, "getSaveFileName", choose)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", choose)
     case.dialog._overwrite.setChecked(True)
-    button = next(item for item in case.dialog.findChildren(QPushButton) if item.accessibleName() == "另存为")
+    button = next(item for item in case.dialog.findChildren(QPushButton) if item.accessibleName() == "选择输出目录")
     button.click()
-    assert seen == [("另存为", source.name)]
-    assert dict(case.dialog.edited_values())["target_path"] == str(destination)
+    assert seen == [("选择输出目录", str(source.parent))]
+    fields = dict(case.dialog.edited_values())
+    assert fields["output_directory"] == str(destination.parent)
+    assert "target_path" not in fields
+    assert not case.dialog._field_edits["target_path"].isVisible()
     assert not case.dialog._overwrite.isChecked()
     case.dialog._overwrite.setChecked(True)
-    restore = next(item for item in case.dialog.findChildren(QPushButton) if item.text() == "保存回原文件")
-    restore.click()
-    assert dict(case.dialog.edited_values())["target_path"] == str(source)
+    mode = case.dialog._field_edits["destination_mode"]
+    mode.setCurrentIndex(mode.findData("original"))
+    assert dict(case.dialog.edited_values())["destination_mode"] == "original"
+    assert not case.dialog._field_edits["output_directory"].isVisible()
     assert not case.dialog._overwrite.isChecked()
 
 
@@ -269,22 +276,46 @@ def test_single_save_as_button_preserves_filename_and_restore_requires_new_confi
 def test_save_original_cannot_overwrite_source_with_another_format(write_dialog, format_id):
     dialog = write_dialog.dialog
     choice = dialog._field_edits["output_format"]
+    mode = dialog._field_edits["destination_mode"]
+    mode.setCurrentIndex(mode.findData("original"))
     choice.setCurrentIndex(choice.findData(format_id))
+    assert not mode.isVisible()
     assert not dialog._save_original_button.isEnabled()
     dialog._restore_output()
     assert dict(dialog.edited_values())["target_path"] == ""
     choice.setCurrentIndex(choice.findData("plugin.sse"))
-    assert dialog._save_original_button.isEnabled()
-    dialog._save_original_button.click()
-    assert dict(dialog.edited_values())["target_path"] == next(iter(write_dialog.context.slots))
+    assert mode.isVisible()
+    assert mode.currentData() == "directory"
+    assert dialog._field_edits["output_directory"].isVisible()
 
 
-def test_save_original_rechecks_reference_before_using_path(write_dialog):
-    dialog = write_dialog.dialog
-    Path(next(iter(write_dialog.context.slots))).unlink()
-    dialog._restore_output()
-    assert dict(dialog.edited_values())["target_path"] == ""
-    assert not dialog._save_original_button.isEnabled()
+def test_save_original_rejects_path_that_disappeared_after_source_capture(write_dialog, feature):
+    case = write_dialog
+    Path(next(iter(case.context.slots))).unlink()
+    mode = case.dialog._field_edits["destination_mode"]
+    mode.setCurrentIndex(mode.findData("original"))
+    draft = feature.feature.edit_draft(case.draft, case.dialog.edited_values())
+    assert not feature.feature.mapper.preflight(draft).ready
+
+
+def test_directory_mode_blocks_source_overlap_without_asking_to_overwrite(tmp_path, feature, qapp, monkeypatch):
+    context = _context(tmp_path)
+    source = Path(next(iter(context.slots)))
+    original = source.read_bytes()
+    facade = build_operation_plan_facade(SimpleNamespace(tasks=feature.tasks), RequestContext("gui"))
+    dialog = facade.begin_write(context)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args: pytest.fail("Source overlap must block export"))
+    try:
+        dialog._field_edits["output_directory"].setText(str(source.parent))
+        dialog._confirm_button.click()
+        _finish_preflight(facade, dialog)
+        qapp.processEvents()
+        assert "输出与来源插件或其配套资源重叠" in dialog._checks.text()
+        assert dialog._field_edits["output_directory"].isEnabled()
+        assert source.read_bytes() == original
+    finally:
+        dialog.close()
+        QTest.qWait(20)
 
 
 def test_output_format_arrow_opens_choice_popup(write_dialog, qapp):
@@ -305,20 +336,80 @@ def test_output_format_arrow_opens_choice_popup(write_dialog, qapp):
         choice.hidePopup()
 
 
-def test_save_picker_does_not_suggest_a_missing_reference(write_dialog, monkeypatch):
+def test_directory_picker_keeps_saved_filename_when_original_is_missing(write_dialog, monkeypatch):
     case = write_dialog
-    Path(next(iter(case.context.slots))).unlink()
+    source = Path(next(iter(case.context.slots)))
+    source.unlink()
+    destination = source.parent / "exports"
     seen = []
 
-    def choose(_parent, _title, initial, _filter, **_kwargs):
+    def choose(_parent, _title, initial, **_kwargs):
         seen.append(initial)
-        return "", ""
+        return str(destination)
 
-    monkeypatch.setattr(QFileDialog, "getSaveFileName", choose)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", choose)
     case.dialog._browse_output()
 
     assert seen == [""]
-    assert dict(case.dialog.edited_values())["target_path"] == ""
+    assert dict(case.dialog.edited_values())["output_directory"] == str(destination)
+
+
+@pytest.mark.parametrize("format_id,suffix", [("sst.ssu9", ".sst"), ("json.dsd", ".json"), ("json.paratranz", ".json")])
+def test_directory_selection_uses_saved_name_and_selected_format(
+    tmp_path, feature, qapp, monkeypatch, format_id, suffix
+):
+    context = _context(tmp_path)
+    slot = context.active_slot
+    slot.source_snapshot = replace(
+        slot.source_snapshot,
+        source=replace(slot.source_snapshot.source, uri="source:0", display_name="保存的文件.esp"),
+    )
+    draft = feature.feature.create_draft(context, False, {})
+    dialog = WritePlanDialog(feature.feature.mapper.present("saved-name", 1, draft), context)
+    destination = tmp_path / "导出目录"
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_a: str(destination))
+    try:
+        dialog._browse_output()
+        assert dict(dialog.edited_values())["output_directory"] == str(destination)
+        choice = dialog._field_edits["output_format"]
+        choice.setCurrentIndex(choice.findData(format_id))
+        assert dict(dialog.edited_values())["target_path"] == ""
+        dialog._browse_output()
+        assert dict(dialog.edited_values())["target_path"] == str(destination / f"保存的文件{suffix}")
+    finally:
+        dialog.close()
+
+
+@pytest.mark.parametrize("batch", [False, True])
+@pytest.mark.parametrize(
+    "format_id,suffix",
+    [("plugin.sse", ".esp"), ("sst.ssu9", ".sst"), ("json.dsd", ".json"), ("json.paratranz", ".json")],
+)
+def test_export_needs_only_directory_selection(tmp_path, feature, qapp, monkeypatch, batch, format_id, suffix):
+    context = _context(tmp_path, 2 if batch else 1)
+    originals = {path: Path(path).read_bytes() for path in context.slots}
+    destination = tmp_path / "导出目录"
+    destination.mkdir()
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_a: str(destination))
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_a, **_kw: pytest.fail("Must not ask for a filename"))
+    facade = build_operation_plan_facade(SimpleNamespace(tasks=feature.tasks), RequestContext("gui"))
+    dialog = facade.begin_write(
+        context, batch=batch, output_format="auto" if batch and format_id == "plugin.sse" else format_id
+    )
+    try:
+        field = "output_directory" if batch or format_id == "plugin.sse" else "target_path"
+        button = dialog._field_edits[field].parentWidget().layout().itemAt(1).widget()
+        assert button.accessibleName() == "选择输出目录" and button.isVisible()
+        button.click()
+        dialog._confirm_button.click()
+        _finish_export(dialog, qapp)
+        assert dialog._checks.property("tbStatusId") == "completed", dialog._checks.text()
+        assert {path.name for path in destination.iterdir()} == {
+            Path(path).with_suffix(suffix).name for path in originals
+        }
+        assert all(Path(path).read_bytes() == content for path, content in originals.items())
+    finally:
+        dialog.close()
 
 
 @pytest.mark.parametrize("write_dialog", [True], indirect=True)
@@ -327,7 +418,7 @@ def test_batch_save_as_directory_button_and_restore_are_available_in_write_ui(wr
     destination = str(Path(next(iter(case.context.slots))).parent / "output")
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: destination)
     case.dialog._overwrite.setChecked(True)
-    button = next(item for item in case.dialog.findChildren(QPushButton) if item.accessibleName() == "批量另存为")
+    button = next(item for item in case.dialog.findChildren(QPushButton) if item.accessibleName() == "选择输出目录")
     button.click()
     values = dict(case.dialog.edited_values())
     assert values["output_directory"] == destination
@@ -342,7 +433,9 @@ def test_batch_save_as_directory_button_and_restore_are_available_in_write_ui(wr
 @pytest.mark.parametrize("write_dialog", [False, True], indirect=True)
 def test_cancelled_save_as_picker_leaves_destination_and_confirmation_unchanged(write_dialog, monkeypatch):
     dialog = write_dialog.dialog
-    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_args, **_kwargs: ("", ""))
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", lambda *_a, **_kw: pytest.fail("Export must only ask for a directory")
+    )
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: "")
     dialog._overwrite.setChecked(True)
     before = dialog.edited_values()

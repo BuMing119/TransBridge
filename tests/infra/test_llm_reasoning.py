@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
 import threading
 import time
 from types import SimpleNamespace
+
+import pytest
 
 from transbridge.infra.llm_reasoning import (
     ReasoningCapability,
@@ -67,6 +70,35 @@ def test_corrupt_and_future_cache_documents_are_safe_misses(tmp_path: Path) -> N
 
     path.write_text(json.dumps({"schema_version": 999, "entries": {}}), encoding="utf-8")
     assert ReasoningCapabilityStore(path).get(_key()) is None
+
+
+def test_legacy_anthropic_omission_capability_requires_a_new_probe(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+    key = ReasoningCapabilityKey.from_config(SimpleNamespace(provider="anthropic", model="claude"))
+    store = ReasoningCapabilityStore(tmp_path / "capabilities.json")
+    old_key = replace(key, probe_version=1)
+    store.put(old_key, ReasoningCapability.supported("anthropic_omit_thinking"))
+
+    assert store.get(key) is None
+
+
+def test_anthropic_capability_cache_key_uses_resolved_endpoint(monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.example.test/anthropic/")
+    config = SimpleNamespace(provider="anthropic", model="claude", base_url="")
+    environment_key = ReasoningCapabilityKey.from_config(config)
+
+    assert environment_key.base_url == "https://gateway.example.test/anthropic"
+    config.base_url = "https://api.anthropic.com"
+    assert ReasoningCapabilityKey.from_config(config) != environment_key
+
+
+def test_anthropic_capability_key_validates_endpoint_before_normalizing() -> None:
+    config = SimpleNamespace(
+        provider="anthropic", model="claude", base_url="https://gateway.example.test/anthropic?route=private"
+    )
+
+    with pytest.raises(ValueError, match="查询参数"):
+        ReasoningCapabilityKey.from_config(config)
 
 
 def test_expired_indeterminate_record_is_removed(tmp_path: Path) -> None:
@@ -207,3 +239,28 @@ def test_scoped_stream_forwards_callback_and_retries_rejected_control(tmp_path: 
     assert client.chat_stream([], 10, chunks.append) == "inherited"
     assert chunks == ["inherited"]
     assert [name for name, _patch in delegate.calls] == ["controlled_stream", "inherit_stream"]
+
+
+def test_scoped_stream_never_replays_after_a_chunk_was_delivered(tmp_path: Path) -> None:
+    class InterruptedStream(_ControlledDelegate):
+        def chat_stream_with_reasoning(self, _messages, _max_tokens, callback, _patch) -> str:
+            callback("partial")
+            raise _ReasoningRejected()
+
+    store = ReasoningCapabilityStore(tmp_path / "capabilities.json")
+    store.put(_key(), ReasoningCapability.supported("reasoning_effort"))
+    delegate = InterruptedStream()
+    client = ReasoningScopedLLMClient(
+        delegate,
+        _key(),
+        ReasoningIntent.PREFER_LOW,
+        manager=ReasoningCapabilityManager(store),
+    )
+    chunks: list[str] = []
+
+    with pytest.raises(_ReasoningRejected):
+        client.chat_stream([], 10, chunks.append)
+
+    assert chunks == ["partial"]
+    assert delegate.calls == []
+    assert store.get(_key()).status is ReasoningCapabilityStatus.INDETERMINATE

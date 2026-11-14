@@ -1,5 +1,6 @@
 from base64 import b64encode
 from dataclasses import replace
+from pathlib import Path
 import struct
 from types import SimpleNamespace
 
@@ -21,16 +22,18 @@ from transbridge.application.projects import ProjectSourceRequest
 from transbridge.application.projects.source_extraction import extract_source, reconstructed_source_snapshot
 from transbridge.application.projects.working_copy import ProjectWorkingCopy
 from transbridge.application.projects.write_inputs import bind_plugin_write_input
+from transbridge.config.text_encoding import LEGACY_READ_POLICY, STRICT_READ_POLICY, TextEncodings
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
+from transbridge.persistence.project_store.connection import project_connection
 from transbridge.persistence.project_store.paths import project_path
 from transbridge.persistence.project_store.repository import ProjectStore
 from transbridge.persistence.v2.ids import ProjectId, VariantId
 
 
-def _create_project(root, source, format_id, *, role):
+def _create_project(root, source, format_id, *, role, options=()):
     context = RequestContext("storage-test", run_id="source-storage")
     prepared = TranslationIoProjectSourcePreparer().prepare_source(
-        ProjectSourceRequest(str(source), format_hint=format_id), context, role=role, common_options=()
+        ProjectSourceRequest(str(source), format_hint=format_id, options=options), context, role=role, common_options=()
     )
     extracted = extract_source(prepared)
     variant = VariantId("main")
@@ -57,7 +60,7 @@ def _publish(snapshot, entries, target):
     return result
 
 
-def test_plugin_input_binary_and_history_location_never_enter_the_project(tmp_path):
+def test_project_retains_plugin_path_after_source_is_removed_without_saving_plugin_binary(tmp_path):
     inputs = tmp_path / "private-plugin-location-72"
     inputs.mkdir()
     source = write_plugin(inputs / "Characters.esp", [(0x800, "Greeter", "Welcome!")])
@@ -74,6 +77,7 @@ def test_plugin_input_binary_and_history_location_never_enter_the_project(tmp_pa
     (info,) = reopened.sources()
     (entry,) = reopened.read_page(variant)
     assert info.name == "Characters.esp"
+    assert info.reference_path == str(source)
     assert entry.snapshot.original == "Welcome!"
     assert entry.snapshot.context == "NPC_:FULL"
     assert entry.snapshot.entry_key.namespace == info.namespace
@@ -91,7 +95,6 @@ def test_plugin_input_binary_and_history_location_never_enter_the_project(tmp_pa
             assert plugin not in content
             assert b64encode(plugin) not in content
             assert marker not in content
-            assert inputs.name.encode() not in content
 
 
 @pytest.mark.parametrize("format_id", [FormatId.BINARY_EET, FormatId.SST_SSU8, FormatId.SST_SSU9])
@@ -169,6 +172,50 @@ def test_plugin_write_rejects_same_name_input_with_different_content(tmp_path):
     assert wrong.read_bytes() == wrong_bytes
     assert selected.read_bytes() == selected_bytes
     assert not original.exists()
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_plugin_write_reproduces_saved_read_facts_after_project_defaults_change(tmp_path, legacy):
+    context = RequestContext("storage-test", run_id="bind-historical-plugin")
+    # Byte 0x8C alone decodes as Ś in cp1250 and Œ in cp1252.
+    if legacy:
+        source = write_plugin(tmp_path / "Legacy.esp", [(0x800, "Legacy", "Ś")], encoding="cp1250")
+        options = (("text_read_policy", LEGACY_READ_POLICY),)
+        expected_original = "Ś"
+    else:
+        source = write_plugin(tmp_path / "Strict.esp", [(0x800, "Strict", "é")])
+        options = (("input_encoding", "cp1252"), ("text_read_policy", STRICT_READ_POLICY))
+        expected_original = "Ã©"
+    path, variant = _create_project(tmp_path / "data", source, FormatId.PLUGIN_SSE, role="primary", options=options)
+    with project_connection(Path(path), write=True) as connection:
+        connection.execute(
+            """UPDATE source SET
+                format_fields = json_remove(format_fields, '$.source_language', '$.text_read_policy'),
+                options = json_remove(options, '$.source_language', '$.text_read_policy')"""
+        )
+        connection.execute(
+            """UPDATE project SET settings = json_set(
+                settings, '$.text_input_encoding', 'utf-8', '$.text_output_encoding', 'utf-8')"""
+        )
+    store = ProjectStore(path)
+    (info,) = store.sources()
+    (row,) = store.read_page(variant)
+    assert row.snapshot.original == expected_original
+    detached = reconstructed_source_snapshot(info, (row,))
+    edited = replace(row.snapshot, translation="Verified", stage=Stage.TRANSLATED.value)
+    before = path.read_bytes()
+
+    bound = bind_plugin_write_input(
+        detached,
+        (edited,),
+        str(source),
+        context,
+        TranslationIoProjectSourcePreparer(),
+        input_encoding=TextEncodings("cp1251").input_encoding,
+    )
+
+    assert dict(bound.metadata)["text_read_policy"] == (LEGACY_READ_POLICY if legacy else STRICT_READ_POLICY)
+    assert path.read_bytes() == before
 
 
 def test_localized_plugin_requires_current_strings_and_writes_companions(tmp_path, localized):  # noqa: F811

@@ -8,6 +8,21 @@ from .paged_models import KeysetPagedTableModel, PagedColumn
 
 def make_table_model(presenter, section: str, parent) -> KeysetPagedTableModel:
     method, columns = _definitions(section)
+    counts = {}
+    if section == "conflicts":
+        columns = (
+            columns[0],
+            PagedColumn(
+                "variants",
+                "候选译名 · 使用词条数",
+                lambda item: " / ".join(
+                    f"{variant.normalized_translation}"
+                    f"（{counts.get((item.conflict_group_id, variant.normalized_translation), '统计中')}）"
+                    for variant in item.variants
+                ),
+            ),
+            *columns[2:],
+        )
     read_loader = None
     try:
         loader = presenter.page_loader(method)
@@ -22,18 +37,25 @@ def make_table_model(presenter, section: str, parent) -> KeysetPagedTableModel:
         def loader(_ref, _request, unavailable=error):
             raise unavailable
 
-    return KeysetPagedTableModel(
+    model = KeysetPagedTableModel(
         loader, columns, parent, page_size=100, max_cached_pages=3, manual_paging=True, read_loader=read_loader
     )
+    model.usage_counts = counts
+    return model
 
 
 def _definitions(section):
     if section == "conflicts":
         return "list_conflicts", (
             PagedColumn("original", "原名", lambda item: item.normalized_original),
-            PagedColumn("variants", "不同译法", lambda item: len(item.variants)),
+            PagedColumn(
+                "variants",
+                "候选译名",
+                lambda item: " / ".join(variant.normalized_translation for variant in item.variants),
+            ),
             PagedColumn("risk", "处理优先级", lambda item: _risk_label(item.risk)),
             PagedColumn("status", "状态", lambda item: _conflict_status(item.status)),
+            PagedColumn("action", "选择", lambda _item: "选择译名…"),
         )
     if section == "history":
         return "list_versions", (
@@ -68,6 +90,10 @@ def _risk_label(value: object) -> str:
 
 
 def _conflict_status(value: object) -> str:
-    return {"unresolved": "待决定", "unified": "已统一", "plugin_exception": "按插件分别使用", "ignored": "已排除"}.get(
-        str(value), str(value)
-    )
+    return {
+        "unresolved": "待决定",
+        "unified": "已统一",
+        "plugin_exception": "按插件分别使用",
+        "ignored": "已排除",
+        "equivalent": "同一术语 · 无需处理",
+    }.get(str(value), str(value))

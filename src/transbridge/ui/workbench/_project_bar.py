@@ -19,6 +19,7 @@ from transbridge.ui.foundation.components import (
     reserve_text_width,
 )
 from transbridge.ui.foundation.tabler_icons import tabler_icon
+from transbridge.ui.text_encoding import context_text_encodings, text_encoding_summary
 from transbridge.ui.workbench.save_presenter import SavePhase, SaveStatePresenter, SaveTarget, SaveViewState
 from transbridge.ui.workbench.workflow_presenter import WorkbenchHierarchyViewState, WorkbenchWorkflowPresenter
 
@@ -29,6 +30,7 @@ class ProjectBar(QWidget):
     new_project_requested = pyqtSignal()
     open_project_requested = pyqtSignal()
     source_update_requested = pyqtSignal()
+    text_encoding_requested = pyqtSignal()
     variant_switch_requested = pyqtSignal(str)  # variant_name
     save_requested = pyqtSignal()
     variant_add_requested = pyqtSignal()
@@ -211,6 +213,15 @@ class ProjectBar(QWidget):
         menu.addAction("重命名工程…", self._on_rename_project)
         menu.addAction("更新源文件…", self.source_update_requested.emit)
         project_id = self._ctx.active_project_id
+        encoding = menu.addAction("文本编码…", self.text_encoding_requested.emit)
+        encoding.setEnabled(bool(project_id and getattr(self._ctx, "project_text_encodings", None)))
+        if encoding.isEnabled():
+            try:
+                summary = text_encoding_summary(context_text_encodings(self._ctx))
+            except (OSError, RuntimeError, ValueError) as exc:
+                summary = f"无法读取文本编码：{exc}"
+            status = menu.addAction(summary)
+            status.setEnabled(False)
         name = self._ctx.project_name
         if project_id and name:
             menu.addSeparator()

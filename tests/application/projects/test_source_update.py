@@ -91,6 +91,7 @@ def test_update_migrates_all_variants_and_reopens_with_new_source(project):
     assert opened.is_success, opened.diagnostics
     assert "recovery" not in opened.value
     assert opened.value["sources"][0]["location"] == ""
+    assert opened.value["hydrations"][0].reference_location == str(replacement)
     for variant in store.summary().variants:
         ref = VariantRef(variant.identity, active.project_ref.identity)
         (backup,) = history.list(ref)

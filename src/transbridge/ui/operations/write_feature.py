@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 from threading import RLock
@@ -14,7 +15,7 @@ from transbridge.application.io.json_export import (
     JsonExportWorkload,
     preflight_json_export,
 )
-from transbridge.application.io.operation_write import HydratedWriteDraft, HydratedWriteWorkload, WritePreflightCheck
+from transbridge.application.io.operation_write import HydratedWriteDraft, HydratedWriteWorkload
 from transbridge.application.io.plugin_transfer import (
     PluginTransferDraft,
     PluginTransferPreflightService,
@@ -22,6 +23,7 @@ from transbridge.application.io.plugin_transfer import (
 )
 from transbridge.application.io.publish import BackupPolicy, ConflictPolicy as PublishConflictPolicy
 from transbridge.application.tasks import OwnerRef, TaskRuntime
+from transbridge.config.text_encoding import TextEncodings
 
 from .errors import OperationCompositionError
 from .facade import OperationFeatureAdapter
@@ -41,21 +43,33 @@ from .write_batch import (
     retarget_write_batch,
 )
 from .write_json_export import json_export_plan, native_export_plan, with_json_choices
-from .write_plan import _write_plan
+from .write_plan import single_write_plan
+from .write_schemes import SchemeExportRequest, edit_scheme_export, expand_scheme_export, scheme_export_plan
 
 
-def build_write_feature(context_factory, operation_tasks, write_preflights):
+def build_write_feature(context_factory, operation_tasks, write_preflights, *, text_encodings=None):
     write_cache: dict[int, object] = {}
     cache_lock = RLock()
     transfer_preflights = PluginTransferPreflightService(write_preflights=write_preflights)
 
     def write_checks(value: object) -> tuple[PreflightCheckState, ...]:
+        if isinstance(value, SchemeExportRequest):
+            expanded = expand_scheme_export(value)
+            checks = write_checks(expanded.request)
+            with cache_lock:
+                write_cache[id(value)] = expanded
+                _trim_cache(write_cache)
+            return checks
         if isinstance(value, JsonExportDraft):
             checked = preflight_json_export(value, write_preflights)
             with cache_lock:
                 write_cache[id(value)] = checked
                 _trim_cache(write_cache)
-            return tuple(_display_check(item) for item in checked.checks)
+            codes = Counter(item.code for item in checked.checks)
+            return tuple(
+                replace(_display_check(item), check_id=item.code if codes[item.code] == 1 else f"{item.code}_{index}")
+                for index, item in enumerate(checked.checks)
+            )
         if isinstance(value, PluginTransferDraft):
             checked = transfer_preflights.preflight(value)
             with cache_lock:
@@ -65,8 +79,7 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
                 _display_check(item, include_message=item.code.startswith("TRANSFER_")) for item in checked.checks
             )
         if isinstance(value, _HydratedWriteBatch):
-            frozen_projection = write_preflights.freeze_projection(value.drafts[0]) if value.drafts else None
-            checked_batch = _check_batch(value, write_preflights, frozen_projection=frozen_projection)
+            checked_batch = _check_batch(value, write_preflights)
             with cache_lock:
                 write_cache[id(value)] = checked_batch
                 _trim_cache(write_cache)
@@ -139,16 +152,27 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         if json_output:
             native_values.pop("output_format")
         plan = create_native_write(context, batch, native_values)
-        return json_export_plan(plan, tuple(values.items())) if json_output else with_json_choices(plan)
+        plan = json_export_plan(plan, tuple(values.items())) if json_output else with_json_choices(plan)
+        source = values.get("export_schemes")
+        return scheme_export_plan(plan, source) if source is not None and source.choices else plan
 
     def create_native_write(context, batch: bool, values):
+        request_context = context_factory(context)
+        encodings = getattr(context, "text_encodings", None)
+        if encodings is None:
+            encodings = TextEncodings() if text_encodings is None else text_encodings(request_context)
+        pack_bsa = bool(values.get("pack_bsa", False))
+        options = (
+            ("pack_bsa", pack_bsa),
+            *encodings.read_options().items(),
+            ("output_encoding", encodings.output_encoding),
+            ("target_language", encodings.target_language),
+        )
         if batch:
             drafts = []
             failures = []
             output_directory = str(values.get("output_directory") or "").strip()
-            pack_bsa = bool(values.get("pack_bsa", False))
             overwrite = bool(values.get("overwrite_confirmed", False))
-            request_context = context_factory(context)
             for slot_key, slot in getattr(context, "slots", {}).items():
                 captured_source = getattr(getattr(slot, "source_snapshot", None), "source", None)
                 source_ref = (
@@ -193,7 +217,7 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
                                 PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL
                             ),
                             backup_policy=BackupPolicy.REQUIRED_IF_EXISTS,
-                            options=(("pack_bsa", pack_bsa),),
+                            options=options,
                             entry_projection=values.get("entry_projection"),
                         )
                     )
@@ -210,6 +234,7 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
                 overwrite=overwrite,
                 pack_bsa=pack_bsa,
                 output_format=str(values.get("output_format") or "auto"),
+                destination_mode=values.get("destination_mode"),
             )
             return _write_batch_plan(request)
         slot = getattr(context, "active_slot", None)
@@ -221,7 +246,6 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         entries = tuple(item.snapshot() for item in collection)
         plugin_path = str(values.get("plugin_path") or "").strip()
         target = str(values.get("target_path") or "").strip()
-        request_context = context_factory(context)
         overwrite = bool(values.get("overwrite_confirmed", False))
         request = HydratedWriteDraft(
             slot.source_snapshot,
@@ -232,14 +256,14 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
             request_context,
             conflict_policy=(PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL),
             backup_policy=BackupPolicy.REQUIRED_IF_EXISTS,
-            options=(("pack_bsa", bool(values.get("pack_bsa", False))),),
+            options=options,
             entry_projection=values.get("entry_projection"),
         )
-        if request.format_id is not FormatId.PLUGIN_SSE:
-            plugin_path = ""
-        return _write_plan(PluginTransferDraft(request, plugin_path) if plugin_path else request)
+        return single_write_plan(request, plugin_path, values)
 
     def edit_write(draft, fields):
+        if isinstance(draft.request, SchemeExportRequest):
+            return edit_scheme_export(draft.request, fields, edit_write)
         edits = dict(fields)
         if edits.get("output_format", getattr(draft.request, "format_id", None)) in JSON_EXPORT_FORMATS:
             return json_export_plan(draft, fields)
@@ -257,16 +281,18 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
                 overwrite=overwrite,
                 pack_bsa=_edited_flag(edits, "pack_bsa", packed),
                 output_format=edits.get("output_format"),
+                destination_mode=edits.get("destination_mode"),
             )
             return _write_batch_plan(request)
         value = _write_request(draft)
         request = value.write if isinstance(value, PluginTransferDraft) else value
         edits = dict(fields)
-        target = edits.get("target_path", request.target_path).strip()
+        output_format = FormatId(edits.get("output_format", request.format_id))
+        target = edits.get("target_path", request.target_path if output_format is request.format_id else "").strip()
         overwrite = _edited_flag(edits, "overwrite_confirmed")
         edited = replace(
             request,
-            format_id=FormatId(edits.get("output_format", request.format_id)),
+            format_id=output_format,
             target_path=target,
             conflict_policy=(PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL),
             options=tuple(
@@ -279,11 +305,16 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         plugin_path = edits.get(
             "plugin_path", value.plugin_path if isinstance(value, PluginTransferDraft) else ""
         ).strip()
-        if edited.format_id is not FormatId.PLUGIN_SSE:
-            plugin_path = ""
-        return _write_plan(PluginTransferDraft(edited, plugin_path) if plugin_path else edited)
+        directory = next((field.value for field in draft.editable_fields if field.field_id == "output_directory"), "")
+        return single_write_plan(edited, plugin_path, edits, directory)
 
     def submit_write(draft, preflight, owner: OwnerRef, tasks: TaskRuntime):
+        if isinstance(draft.request, SchemeExportRequest):
+            with cache_lock:
+                expanded = write_cache.pop(id(draft.request), None)
+            if expanded is None:
+                raise OperationCompositionError("多方案导出检查已失效，请重新导出。")
+            return submit_write(expanded, preflight, owner, tasks)
         if isinstance(draft, OperationPlanDraft) and isinstance(draft.request, JsonExportDraft):
             request = draft.request
             with cache_lock:
@@ -326,35 +357,23 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
                 checked_batch = write_cache.pop(id(request), None)
             if checked_batch is None:
                 raise OperationCompositionError("批量写回预检在提交前已失效")
-            current = _check_batch(request, write_preflights)
-            conflicts = batch_output_conflicts(current)
+            conflicts = tuple(
+                item.reason
+                for item in preflight.checks
+                if item.check_id == "BATCH_OUTPUT_DISJOINT" and item.status is PreflightCheckStatus.BLOCKED
+            )
             if conflicts and not preflight.ready:
                 raise OperationCompositionError("批量输出路径重叠，未提交任何文件：\n" + "\n".join(conflicts))
-            prepared = []
-            for confirmed, latest in zip(checked_batch, current, strict=True):
-                if isinstance(latest, _WriteBatchFailure) or isinstance(confirmed, _WriteBatchFailure):
-                    prepared.append(latest if isinstance(latest, _WriteBatchFailure) else confirmed)
-                elif latest.artifact_fingerprints != confirmed.artifact_fingerprints:
-                    prepared.append(
-                        replace(
-                            confirmed,
-                            checks=(
-                                *confirmed.checks,
-                                WritePreflightCheck("TARGET_FINGERPRINT_CONFLICT", False, "输出文件在预检后发生变化。"),
-                            ),
-                        )
-                    )
-                elif not latest.ready:
-                    prepared.append(replace(confirmed, checks=latest.checks))
-                else:
-                    prepared.append(confirmed)
+            # Confirmation runs on the GUI thread. Reuse the worker's frozen
+            # projection; each workload checks input/target identity and the
+            # publisher checks fingerprints again before committing any file.
             return operation_tasks.submit(
                 OperationTaskRequest(
                     OperationKind.WRITE,
                     preflight.request_digest,
                     ":".join(item.source_snapshot.sha256 for item in request.drafts),
-                    f"批量写回 {len(prepared)} 个来源",
-                    _HydratedWriteBatchWorkload(prepared),
+                    f"批量写回 {len(checked_batch)} 个来源",
+                    _HydratedWriteBatchWorkload(checked_batch),
                     True,
                     tuple(item.target_path for item in request.drafts),
                 ),
@@ -363,8 +382,7 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         request = _operation_request(draft, HydratedWriteDraft)
         with cache_lock:
             checked = write_cache.pop(id(request), None)
-        current = write_preflights.preflight(request)
-        if checked is None or not current.ready or current.artifact_fingerprints != checked.artifact_fingerprints:
+        if checked is None or not checked.ready:
             raise OperationCompositionError("写回预检在提交前已失效")
         workload = HydratedWriteWorkload(checked)
         return operation_tasks.submit(
@@ -388,6 +406,12 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
         return bool(not batch and slot is not None and getattr(slot, "collection", None) is not None)
 
     def discard_write(draft) -> None:
+        if isinstance(draft.request, SchemeExportRequest):
+            with cache_lock:
+                expanded = write_cache.pop(id(draft.request), None)
+            if expanded is not None:
+                discard_write(expanded)
+            return
         if isinstance(draft, OperationPlanDraft) and isinstance(draft.request, (_HydratedWriteBatch, JsonExportDraft)):
             request = draft.request
         else:
@@ -408,9 +432,17 @@ def build_write_feature(context_factory, operation_tasks, write_preflights):
 
 def _check_batch(value, service, **kwargs):
     checked = []
+    unfrozen = next(
+        (item for item in value.drafts if isinstance(item, HydratedWriteDraft) and item.entry_projection is None), None
+    )
+    fallback = service.freeze_projection(unfrozen) if unfrozen is not None else None
     for item in value.drafts:
         try:
-            checked.append(service.preflight(item, **kwargs))
+            checked.append(
+                PluginTransferPreflightService(service).preflight(item)
+                if isinstance(item, PluginTransferDraft)
+                else service.preflight(item, frozen_projection=item.entry_projection or fallback, **kwargs)
+            )
         except (OSError, TypeError, ValueError) as exc:
             checked.append(
                 _WriteBatchFailure(

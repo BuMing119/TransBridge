@@ -13,14 +13,6 @@ def source_entry_texts(request: WriteRequest) -> dict[str, tuple[str, str]]:
     snapshot = request.source_snapshot
     if snapshot is None or snapshot.content is None:
         raise ValueError("preserving source content requires a captured source snapshot")
-    if request.format_id in {FormatId.STRINGS, FormatId.DLSTRINGS, FormatId.ILSTRINGS}:
-        from .strings_adapter import _snapshot_records
-
-        records = _snapshot_records(snapshot)
-        values = {f"strings:{record.string_id}": (record.text, "") for record in records}
-        if len(values) != len(records):
-            raise ValueError("protected strings have duplicate source records")
-        return values
     if request.format_id in {FormatId.XML_EET, FormatId.XML_XT}:
         from .legacy_adapters import _eet_nodes, _xt_nodes
 

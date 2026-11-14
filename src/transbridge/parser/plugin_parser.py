@@ -9,9 +9,18 @@ from sse_plugin_interface.plugin import SSEPlugin
 from sse_plugin_interface.plugin_string import PluginString
 
 from transbridge.application.contracts import Diagnostic
+from transbridge.config.text_encoding import (
+    DEFAULT_SOURCE_LANGUAGE,
+    DEFAULT_TEXT_ENCODING,
+    XTRANSLATOR_READ_POLICY,
+    TextReadOptions,
+    language_from_suffix,
+)
 from transbridge.converter.plugin_entry_conflicts import resolve_plugin_entry_conflicts
 from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.parser.plugin.binary_io import PluginBinaryIO
 from transbridge.parser.plugin.plugin_with_context import SSEPluginWithContext
+from transbridge.parser.plugin.text_subrecords import PluginTextEncodingError
 from transbridge.parser.strings_file import PluginStringsLookup
 
 
@@ -28,16 +37,21 @@ class PluginParser:
         self.log = logging.getLogger("PluginParser")
         self.conflict_diagnostics: tuple[Diagnostic, ...] = ()
         self.conflict_skipped_count = 0
+        self.fallback_count = 0
 
     def parse_plugin(
         self,
         path: Path,
         progress_callback: Callable[[int, int, str], None] | None = None,
         skip_empty: bool = True,
-        language: str = "english",
+        language: str = DEFAULT_SOURCE_LANGUAGE,
         discover_sibling_strings: bool = True,
         raise_on_error: bool = False,
         captured_content: bytes | None = None,
+        *,
+        input_encoding: str = DEFAULT_TEXT_ENCODING,
+        source_language: str | None = None,
+        text_read_policy: str = XTRANSLATOR_READ_POLICY,
     ) -> list[TranslationEntry]:
         """
         Parse a plugin file and return all translatable strings as TranslationItem objects.
@@ -55,6 +69,7 @@ class PluginParser:
                 within the source file, before invoking the binary parser.
             captured_content: Parse these immutable plugin bytes instead of
                 opening path. The path still identifies sibling string resources.
+            input_encoding: Codec for inline display text and external Strings.
 
         Returns:
             List of TranslationEntry objects.
@@ -64,7 +79,12 @@ class PluginParser:
         self._strings_lookup = None
         self.conflict_diagnostics = ()
         self.conflict_skipped_count = 0
+        self.fallback_count = 0
         self.log.info("Starting to parse plugin: %s", path)
+        if source_language is None:
+            source_language = language_from_suffix(language)
+        options = TextReadOptions(input_encoding, source_language, text_read_policy)
+        codec_options = options.as_options() if options != TextReadOptions() else {}
 
         try:
             if raise_on_error:
@@ -79,13 +99,13 @@ class PluginParser:
                 if int.from_bytes(header[4:8], "little") > file_size - 24:
                     raise ValueError(f"Plugin TES4 header data exceeds the source file: {path}")
             self._plugin = (
-                SSEPluginWithContext.from_stream(BytesIO(captured_content), path.name)
+                SSEPluginWithContext.from_stream(BytesIO(captured_content), path.name, **codec_options)
                 if captured_content is not None
-                else SSEPluginWithContext.from_file(path)
+                else SSEPluginWithContext.from_file(path, **codec_options)
             )
         except Exception as e:
             self.log.error("Failed to parse plugin %s: %s", path, e)
-            if raise_on_error:
+            if raise_on_error or isinstance(e, PluginTextEncodingError):
                 raise
             return []
 
@@ -106,9 +126,9 @@ class PluginParser:
         strings_lookup = None
         if discover_sibling_strings:
             strings_lookup = (
-                PluginStringsLookup.from_plugin(path, language=language)
+                PluginStringsLookup.from_plugin(path, language=language, **codec_options)
                 if discover_archive
-                else PluginStringsLookup.from_strings_dir(path.parent / "Strings", path.stem, language)
+                else PluginStringsLookup.from_strings_dir(path.parent / "Strings", path.stem, language, **codec_options)
             )
         self._strings_lookup = strings_lookup
         if strings_lookup:
@@ -116,6 +136,12 @@ class PluginParser:
 
         strings_with_context = self._plugin.extract_strings_with_context(strings_lookup=strings_lookup)
         self._plugin.require_resolved_strings()
+        if isinstance(self._plugin, PluginBinaryIO):
+            self.fallback_count += self._plugin.fallback_count
+        if isinstance(strings_lookup, PluginStringsLookup):
+            self.fallback_count += strings_lookup.fallback_count
+        if self.fallback_count:
+            self.log.info("%s game text field(s) used a fallback encoding in %s", self.fallback_count, path.name)
         items = self.create_entries(strings_with_context, progress_callback=progress_callback, skip_empty=False)
         items, self.conflict_diagnostics = resolve_plugin_entry_conflicts(items)
         self.conflict_skipped_count = len(self.conflict_diagnostics)

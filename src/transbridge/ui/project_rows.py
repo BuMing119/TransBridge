@@ -69,6 +69,22 @@ class ProjectRowsCollection:
         entry = self.get(key)
         return None if entry is None else entry.snapshot()
 
+    def freeze_entries(self):
+        """Capture a revision-bound batch reader without doing I/O on the GUI thread."""
+        store, token = self.reader.store, self.token
+        namespace = self.source.info.namespace
+        authority = self._authority
+        states = None if self._states is None else dict(self._states)
+
+        def read(keys):
+            selected = tuple(key for key in keys if key.namespace == namespace)
+            if not selected:
+                return ()
+            rows = store.read_entries(token.variant_id, selected, token=token)
+            return tuple(_translation_entries(rows, authority, states))
+
+        return read
+
     def get_by_id(self, entry_id):
         return TranslationEntryCollection(self).get_by_id(entry_id)
 
@@ -276,6 +292,7 @@ def build_paged_slots(reader):
                 format_id=source.info.format_id,
                 source_id=source.key,
                 source_namespace=source.info.namespace.value,
+                reference_path=source.info.reference_path,
             ),
         )
         for source in reader.sources

@@ -48,6 +48,9 @@ class TerminologyProfileService:
         reader = getattr(self._repository, "read_cache_token", None)
         return None if reader is None else reader()
 
+    def get_profile(self, profile_id: str) -> TerminologyProfile:
+        return self._require_profile(profile_id)
+
     def create(self, project_id: str, name: str, *, copy_from: str | None = None) -> TerminologyProfile:
         content = TerminologyProfileContent()
         if copy_from is not None:

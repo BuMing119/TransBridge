@@ -29,3 +29,4 @@ class CollectionSlot:
     source_id: str | None = None
     source_namespace: str | None = None
     reading_source_entries: tuple[ReadingEntry, ...] | None = None
+    reference_path: str = ""

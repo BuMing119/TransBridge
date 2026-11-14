@@ -15,12 +15,13 @@ import threading
 from urllib.parse import urlsplit, urlunsplit
 
 from transbridge.config.paths import get_data_dir
+from transbridge.infra.llm_request_config import resolve_anthropic_endpoint
 from transbridge.persistence._utils import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
 _SCHEMA_VERSION = 1
-_PROBE_VERSION = 1
+_PROBE_VERSION = 2
 _STABLE_TTL_SECONDS = 30 * 24 * 60 * 60
 _INDETERMINATE_TTL_SECONDS = 24 * 60 * 60
 _FOREGROUND_PROBE_WAIT_SECONDS = 2.0
@@ -50,12 +51,12 @@ class ReasoningCapabilityKey:
     @classmethod
     def from_config(cls, config: object) -> ReasoningCapabilityKey:
         protocol = str(getattr(config, "provider", "openai_compatible") or "openai_compatible").strip().lower()
-        base_url = _normalize_base_url(str(getattr(config, "base_url", "") or ""))
-        if protocol == "anthropic" and not base_url:
-            base_url = "https://api.anthropic.com"
+        base_url = str(getattr(config, "base_url", "") or "")
+        if protocol == "anthropic":
+            base_url = resolve_anthropic_endpoint(base_url)
         return cls(
             protocol=protocol,
-            base_url=base_url,
+            base_url=_normalize_base_url(base_url),
             model=str(getattr(config, "model", "") or "").strip(),
         )
 
@@ -286,8 +287,13 @@ class ReasoningCapabilityManager:
         try:
             try:
                 result = detector()
-            except Exception:
-                logger.exception("LLM 思考能力后台探测失败: protocol=%s, model=%s", key.protocol, key.model)
+            except Exception as exc:
+                logger.warning(
+                    "LLM 思考能力后台探测失败: protocol=%s, model=%s, error=%s",
+                    key.protocol,
+                    key.model,
+                    type(exc).__name__,
+                )
                 result = ReasoningCapability.indeterminate()
             flight.result = result
             self._store.put(key, result)
@@ -340,14 +346,21 @@ class ReasoningScopedLLMClient:
         return self._call("chat", messages, max_tokens)
 
     def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
-        return self._call("chat_stream", messages, max_tokens, chunk_callback)
+        emitted_chunk = False
+
+        def forward_chunk(text: str) -> None:
+            nonlocal emitted_chunk
+            emitted_chunk = True
+            chunk_callback(text)
+
+        return self._call("chat_stream", messages, max_tokens, forward_chunk, can_retry=lambda: not emitted_chunk)
 
     def cancel(self) -> None:
         cancel = getattr(self._delegate, "cancel", None)
         if callable(cancel):
             cancel()
 
-    def _call(self, method: str, *args) -> str:
+    def _call(self, method: str, *args, can_retry: Callable[[], bool] | None = None) -> str:
         inherited = getattr(self._delegate, method)
         if self._intent is ReasoningIntent.INHERIT:
             return inherited(*args)
@@ -370,6 +383,8 @@ class ReasoningScopedLLMClient:
             if not callable(rejection) or not rejection(exc, patch):
                 raise
             self._manager.mark_indeterminate(self._key)
+            if can_retry is not None and not can_retry():
+                raise
             logger.warning(
                 "已缓存的 LLM 思考控制被 Provider 拒绝，暂缓重探测并继承重试: protocol=%s, model=%s",
                 self._key.protocol,

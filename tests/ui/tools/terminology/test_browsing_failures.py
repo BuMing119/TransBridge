@@ -115,15 +115,20 @@ def test_profile_switch_invalidates_old_page_even_when_asset_refresh_fails(new_q
     )
     try:
         window._browsing.refresh()
-        assert entered.wait(2)
+        assert not entered.is_set()
+        window.terms_view.browse_button.click()
+        _wait(entered.is_set)
         previous_generation = window.effective_model.generation
         profiles.state = _profile_state("B")
         profiles.state_changed.emit(profiles.state)
         assert window.effective_model.generation > previous_generation
-        _wait(lambda: asset_failed.is_set() and not window.effective_model.is_loading)
+        _wait(lambda: not window.effective_model.is_loading)
+        assert not asset_failed.is_set()
         browser = window.terms_view.source_browser
-        assert browser.model.index(0, 1).data() == "B"
-        assert browser.model.index(0, 3).data() == "尚未检查匹配状态"
+        window.terms_view.show_source()
+        _wait(asset_failed.is_set)
+        _wait(lambda: "asset metadata unavailable" in browser.status.text())
+        assert not browser.table.isEnabled()
         release.set()
         assert QThreadPool.globalInstance().waitForDone(3000)
         _APP.processEvents()

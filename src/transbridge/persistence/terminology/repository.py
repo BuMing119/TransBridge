@@ -44,7 +44,8 @@ from .builds import BuildStore
 from .cache import TerminologyCache
 from .changelog import ChangelogDocumentStore
 from .codec import dumps, loads
-from .conflict_queries import conflict_page, review_conflict_page
+from .conflict_queries import conflict_page
+from .conflict_reads import ConflictReads
 from .connection import (
     StorageMode,
     TerminologyConnectionFactory,
@@ -53,6 +54,7 @@ from .connection import (
     translate_sqlite_error,
 )
 from .connection_lifecycle import ProjectTerminologyConnection
+from .draft_browse_pages import DraftBrowsePages
 from .drafts import DraftStore
 from .inbound_review import SqliteInboundReviewStore
 from .paths import TerminologyPaths
@@ -107,6 +109,8 @@ class SqliteTerminologyRepository:
             opened, reopen=lambda: factory.open(project_id, writable=writable), lock=self._lock
         )
         self._builds = BuildStore(self._connection, project_id, self._decode)
+        self.conflict_reads = ConflictReads(self)
+        self._draft_browse = DraftBrowsePages(self)
         self.cache = TerminologyCache(self._connection)
         self.artifacts = ArtifactLedger(self._connection)
         self.changelogs = ChangelogDocumentStore(self._connection)
@@ -199,6 +203,33 @@ class SqliteTerminologyRepository:
             ).fetchone()
             return None if row is None else self._decode(str(row["payload_json"]), BuildResult)
 
+    def latest_build_ref(self, project_id: str, variant_id: str) -> BuildResultRef | None:
+        self._require_project(project_id)
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT build_key, content_digest FROM builds WHERE project_id = ? AND variant_id = ? "
+                "ORDER BY rowid DESC LIMIT 1",
+                (project_id, variant_id),
+            ).fetchone()
+            return None if row is None else BuildResultRef(row[0], row[1])
+
+    def effective_ref(self, project_id: str, variant_id: str) -> TerminologyVersionRef | None:
+        self._require_project(project_id)
+        with self._lock:
+            return self._effective_ref(project_id, variant_id)
+
+    def workbench_status(self, project_id: str, variant_id: str):
+        from .workbench_status import read_workbench_status
+
+        self._require_project(project_id)
+        with self._lock:
+            for _ in range(3):
+                before = self.read_cache_token()
+                status = read_workbench_status(self._connection, project_id, variant_id)
+                if before == self.read_cache_token():
+                    return status
+            raise CursorStaleError("术语状态在读取期间发生变化，请刷新重试")
+
     def create_draft(self, draft: TerminologyDraft) -> DraftRef:
         with self._lock, self.transaction():
             return self._drafts.create(draft)
@@ -215,6 +246,9 @@ class SqliteTerminologyRepository:
         """Return the full mutable draft identity without decoding its contents."""
         with self._lock:
             return self._drafts.active_ref(project_id, variant_id)
+
+    def draft_browse_page(self, query, request=PageRequest(), *, cancellation=None):
+        return self._draft_browse.page(query, request, cancellation=cancellation)
 
     def discard_draft(self, project_id: str, variant_id: str, *, expected_revision: int) -> None:
         with self._lock, self.transaction():
@@ -417,14 +451,7 @@ class SqliteTerminologyRepository:
     def list_review_conflicts(
         self, ref: BuildResultRef, request: PageRequest = PageRequest(), *, filters: ConflictFilter = ConflictFilter()
     ) -> Page[ConflictGroup]:
-        with self._lock:
-            build = self.get_build(ref)
-            latest = self.latest_build(build.project_id, build.variant_id)
-            if latest is None or latest.ref != ref:
-                raise CursorStaleError("术语构建已变化，请刷新异译列表")
-            draft = self._drafts.active(build.project_id, build.variant_id)
-            effective = self.effective_version(build.project_id, build.variant_id)
-            return review_conflict_page(self._connection, build, draft, effective, request, filters)
+        return self.conflict_reads.page(ref, request, filters)
 
     def list_terms(self, ref: TerminologyVersionRef, request: PageRequest = PageRequest()) -> Page[TermDecision]:
         self._require_version_ref(ref)

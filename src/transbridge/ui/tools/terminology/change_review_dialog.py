@@ -227,10 +227,10 @@ class CanonicalDiffView(QWidget):
 class ChangeReviewDialog(QDialog):
     def __init__(self, comparison: CanonicalDiff, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("检查发布影响")
+        self.setWindowTitle("应用术语结果")
         self.resize(1120, 700)
         layout = QVBoxLayout(self)
-        explanation = QLabel("确认后会发布本次审阅的术语内容；若草稿或工程输入变化，需要重新检查影响。", self)
+        explanation = QLabel("确认后，本次结果将用于项目翻译。以下变化供查看，无需逐条确认。", self)
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
         self.changes = CanonicalDiffView(self)
@@ -239,7 +239,7 @@ class ChangeReviewDialog(QDialog):
         layout.addWidget(self.changes, 1)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
         self.publish_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        self.publish_button.setText("确认发布")
+        self.publish_button.setText("确认应用")
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)

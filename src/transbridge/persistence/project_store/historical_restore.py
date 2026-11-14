@@ -10,11 +10,17 @@ from uuid import uuid4
 from transbridge.application.contracts import OperationResult
 from transbridge.application.io.identity import EntryRevision
 from transbridge.application.projects.models import LifecycleSnapshot
+from transbridge.config.text_encoding import (
+    DEFAULT_TEXT_ENCODING,
+    TEXT_INPUT_ENCODING,
+    TEXT_OUTPUT_ENCODING,
+)
 from transbridge.persistence.v2.ids import VariantId, VariantRef
 from transbridge.persistence.v2.models import ProjectDto
 from transbridge.persistence.v2.variant import VariantEntryState, VariantSnapshot
 
 from .connection import project_connection
+from .encoding_restore import encoding_restore_entries, rekey_states
 from .format import ProjectStorageConflict
 from .history import snapshot_record, write_snapshot
 from .lifecycle import _verify_project, _write_project
@@ -54,14 +60,22 @@ class HistoricalSourceRestore:
                 raise ProjectStorageConflict("project changed before restoring the snapshot")
             row = snapshot_record(connection, identity, historical.ref)
             settings = json.loads(row["source_settings"])
-            old_variants = tuple(
-                read_variant(connection, VariantRef(VariantId(value), ref.identity))[0]
+            legacy_encoding_settings = TEXT_OUTPUT_ENCODING in settings
+            if legacy_encoding_settings:
+                settings.setdefault(TEXT_INPUT_ENCODING, DEFAULT_TEXT_ENCODING)
+            else:
+                settings.pop(TEXT_INPUT_ENCODING, None)
+            variants = tuple(
+                read_variant(connection, VariantRef(VariantId(value), ref.identity))
                 for value in saved.envelope.data["variant_ids"]
             )
+            _, rows = next((item, rows) for item, rows in variants if item.ref == historical.ref)
+            remapped, changed = encoding_restore_entries(connection, identity, rows)
         project = ProjectDto(
             replace(saved.envelope, revision=saved.envelope.revision + 1, data={**saved.envelope.data, **settings})
         )
-        restored = {item.ref: _restore_variant(item, historical) for item in old_variants}
+        old_variants = tuple(item for item, _ in variants)
+        restored = {item.ref: _restore_variant(item, historical, remapped, changed) for item in old_variants}
         target = restored[historical.ref]
         active_revision = next(item.revision for item in old_variants if item.ref == historical.ref)
         token = uuid4().hex
@@ -77,6 +91,7 @@ class HistoricalSourceRestore:
                         connection,
                         LifecycleSnapshot(ref, old.ref, old, "恢复快照前"),
                         f"{token}-{index}",
+                        legacy_encoding_settings=legacy_encoding_settings,
                     )
                 connection.execute("DELETE FROM project_source")
                 connection.execute(
@@ -111,10 +126,12 @@ class HistoricalSourceRestore:
         )
 
 
-def _restore_variant(current: VariantSnapshot, historical: VariantSnapshot) -> VariantSnapshot:
-    current_by_key = {item.entry_key: item for item in current.entries}
+def _restore_variant(current: VariantSnapshot, historical: VariantSnapshot, remapped, changed) -> VariantSnapshot:
     states = []
     is_target = current.ref == historical.ref
+    current_by_key = {
+        item.entry_key: item for item in rekey_states(current.entries, remapped, changed, mark_review=not is_target)
+    }
     for saved in historical.entries:
         now = current_by_key.get(saved.entry_key, VariantEntryState(saved.entry_key))
         if is_target:

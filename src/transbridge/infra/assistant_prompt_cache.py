@@ -6,26 +6,19 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from transbridge.infra.llm_request_config import is_official_anthropic_endpoint
 from transbridge.infra.prompt_cache import (
     PROMPT_CACHE_METADATA_KEY,
     attach_prompt_cache_directive,
     is_official_openai_base_url,
+    log_prompt_cache_strategy,
 )
 
 ASSISTANT_CONTEXT_KEY = "_transbridge_assistant_context"
 ASSISTANT_CACHE_PROFILE = "assistant_stable"
 
-# This profile deliberately does not inherit the generic unknown-model fallback.
+# The OpenAI assistant profile only sends a routing key to supported families.
 _OPENAI_MODELS = ("gpt-4o", "gpt-4.1", "gpt-5", "gpt-6", "o1", "o3", "o4")
-_ANTHROPIC_MODELS = (
-    "claude-sonnet-4",
-    "claude-opus-4",
-    "claude-haiku-4-5",
-    "claude-haiku-3-5",
-    "claude-fable-5",
-    "claude-mythos-5",
-    "claude-mythos-preview",
-)
 
 
 def _clean_blocks(value: Any) -> Any:
@@ -102,10 +95,21 @@ def prepare_assistant_openai(*, messages: list[dict], model: str, base_url: str,
     from implicit caching, even when that history has a reusable prefix.
     """
     result = {"messages": messages, "request_options": {}, "cache_mode": "disabled"}
-    if not is_official_openai_base_url(base_url) or not model.lower().startswith(_OPENAI_MODELS):
-        return result
-    result["request_options"] = {"prompt_cache_key": key}
-    result["cache_mode"] = "automatic_prefix"
+    if not is_official_openai_base_url(base_url):
+        reason = "endpoint_not_official"
+    elif not model.lower().startswith(_OPENAI_MODELS):
+        reason = "routing_key_support_unknown"
+    else:
+        reason = "server_checks_prefix_length"
+        result["request_options"] = {"prompt_cache_key": key}
+        result["cache_mode"] = "automatic_prefix"
+    log_prompt_cache_strategy(
+        provider="openai",
+        model=model,
+        profile=ASSISTANT_CACHE_PROFILE,
+        strategy="automatic_prefix" if result["request_options"] else "standard_request",
+        reason=reason,
+    )
     return result
 
 
@@ -115,9 +119,22 @@ def anthropic_assistant_cache_options(messages: list[dict], *, model: str, base_
 
     if not is_assistant_context(messages):
         return {}
+    options: dict = {}
     if not messages[0][ASSISTANT_CONTEXT_KEY].get("cache_enabled"):
-        return {}
-    if base_url.rstrip("/") != "https://api.anthropic.com" or not model.lower().startswith(_ANTHROPIC_MODELS):
-        return {}
-    _, directives = validate_prompt_cache_directives(messages, ASSISTANT_CACHE_PROFILE)
-    return {"cache_control": {"type": "ephemeral"}} if directives else {}
+        reason = "assistant_cache_disabled"
+    elif not is_official_anthropic_endpoint(base_url):
+        reason = "endpoint_not_official"
+    else:
+        _, directives = validate_prompt_cache_directives(messages, ASSISTANT_CACHE_PROFILE)
+        reason = "missing_or_invalid_directives"
+        if directives:
+            options["cache_control"] = {"type": "ephemeral"}
+            reason = "official_messages_api"
+    log_prompt_cache_strategy(
+        provider="anthropic",
+        model=model,
+        profile=ASSISTANT_CACHE_PROFILE,
+        strategy="automatic_history" if options else "standard_request",
+        reason=reason,
+    )
+    return options

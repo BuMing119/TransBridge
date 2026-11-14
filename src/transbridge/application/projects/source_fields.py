@@ -54,12 +54,17 @@ _OPTION_FIELDS = frozenset({
     "original_language",
     "translation_language",
     "encoding",
+    "input_encoding",
+    "source_language",
+    "text_read_policy",
     "discover_sibling_strings",
     "external_scope",
 })
 _FORMAT_FIELDS = frozenset({
     "source_role",
     "encoding",
+    "source_language",
+    "text_read_policy",
     "bom",
     "eet_header",
     "sst_header",

@@ -84,6 +84,9 @@ class DraftSaveCloseGuard(QObject):
         ]
 
     def _close_unsaved_forms(self):
+        review = getattr(self._window, "_conflict_review", None)
+        if review is not None and not review.allow_leave():
+            return False
         for dialog in self._unsaved_forms():
             dialog.close()
             if dialog.isVisible():

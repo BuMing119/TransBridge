@@ -229,7 +229,11 @@ class LLMConfig:
             "action_rules": self._serialize_action_rules(),
             "workflow_profiles": self._serialize_workflow_profiles() or None,
         }
-        if all(str(value).strip() for value in (self.provider, self.base_url, self.model)):
+        if (
+            str(self.provider or "").strip()
+            and str(self.model or "").strip()
+            and (self.provider == "anthropic" or str(self.base_url or "").strip())
+        ):
             llm.update({"provider": self.provider, "base_url": self.base_url, "model": self.model})
         llm.update({key: getattr(self, attr) for attr, key, _kind in self._CONFIG_FIELDS})
         llm["pp_strategy"] = _normalize_persisted_postprocess_strategy(self.pp_strategy)
@@ -270,7 +274,8 @@ class LLMConfig:
         obj._credential_store = store
         obj._environment = environment
         obj.provider = snapshot.value("llm", "provider", obj.provider) or obj.provider
-        obj.base_url = snapshot.value("llm", "base_url", obj.base_url) or ""
+        default_base_url = "" if obj.provider == "anthropic" else obj.base_url
+        obj.base_url = snapshot.value("llm", "base_url", default_base_url) or ""
         obj.model = snapshot.value("llm", "model", obj.model) or ""
         obj.credential_ref = _credential_ref(snapshot.value("llm", "credential_ref"), _LLM_REF)
         obj.embedding.credential_ref = _credential_ref(

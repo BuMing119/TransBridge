@@ -207,6 +207,23 @@ def _profiled_snapshot(
                 DecisionStatus.ADOPTED,
             )
         )
+    version_id, digest = profiled_snapshot_identity(base, profile, format_version=format_version)
+    diagnostics = list(base.diagnostics)
+    if missing:
+        diagnostics.append(f"terminology localization profile has {missing} unmapped effective term(s)")
+    return EffectiveTerminologySnapshot(
+        base.local_project_id,
+        base.local_variant_id,
+        EffectiveSnapshotStatus.READY,
+        version_id=version_id,
+        content_digest=digest,
+        decisions=tuple(decisions),
+        diagnostics=tuple(diagnostics),
+    )
+
+
+def profiled_snapshot_identity(base, profile, *, format_version=2):
+    """Identity depends on immutable references, independently of projected rows."""
     version_id = encode_profiled_version_id(base.version_id, profile, format_version=format_version)
     payload = json.dumps(
         {
@@ -222,18 +239,7 @@ def _profiled_snapshot(
     ).encode("utf-8")
     digest_domain = f"transbridge.profiled-effective-terminology.v{format_version}\0".encode("ascii")
     digest = hashlib.sha256(digest_domain + payload).hexdigest()
-    diagnostics = list(base.diagnostics)
-    if missing:
-        diagnostics.append(f"terminology localization profile has {missing} unmapped effective term(s)")
-    return EffectiveTerminologySnapshot(
-        base.local_project_id,
-        base.local_variant_id,
-        EffectiveSnapshotStatus.READY,
-        version_id=version_id,
-        content_digest=digest,
-        decisions=tuple(decisions),
-        diagnostics=tuple(diagnostics),
-    )
+    return version_id, digest
 
 
 __all__ = [

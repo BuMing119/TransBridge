@@ -10,6 +10,7 @@ from transbridge.application.projections.adapters import ProjectProjectionPublis
 from transbridge.application.projections.store import ProjectionStore
 from transbridge.application.projects.gui_facade import GuiProjectCommandFacade
 from transbridge.application.projects.variant_commands import patch_entry_records, patch_entry_states
+from transbridge.config.text_encoding import TextEncodings
 from transbridge.persistence.v2.variant import (
     SourceFingerprint,
     VariantAggregate,
@@ -18,9 +19,11 @@ from transbridge.persistence.v2.variant import (
 )
 
 
-def _saving_facade(*, dirty):
+def _saving_facade(*, dirty, legacy=False):
     project_ref, variant_ref = _refs("save-cost", "main")
     active = _active(project_ref, variant_ref, revision=1, persisted_revision=0 if dirty else 1)
+    if not legacy:
+        active.project.envelope.data.update(TextEncodings().to_project_data())
     namespace = SourceNamespace("source:save-cost")
     active = replace(
         active,
@@ -41,8 +44,9 @@ def _saving_facade(*, dirty):
     return facade, harness, store
 
 
-def test_clean_save_keeps_projection_and_performs_no_entry_serialization(monkeypatch):
-    facade, harness, store = _saving_facade(dirty=False)
+@pytest.mark.parametrize("legacy", [False, True])
+def test_clean_save_keeps_projection_and_performs_no_entry_serialization(monkeypatch, legacy):
+    facade, harness, store = _saving_facade(dirty=False, legacy=legacy)
     before = store.snapshot()
     notifications = []
     subscription = store.subscribe(notifications.append, replay=False)
@@ -55,7 +59,7 @@ def test_clean_save_keeps_projection_and_performs_no_entry_serialization(monkeyp
     assert facade.save(_context()).is_success
     assert store.snapshot() is before
     assert notifications == []
-    assert harness.store.saved_revisions == []
+    assert harness.store.saved_revisions == ([1] if legacy else [])
     subscription.close()
 
 

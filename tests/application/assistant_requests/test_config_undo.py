@@ -132,6 +132,17 @@ def test_endpoint_undo_restores_absent_members_without_materializing_defaults(tm
     assert dict(restored.section("llm").values) == {"provider": "openai"}
 
 
+def test_endpoint_undo_restores_automatic_anthropic_address(tmp_path):
+    repository = _repository(tmp_path)
+    before = repository.update_sections({"llm": {"provider": "anthropic", "base_url": "", "model": "claude"}})
+    after = repository.update_sections({
+        "llm": {"provider": "anthropic", "base_url": "https://proxy.example/claude", "model": "claude"}
+    })
+    receipt = capture_config_undo(before, after, {"provider", "base_url", "model"})
+    restored = apply_config_undo(repository, receipt)
+    assert restored.section("llm") == before.section("llm")
+
+
 def test_endpoint_legacy_empty_inverse_is_rejected_before_any_write(tmp_path):
     repository = _repository(tmp_path)
     repository.path.write_text(

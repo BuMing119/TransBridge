@@ -161,6 +161,11 @@ class TerminologyBrowseQueries:
         *,
         cancellation: QueryCancellation | None = None,
     ) -> Page[TermDecision]:
+        direct = getattr(self._snapshots, "list_effective_page", None)
+        if direct is not None:
+            page = direct(query, request, cancellation=cancellation)
+            if page is not NotImplemented:
+                return page
         context = self.describe(query, cancellation=cancellation)
         if context.status in {EffectiveSnapshotStatus.UNAVAILABLE, EffectiveSnapshotStatus.CORRUPT}:
             detail = "; ".join(context.diagnostics) or context.status.value
@@ -178,6 +183,9 @@ class TerminologyBrowseQueries:
     ) -> Page[TermDecision]:
         if cancellation is not None:
             cancellation.raise_if_cancelled()
+        direct = getattr(self._drafts, "draft_browse_page", None)
+        if direct is not None:
+            return direct(query, request, cancellation=cancellation)
         with self._lock:
             draft = self._read_draft(query, cancellation)
         if draft is not None and (draft.ref.project_id, draft.ref.variant_id) != (query.project_id, query.variant_id):

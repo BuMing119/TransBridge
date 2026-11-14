@@ -79,6 +79,7 @@ class ProfileVariantCommands:
         expected_project_revision=None,
         expected_variant_revision=None,
         base_snapshot=None,
+        projection_projector=None,
     ):
         descriptor = None
 
@@ -130,7 +131,7 @@ class ProfileVariantCommands:
                 ):
                     _fail("BASE_TERMINOLOGY_CHANGED", "项目默认术语在预览后已变化，请重新预览后保存。")
                 base = base if base_snapshot is None else base_snapshot
-            entries = self._convert(active, source, context, target_profile, source_profile, base)
+            entries = self._convert(active, source, context, target_profile, source_profile, base, projection_projector)
             snapshot = VariantSnapshot(ref, source.source_fingerprints, entries, revision, source.label_library)
             project = project_with_active_variant(project, ref)
             candidate = ActiveProject(
@@ -178,8 +179,8 @@ class ProfileVariantCommands:
             return result
         return OperationResult.completed(descriptor.to_dict(), diagnostics=result.diagnostics, run_id=context.run_id)
 
-    def _convert(self, active, source, context, target, source_profile, base):
-        projector = ProfileEntryProjector(target, base, source_profile=source_profile)
+    def _convert(self, active, source, context, target, source_profile, base, projection_projector=None):
+        projector = ProfileEntryProjector(target, base, source_profile=source_profile, projector=projection_projector)
         inputs = {} if self._entry_inputs is None else self._entry_inputs(active.project, source, context)
         output = []
         for state in source.entries:

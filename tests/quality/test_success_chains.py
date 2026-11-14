@@ -87,7 +87,7 @@ IO_CHAINS: tuple[dict[str, object], ...] = (
     },
     {
         "chain_id": "strings-parse-write-reparse",
-        "fixture": "tests/contracts/io/fixtures/strings/integrity.strings",
+        "fixture": "tests/contracts/io/fixtures/strings/utf8-integrity.strings",
         "format_id": FormatId.STRINGS,
         "translation": "hello (s02)",
         "outcomes": (OperationOutcome.COMPLETED, OperationOutcome.PARTIAL),

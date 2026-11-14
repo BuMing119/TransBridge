@@ -60,7 +60,7 @@ def _validate_localized_template(snapshot: SourceSnapshot) -> None:
 
 def target_entries_from_snapshot(snapshot: SourceSnapshot):
     """Discard parser read timing: the matching entries come from the leased bytes."""
-    _parser, entries = _parser_from_snapshot(snapshot, {})
+    _parser, entries = _parser_from_snapshot(snapshot)
     namespace = SourceNamespace(dict(snapshot.metadata)["source_namespace"])
     return tuple(replace(entry, entry_key=EntryKey(namespace, entry.key, entry.identity.original)) for entry in entries)
 

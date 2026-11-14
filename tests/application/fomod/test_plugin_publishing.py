@@ -15,9 +15,11 @@ from transbridge.application.contracts import OperationOutcome
 from transbridge.application.io import EntryKey, SourceNamespace, SsePluginAdapter
 from transbridge.application.io.publish import ImmediateCommitGuard, OsPublishFilesystem
 from transbridge.application.tasks import TaskCancelled
+from transbridge.config.text_encoding import TextEncodings
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.fomod.pipeline import FomodPipeline
 from transbridge.fomod.plugin_publishing import prepare_plugin_source, publish_plugin_collection
+from transbridge.parser.plugin_parser import PluginParser
 from transbridge.translation_memory import TranslationMemoryManager
 from transbridge.writer.plugin_writer import PluginWriter
 
@@ -46,6 +48,26 @@ def test_successful_publication_leaves_only_package_assets(tmp_path, localized):
     assert _texts(plugin, localized=localized)[:2] == ["Translated First", "Translated Second"]
     assert {path.relative_to(tmp_path) for path in tmp_path.rglob("*") if path.is_file()} == before_files
     assert not any(path.name.startswith(".transbridge-") for path in tmp_path.rglob("*"))
+
+
+def test_fomod_language_fallback_transcodes_unchanged_text_to_utf8(tmp_path):
+    plugin = write_plugin(tmp_path / "source.esp", [(0x800, "Npc", "Привет")], encoding="cp1251")
+    source = prepare_plugin_source(plugin, encodings=TextEncodings(source_language="russian"))
+    collection = TranslationEntryCollection(source.collection_entries())
+    assert [entry.original for entry in collection] == ["Привет"]
+    result = publish_plugin_collection(plugin, collection, source=source)
+    assert result.outcome is OperationOutcome.COMPLETED
+    parsed = PluginParser().parse_plugin(plugin, input_encoding="utf-8", text_read_policy="strict-v1")
+    assert [entry.original for entry in parsed] == ["Привет"]
+
+
+def test_fomod_codec_languages_do_not_change_companion_names(tmp_path):
+    plugin = _localized_quest(tmp_path / "source.esp")
+    source = prepare_plugin_source(plugin, encodings=TextEncodings(source_language="russian"))
+    collection = TranslationEntryCollection(source.collection_entries())
+    result = publish_plugin_collection(plugin, collection, source=source)
+    assert result.outcome is OperationOutcome.COMPLETED
+    assert {path.name for path in (tmp_path / "Strings").iterdir()} == {"source_English.dlstrings"}
 
 
 def test_failed_renderer_cannot_truncate_existing_workspace_plugin(tmp_path, monkeypatch):

@@ -31,9 +31,9 @@ def test_term_enter_clear_and_reset_restore_actual_rows_with_one_query(workbench
     harness.parser.entries["source-a"] += (_entry("source-a", "two", "Sword", "剑"),)
     harness.build()
     window._bind_existing_assets()
-    _wait(lambda: window.draft_model.rowCount() == 2)
     window.terms_view.show_draft()
     window.show()
+    _wait(lambda: window.draft_model.rowCount() == 2)
     settle_layout(layout_app)
     filters = window.draft_view.filters
     queries = []
@@ -106,7 +106,7 @@ def test_terminology_action_shapes_and_filter_keyboard_fit_narrow_window(workben
         actions = (
             filters.apply_button,
             filters.reset_button,
-            window.conflicts_view.review_button,
+            window.conflicts_view.pane.save_button,
             terms.build_details_button,
             window.build_view.build_button,
             terms.review_button,
@@ -116,7 +116,7 @@ def test_terminology_action_shapes_and_filter_keyboard_fit_narrow_window(workben
             assert button.property("tbComponentKind") == "button"
             assert button.sizeHint().height() == reference_height
         filters.search.setText("not yet applied")
-        window.activateWindow()
+        terms.editor_dialog.activateWindow()
         filters.apply_button.setFocus()
         settle_layout(layout_app)
         assert filters.apply_button.hasFocus()
@@ -138,10 +138,12 @@ def test_terminology_action_shapes_and_filter_keyboard_fit_narrow_window(workben
             settle_layout(layout_app)
             assert window.width() == 920
             for widget in controls:
-                left = widget.mapTo(window, QPoint()).x()
-                assert 0 <= left <= window.width() - widget.width()
+                host = widget.window()
+                left = widget.mapTo(host, QPoint()).x()
+                assert 0 <= left <= host.width() - widget.width()
             for before, after in zip(controls, controls[1:]):
-                assert not before.geometry().intersects(after.geometry())
+                if before.parent() is after.parent():
+                    assert not before.geometry().intersects(after.geometry())
         terms.review_button.setEnabled(False)
         settle_layout(layout_app)
         assert terms.review_button.sizeHint().height() == reference_height

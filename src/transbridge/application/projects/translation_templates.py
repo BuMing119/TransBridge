@@ -8,7 +8,7 @@ from collections.abc import Sequence
 import xml.etree.ElementTree as ET
 
 from transbridge.application.io.contracts import FormatId
-from transbridge.application.io.strings_adapter import _encode_chunk, _parse_records, _render
+from transbridge.parser.localized_string_records import LocalizedStringRecord, encode_chunk, render
 
 from .storage_contracts import StoredEntry
 
@@ -44,17 +44,27 @@ def rebuild_xml(header: tuple, records: tuple[tuple[str, str | None], ...], enco
     return bom + data if bom and not data.startswith(bom) else data
 
 
-def rebuild_strings(format_id: FormatId, entries: Sequence[StoredEntry]) -> tuple[bytes, tuple]:
+def rebuild_strings(
+    format_id: FormatId, entries: Sequence[StoredEntry]
+) -> tuple[bytes, tuple[LocalizedStringRecord, ...]]:
     length_prefixed = format_id is not FormatId.STRINGS
     chunks = []
-    for entry in entries:
+    records = []
+    offset = 0
+    payload_start = 4 if length_prefixed else 0
+    for index, entry in enumerate(entries):
         item = entry.snapshot
         if item.string_id is None:
             raise ValueError("localized translation record is missing its String ID")
         encoding = dict(item.metadata)["strings.encoding"]
-        chunks.append((item.string_id, _encode_chunk(item.original, encoding, length_prefixed)))
-    data = _render(chunks)
-    return data, _parse_records(data, length_prefixed)
+        chunk = encode_chunk(item.original, encoding, length_prefixed)
+        chunks.append((item.string_id, chunk))
+        # Existing projects may have saved different per-entry codecs. Preserve
+        # the known Unicode facts without attempting to decode template bytes.
+        payload = chunk[payload_start:-1]
+        records.append(LocalizedStringRecord(index, item.string_id, offset, payload, chunk, item.original, encoding))
+        offset += len(chunk)
+    return render(chunks), tuple(records)
 
 
 def _xml_parser() -> ET.XMLParser:

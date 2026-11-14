@@ -41,6 +41,7 @@ from transbridge.application.io.publish import (
 )
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
 from transbridge.application.tasks import TaskCancelled
+from transbridge.config.text_encoding import TextEncodingDefaults, TextEncodings
 from transbridge.parser.localized_resources import candidate_input_paths
 
 
@@ -49,16 +50,20 @@ class FomodPluginSource:
     snapshot: SourceSnapshot
     entries: tuple[EntrySnapshot, ...]
     fingerprints: tuple[tuple[str, str, FileFingerprint], ...]
+    encodings: TextEncodings = TextEncodings()
 
     def collection_entries(self):
         return _translation_entries(self.entries)
 
 
-def prepare_plugin_source(path, *, namespace: SourceNamespace | None = None, cancellation=None) -> FomodPluginSource:
+def prepare_plugin_source(
+    path, *, namespace: SourceNamespace | None = None, cancellation=None, encodings: TextEncodings | None = None
+) -> FomodPluginSource:
     """Capture the new plugin before migration/TM/AI can change its collection."""
     token = _CancellationToken(cancellation)
     token.raise_if_cancelled()
     source = Path(path)
+    encodings = encodings if encodings is not None else TextEncodingDefaults().load()
     fs = OsPublishFilesystem()
     requested_paths = {str(source), *(str(path) for path in candidate_input_paths(source, "english"))}
     baseline = {}
@@ -71,7 +76,7 @@ def prepare_plugin_source(path, *, namespace: SourceNamespace | None = None, can
             RequestContext("fomod-pipeline"),
             FormatId.PLUGIN_SSE,
             namespace,
-            options=(("language", "english"), ("skip_empty", False)),
+            options=(("skip_empty", False), ("language", "english"), *encodings.read_options().items()),
             cancellation=token,
         )
     )
@@ -88,7 +93,7 @@ def prepare_plugin_source(path, *, namespace: SourceNamespace | None = None, can
         )
     # Reconstruct from captured bytes, rather than trusting entries read before
     # companion Strings snapshots were captured by the format adapter.
-    _parser, entries = _parser_from_snapshot(snapshot, {})
+    _parser, entries = _parser_from_snapshot(snapshot)
     frozen_namespace = SourceNamespace(dict(snapshot.metadata)["source_namespace"])
     snapshots = tuple(
         replace(entry, entry_key=EntryKey(frozen_namespace, entry.key, entry.identity.original)).snapshot()
@@ -112,7 +117,7 @@ def prepare_plugin_source(path, *, namespace: SourceNamespace | None = None, can
         fingerprints.append((requested, path, fingerprint))
     _validate_localized_source(snapshot)
     token.raise_if_cancelled()
-    return FomodPluginSource(snapshot, snapshots, tuple(fingerprints))
+    return FomodPluginSource(snapshot, snapshots, tuple(fingerprints), encodings)
 
 
 def publish_plugin_collection(
@@ -156,7 +161,11 @@ def publish_plugin_collection(
         RequestContext("fomod-pipeline", run_id=publication_id),
         ConflictPolicy.EXPLICIT_OVERWRITE,
         BackupPolicy.NONE,
-        options=(("language", "english"),),
+        options=(
+            *prepared.encodings.read_options().items(),
+            ("target_language", prepared.encodings.target_language),
+            ("output_encoding", prepared.encodings.output_encoding),
+        ),
     )
     checked = HydratedWritePreflightService().preflight(draft)
     if not checked.ready:

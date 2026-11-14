@@ -74,6 +74,20 @@ class ProfiledTerminologyBrowseSnapshotPort:
         self._cache: OrderedDict[object, TermBrowseContext] = OrderedDict()
         self._lock = RLock()
 
+    def list_effective_page(self, query, request, *, cancellation=None):
+        reader = getattr(self._base, "browse_page", None)
+        if reader is None:
+            return NotImplemented
+        for _ in range(3):
+            if cancellation is not None:
+                cancellation.raise_if_cancelled()
+            token = (_read_token(self._base), _read_token(self._profiles))
+            profile = self._profiles.selected_revision(query.project_id, query.variant_id)
+            page = reader(query, request, profile, cancellation)
+            if token == (_read_token(self._base), _read_token(self._profiles)):
+                return page
+        raise ValueError("术语或译名方案在读取时发生变化，请重试")
+
     def describe(
         self, project_id: str, variant_id: str, *, cancellation: QueryCancellation | None = None
     ) -> TermBrowseContext:

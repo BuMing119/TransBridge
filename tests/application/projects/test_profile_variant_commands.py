@@ -138,6 +138,35 @@ def test_new_variant_saves_full_partial_conversion_and_exact_association_without
     assert _translations(services) == _translations(services, original.formal_variant_ref)
 
 
+def test_ambiguous_save_requires_frozen_alignment_and_reuses_preview_without_model(scheme_project):
+    from transbridge.application.terminology_profiles.occurrence_alignment import AlignmentDecision
+    from transbridge.application.terminology_profiles.profile_alignment import align_profile_entries
+    from transbridge.application.terminology_profiles.projection import TerminologyProfileProjector
+
+    services, context, _participant, (source, target), keys = scheme_project
+    assert services.gui_project_commands.update_entry(
+        keys[0], context, translation="雪漫和雪漫欢迎大雪漫。", stage=3
+    ).is_success
+    assert services.gui_project_commands.save(context).is_success
+    active = services.project_lifecycle.active
+    inputs = services.gui_project_commands._profile_entry_inputs(active.project, active.variant.snapshot(), context)
+    failed = _save(scheme_project)
+    assert not failed.is_success
+    assert services.project_lifecycle.active.formal_variant_ref == active.formal_variant_ref
+
+    class Service:
+        def resolve_many(self, requests, **_kwargs):
+            assert len(requests) == 1
+            return (AlignmentDecision((0, 1), True, "仅前两处对应原文的两个 Whiterun"),)
+
+    frozen, preview = align_profile_entries(
+        tuple(inputs.values()), target, None, source_profile=source, service=Service()
+    )
+    result = _save(scheme_project, projection_projector=TerminologyProfileProjector(resolver=frozen))
+    assert result.is_success, result.diagnostics
+    assert _translations(services)[keys[0]] == preview[keys[0].serialize()].translation == "白漫和白漫欢迎大雪漫。"
+
+
 def test_saved_b_reopens_edits_independently_and_copy_delete_manage_its_association(scheme_project, service_factory):
     services, context, participant, (_source, target), keys = scheme_project
     source_ref = services.project_lifecycle.active.formal_variant_ref

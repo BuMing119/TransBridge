@@ -13,12 +13,16 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
+from transbridge.application.io.identity import SourceNamespace
 from transbridge.application.projects.models import ActiveProject, TransitionTarget
 from transbridge.application.projects.provisioning_models import PreparedSourceHydration
-from transbridge.application.projects.source_content import authoritative_baseline_sources, source_content_identity
+from transbridge.application.projects.save_changes import project_encoding_settings
+from transbridge.application.projects.source_content import registered_source_ids
 from transbridge.application.projects.source_extraction import reconstructed_source_snapshot
 from transbridge.application.projects.source_fields import parse_options, source_name
+from transbridge.application.projects.storage_contracts import ProjectReadToken
 from transbridge.application.projects.translation_templates import XML_FORMATS
+from transbridge.config.text_encoding import TextEncodings
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantRef
 from transbridge.persistence.v2.models import SCHEMA_VERSION, LoadedRecord, ProjectDto, SchemaEnvelope, VariantDto
 from transbridge.persistence.v2.variant import SourceBaseline, SourceFingerprint, VariantAggregate, VariantSnapshot
@@ -29,6 +33,7 @@ from .format import PROJECT_ROOT, ProjectStoreError
 from .paths import project_path
 from .reads import read_baseline_states, read_format_records, read_page, read_sources, read_summary, require_variant
 from .repository import ProjectStore
+from .source_references import read_reference_path, write_reference_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +68,50 @@ class WorkspaceProjects:
         with project_connection(self.store_for(ref.identity).path) as connection:
             return read_project(connection, ref)
 
+    def update_source_reference(
+        self,
+        project_id: ProjectId,
+        source_id: str,
+        namespace: SourceNamespace,
+        *,
+        expected_fingerprint: str,
+        expected_path: str,
+        reference_path: str,
+        token: ProjectReadToken | None = None,
+    ) -> bool:
+        """Replace a validated reference only if its source and captured state still match."""
+        path = self.store_for(project_id).path
+        with project_connection(path, write=True) as connection:
+            project = read_project(connection, ProjectRef(project_id))
+            if token is not None:
+                variant = connection.execute(
+                    "SELECT revision FROM variant WHERE identity = ?", (token.variant_id.value,)
+                ).fetchone()
+                if (
+                    token.project_id != project_id
+                    or token.project_revision != project.envelope.revision
+                    or variant is None
+                    or token.variant_revision != variant["revision"]
+                ):
+                    return False
+            if registered_source_ids(project).get(namespace.value, namespace.value) != source_id:
+                return False
+            source = connection.execute(
+                """
+                SELECT s.id, s.fingerprint FROM project_source AS ps
+                JOIN source AS s ON s.id = ps.source_id WHERE ps.namespace = ?
+                """,
+                (namespace.value,),
+            ).fetchone()
+            if source is None or source["fingerprint"] != expected_fingerprint:
+                return False
+            current = read_reference_path(connection, source["id"])
+            if current != expected_path:
+                return False
+            if reference_path != current:
+                write_reference_path(connection, source["id"], reference_path)
+            return True
+
     def load(self, ref: ProjectRef) -> LoadedRecord:
         project = self.read_snapshot(ref)
         return LoadedRecord(ref, project, revision_marker(project.envelope.revision))
@@ -95,7 +144,7 @@ class WorkspaceProjects:
                 reconstructed_source_snapshot(info, grouped[info.namespace], native.get(info.namespace, ())),
                 tuple(item.snapshot for item in grouped[info.namespace]),
                 source_ids.get(info.namespace.value),
-                reference_location="",
+                reference_location=info.reference_path,
             )
             for info in sources
         )
@@ -145,6 +194,7 @@ def read_project(connection: sqlite3.Connection, ref: ProjectRef) -> ProjectDto:
     if summary.identity != ref.identity:
         raise ProjectStoreError("project identity differs from its storage path")
     metadata = json.loads(connection.execute("SELECT settings FROM project").fetchone()[0])
+    TextEncodings.from_project_data(metadata)
     data = {
         "sources": [],
         "source_relations": [],
@@ -187,17 +237,12 @@ def read_baselines(connection: sqlite3.Connection, sources=None) -> tuple[Source
     )
 
 
-def registered_source_ids(project: ProjectDto) -> dict[str | None, str]:
-    data = project.envelope.data
-    sources = authoritative_baseline_sources(tuple(data["sources"]), tuple(data.get("source_relations", ())))
-    return {source_content_identity(item): item["source_id"] for item in sources}
-
-
 def project_settings(project: ProjectDto) -> str:
     data = project.envelope.data
     settings = {
         key: data[key] for key in ("source_relations", "source_registry_diagnostics", "remote_bindings") if key in data
     }
+    settings.update(project_encoding_settings(data))
     settings["sources"] = [_source_registration(source) for source in data.get("sources", ())]
     return encode_json(settings)
 

@@ -22,6 +22,13 @@ from transbridge.application.projects.source_fields import (
 )
 from transbridge.application.projects.source_registry import SourceRegistrySnapshot
 from transbridge.application.projects.storage_contracts import StoredEntry
+from transbridge.config.text_encoding import (
+    TEXT_INPUT_ENCODING,
+    TEXT_OUTPUT_ENCODING,
+    TEXT_SOURCE_LANGUAGE,
+    TEXT_TARGET_LANGUAGE,
+    TextEncodings,
+)
 from transbridge.persistence.terminology.project_selection import decode_selection
 from transbridge.persistence.v2.ids import VariantId
 from transbridge.persistence.v2.variant import SourceFingerprint, VariantEntryState
@@ -31,8 +38,17 @@ from .entry_codec import encode_json, pack_text, unpack_text
 from .format import UnsupportedProjectFormat
 from .reads import read_summary
 from .records import _source_registration
+from .source_references import validate_references
 
-_SETTINGS = frozenset({"sources", "source_relations", "source_registry_diagnostics"})
+_SETTINGS = frozenset({
+    "sources",
+    "source_relations",
+    "source_registry_diagnostics",
+    TEXT_INPUT_ENCODING,
+    TEXT_OUTPUT_ENCODING,
+    TEXT_SOURCE_LANGUAGE,
+    TEXT_TARGET_LANGUAGE,
+})
 _SOURCE_PATH = re.compile(r"(?i)^(?:file:|[a-z]:[\\/]|[\\/])")
 
 
@@ -52,6 +68,7 @@ def validate_archive_database(connection, manifest_project_id):
             raise ValueError("project identity differs from its manifest")
         _display_text(_text(connection.execute("SELECT name FROM project").fetchone()[0]))
         _reject_invalid_references(connection)
+        validate_references(connection)
         source_rows = _validate_sources(connection)
         settings = connection.execute("SELECT settings FROM project").fetchone()[0]
         active_sources = (source_rows[row[0]] for row in connection.execute("SELECT source_id FROM project_source"))
@@ -156,6 +173,7 @@ def _validate_settings(value, sources, *, allow_bindings=False):
     settings = _object(value)
     if settings.keys() - (_SETTINGS | ({"remote_bindings"} if allow_bindings else set())):
         raise ValueError("project settings contain unapproved fields")
+    TextEncodings.from_project_data(settings)
     for item in _list(settings.get("sources", [])):
         if not isinstance(item, dict) or encode_json(_source_registration(item)) != encode_json(item):
             raise ValueError("source registration contains a historical path or unapproved fields")

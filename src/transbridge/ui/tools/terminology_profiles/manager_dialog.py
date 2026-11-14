@@ -99,7 +99,7 @@ class TerminologyProfileManagerDialog(QDialog):
                 revision = profile.latest_published_revision
                 suffix = "未发布草稿" if revision is None else "已发布 · 可选择"
                 if profile.state is ProfileState.ARCHIVED:
-                    suffix = "已归档"
+                    suffix = "已删除 · 可恢复"
                 self.profile_combo.addItem(f"{profile.name} · {suffix}", profile.profile_id)
                 row = self.profile_combo.count() - 1
                 self.profile_combo.setItemData(row, self.profile_combo.itemText(row), Qt.ItemDataRole.ToolTipRole)
@@ -170,7 +170,7 @@ class TerminologyProfileManagerDialog(QDialog):
 
     def _profile_status(self, profile) -> str:
         if profile.state is ProfileState.ARCHIVED:
-            return "此方案已归档。现有翻译版本保留原关联修订；恢复后可继续编辑和预览。"
+            return "此方案已删除，可恢复。现有翻译版本保留原关联修订；恢复后可继续编辑和预览。"
         published = profile.latest_published_revision
         if published is None:
             return "尚未发布。可先保存草稿，或点击“发布并预览”查看译名转换效果。"
@@ -255,7 +255,7 @@ class TerminologyProfileManagerDialog(QDialog):
             self._show_error(exc)
             return
         self._current = None
-        self._changed("已归档；现有翻译版本保留原关联修订。勾选“显示已归档”可恢复。")
+        self._changed("方案已删除；现有翻译版本保留原关联修订。勾选“显示已删除方案（可恢复）”可恢复。")
 
     def _restore_profile(self) -> None:
         if self._current is None:

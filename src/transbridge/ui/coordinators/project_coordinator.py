@@ -14,6 +14,7 @@ from transbridge.persistence import (
 )
 
 from ..context import CollectionSlot
+from ..text_encoding import context_text_encodings
 from ..workers import ApiWorker
 
 
@@ -314,7 +315,9 @@ class ProjectCoordinator:
 
         def _do():
             parser = PluginParser()
-            parsed_entries = parser.parse_plugin(PathLib(esp_path))
+            parsed_entries = parser.parse_plugin(
+                PathLib(esp_path), **context_text_encodings(self._host.context).read_options()
+            )
             collection = TranslationEntryCollection(parsed_entries)
             reading_entries = tuple(ReadingEntry(entry.identity, entry.context, entry.metadata) for entry in collection)
             if self._host.context.uses_authoritative_projection:
@@ -341,6 +344,7 @@ class ProjectCoordinator:
 
         def _on_error(msg: str):
             self._host.workbench.hide_step2_progress()
+            self._host.show_message(f"工程来源恢复失败：{msg}", error=True)
 
         w = ApiWorker(_do)
         w.result.connect(_on_done)

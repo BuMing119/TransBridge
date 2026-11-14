@@ -92,7 +92,8 @@ def test_header_icons_follow_light_dark_light_without_changing_navigation(layout
         settle_layout(layout_app)
 
         _assert_icon_colours(shell, layout_app.palette())
-        assert shell.current_area() is TerminologyArea.VERSIONS
+        assert shell.current_area() is TerminologyArea.TERMS
+        assert shell._dialogs[1].isVisible()
         assert shell.pages.currentWidget() is page
         assert [(button.isChecked(), button.isEnabled()) for button in shell._area_buttons.values()] == states
 

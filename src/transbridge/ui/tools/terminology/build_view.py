@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
 
+from .extraction_options import ExtractionOptionsView
 from .view_models import TechnicalDetail, TerminologyPreflightViewState, TerminologySummaryViewState
 
 
@@ -73,6 +74,9 @@ class BuildView(QWidget):
         self.cancel_button.hide()
         for button in (self.preflight_button, self.cancel_button):
             _style_button(button)
+
+        self.extraction_options = ExtractionOptionsView(self)
+        layout.addWidget(self.extraction_options)
 
         self.alert = QFrame(self)
         self.alert.setProperty("tbTerminologyAlert", True)
@@ -200,8 +204,8 @@ class BuildView(QWidget):
         self.scope_label.setText(state.scope_label or "来源范围 · 未就绪")
         self.current_version_label.setText(state.current_version_label or "当前版本 · 未就绪")
         self.scale_label.setText(f"预计规模 · {state.expected_scale_label}")
-        self.build_button.setText(state.action_label)
-        self.build_button.setAccessibleName(state.action_label)
+        self.build_button.setText("提取术语")
+        self.build_button.setAccessibleName("提取术语")
         self.build_button.setEnabled(state.ready)
         self.preflight_button.setText("重新检查" if state.ready else "重试检查")
         self.preflight_button.show()
@@ -209,6 +213,7 @@ class BuildView(QWidget):
         # ready and blocked checks inspectable when the user opens that panel.
         self.alert.show()
         self.details.set_details(state.technical_details)
+        self.extraction_options.model.setText(state.extraction_label or "使用模型：尚未确认")
         self.show()
 
     def set_summary(self, state: TerminologySummaryViewState) -> None:
@@ -217,7 +222,13 @@ class BuildView(QWidget):
         self.progress_message.hide()
         self.cancel_button.hide()
         self.result_group.show()
-        self.result_title.setText("待审核" if state.attention_count else "草稿已整理 · 待发布")
+        self.result_title.setText(
+            "提取未完整完成"
+            if state.is_partial or state.is_stale
+            else "有冲突待处理"
+            if state.attention_count
+            else "结果已就绪 · 可应用"
+        )
         self.result.setText(state.result)
         self.decisions.setText(state.decisions)
         self.decisions.setVisible(bool(state.attention_count))

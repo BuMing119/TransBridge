@@ -148,9 +148,9 @@ def test_unchanged_member_cannot_belong_to_another_inventory_file(select_other):
 
 @pytest.mark.parametrize(
     "name",
-    ["utf8/a.esp/category-49.json", "raw/other.esp/category-49.json", "raw/category-49.json"],
+    ["raw/other.esp/category-49.json", "raw/category-49.json"],
 )
-def test_missing_raw_member_never_uses_formatted_or_unrelated_json(name):
+def test_missing_raw_member_never_uses_unrelated_json(name):
     reader, _, api, _ = setup_reader(50)
     rows = api.payloads.pop("a.esp/category-49.json")
     api.extra = [(name, json.dumps(rows))]
@@ -234,7 +234,7 @@ def test_entry_limit_preserves_complete_source_boundary():
     assert not api.destination.parent.exists()
 
 
-@pytest.mark.parametrize("phase", ["正在下载", "正在解压", "解压完成"])
+@pytest.mark.parametrize("phase", ["正在下载", "正在检索", "索引完成"])
 def test_cancellation_cleans_up_at_every_archive_phase(phase):
     reader, backend, api, artifacts = setup_reader(50)
     cancellation = UploadCancellation(Event())

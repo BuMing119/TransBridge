@@ -17,6 +17,7 @@ from transbridge.persistence.v2.variant import SourceFingerprint, VariantEntrySt
 
 from .entry_codec import STATE_FIELDS, encode_json, entry_values, pack_text, state_values
 from .format import PROJECT_FORMAT
+from .source_references import write_reference_path
 
 
 def insert_project(
@@ -62,6 +63,7 @@ def insert_source(connection: sqlite3.Connection, source: ExtractedSource, ordin
         "INSERT INTO project_source (source_id, namespace, ordinal) VALUES (?, ?, ?)",
         (source_id, source.namespace.value, ordinal),
     )
+    write_reference_path(connection, source_id, source.reference_path)
     if source.format_records and source.format_id not in XML_FORMATS:
         raise ValueError("physical XML translation records require an XML source")
     connection.executemany(

@@ -22,8 +22,8 @@ class PreparedPluginSource:
 
 @dataclass(slots=True)
 class _PublicationSources:
-    sources: dict[tuple[int, str], PreparedPluginSource] = field(default_factory=dict)
-    rendered: set[tuple[int, str]] = field(default_factory=set)
+    sources: dict[int, PreparedPluginSource] = field(default_factory=dict)
+    rendered: set[int] = field(default_factory=set)
 
 
 _publication: ContextVar[_PublicationSources | None] = ContextVar("plugin_publication_sources", default=None)
@@ -47,11 +47,10 @@ def retire_plugin_parsers() -> None:
             prepared.parser = None
 
 
-def prepared_plugin_source(snapshot: SourceSnapshot, options: dict, *, for_write: bool = False) -> PreparedPluginSource:
+def prepared_plugin_source(snapshot: SourceSnapshot, *, for_write: bool = False) -> PreparedPluginSource:
     from .plugin_write import _parser_from_snapshot
 
-    language = str(dict(snapshot.metadata).get("localized_language", options.get("language", "english")))
-    key = (id(snapshot), language)
+    key = id(snapshot)
     publication = _publication.get()
     if publication is not None and for_write:
         # A renderer may retry within the same publication. Never hand it an
@@ -62,7 +61,7 @@ def prepared_plugin_source(snapshot: SourceSnapshot, options: dict, *, for_write
         publication.rendered.add(key)
     if publication is not None and key in publication.sources:
         return publication.sources[key]
-    parser, entries = _parser_from_snapshot(snapshot, options)
+    parser, entries = _parser_from_snapshot(snapshot)
     plugin = parser.get_plugin()
     if plugin is None:
         raise ValueError("plugin parser did not produce a source plugin")

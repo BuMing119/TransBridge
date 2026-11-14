@@ -10,6 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtWidgets import QApplication
 
 from transbridge.infra.llm_tool_calling import LlmToolCall, LlmTurn
+from transbridge.smart_assistant.context_budget import budget_for_config
 from transbridge.smart_assistant.conversation_orchestrator import (
     ConversationOrchestrator,
     _smart_assistant_max_tokens,
@@ -18,14 +19,17 @@ from transbridge.smart_assistant.conversation_orchestrator import (
 _APP = QApplication.instance() or QApplication([])
 
 
-def test_anthropic_assistant_uses_positive_default_max_tokens() -> None:
-    config = type("Config", (), {"provider": "anthropic", "max_output_tokens": 0})()
-    assert _smart_assistant_max_tokens(config) == 4096
+@pytest.mark.parametrize(("configured", "expected"), [(0, 4096), (900, 900)])
+def test_anthropic_assistant_reserves_its_effective_output_limit(configured, expected) -> None:
+    config = type("Config", (), {"provider": "anthropic", "max_output_tokens": configured})()
+    request_limit = _smart_assistant_max_tokens(config)
+    assert request_limit == budget_for_config(config, request_limit).output_reserve == expected
 
 
-def test_configured_max_tokens_is_preserved() -> None:
-    config = type("Config", (), {"provider": "anthropic", "max_output_tokens": 900})()
-    assert _smart_assistant_max_tokens(config) == 900
+def test_openai_automatic_output_retains_a_local_context_reserve() -> None:
+    config = type("Config", (), {"provider": "openai_compatible", "max_output_tokens": 0})()
+    assert _smart_assistant_max_tokens(config) == 0
+    assert budget_for_config(config, 0).output_reserve == 4096
 
 
 class _Conversation:

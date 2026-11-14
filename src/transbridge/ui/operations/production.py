@@ -23,6 +23,7 @@ from transbridge.application.tasks import OwnerRef, TaskRuntime
 from transbridge.application.terminology_profiles import TerminologyProfileWriteProjectionSource
 from transbridge.bootstrap.runtime import AppRuntime
 from transbridge.config.language_profiles import discover_language_profiles
+from transbridge.ui.text_encoding import effective_text_encodings
 
 from .batch_download_session import open_batch_download
 from .categorized_upload_bridge import open_file_upload
@@ -59,6 +60,7 @@ def build_operation_plan_facade(
     runtime_context: RequestContext | RuntimeContextFactory,
     *,
     dialog_factory=OperationPlanDialog,
+    parent=None,
 ) -> OperationPlanFacade:
     """Compose current transfer launchers and write/FOMOD plan adapters.
 
@@ -73,6 +75,16 @@ def build_operation_plan_facade(
     facade = None
     profile_projection = None
     use_cases = getattr(runtime, "use_cases", None)
+    names = () if use_cases is None else use_cases.names()
+    encoding_service = use_cases.resolve("project_text_encodings") if "project_text_encodings" in names else None
+    encoding_defaults = use_cases.resolve("text_encoding_defaults") if "text_encoding_defaults" in names else None
+
+    def write_encodings(request):
+        try:
+            return effective_text_encodings(request, encoding_service, encoding_defaults)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise OperationCompositionError(f"无法创建导出计划：{exc}") from exc
+
     if use_cases is not None and "terminology_profile_service_factory" in use_cases.names():
         profile_services = use_cases.resolve("terminology_profile_service_factory")
         profile_projection = TerminologyProfileWriteProjectionSource(
@@ -153,7 +165,7 @@ def build_operation_plan_facade(
         return operation_tasks.result(ref, owner)
 
     features = (
-        build_write_feature(context_factory, operation_tasks, write_preflights),
+        build_write_feature(context_factory, operation_tasks, write_preflights, text_encodings=write_encodings),
         OperationFeatureAdapter(
             OperationKind.FOMOD,
             FomodOperationMapper(fomod_checks),
@@ -175,6 +187,8 @@ def build_operation_plan_facade(
         features,
         dialog_factory=dialog_factory,
         dialog_factories=dialog_factories,
+        parent=parent,
+        write_encodings=write_encodings,
         execution_result_reader=read_result,
         upload_launcher=open_file_upload,
         download_launcher=(

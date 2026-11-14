@@ -57,7 +57,7 @@ def test_review_shows_translation_scope_status_and_full_details():
     assert after.notes in dialog.changes.details.toPlainText()
     assert "source-evidence" in dialog.changes.details.toPlainText()
     assert "old-version → new-version" in dialog.changes.summary.text()
-    assert dialog.publish_button.text() == "确认发布"
+    assert dialog.publish_button.text() == "确认应用"
     assert not dialog.changes.model.flags(dialog.changes.model.index(0, 0)) & Qt.ItemFlag.ItemIsEditable
     dialog.close()
 

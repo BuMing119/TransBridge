@@ -42,6 +42,15 @@ class FixtureIntegrityError(RuntimeError):
 
 # sha256 registry of every real fixture referenced by S02 success chains.
 FIXTURE_CHECKSUMS: dict[str, str] = {
+    "tests/contracts/io/fixtures/strings/utf8-integrity.strings": (
+        "fc95ca225bd3518583f8bacb65a22b3e5e1fe8a7895bff61a0db8134324c8cfd"
+    ),
+    "tests/contracts/io/fixtures/strings/utf8-integrity.dlstrings": (
+        "9d669d7a99588918589d3b41a559ffa2297eb032dd50d84aecb4444637c6bf3d"
+    ),
+    "tests/contracts/io/fixtures/strings/utf8-integrity.ilstrings": (
+        "ef96be2f36a53a53472ccbafa4a7e1c08980c7ccd7232509f945c812ed4694c7"
+    ),
     "tests/contracts/io/fixtures/eet-small.xml": ("95d6266b9fb3b6ec2b16281dc7d3b79f3d050c2ec3b6185e4b8fe173968950bc"),
     "tests/contracts/io/fixtures/xt-small.xml": ("ca024ffffd7f2dea3348a42c04e454aa2324b7d3a64dd5454882aab9ed3780dd"),
     "tests/contracts/io/fixtures/paratranz_dual_id.json": (

@@ -28,6 +28,7 @@ from transbridge.application.projects.provisioning import (
     PreparedProjectSource,
     ProjectSourceRequest,
 )
+from transbridge.application.projects.source_encoding import TEXT_ENCODING_FORMATS, TEXT_READ_OPTION_KEYS
 
 _PLUGIN_SUFFIXES = {".esp", ".esm", ".esl"}
 
@@ -71,6 +72,10 @@ class TranslationIoProjectSourcePreparer:
         format_hint = request.format_hint or _infer_format(path)
         options = dict(common_options)
         options.update(request.options)
+        read_options = {key: options[key] for key in TEXT_READ_OPTION_KEYS if key in options}
+        if format_hint not in TEXT_ENCODING_FORMATS:
+            for key in read_options:
+                del options[key]
         # These are preparation actions, not durable parser settings. In particular,
         # retaining the donor path would reapply a mutable external file on reopen.
         initial_translation = options.pop("initial_translation", None)
@@ -127,7 +132,7 @@ class TranslationIoProjectSourcePreparer:
                 )
             from transbridge.application.io.initial_translation import apply_initial_translation
 
-            parsed = apply_initial_translation(parsed, path, initial_translation, context)
+            parsed = apply_initial_translation(parsed, path, initial_translation, context, **read_options)
         diagnostics = tuple(replace(item, severity=DiagnosticSeverity.WARNING) for item in parsed.diagnostics)
         from transbridge.application.projects.prepared_source_results import prepare_parsed_source
 

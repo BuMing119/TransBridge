@@ -23,18 +23,19 @@ def choose_unsaved_action(parent, name: str) -> QMessageBox.StandardButton:
 
 def confirm_archive(parent, name: str, selections, variant_names: dict[str, str]) -> bool:
     dialog = QDialog(parent)
-    dialog.setWindowTitle("归档影响确认")
+    dialog.setWindowTitle("删除方案（可恢复）")
     dialog.resize(500, 330)
     layout = QVBoxLayout(dialog)
     text = QLabel(
-        f"归档“{name}”后，以下 {len(selections)} 个翻译版本保留原方案关联和正文。\n"
-        "方案将从新的预览选择中隐藏；可在“显示已归档”中恢复并继续编辑。",
+        f"删除“{name}”后，以下 {len(selections)} 个翻译版本保留原方案关联和正文。\n"
+        "方案及其草稿将移入已删除列表，不再用于新的方案选择。\n"
+        "这不是永久清除；勾选“显示已删除方案（可恢复）”可恢复方案和草稿。",
         dialog,
     )
     text.setWordWrap(True)
     layout.addWidget(text)
     affected = QListWidget(dialog)
-    affected.setAccessibleName("归档受影响的翻译版本")
+    affected.setAccessibleName("删除方案后保留关联的翻译版本")
     for selection in selections:
         name = variant_names.get(selection.variant_id, selection.variant_id)
         label = name if name == selection.variant_id else f"{name}（{selection.variant_id}）"
@@ -43,7 +44,7 @@ def confirm_archive(parent, name: str, selections, variant_names: dict[str, str]
         affected.addItem("当前没有翻译版本使用此方案。")
     layout.addWidget(affected)
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, dialog)
-    buttons.button(QDialogButtonBox.StandardButton.Ok).setText("归档")
+    buttons.button(QDialogButtonBox.StandardButton.Ok).setText("删除方案")
     buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
     buttons.button(QDialogButtonBox.StandardButton.Cancel).setDefault(True)
     buttons.accepted.connect(dialog.accept)

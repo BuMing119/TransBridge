@@ -11,8 +11,10 @@ from PyQt6.QtWidgets import QDockWidget, QMessageBox
 
 from transbridge.converter.translation_entry import STAGE_QUESTIONABLE
 from transbridge.ui.guidance.qt import GuidanceBinding
+from transbridge.ui.workbench.alignment_consent import get_alignment_consent
 
 from .action_catalog import DEFAULT_ACTION_CATALOG, IntentId
+from .alignment_cache_actions import register_alignment_cache_action
 from .command_palette import (
     CommandCandidateKind,
     CommandIntentRequest,
@@ -75,6 +77,8 @@ class ShellIntentComposition:
             refresh_projects=callback(IntentId.PROJECT_REFRESH),
             show_appearance=callback(IntentId.SETTINGS_APPEARANCE),
             show_config=callback(IntentId.SETTINGS_SERVICES),
+            show_terminology_alignment=callback(IntentId.SETTINGS_TERMINOLOGY_ALIGNMENT),
+            clear_alignment_cache=callback(IntentId.SETTINGS_ALIGNMENT_CACHE_CLEAR),
             open_ai_translator=callback(IntentId.TRANSLATION_AI),
             toggle_smart_assistant=callback(IntentId.VIEW_SMART_ASSISTANT),
             open_dictionary=callback(IntentId.TRANSLATION_DICTIONARY),
@@ -89,6 +93,7 @@ class ShellIntentComposition:
             show_task_activity=callback(IntentId.TASK_OPEN_ACTIVITY),
             rename_project=callback(IntentId.PROJECT_RENAME),
             update_source=callback(IntentId.PROJECT_SOURCE_UPDATE),
+            change_text_encoding=callback(IntentId.PROJECT_TEXT_ENCODING),
             delete_project=callback(IntentId.PROJECT_DELETE),
             exit_app=callback(IntentId.APP_EXIT),
         )
@@ -187,6 +192,11 @@ class ShellIntentComposition:
             _call(lambda: host.source_update_coordinator.start_current()),
             availability=self._has_project,
         )
+        register(
+            IntentId.PROJECT_TEXT_ENCODING,
+            _call(lambda: host.project_text_encoding_coordinator.start()),
+            availability=lambda: host.project_text_encoding_coordinator.availability(),
+        )
         register(IntentId.PROJECT_DELETE, self._delete_project)
         register(
             IntentId.PROJECT_VARIANT_CREATE, _call(host.variant_coordinator.new_variant), availability=self._has_project
@@ -257,6 +267,8 @@ class ShellIntentComposition:
         register(IntentId.VIEW_SMART_ASSISTANT, _call(host.tool_windows.toggle_smart_assistant))
         register(IntentId.SETTINGS_APPEARANCE, _call(host.tool_windows.show_ui_settings))
         register(IntentId.SETTINGS_SERVICES, _call(lambda: host.tool_windows.show_ui_settings("ai_service")))
+        register(IntentId.SETTINGS_TERMINOLOGY_ALIGNMENT, _call(lambda: get_alignment_consent().configure(host)))
+        register_alignment_cache_action(self.router, host)
         register(IntentId.SETTINGS_ACCOUNT, _call(host.tool_windows.show_user), availability=self._has_current_user)
         register(IntentId.SETTINGS_MESSAGES, _call(host.tool_windows.show_mails), availability=self._has_current_user)
         register(IntentId.TASK_OPEN_ACTIVITY, _call(self._show_task_center), availability=self._has_task_runtime)

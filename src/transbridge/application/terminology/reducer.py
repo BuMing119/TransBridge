@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 
+from .equivalent_candidates import equivalent_candidates
 from .identity import candidate_id, conflict_group_id
 from .models import (
     BilingualEvidence,
@@ -165,7 +166,7 @@ class ManualBaselineReconciler:
         effective: list[TermCandidate] = []
         review: set[str] = set()
         diagnostics: list[str] = []
-        for candidate in sorted(candidates, key=_candidate_sort_key):
+        for candidate in sorted(equivalent_candidates(candidates, conflicts, decisions), key=_candidate_sort_key):
             if candidate.normalized_original in unresolved_originals:
                 diagnostics.append(f"AUTOMATIC_CONFLICT_NOT_EFFECTIVE:{candidate.candidate_id}")
                 continue

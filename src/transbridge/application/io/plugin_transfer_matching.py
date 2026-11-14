@@ -130,7 +130,7 @@ def match_plugin_translations(
 
 
 def _physical_entries(snapshot: SourceSnapshot) -> tuple[TranslationEntry, ...]:
-    parser, _entries = _parser_from_snapshot(snapshot, {})
+    parser, _entries = _parser_from_snapshot(snapshot)
     plugin = parser.get_plugin()
     if plugin is None:
         raise ValueError("plugin snapshot could not be parsed")

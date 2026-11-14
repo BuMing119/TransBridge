@@ -162,7 +162,7 @@ def test_final_draft_confirmation_rechecks_late_project_edit(guarded_shutdown, m
 @pytest.mark.parametrize("kind", ["api", "project_open", "foreground", "ai"])
 def test_final_draft_confirmation_drains_new_background_work_before_disposal(guarded_shutdown, monkeypatch, kind):
     widget, _context, _entry, _response, host, registry, lifecycle, scheduled = guarded_shutdown
-    api_registry = SimpleNamespace(busy=False)
+    api_registry = SimpleNamespace(busy=False, cancel_reads_for_close=Mock())
     monkeypatch.setattr(window_lifecycle, "get_api_worker_registry", lambda: api_registry)
     worker = Mock()
     worker.isRunning.return_value = False

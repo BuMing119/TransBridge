@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 from transbridge.application.io import TranslationIoUseCase
 from transbridge.application.terminology.build import TerminologyFullBuilder, TranslationIoRegisteredSourceParser
 from transbridge.application.terminology.build_drafts import BuildDraftCoordinator
@@ -37,20 +39,34 @@ class BuildRunner:
         snapshot = request.input_snapshot or self._state.get(self._state.snapshots, request.build_key)
         context = self._state.get(self._state.contexts, request.build_key)
         runtime.progress.update(TerminologyProgress(TerminologyPhase.PARSE, 0, len(snapshot.sources)))
-        builder = TerminologyFullBuilder(
-            TranslationIoRegisteredSourceParser(TranslationIoUseCase(self._catalog)),
-            InMemoryTerminologyRepository(),
-        )
         repository = self._repositories.for_project(request.project_id)
         baseline = repository.active_draft(request.project_id, request.variant_id)
         if baseline is None:
             baseline = repository.effective_version(request.project_id, request.variant_id)
-        outcome = builder.build(
-            snapshot,
-            context,
-            baseline_decisions=() if baseline is None else baseline.decisions,
-            cancellation=runtime.cancellation,
+        extraction = snapshot.extraction
+        session = (
+            nullcontext(None)
+            if extraction is None
+            else extraction.open(
+                cancellation=runtime.cancellation, progress=runtime.progress.update, cache=repository.cache
+            )
         )
+        with session as service:
+            builder = TerminologyFullBuilder(
+                TranslationIoRegisteredSourceParser(TranslationIoUseCase(self._catalog)),
+                InMemoryTerminologyRepository(),
+                extraction=service,
+                conflict_judge=(
+                    None if extraction is None else extraction.conflict_judge(progress=runtime.progress.update)
+                ),
+            )
+            outcome = builder.build(
+                snapshot,
+                context,
+                baseline_decisions=() if baseline is None else baseline.decisions,
+                llm_enabled=extraction is not None,
+                cancellation=runtime.cancellation,
+            )
         runtime.checkpoint()
         runtime.progress.update(
             TerminologyProgress(TerminologyPhase.PERSIST, len(snapshot.sources), len(snapshot.sources))

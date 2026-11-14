@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
+from transbridge.infra.assistant_prompt_cache import decorate_assistant_messages
 from transbridge.infra.llm_tool_calling import (
     LlmToolDefinition,
     LlmToolProtocolError,
@@ -51,11 +52,11 @@ class _CacheRejected(RuntimeError):
     status_code = 400
 
 
-def _owner(*streams: _Stream):
+def _owner(*streams: _Stream, model="gpt-test", base_url="https://api.openai.com/v1"):
     create = MagicMock(side_effect=streams)
     return SimpleNamespace(
-        _model="gpt-test",
-        _base_url="https://api.openai.com/v1",
+        _model=model,
+        _base_url=base_url,
         _lock=_Lock(),
         _client=SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))),
         _active_requests=0,
@@ -205,43 +206,61 @@ def test_rejects_incomplete_or_malformed_tool_calls(delta, finish_reason, messag
     assert owner._active_requests == 0
 
 
+def _assistant_messages():
+    return decorate_assistant_messages(
+        [{"role": "system", "content": "stable rules"}, {"role": "user", "content": "run"}],
+        namespace="session",
+    )
+
+
 def test_cache_rejection_before_events_retries_clean_and_preserves_tools() -> None:
-    error = _CacheRejected("prompt_cache_options unsupported")
+    error = _CacheRejected("prompt_cache_key unsupported")
     owner = _owner(
         _Stream(enter_error=error),
         _Stream([_choice(content="ok"), _choice(finish_reason="stop")]),
+        model="gpt-4.1",
     )
-    prepared = {
-        "messages": [{"role": "system", "content": "cached"}],
-        "request_options": {"prompt_cache_key": "cache-key"},
-        "cache_mode": "automatic_prefix",
-    }
-    clean = [{"role": "system", "content": "clean"}, {"role": "user", "content": "run"}]
-
-    with (
-        patch("transbridge.infra.openai_tool_calling.prepare_openai_chat_cache_request", return_value=prepared),
-        patch("transbridge.infra.openai_tool_calling.extract_prompt_cache_directives", return_value=(clean, ())),
-    ):
-        turn = chat_stream_with_tools(owner, [{"role": "user", "content": "run"}], 32, _tools(), lambda _text: None)
+    records = []
+    turn = chat_stream_with_tools(
+        owner, _assistant_messages(), 32, _tools(), lambda _text: None, usage_callback=records.append
+    )
 
     assert turn.text == "ok"
     assert owner._client.chat.completions.create.call_count == 2
     first, second = [call.kwargs for call in owner._client.chat.completions.create.call_args_list]
-    assert first["messages"] == prepared["messages"]
-    assert first["extra_body"] == prepared["request_options"]
-    assert second["messages"] == clean
-    assert "extra_body" not in second
-    assert second["tools"] == first["tools"]
-    assert second["tool_choice"] == "auto"
+    assert first["extra_body"]["prompt_cache_key"].startswith("assistant.")
+    assert second == {key: value for key, value in first.items() if key != "extra_body"}
+    assert records[0].degradation == "cache_parameter_unsupported"
+
+
+@pytest.mark.parametrize(
+    ("base_url", "message", "sends_cache_options"),
+    [
+        ("https://proxy.invalid/v1", "prompt_cache_key unsupported", False),
+        ("https://api.openai.com/v1", "Invalid cached account state", True),
+        ("https://api.openai.com/v1", "Unknown parameter prompt_cache_options", True),
+    ],
+)
+def test_only_rejection_of_a_sent_cache_parameter_triggers_retry(base_url, message, sends_cache_options) -> None:
+    error = _CacheRejected(message)
+    owner = _owner(_Stream(enter_error=error), model="gpt-4.1", base_url=base_url)
+
+    with pytest.raises(_CacheRejected) as caught:
+        chat_stream_with_tools(owner, _assistant_messages(), 32, _tools(), lambda _text: None)
+
+    assert caught.value is error
+    create = owner._client.chat.completions.create
+    assert ("extra_body" in create.call_args.kwargs) is sends_cache_options
+    assert create.call_count == 1
 
 
 def test_cache_rejection_after_any_stream_event_is_not_retried() -> None:
-    error = _CacheRejected("cache_control rejected")
-    owner = _owner(_FailingStream([_choice(content="partial")], error))
+    error = _CacheRejected("prompt_cache_key rejected")
+    owner = _owner(_FailingStream([_choice(content="partial")], error), model="gpt-4.1")
     chunks: list[str] = []
 
     with pytest.raises(_CacheRejected):
-        chat_stream_with_tools(owner, [{"role": "user", "content": "run"}], 32, _tools(), chunks.append)
+        chat_stream_with_tools(owner, _assistant_messages(), 32, _tools(), chunks.append)
 
     assert chunks == ["partial"]
     assert owner._client.chat.completions.create.call_count == 1

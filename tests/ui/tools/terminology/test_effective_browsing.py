@@ -60,15 +60,20 @@ def test_real_window_distinguishes_draft_from_complete_actual_profile_mapping(tm
         services = replace(services, commands=harness.commands)
         window = TerminologyWindow(TerminologyPresenter(services, context))
         window._bind_existing_assets()
-        _wait(lambda: window.effective_model.rowCount() > 0 and window.draft_model.rowCount() == 1)
+        window.terms_view.browse_button.click()
+        _wait(lambda: window.effective_model.rowCount() > 0)
         assert window.effective_model.rowCount() == 2
         assert window.terms_view.pages.currentWidget() is window.effective_view
         assert window.effective_model.index(0, 1).data() == "巨龙"
         assert window.effective_model.index(1, 0).data() == "Missing"
         assert window.effective_model.index(1, 1).data() == "孤立映射"
+        window.terms_view.show_draft()
+        _wait(lambda: window.draft_model.rowCount() == 1)
         assert window.draft_model.index(0, 1).data() == "草稿新译名"
         assert version.ref.version_id in window.workspace.current_version.text()
         browser = window.terms_view.source_browser
+        window.terms_view.show_source()
+        _wait(lambda: browser.model.rowCount() > 0)
         browser.search.setText("Missing")
         assert browser.filtered.rowCount() == 1
         assert browser.filtered.index(0, 3).data() == "当前生效"
@@ -102,6 +107,7 @@ def test_real_window_full_search_and_refresh_preserve_page_and_filters(tmp_path,
         services = replace(services, commands=harness.commands)
         window = TerminologyWindow(TerminologyPresenter(services, context))
         window._bind_existing_assets()
+        window.terms_view.show_draft()
         _wait(lambda: window.draft_model.rowCount() == 100)
         model = window.draft_model
         for _ in range(5):

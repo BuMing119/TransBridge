@@ -18,14 +18,22 @@ retain that scope; the merged dictionary remains a legacy read facade.
 
 import logging
 from pathlib import Path
-import struct
 
+from transbridge.config.text_encoding import (
+    DEFAULT_SOURCE_LANGUAGE,
+    DEFAULT_TEXT_ENCODING,
+    XTRANSLATOR_READ_POLICY,
+    TextReadOptions,
+    language_from_suffix,
+    normalize_text_encoding,
+)
 from transbridge.parser.localized_resources import (
     BASE_GAME_PLUGINS,
     LocalizedResource,
     capture_plugin_resources,
     capture_strings_directory,
 )
+from transbridge.parser.localized_string_records import encode_chunk, parse_records, render
 
 log = logging.getLogger("SkyrimStringsFile")
 
@@ -49,72 +57,25 @@ _DLSTRINGS_SUBTYPES: frozenset[str] = frozenset({
 _ILSTRINGS_SUBTYPES: frozenset[str] = frozenset({"NAM1", "NAM2", "NAM3", "NAM4"})
 
 
-def _decode(data: bytes) -> str:
-    """Decode bytes to str, trying UTF-8 then cp1252 as fallback."""
-    try:
-        return data.decode("utf-8")
-    except UnicodeDecodeError:
-        return data.decode("cp1252", errors="replace")
-
-
-def _read_strings(data: bytes, count: int, data_start: int, length_prefixed: bool) -> dict[int, str]:
-    """
-    Parse the directory and data section of a strings file.
-
-    Args:
-        data: Full file bytes.
-        count: Number of entries declared in the header.
-        data_start: Byte offset where the string data section begins.
-        length_prefixed: True for .dlstrings/.ilstrings, False for .strings.
-
-    Returns:
-        dict mapping string_id -> text.
-    """
-    result: dict[int, str] = {}
-
-    for i in range(count):
-        dir_offset = 8 + i * 8
-        if dir_offset + 8 > len(data):
-            log.warning(f"Directory entry {i} out of bounds, stopping early")
-            break
-
-        string_id, offset = struct.unpack_from("<II", data, dir_offset)
-        pos = data_start + offset
-
-        if pos >= len(data):
-            log.warning(f"String ID {string_id:#010x}: offset {offset} out of bounds")
-            continue
-
-        try:
-            if length_prefixed:
-                if pos + 4 > len(data):
-                    continue
-                length = struct.unpack_from("<I", data, pos)[0]
-                raw = data[pos + 4 : pos + 4 + length]
-                text = _decode(raw.rstrip(b"\x00"))
-            else:
-                end = data.index(b"\x00", pos)
-                text = _decode(data[pos:end])
-        except (ValueError, struct.error) as e:
-            log.warning(f"String ID {string_id:#010x}: parse error: {e}")
-            continue
-
-        result[string_id] = text
-
-    return result
-
-
 class SkyrimStringsFile:
     """
     Reads a single Skyrim strings file (.strings, .dlstrings, or .ilstrings).
     """
 
-    def __init__(self, strings: dict[int, str], source: str = "") -> None:
+    def __init__(self, strings: dict[int, str], source: str = "", *, fallback_count: int = 0) -> None:
         self._strings = strings
         self._source = source
+        self.fallback_count = fallback_count
 
     @classmethod
-    def from_file(cls, path: Path) -> "SkyrimStringsFile":
+    def from_file(
+        cls,
+        path: Path,
+        *,
+        input_encoding: str = DEFAULT_TEXT_ENCODING,
+        source_language: str = DEFAULT_SOURCE_LANGUAGE,
+        text_read_policy: str = XTRANSLATOR_READ_POLICY,
+    ) -> "SkyrimStringsFile":
         """
         Load a strings file from disk.
 
@@ -129,10 +90,27 @@ class SkyrimStringsFile:
             ValueError: If the file header is malformed.
         """
         data = path.read_bytes()
-        return cls.from_bytes(data, path.suffix, source=path.name)
+        return cls.from_bytes(
+            data,
+            path.suffix,
+            source=str(path),
+            input_encoding=input_encoding,
+            source_language=source_language,
+            text_read_policy=text_read_policy,
+        )
 
     @classmethod
-    def from_bytes(cls, data: bytes, ext: str, source: str = "") -> "SkyrimStringsFile":
+    def from_bytes(
+        cls,
+        data: bytes,
+        ext: str,
+        source: str = "",
+        *,
+        input_encoding: str = DEFAULT_TEXT_ENCODING,
+        source_language: str = DEFAULT_SOURCE_LANGUAGE,
+        text_read_policy: str = XTRANSLATOR_READ_POLICY,
+        _legacy_linked: bool = False,
+    ) -> "SkyrimStringsFile":
         """
         Parse a strings file from raw bytes (e.g. extracted from a BSA).
 
@@ -140,23 +118,20 @@ class SkyrimStringsFile:
             data: Raw file bytes.
             ext: File extension including dot, e.g. ``".strings"``.
             source: Optional label for log messages.
+            input_encoding: Codec used to decode every string payload.
 
         Returns:
             SkyrimStringsFile instance.
         """
-        if len(data) < 8:
-            raise ValueError(f"Data too small to be a valid strings file ({source})")
-
-        count, _data_size = struct.unpack_from("<II", data, 0)
-        data_start = 8 + count * 8
-
-        if data_start > len(data):
-            raise ValueError(f"Directory claims {count} entries but data is only {len(data)} bytes ({source})")
-
         length_prefixed = ext.lower() in {".dlstrings", ".ilstrings"}
-        strings = _read_strings(data, count, data_start, length_prefixed)
+        options = TextReadOptions(input_encoding, source_language, text_read_policy)
+        try:
+            records = parse_records(data, length_prefixed, read_options=options, legacy_linked=_legacy_linked)
+        except ValueError as exc:
+            raise ValueError(f"{source or ext}: {exc}") from exc
+        strings = {record.string_id: record.text for record in records}
         log.debug(f"Parsed {len(strings)} strings from {source or ext}")
-        return cls(strings, source=source)
+        return cls(strings, source=source, fallback_count=sum(record.used_fallback(options) for record in records))
 
     def get(self, string_id: int) -> str | None:
         """Return the string for the given ID, or None if not found."""
@@ -193,10 +168,12 @@ class PluginStringsLookup:
         resources: tuple[LocalizedResource, ...] = (),
         *,
         tables: dict[str, dict[int, str]] | None = None,
+        fallback_count: int = 0,
     ) -> None:
         self._merged = merged
         self._resources = tuple(resources)
         self._tables = {} if tables is None else tables
+        self.fallback_count = fallback_count
         seen, duplicates = set(), set()
         for table in self._tables.values():
             duplicates.update(seen.intersection(table))
@@ -214,6 +191,10 @@ class PluginStringsLookup:
         strings_dir: Path,
         plugin_stem: str,
         language: str = "english",
+        *,
+        input_encoding: str = DEFAULT_TEXT_ENCODING,
+        source_language: str | None = None,
+        text_read_policy: str = XTRANSLATOR_READ_POLICY,
     ) -> "PluginStringsLookup | None":
         """
         从指定的 Strings 目录加载指定语言的 strings 文件，不依赖 plugin_path 推断目录。
@@ -229,13 +210,20 @@ class PluginStringsLookup:
             PluginStringsLookup if at least one strings file was found, otherwise None.
         """
         resources = capture_strings_directory(strings_dir, plugin_stem, language)
-        return cls._from_resources(resources)
+        if source_language is None:
+            source_language = language_from_suffix(language)
+        options = TextReadOptions(input_encoding, source_language, text_read_policy)
+        return cls._from_resources(resources, options)
 
     @classmethod
     def from_plugin(
         cls,
         plugin_path: Path,
         language: str = "english",
+        *,
+        input_encoding: str = DEFAULT_TEXT_ENCODING,
+        source_language: str | None = None,
+        text_read_policy: str = XTRANSLATOR_READ_POLICY,
     ) -> "PluginStringsLookup | None":
         """
         Auto-discover and load all strings files for the given plugin.
@@ -251,12 +239,18 @@ class PluginStringsLookup:
             otherwise None.
         """
         resources = capture_plugin_resources(plugin_path, language, base_game_plugins=cls._BASE_GAME_PLUGINS)
-        return cls._from_resources(resources)
+        if source_language is None:
+            source_language = language_from_suffix(language)
+        options = TextReadOptions(input_encoding, source_language, text_read_policy)
+        return cls._from_resources(resources, options)
 
     @classmethod
-    def _from_resources(cls, resources: tuple[LocalizedResource, ...]) -> "PluginStringsLookup | None":
+    def _from_resources(
+        cls, resources: tuple[LocalizedResource, ...], options: TextReadOptions
+    ) -> "PluginStringsLookup | None":
         merged: dict[int, str] = {}
         tables = {}
+        fallback_count = 0
         for resource in resources:
             source = (
                 str(resource.source_path)
@@ -264,17 +258,20 @@ class PluginStringsLookup:
                 else f"{resource.source_path}/{resource.member_path}"
             )
             try:
-                strings = SkyrimStringsFile.from_bytes(resource.content, resource.suffix, source=source)
-            except Exception as exc:
+                strings = SkyrimStringsFile.from_bytes(
+                    resource.content, resource.suffix, source=source, _legacy_linked=True, **options.as_options()
+                )
+            except ValueError as exc:
                 log.warning("Failed to parse localized resource %s: %s", source, exc)
-                raise ValueError(f"无法解析本地化资源 {source}：{exc}") from exc
+                raise
             merged.update(strings._strings)
             tables[resource.suffix] = strings._strings
+            fallback_count += strings.fallback_count
             log.info("Loaded %s strings from %s", len(strings), source)
         if not merged:
             return None
         log.info("PluginStringsLookup ready: %s total strings", len(merged))
-        return cls(merged, resources, tables=tables)
+        return cls(merged, resources, tables=tables, fallback_count=fallback_count)
 
     def get(self, string_id: int) -> str | None:
         """
@@ -301,6 +298,10 @@ class PluginStringsLookup:
         suffix = PluginStringsWriter._ext_for(subrecord_type)
         return self._tables.get(suffix, {}).get(string_id)
 
+    def create_writer(self) -> "PluginStringsWriter":
+        """Seed a complete write from the same decoded variant tables."""
+        return PluginStringsWriter(self._tables)
+
     def __len__(self) -> int:
         return len(self._merged)
 
@@ -323,41 +324,28 @@ class SkyrimStringsWriter:
     """
 
     @staticmethod
-    def to_bytes(strings: dict[int, str], length_prefixed: bool) -> bytes:
+    def to_bytes(
+        strings: dict[int, str], length_prefixed: bool, *, output_encoding: str = DEFAULT_TEXT_ENCODING
+    ) -> bytes:
         """
         Serialise *strings* into a strings-file binary blob.
 
         Args:
             strings: Mapping of string_id -> text.
             length_prefixed: True for .dlstrings / .ilstrings, False for .strings.
+            output_encoding: Codec used to encode every string payload.
 
         Returns:
             Raw bytes ready to be written to disk.
         """
-        entries: list[tuple[int, int]] = []
-        data_chunks: list[bytes] = []
-        offset = 0
-
+        output_encoding = normalize_text_encoding(output_encoding)
+        chunks = []
         for string_id, text in strings.items():
             try:
-                encoded = text.encode("utf-8")
-            except UnicodeEncodeError:
-                encoded = text.encode("cp1252", errors="replace")
-
-            if length_prefixed:
-                # Length includes the null terminator
-                chunk = struct.pack("<I", len(encoded) + 1) + encoded + b"\x00"
-            else:
-                chunk = encoded + b"\x00"
-
-            entries.append((string_id, offset))
-            data_chunks.append(chunk)
-            offset += len(chunk)
-
-        data_size = offset
-        header = struct.pack("<II", len(entries), data_size)
-        directory = b"".join(struct.pack("<II", sid, off) for sid, off in entries)
-        return header + directory + b"".join(data_chunks)
+                chunks.append((string_id, encode_chunk(text, output_encoding, length_prefixed)))
+            except ValueError as exc:
+                raise ValueError(f"String ID {string_id}: {exc}") from exc
+        return render(chunks)
 
 
 class PluginStringsWriter:
@@ -374,12 +362,14 @@ class PluginStringsWriter:
         paths = writer.write(Path("Data"), "MyMod")
     """
 
-    def __init__(self) -> None:
+    def __init__(self, tables: dict[str, dict[int, str]] | None = None) -> None:
         self._by_ext: dict[str, dict[int, str]] = {
             ".strings": {},
             ".dlstrings": {},
             ".ilstrings": {},
         }
+        self._source_tables = {} if tables is None else tables
+        self._by_ext.update((ext, contents.copy()) for ext, contents in self._source_tables.items())
 
     @staticmethod
     def _ext_for(subrecord_type: str) -> str:
@@ -401,6 +391,9 @@ class PluginStringsWriter:
                 to determine which strings file the entry belongs to.
         """
         ext = PluginStringsWriter._ext_for(subrecord_type)
+        containing = [suffix for suffix, values in self._source_tables.items() if string_id in values]
+        if len(containing) == 1:
+            ext = containing[0]
         self._by_ext[ext][string_id] = text
 
     def write(
@@ -408,6 +401,8 @@ class PluginStringsWriter:
         output_dir: Path,
         plugin_stem: str,
         language: str = "english",
+        *,
+        output_encoding: str = DEFAULT_TEXT_ENCODING,
     ) -> list[Path]:
         """
         Write all three strings files (only those with content are created).
@@ -423,15 +418,17 @@ class PluginStringsWriter:
         Returns:
             List of paths that were actually written.
         """
+        prefix = f"{plugin_stem}_{language.capitalize()}"
+        # Encode every table before creating any output files.
+        payloads = {
+            ext: SkyrimStringsWriter.to_bytes(strings, ext != ".strings", output_encoding=output_encoding)
+            for ext, strings in self._by_ext.items()
+        }
         strings_dir = output_dir / "Strings"
         strings_dir.mkdir(parents=True, exist_ok=True)
-        prefix = f"{plugin_stem}_{language.capitalize()}"
-
         written: list[Path] = []
-        for ext, strings in self._by_ext.items():
-            # 即使没有条目也写入空文件，保证三种strings文件都存在
-            length_prefixed = ext != ".strings"
-            data = SkyrimStringsWriter.to_bytes(strings, length_prefixed)
+        for ext, data in payloads.items():
+            strings = self._by_ext[ext]
             path = strings_dir / f"{prefix}{ext}"
             path.write_bytes(data)
             if strings:

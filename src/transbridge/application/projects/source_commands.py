@@ -17,6 +17,7 @@ from transbridge.application.contracts import (
     RequestContext,
 )
 from transbridge.application.io.identity import EntryKey, SourceNamespace
+from transbridge.config.text_encoding import TextEncodings
 from transbridge.persistence.v2.baselines import BaselineRegistry
 from transbridge.persistence.v2.ids import VariantId, VariantRef
 from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
@@ -30,6 +31,7 @@ from .provisioning import (
     translation_registry,
 )
 from .source_content import folded_plugin_pairs, source_content_identity
+from .source_encoding import validate_prepared_input_encoding, with_source_read_options
 from .source_extraction import extract_source, hydrate_extracted
 from .source_registry import (
     SourceKind,
@@ -72,8 +74,19 @@ class ProjectSourceMutationService:
         expected_variant_revision: int | None = None,
         expected_variant_ref: VariantRef | None = None,
     ) -> OperationResult[SourceMutationResult]:
+        active = self._lifecycle.active
+        if active is None or active.variant is None or active.formal_variant_ref is None:
+            return _failed("ACTIVE_VARIANT_REQUIRED", "请先打开一个工程版本。", context)
+        if expected_project_revision is None:
+            expected_project_revision = active.project.envelope.revision
+        if expected_variant_revision is None:
+            expected_variant_revision = active.variant.revision
+        if expected_variant_ref is None:
+            expected_variant_ref = active.formal_variant_ref
         try:
             source_request, initial_states = _split_initial_entry_states(request)
+            encodings = TextEncodings.from_project_data(active.project.envelope.data)
+            source_request = with_source_read_options(source_request, encodings)
             parsed = self._preparer.prepare_source(source_request, context, role="primary", common_options=())
             prepared = _apply_initial_entry_states(parsed, initial_states)
         except Exception as exc:
@@ -134,6 +147,7 @@ class ProjectSourceMutationService:
             active.variant.revision if expected_variant_revision is None else expected_variant_revision
         )
         try:
+            validate_prepared_input_encoding(prepared, active.project.envelope.data)
             extracted = extract_source(prepared)
             registry = _source_registry(active.project)
             registration = migrate_legacy_source_registry(
