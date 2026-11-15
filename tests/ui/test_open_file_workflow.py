@@ -27,7 +27,14 @@ def host(project, monkeypatch):
     widget.context = project.ctx
     widget.workers = []
     widget.messages = []
-    widget.show_message = lambda message, **_: widget.messages.append(message)
+    widget.retries = []
+
+    def show_message(message, *, retry=None, **_):
+        widget.messages.append(message)
+        if retry is not None:
+            widget.retries.append(retry)
+
+    widget.show_message = show_message
     widget.workbench = SimpleNamespace(
         show_step2_progress=lambda *_: None,
         hide_step2_progress=lambda: None,
@@ -95,6 +102,64 @@ def test_batch_retains_successes_and_reports_corrupt_and_duplicate_files(project
     assert not project.ctx.authoritative_projection_diverged()
     assert "部分文件已打开" in host.messages[-1]
     assert "broken.json" in host.messages[-1]
+
+
+@pytest.mark.parametrize("failure", ["installation", "construction"])
+def test_open_recovers_committed_view_without_reopening_source(project, host, monkeypatch, failure):
+    start(project, host, [project.source])
+    wait(project, lambda: not host.opener._running)
+    original_key = project.ctx.active_key
+    entry_key = next(iter(project.ctx.collection)).identity
+    update = project.ctx.project_commands.update_entry(entry_key, project.request, translation="Unsaved translation")
+    assert update.is_success, update.diagnostics
+
+    monkeypatch.setattr(project.services.project_projection, "_notify", lambda _snapshot: ())
+    path = source_file(project.root, "binary.eet")
+    content = path.read_bytes()
+    installer = project.ctx.install_working_sources
+    attempts = []
+    prepare_slot = opening.slot_from_hydration
+    slot_attempts = []
+
+    def install(identity, **options):
+        attempts.append(options["view_token"])
+        return (failure != "installation" or len(attempts) > 1) and installer(identity, **options)
+
+    def prepare(hydration):
+        slot_attempts.append(hydration)
+        if failure == "construction" and len(slot_attempts) < 3:
+            raise RuntimeError("source slot preparation failed")
+        return prepare_slot(hydration)
+
+    monkeypatch.setattr(project.ctx, "install_working_sources", install)
+    monkeypatch.setattr(opening, "slot_from_hydration", prepare)
+    start(project, host, [path])
+    wait(project, lambda: not host.opener._running)
+    assert project.ctx.active_key == original_key
+    assert project.ctx.project_view_failed
+    assert "刷新待重试" in host.messages[-1]
+    (retry,) = host.retries
+    committed = project.services.project_lifecycle.active
+    variant = committed.variant.snapshot()
+    path.unlink()
+
+    retry()
+
+    assert attempts[-1] is None
+    if failure == "installation":
+        assert len(attempts) == 2 and attempts[0] is not None
+        assert len(slot_attempts) == 1
+    else:
+        assert len(attempts) == 1 and len(slot_attempts) == 3
+        assert all(hydration is slot_attempts[0] for hydration in slot_attempts)
+    assert project.ctx.active_slot.source_snapshot.content == content
+    assert len(project.ctx.project_sources) == 2
+    assert project.ctx.slots[original_key].collection.get(entry_key).translation == "Unsaved translation"
+    assert project.services.project_lifecycle.active is committed
+    assert committed.variant.snapshot() == variant
+    assert not project.ctx.project_opening and not project.ctx.project_view_failed
+    assert not project.ctx.authoritative_projection_diverged()
+    assert host.messages[-1] == "所选文件已打开。"
 
 
 @pytest.mark.parametrize("suffix", ["strings", "dlstrings", "ilstrings"])

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass, replace
 import logging
@@ -13,21 +14,27 @@ from transbridge.application.io.eet_source import probe_eet_format
 from transbridge.application.io.migration_import import MigrationImportError
 from transbridge.application.io.migration_snapshot import detached_entries
 from transbridge.application.io.translation_import import prepare_translation_import
+from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.persistence.project_store.format import ProjectStorageConflict
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
+from transbridge.ui.project_rows import ProjectRowsCollection
 from transbridge.ui.source_input_state import SourceInputScope, ensure_source_input
 from transbridge.ui.text_encoding import context_text_encodings
 from transbridge.ui.workers import ApiWorker
 
 logger = logging.getLogger(__name__)
+_TARGET_CHANGED = (
+    "MIGRATION_TARGET_CHANGED: 工程或翻译版本已变化，请在工作台刷新后重新导入。若提示仍在，请重新打开工程。"
+)
 
 
 @dataclass(frozen=True)
 class _Target:
     slot: object
-    collection: TranslationEntryCollection
+    collection: TranslationEntryCollection | ProjectRowsCollection
     revision: object
-    entries: tuple
+    entries: Iterable[TranslationEntry]
     paths: tuple
     strings_lookup: object
     source_snapshot: object
@@ -39,22 +46,34 @@ class _Target:
             slot,
             collection,
             collection.collection_revision,
-            detached_entries(collection),
+            iter(collection) if isinstance(collection, ProjectRowsCollection) else detached_entries(collection),
             _paths(slot),
             getattr(slot, "strings_lookup", None),
             getattr(slot, "source_snapshot", None),
         )
 
+    def read_entries(self):
+        if isinstance(self.collection, ProjectRowsCollection):
+            try:
+                return detached_entries(self.entries)
+            except ProjectStorageConflict as exc:
+                raise RuntimeError(_TARGET_CHANGED) from exc
+        return self.entries
+
     def is_current(self, context):
-        return (
+        if not (
             any(slot is self.slot for slot in context.slots.values())
             and self.slot.collection is self.collection
             and self.collection.collection_revision == self.revision
-            and tuple(self.collection) == self.entries
             and _paths(self.slot) == self.paths
             and getattr(self.slot, "strings_lookup", None) is self.strings_lookup
             and getattr(self.slot, "source_snapshot", None) is self.source_snapshot
-        )
+        ):
+            return False
+        if isinstance(self.collection, ProjectRowsCollection):
+            token = self.collection.token
+            return self.collection.reader.store.read_token(token.variant_id) == token
+        return tuple(self.collection) == self.entries
 
 
 def _paths(slot):
@@ -107,7 +126,8 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
         skipped = 0
         binary_eet = bool(cfg.eet_path and probe_eet_format(cfg.eet_path) is FormatId.BINARY_EET)
         for target in targets:
-            candidate = TranslationEntryCollection(target.entries)
+            entries = target.read_entries()
+            candidate = TranslationEntryCollection(entries)
             esp_path, eet_path, xt_path, strings_path, _language = target.paths
             eet_source = cfg.eet_path if target.slot is slot and eet_path is None else None
             xt_source = cfg.xt_path if target.slot is slot and xt_path is None else None
@@ -145,7 +165,7 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
                 )
                 labels.extend(formats)
                 skipped += unmatched
-            previous = {entry.identity: (entry.translation, entry.stage) for entry in target.entries}
+            previous = {entry.identity: (entry.translation, entry.stage) for entry in entries}
             changes = {
                 entry.identity: (entry.translation, entry.stage)
                 for entry in candidate
@@ -170,7 +190,7 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
             or not all(target.is_current(context) for target in targets)
             or (apply_all and tuple(context.slots.values()) != slots)
         ):
-            failed("MIGRATION_TARGET_CHANGED: 工程版本或翻译内容已变化，导入草稿未提交。")
+            failed(_TARGET_CHANGED)
             return
         if authoritative and states:
             if authority[0] is None:
@@ -194,7 +214,8 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
                 target.slot.strings_lookup = legacy.strings_lookup
             if changes:
                 updated += 1
-                target.slot.collection = candidate
+                if not authoritative:
+                    target.slot.collection = candidate
             if legacy.applied_count:
                 if eet_source:
                     target.slot.eet_path = eet_source
@@ -215,7 +236,8 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
             host.show_message("译文导入完成。" if states else "没有可更新的译文，请检查来源或已有译文处理方式。")
         else:
             host.show_message(f"迁移完成{formats}，{scope}新增 {len(states)} 条译文{suffix}")
-        context.collection_changed.emit(slot.collection)
+        if not authoritative:
+            context.collection_changed.emit(slot.collection)
 
     def failed(message):
         host.workbench.hide_step2_progress()

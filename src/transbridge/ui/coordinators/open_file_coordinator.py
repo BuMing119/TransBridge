@@ -8,7 +8,9 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 
 from transbridge.application.io.open_translation_file import prepare_open_file
+from transbridge.application.projects.provisioning_models import PreparedSourceHydration
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
+from transbridge.ui.projection_types import CollectionSlot
 from transbridge.ui.source_hydration import slot_from_hydration, source_slot_key
 from transbridge.ui.text_encoding import context_text_encodings
 from transbridge.ui.workers import ApiWorker
@@ -16,9 +18,27 @@ from transbridge.ui.workers import ApiWorker
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True)
+class _OpenedSource:
+    key: str
+    hydration: PreparedSourceHydration
+    strings_lookup: object
+    strings_lang: str
+    note: str
+    slot: CollectionSlot | None = None
+
+    def prepare_slot(self):
+        if self.slot is None:
+            slot = slot_from_hydration(self.hydration)
+            slot.strings_lookup = self.strings_lookup
+            slot.strings_lang = self.strings_lang
+            self.slot = slot
+        return self.key, self.slot
+
+
+@dataclass(frozen=True, slots=True)
 class _OpenResult:
-    slots: tuple
+    sources: tuple[_OpenedSource, ...]
     failures: tuple[str, ...]
     authority: object
 
@@ -69,6 +89,11 @@ class OpenFileCoordinator:
         if not options.source_paths:
             self._host.show_message("请选择要打开的文件。", error=True)
             return
+        installer = context.install_working_sources if authority is not None else None
+        if installer is not None and (context.project_opening or context.project_view_failed):
+            self._host.show_message("工作台尚未就绪，请恢复后再打开文件。", error=True)
+            return
+        view_token = context.begin_project_open() if installer is not None else None
         self._running = True
         self._host.workbench.show_step2_progress(0, "正在打开翻译文件…")
         self._host.workbench.set_step2_parsing(True)
@@ -79,7 +104,7 @@ class OpenFileCoordinator:
             from .parse_coordinator import _apply_dictionary_to_collection
 
             read_options = context_text_encodings(context).read_options()
-            slots, failures = [], []
+            sources, failures = [], []
             expected = authority
             seen = set()
             for path in options.source_paths:
@@ -122,34 +147,46 @@ class OpenFileCoordinator:
                     key = source_slot_key(hydration)
                     if key in seen or authority is None and key in context.slots:
                         raise ValueError("该翻译来源已打开，请使用导入译文或管理已有内容。")
-                    slot = slot_from_hydration(hydration)
-                    slot.strings_lookup = opened.strings_lookup
-                    slot.strings_lang = options.strings_lang
-                    slots.append((key, slot, opened.note))
+                    source = _OpenedSource(key, hydration, opened.strings_lookup, options.strings_lang, opened.note)
+                    try:
+                        source.prepare_slot()
+                    except Exception:
+                        if authority is None:
+                            raise
+                        logger.exception("Preparing the registered source view failed: %s", path)
+                    sources.append(source)
                     seen.add(key)
                 except Exception as exc:  # noqa: BLE001 - retain per-file failure and let independent files continue
                     logger.exception("Opening translation source failed: %s", path)
                     failures.append(f"{Path(path).name}：{exc}")
-            return _OpenResult(tuple(slots), tuple(failures), expected)
+            return _OpenResult(tuple(sources), tuple(failures), expected)
+
+        def release_view():
+            nonlocal view_token
+            if view_token is not None:
+                token = view_token
+                view_token = None
+                context.finish_project_open(token)
 
         def done(result):
+            if installer is not None and result.sources:
+                self._install_sources(context, result, installer, view_token, release_view)
+                return
+            release_view()
             if not self._is_current(context, result.authority):
                 self._host.show_message(
                     "工程版本或内容已变化，未显示旧任务的文件；已登记来源保留在其原工程版本。", error=True
                 )
                 return
-            for key, slot, _note in result.slots:
-                context.add_slot(key, slot)
-            notes = [note for _key, _slot, note in result.slots if note]
-            message = "所选文件已打开。" if result.slots else "文件未打开。"
-            if result.failures:
-                message = "部分文件已打开，其余文件未添加。" if result.slots else "文件未打开。"
-            self._host.show_message("\n".join((message, *notes, *result.failures)), error=bool(result.failures))
+            for source in result.sources:
+                context.add_slot(*source.prepare_slot())
+            self._show_result(result)
 
         def failed(message):
             self._host.show_message(f"打开文件失败：{message}", error=True)
 
         def finished():
+            release_view()
             self._running = False
             self._host.workbench.hide_step2_progress()
             self._host.workbench.set_step2_parsing(False)
@@ -159,4 +196,47 @@ class OpenFileCoordinator:
         worker.error.connect(failed)
         worker.finished.connect(finished)
         self._host.workers.append(worker)
-        worker.start()
+        try:
+            worker.start()
+        except Exception as exc:
+            self._host.workers.remove(worker)
+            worker.deleteLater()
+            finished()
+            logger.exception("Could not start source open worker")
+            failed(str(exc))
+
+    def _install_sources(self, context, result, installer, view_token=None, release_view=None):
+        identity = result.authority[0]
+        error = "工作台暂未同步到提交后的工程版本。"
+        installed = False
+        try:
+            try:
+                if self._host.context is context and context.active_version_identity == identity:
+                    additions = tuple(source.prepare_slot() for source in result.sources)
+                    installed = installer(identity, additions=additions, view_token=view_token)
+            finally:
+                if release_view is not None:
+                    release_view()
+        except Exception as exc:
+            logger.exception("Failed to install registered source views")
+            error = str(exc)
+            installed = False
+        if installed and not context.project_view_failed:
+            self._show_result(result)
+        elif self._host.context is context and context.active_version_identity == identity:
+            context.project_view_failed = True
+            self._host.show_message(
+                "\n".join((f"来源已登记，工作台刷新待重试：{error}", *result.failures)),
+                error=True,
+                retry=lambda: self._install_sources(context, result, installer),
+                retry_label="重试刷新工作台",
+            )
+        else:
+            self._host.show_message("工程版本已切换，已登记来源保留在原工程版本。", error=True)
+
+    def _show_result(self, result):
+        notes = [source.note for source in result.sources if source.note]
+        message = "所选文件已打开。" if result.sources else "文件未打开。"
+        if result.failures and result.sources:
+            message = "部分文件已打开，其余文件未添加。"
+        self._host.show_message("\n".join((message, *notes, *result.failures)), error=bool(result.failures))

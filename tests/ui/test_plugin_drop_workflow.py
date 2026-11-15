@@ -257,14 +257,20 @@ def test_view_install_failure_is_explicit_and_does_not_leave_partial_content_edi
     other = write_plugin(case.root / "B.esp", [(0x900, "OtherNPC", "Other original")])
     old_slot = case.window.context.active_slot
     old_key = case.window.context.active_key
-    messages = []
-    monkeypatch.setattr(case.window, "show_message", lambda text, **_: messages.append(text))
+    messages, retries = [], []
+
+    def show_message(text, *, retry=None, **_options):
+        messages.append(text)
+        if retry is not None:
+            retries.append(retry)
+
+    monkeypatch.setattr(case.window, "show_message", show_message)
 
     def fail(*_, **_kwargs):
         raise RuntimeError("injected hydration failure")
 
     with monkeypatch.context() as failures:
-        failures.setattr("transbridge.ui.coordinators.source_add_operation.prepare_project_slots", fail)
+        failures.setattr("transbridge.ui.coordinators.source_add_operation.slot_from_hydration", fail)
         _drop_choice(case, other, "add")
         _until(lambda: case.window.foreground_worker is None)
 
@@ -272,21 +278,17 @@ def test_view_install_failure_is_explicit_and_does_not_leave_partial_content_edi
     assert not case.window.context.project_opening
     assert case.window.context.active_slot is old_slot
     assert len(case.services.project_lifecycle.active.project.envelope.data["sources"]) == 2
-    assert any("injected hydration failure" in text and "重新打开工程" in text for text in messages)
+    assert any("injected hydration failure" in text for text in messages)
     entry = next(iter(old_slot.collection))
     rejected = case.window.context.update_projected_entry(entry.identity, translation="Must not be applied")
     assert not rejected.is_success and rejected.diagnostics[0].code == "PROJECT_VIEW_UNAVAILABLE"
 
-    monkeypatch.setattr(QMessageBox, "question", lambda *_: QMessageBox.StandardButton.Yes)
-    monkeypatch.setattr(QMessageBox, "warning", lambda *args: messages.append(str(args[2])))
-    monkeypatch.setattr(QMessageBox, "critical", lambda *args: messages.append(str(args[2])))
-    path = case.services.projects.path_for(case.services.project_lifecycle.active.project_ref)
-    case.window.project_coordinator.open_project_path(path)
-    _until(lambda: case.window.project_open_worker is None)
+    (retry,) = retries
+    retry()
     assert not case.window.context.project_view_failed, messages
     assert set(case.window.context.slots) == {item["source_id"] for item in case.window.context.project_sources}
     assert next(iter(case.window.context.slots[old_key].collection)).translation == "Unsaved A"
-    assert not case.window.context.dirty
+    assert case.window.context.dirty
 
 
 def test_cancel_choice_keeps_the_existing_project_untouched(shared_plugin_window):

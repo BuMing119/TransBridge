@@ -87,11 +87,12 @@ def changed_translation_keys(previous, current, *, sparse=None):
     return tuple(key for key in old.keys() | new.keys() if old.get(key) != new.get(key))
 
 
-def publish_alignment_epochs(previous, current):
+def publish_alignment_epochs(previous, current, *, changes=None):
     """Notify existing subscribers only after a replacement has been accepted."""
     if previous.ref != current.ref:
         return
-    changes = changed_translation_keys(previous.snapshot().entries, current.snapshot().entries)
+    if changes is None:
+        changes = changed_translation_keys(previous.snapshot().entries, current.snapshot().entries)
     # One published Variant lifetime keeps its subscriptions even when Qt
     # coalesces several authority replacements before the next view refresh.
     current.alignment_epochs = previous.alignment_epochs

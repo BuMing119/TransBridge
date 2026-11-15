@@ -18,10 +18,21 @@ from transbridge.persistence.v2.models import ProjectDto
 from .provisioning import ProjectSourceRequest, translation_registry
 from .source_content import authoritative_baseline_sources, folded_plugin_pairs, source_content_identity
 from .source_encoding import TEXT_ENCODING_FORMATS, with_source_read_options
-from .source_input_publication import PreparedSourcePublication, check_source_update_cancelled, publish_source_input
+from .source_input_publication import (
+    PreparedSourceInput,
+    PreparedSourcePublication,
+    check_source_update_cancelled,
+    parse_source_update_input,
+    publish_source_input,
+)
 from .source_registry import SourceRegistrySnapshot, migrate_legacy_source_registry
-from .source_update_migration import compare_source, migrate_variant
-from .source_update_models import SourceUpdatePreview, SourceUpdateTarget
+from .source_update_migration import SourceMigration, compare_source, migrate_variant
+from .source_update_models import (
+    BatchSourceUpdatePreview,
+    SourceUpdateDifference,
+    SourceUpdatePreview,
+    SourceUpdateTarget,
+)
 from .text_encoding_matching import match_encoding_entries
 
 
@@ -63,6 +74,27 @@ class ProjectSourceUpdateService:
             return OperationResult.from_exception(exc, run_id=context.run_id)
 
     def prepare(self, project_path, source_id, replacement_path, context, *, cancelled=None):
+        """Keep the single-source preview contract for existing callers."""
+        result = self.prepare_batch(project_path, ((source_id, replacement_path),), context, cancelled=cancelled)
+        if not result.is_success or result.value is None:
+            return result
+        batch = result.value
+        (item,) = batch.differences
+        preview = SourceUpdatePreview(
+            batch.token,
+            item.source_name,
+            item.replacement_path,
+            batch.variant_count,
+            item.added,
+            item.removed,
+            item.unchanged,
+            item.changed,
+            item.unverified,
+            item.reordered,
+        )
+        return replace(result, value=preview)
+
+    def prepare_batch(self, project_path, replacements, context, *, cancelled=None):
         try:
             check_source_update_cancelled(cancelled)
             ref = self._resolve(project_path, context)
@@ -72,75 +104,48 @@ class ProjectSourceUpdateService:
                 raise ValueError("请先保存当前工程的修改，再更新源文件。")
             expected = self._store.read(ref)
             registry = _registry(expected.project)
-            source = next((item for item in registry.sources if item.source_id == source_id), None)
-            if source is None:
-                raise ValueError("工程中找不到所选源文件。")
-            if source not in _update_targets(registry):
-                raise ValueError("所选来源不是独立的工程源文件，请更新其对应的原始来源。")
-            path = str(Path(replacement_path).resolve(strict=True))
-            old = self._store.previous(ref, source)
-            options = dict(source.format_options)
-            localized_language = dict(old.hydration.source_snapshot.metadata).get("localized_language")
-            if localized_language is not None:
-                options.setdefault("language", localized_language)
-            request = ProjectSourceRequest(path, source.format_id, options=tuple(options.items()))
+            selections = _selected_sources(registry, replacements)
+            previous = self._store.previous_sources(ref, tuple(source for source, _ in selections))
             encodings = TextEncodings.from_project_data(expected.project.envelope.data)
-            request = with_source_read_options(request, encodings)
-            prepared = self._preparer.prepare_source(request, context, role="primary", common_options=())
-            identity = source_content_identity(source.to_dict())
-            namespaces = {
-                fingerprint.namespace
-                for variant in expected.variants
-                for fingerprint in variant.source_fingerprints
-                if fingerprint.sha256 == source.fingerprint
-                and (identity is None or fingerprint.namespace.value == identity)
-            }
-            if len(namespaces) != 1:
-                raise ValueError("无法把所选来源唯一对应到翻译版本，请检查工程来源登记。")
-            namespace = namespaces.pop()
+            keys_by_namespace = {item.baseline.fingerprint.namespace: set() for item in previous}
             for variant in expected.variants:
-                matches = [item for item in variant.source_fingerprints if item.namespace == namespace]
-                if len(matches) != 1 or matches[0].sha256 != source.fingerprint:
-                    raise ValueError("工程内翻译版本的来源不一致，无法统一更新。")
-            warnings = ()
-            keys = {
-                (item.entry_key.local_key, item.entry_key.original)
-                for variant in expected.variants
-                for item in variant.entries
-                if item.entry_key.namespace == namespace
-            }
-            matched = _match_same_source_with_new_read_options(source, old, prepared, keys)
-            changes = compare_source(keys, old, prepared, matched_keys=matched)
-            variants = tuple(
-                migrate_variant(item, namespace, prepared, changes, matched_keys=matched) for item in expected.variants
-            )
-            project = _updated_project(expected.project, registry, source, old, prepared)
+                for entry in variant.entries:
+                    key = entry.entry_key
+                    if key.namespace in keys_by_namespace:
+                        keys_by_namespace[key.namespace].add((key.local_key, key.original))
+            inputs = []
+            migrations = []
+            differences = []
+            for (source, path), old in zip(selections, previous, strict=True):
+                check_source_update_cancelled(cancelled)
+                request = _source_request(source, path, old, encodings)
+                prepared = parse_source_update_input(self._preparer, request, context)
+                namespace = old.baseline.fingerprint.namespace
+                migration, difference = _compare_source(source, old, request, prepared, keys_by_namespace[namespace])
+                registry = updated_registry(expected.project, registry, source, old, prepared)
+                inputs.append(
+                    PreparedSourceInput(
+                        replace(request, expected_fingerprint=prepared.baseline.fingerprint.sha256),
+                        prepared,
+                        namespace,
+                        old.hydration.reference_location or "",
+                    )
+                )
+                migrations.append(migration)
+                differences.append(difference)
+            migrations = tuple(migrations)
+            variants = tuple(migrate_variant(variant, migrations) for variant in expected.variants)
             token = secrets.token_hex(24)
-            preview = SourceUpdatePreview(
-                token,
-                source.display_name or Path(source.location).name,
-                path,
-                len(variants),
-                len(changes.added),
-                len(changes.removed),
-                len(changes.unchanged),
-                len(changes.changed),
-                len(changes.unverified),
-                len(changes.reordered),
-                warnings,
-            )
+            preview = BatchSourceUpdatePreview(token, len(variants), tuple(differences))
             candidate = PreparedSourcePublication(
                 context.owner_id,
                 generation,
                 expected,
-                project,
+                _updated_project(expected.project, registry),
                 variants,
-                replace(request, expected_fingerprint=prepared.baseline.fingerprint.sha256),
-                prepared,
-                namespace,
+                tuple(inputs),
                 str(self._projects.path_for(ref)),
-                preview,
-                old.hydration.reference_location or "",
+                differences[0].source_name if len(differences) == 1 else f"{len(differences)} 个来源",
             )
             check_source_update_cancelled(cancelled)
             with self._lock:
@@ -171,6 +176,7 @@ class ProjectSourceUpdateService:
                 baselines=self._baselines,
                 preparer=self._preparer,
                 cancelled=cancelled,
+                recover_replacement=True,
             )
         except Exception as exc:
             return OperationResult.from_exception(exc, run_id=context.run_id)
@@ -190,6 +196,57 @@ class ProjectSourceUpdateService:
     def _check_context(ref, context):
         if context.project_id is not None and context.project_id != ref.identity.value:
             raise DomainError(ErrorCategory.PERMISSION, "PROJECT_CONTEXT_MISMATCH", "更新目标与请求工程不一致。")
+
+
+def _selected_sources(registry, replacements):
+    replacements = tuple(replacements)
+    if not replacements:
+        raise ValueError("请至少选择一个要更新的来源。")
+    if len({source_id for source_id, _ in replacements}) != len(replacements):
+        raise ValueError("同一个工程来源只能选择一个新版文件。")
+    targets = {item.source_id: item for item in _update_targets(registry)}
+    selected = []
+    for source_id, replacement in replacements:
+        source = targets.get(source_id)
+        if source is None:
+            raise ValueError("工程中找不到所选独立来源，请重新选择。")
+        try:
+            selected.append((source, Path(replacement).resolve(strict=True)))
+        except FileNotFoundError as exc:
+            raise DomainError(
+                ErrorCategory.PREREQUISITE,
+                "RESOURCE_NOT_FOUND",
+                f"找不到所选新版文件，请重新选择。\n{replacement}",
+                cause=exc,
+            ) from exc
+    if len({path for _, path in selected}) != len(selected):
+        raise ValueError("同一个新版文件只能配对一个工程来源。")
+    return selected
+
+
+def _source_request(source, path, old, encodings):
+    options = dict(source.format_options)
+    localized_language = dict(old.hydration.source_snapshot.metadata).get("localized_language")
+    if localized_language is not None:
+        options.setdefault("language", localized_language)
+    request = ProjectSourceRequest(str(path), source.format_id, options=tuple(options.items()))
+    return with_source_read_options(request, encodings)
+
+
+def _compare_source(source, old, request, prepared, keys):
+    matched = _match_same_source_with_new_read_options(source, old, prepared, keys)
+    changes = compare_source(keys, old, prepared, matched_keys=matched)
+    return SourceMigration(old.baseline.fingerprint, prepared, changes, matched), SourceUpdateDifference(
+        source.display_name or Path(source.location).name,
+        old.hydration.reference_location or source.location,
+        request.location,
+        len(changes.added),
+        len(changes.removed),
+        len(changes.unchanged),
+        len(changes.changed),
+        len(changes.unverified),
+        len(changes.reordered),
+    )
 
 
 def _match_same_source_with_new_read_options(source, previous, prepared, keys):
@@ -233,8 +290,7 @@ def _registry(project):
         return migrate_legacy_source_registry(project.envelope.identity, data.get("sources", ()))
 
 
-def _updated_project(project, registry, source, previous, prepared):
-    registry = updated_registry(project, registry, source, previous, prepared)
+def _updated_project(project, registry):
     data = deepcopy(project.envelope.data)
     data.update(translation_registry(registry).to_project_data())
     return ProjectDto(replace(project.envelope, revision=project.envelope.revision + 1, data=data))

@@ -193,6 +193,8 @@ class DurableVariantCommitService:
                     keys = {
                         key for key, disposition, _, _ in change_set.application_outcomes if disposition == "applied"
                     }
+                    if isinstance(save.variant.entries, DeferredVariantRows):
+                        keys.update(row.entry_key for row in save.variant.entries.pending())
                     observed_entries = (
                         snapshot.entries.get_many(keys)
                         if isinstance(snapshot.entries, DeferredVariantRows)

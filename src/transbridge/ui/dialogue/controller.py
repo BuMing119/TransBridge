@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from transbridge.application.dialogue.index import DialogueIndex, source_unavailable_reason
 from transbridge.application.dialogue.loading import DialogueIndexLoader
+from transbridge.ui.project_rows import ProjectRowsCollection
 from transbridge.ui.windowing import show_and_activate
 
 from .consistency import synchronize_translation
@@ -17,7 +18,6 @@ from .dialog import EntryEditorDialog
 from .editing import EntryDraft, content_scope
 from .index_delivery import IndexDelivery
 from .index_state import IndexStructure
-from .projection_sync import EditorProjectionSync
 
 
 def unavailable_reason(context) -> str | None:
@@ -39,7 +39,6 @@ class DialogueEditorController(QObject):
         self.context, self.preview = context, preview
         self._workers = workers
         self._projection = projection
-        self._projection_sync = EditorProjectionSync(projection)
         self._index_structure = IndexStructure()
         self._generation = 0
         self._closed = False
@@ -126,6 +125,7 @@ class DialogueEditorController(QObject):
 
     def _prepare_context(self) -> None:
         collection = self.context.collection
+        paged = isinstance(collection, ProjectRowsCollection)
         reason = unavailable_reason(self.context)
         rebuild = collection is not None and self._index_structure.changed(collection)
         if rebuild:
@@ -134,7 +134,14 @@ class DialogueEditorController(QObject):
             self._index = DialogueIndex((), {})
             self._context_reason = reason or "正在建立任务与话题索引…"
             self._entry_keys = self._index_structure.keys
-            self._session_keys = tuple(key for key in self._session_keys if key in collection)
+            if paged:
+                removed = self._index_structure.removed_keys
+                if removed is None:
+                    self._session_keys = self.preview.editor_navigation_keys()
+                elif removed:
+                    self._session_keys = tuple(key for key in self._session_keys if key not in removed)
+            else:
+                self._session_keys = tuple(key for key in self._session_keys if key in collection)
         if collection is not None and self._selected_key is not None and collection.get(self._selected_key) is not None:
             self._display_entry(self._selected_key)
         elif collection and self._node_identity is not None:
@@ -149,7 +156,8 @@ class DialogueEditorController(QObject):
             return
         generation, scope = self._generation, self._scope
         slot = self.context.active_slot
-        entries = tuple(collection)
+        # Paged iteration captures the current revision before handing the read to the worker.
+        entries = iter(collection) if paged else tuple(collection)
         self._delivery = IndexDelivery(
             self._loader,
             entries,
@@ -208,7 +216,6 @@ class DialogueEditorController(QObject):
             return
         self._node_identity = None
         self._selected_key = key
-        self._sync_projection()
         self._session_keys = self.preview.editor_navigation_keys()
         self._prepare_context()
         show_and_activate(self.dialog)
@@ -249,9 +256,6 @@ class DialogueEditorController(QObject):
         self.view.set_context_available(True, self._context_reason)
         self.view.show_quests(self._index, quest)
         self.select_quest(quest, topic, row)
-
-    def _sync_projection(self) -> bool:
-        return self._projection_sync.sync(self.context)
 
     def select_quest(self, quest: int, topic: int = 0, row: int = 0) -> None:
         if not 0 <= quest < len(self._index.quests) or unavailable_reason(self.context):
@@ -321,9 +325,7 @@ class DialogueEditorController(QObject):
             return
         position = self._navigation_keys.index(self._selected_key) + delta
         if 0 <= position < len(self._navigation_keys):
-            key = self._navigation_keys[position]
-            self._sync_projection()
-            self._display_entry(key)
+            self._display_entry(self._navigation_keys[position])
             self.view.translation.setFocus()
 
     def apply(self, advance: bool = False) -> None:
@@ -336,7 +338,7 @@ class DialogueEditorController(QObject):
         )
         changed = draft.changed
         try:
-            error = draft.commit(self.context, projection=self._projection, projection_sync=self._projection_sync)
+            error = draft.commit(self.context, projection=self._projection)
         except Exception as exc:  # GUI boundary: retain the draft and report the original failure.
             logging.getLogger(__name__).exception("Entry draft commit failed")
             error = f"应用译文失败：{exc}。草稿已保留。"
@@ -356,7 +358,6 @@ class DialogueEditorController(QObject):
                     self._drafts,
                     self.dialog,
                     projection=self._projection,
-                    projection_sync=self._projection_sync,
                 )
             except Exception as exc:
                 logging.getLogger(__name__).exception("Translation synchronization failed")
@@ -380,7 +381,6 @@ class DialogueEditorController(QObject):
             return
         key = self._current.before.entry_key
         self._drafts.pop((self._current.scope, key), None)
-        self._sync_projection()
         self._display_entry(key)
 
     def can_close(self) -> bool:

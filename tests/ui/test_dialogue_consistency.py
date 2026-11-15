@@ -241,12 +241,12 @@ def test_public_projection_preserves_fresh_collection_and_matching_entry_contrac
     assert unmatched is not collection and unmatched.get(entry.identity) is entry
 
 
-def test_missing_snapshot_after_commit_reports_applied_but_refresh_failed(authority):
+def test_successful_commit_leaves_refresh_to_the_project_binding(authority):
     context, store, aggregate, _, target, _ = authority
     draft = EntryDraft.capture(context, context.collection.get(target.identity))
     draft.text = "已提交"
-    snapshots = iter((store.snapshot(), None))
-    error = draft.commit(context, projection=SimpleNamespace(snapshot=lambda: next(snapshots)))
-    assert "已提交" in error and "快照不可用" in error
+    snapshots = iter((store.snapshot(),))
+    assert draft.commit(context, projection=SimpleNamespace(snapshot=lambda: next(snapshots))) is None
     states = {entry.entry_key: entry for entry in aggregate.snapshot().entries}
     assert states[target.identity].translation == "已提交"
+    assert context.collection.get(target.identity).translation == "已提交"

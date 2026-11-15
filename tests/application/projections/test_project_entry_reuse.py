@@ -54,7 +54,7 @@ def test_single_entry_edit_reuses_other_rows_and_still_notifies_every_listener(m
     publisher = ProjectProjectionPublisher(store)
     harness = _harness(active, {}, event=publisher)
     publisher.bind(harness.service)
-    facade = GuiProjectCommandFacade(harness.service, publisher.rebuild)
+    facade = GuiProjectCommandFacade(harness.service)
     before = store.snapshot()
     old_rows = tuple(before.values["entries"])
     calls = _count_serializations(monkeypatch)

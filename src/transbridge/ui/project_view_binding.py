@@ -11,7 +11,8 @@ from PyQt6.QtCore import QThread
 
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
 from transbridge.application.projections.models import DeferredProjectRows, copy_projection_value
-from transbridge.ui.entry_projection import prepare_projected_entries, sync_projected_entries
+from transbridge.application.projects.source_content import source_content_identity
+from transbridge.ui.entry_projection import EntryProjectionUpdate, prepare_projected_entries, sync_projected_entries
 from transbridge.ui.project_labels import project_entry_labels
 from transbridge.ui.project_rows import ProjectRowsCollection, sync_paged_collections
 from transbridge.ui.projection_consistency import PreparedProjectionConsistency, ProjectionConsistency
@@ -177,9 +178,9 @@ class ProjectViewBinding:
         if QThread.currentThread() != self.context.thread():
             previous = self.state.snapshot
             prepared = None
-            if not self.installing and not self._paged() and _same_entry_scope(previous, snapshot):
+            if not self.installing and _same_entry_scope(previous, snapshot) and (slots := self._materialized_slots()):
                 try:
-                    prepared = prepare_projected_entries(tuple(self.context.slots.values()), previous, snapshot)
+                    prepared = prepare_projected_entries(slots, previous, snapshot)
                 except Exception:
                     # A preparation failure must not strand queued delivery or
                     # a background save waiting for it. Retain the cause and
@@ -224,7 +225,54 @@ class ProjectViewBinding:
             self._lock.notify_all()
             return self._token
 
-    def install(self, token, snapshot, slots, *, state=None):
+    def install_working_sources(self, identity, *, additions=(), removals=(), view_token=None):
+        """Install a pending catalogue from the working copy without reopening SQLite."""
+        self._require_gui_thread()
+        context = self.context
+        snapshot = None if self.store is None else self.store.snapshot()
+        if snapshot is None or identity != context.active_version_identity:
+            return False
+        values = snapshot.values
+        if identity != (values.get("project_id"), values.get("variant_id")):
+            return False
+        registered = {source["source_id"]: source_content_identity(source) for source in values.get("sources", ())}
+        if registered.keys() & set(removals):
+            return False
+        for key, slot in additions:
+            source_id = slot.source_id or key
+            namespace = slot.source_namespace
+            if source_id not in registered or (namespace is not None and registered[source_id] != namespace):
+                return False
+        slots = {
+            key: slot
+            for key, slot in context.slots.items()
+            if key not in removals and (slot.source_id is None or slot.source_id in registered)
+        }
+        if additions:
+            keys = (entry.identity for _, slot in additions for entry in slot.collection)
+            update = EntryProjectionUpdate.from_snapshot(snapshot, keys=keys)
+            for key, slot in additions:
+                if slots.get(key) is not slot:
+                    slot.collection = update.collection(slot.collection)
+                slots[key] = slot
+        preferred = additions[-1][0] if additions else context.active_key
+        state = replace(ProjectViewState.capture(snapshot, context._entry_labels_exact), initial_source_key=preferred)
+        owns_token = view_token is None
+        if owns_token and self.opening:
+            return False
+        token = self.begin() if owns_token else view_token
+        installed = False
+        try:
+            if self.store.snapshot() is snapshot:
+                installed = self.install(
+                    token, snapshot, tuple(slots.items()), state=state, recover_source_update=True, working_sources=True
+                )
+        finally:
+            if owns_token:
+                self.finish(token)
+        return installed and not self.failed
+
+    def install(self, token, snapshot, slots, *, state=None, recover_source_update=False, working_sources=False):
         with self._lock:
             if self._closed or token != self._token or self._installed:
                 return False
@@ -239,11 +287,23 @@ class ProjectViewBinding:
             raise ValueError("Prepared project view must belong to the exact installation snapshot")
         next_state = state or ProjectViewState.capture(snapshot, self.context._entry_labels_exact)
         context = self.context
+        preserved = (
+            tuple(slot for key, slot in prepared_slots.items() if context.slots.get(key) is slot)
+            if working_sources
+            else ()
+        )
         with self._lock:
             if self._closed or token != self._token:
                 return False
-            if self._pending is not _UNSET and _snapshot_identity(self._pending[1]) != _snapshot_identity(snapshot):
-                return False
+            if self._pending is not _UNSET:
+                queued = self._pending[1]
+                if _snapshot_identity(queued) != _snapshot_identity(snapshot) and not (
+                    recover_source_update
+                    and _same_entry_scope(queued, snapshot)
+                    and queued.revision <= snapshot.revision
+                    and queued.persisted_revision <= snapshot.persisted_revision
+                ):
+                    return False
             if next_state.consistency is not None:
                 consistency = next_state.consistency.take(snapshot, prepared_slots.values())
                 if consistency is not None:
@@ -262,7 +322,7 @@ class ProjectViewBinding:
             )
             self.failed = False
         try:
-            self._apply_state(next_state)
+            self._apply_state(next_state, preserved_slots=preserved)
             context.collection_list_changed.emit()
         finally:
             with self._lock:
@@ -310,25 +370,26 @@ class ProjectViewBinding:
     def apply(self, snapshot, *, prepared=None):
         self._apply_state(ProjectViewState.capture(snapshot, self.context._entry_labels_exact), prepared=prepared)
 
-    def _apply_state(self, state, *, prepared=None):
+    def _apply_state(self, state, *, prepared=None, preserved_slots=()):
         context, old = self.context, self.state
         entries_changed = False
         previous_collection = context.collection
         paged = self._paged()
-        if (
-            paged
-            and state.snapshot is not None
-            and (self.installing or _same_entry_scope(old.snapshot, state.snapshot))
-        ):
-            entries_changed = sync_paged_collections(paged, state.snapshot, None if self.installing else old.snapshot)
-        elif not self.installing and _same_entry_scope(old.snapshot, state.snapshot):
+        same_scope = _same_entry_scope(old.snapshot, state.snapshot)
+        if paged and state.snapshot is not None and (self.installing or same_scope):
+            previous = old.snapshot if not self.installing or preserved_slots else None
+            entries_changed = sync_paged_collections(paged, state.snapshot, previous)
+        slots = (
+            tuple(slot for slot in preserved_slots if not isinstance(slot.collection, ProjectRowsCollection))
+            if self.installing
+            else self._materialized_slots()
+        )
+        if same_scope and slots:
             applied = None
-            if prepared is not None and prepared.matches(context.slots.values(), old.snapshot):
+            if prepared is not None and prepared.matches(slots, old.snapshot):
                 applied = prepared.apply()
-            entries_changed = (
-                sync_projected_entries(context.slots.values(), old.snapshot, state.snapshot)
-                if applied is None
-                else applied
+            entries_changed |= (
+                sync_projected_entries(slots, old.snapshot, state.snapshot) if applied is None else applied
             )
         labels_changed = (
             context._label_library != state.label_library
@@ -360,6 +421,11 @@ class ProjectViewBinding:
             slot.collection
             for slot in self.context.slots.values()
             if isinstance(slot.collection, ProjectRowsCollection)
+        )
+
+    def _materialized_slots(self):
+        return tuple(
+            slot for slot in self.context.slots.values() if not isinstance(slot.collection, ProjectRowsCollection)
         )
 
     def diverged(self):

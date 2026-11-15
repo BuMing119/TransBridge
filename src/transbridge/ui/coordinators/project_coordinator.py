@@ -205,6 +205,7 @@ class ProjectCoordinator:
         on_success=None,
         on_failure=None,
         request_context=None,
+        **options,
     ) -> bool:
         """Run preparation, activation and detached view construction in one worker."""
         from .project_open_operation import ProjectOpenOperation
@@ -219,7 +220,51 @@ class ProjectCoordinator:
             on_success=on_success,
             on_failure=on_failure,
             request_context=request_context,
+            **options,
         )
+
+    def refresh_committed_sources(self, token, context, *, view_token=None, on_finished=None) -> bool:
+        """Install the committed sources without reactivating or saving the working copy."""
+        project_id, variant_id = token.project_id.value, token.variant_id.value
+        host = self._host
+        view = host.context
+
+        def failed(_code, message):
+            host.show_message(
+                message,
+                error=True,
+                retry=lambda: self.refresh_committed_sources(token, context),
+                retry_label="重试刷新工作台",
+            )
+            if on_finished is not None:
+                on_finished(False)
+
+        if view.active_version_identity != (project_id, variant_id):
+            if view_token is not None:
+                view.finish_project_open(view_token)
+            if on_finished is not None:
+                on_finished(False)
+            return False
+        started = self._start_current_project_open(
+            lambda: self._prepare("prepare_identity", project_id, variant_id, context),
+            dirty_decision=None,
+            success_verb="来源视图已更新",
+            show_error_dialog=False,
+            on_failure=failed,
+            on_success=None if on_finished is None else lambda _opened: on_finished(True),
+            request_context=context,
+            source_token=token,
+            view_token=view_token,
+        )
+        if not started:
+            if view_token is not None:
+                view.finish_project_open(view_token)
+            if not getattr(host, "close_pending", False):
+                view.project_view_failed = True
+                failed("PROJECT_VIEW_REFRESH_PENDING", "来源已提交。空闲后可重试刷新工作台。")
+            elif on_finished is not None:
+                on_finished(False)
+        return started
 
     def _show_start_center_empty(self) -> None:
         if hasattr(self._host, "show_start_center_empty"):

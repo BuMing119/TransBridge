@@ -40,7 +40,7 @@ def _saving_facade(*, dirty, legacy=False):
     publisher = ProjectProjectionPublisher(store)
     harness = _harness(active, {}, event=publisher)
     publisher.bind(harness.service)
-    facade = GuiProjectCommandFacade(harness.service, publisher.rebuild)
+    facade = GuiProjectCommandFacade(harness.service)
     return facade, harness, store
 
 

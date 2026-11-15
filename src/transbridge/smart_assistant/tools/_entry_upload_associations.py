@@ -139,15 +139,6 @@ def associate_upload_receipts(target, record):
                     if receipt["association"] == "pending":
                         receipt["association"] = "applied"
                         receipt.pop("association_error", None)
-                from transbridge.ui.entry_projection import EntryProjectionUpdate
-
-                snapshot = app._project_projection.snapshot()
-                update = EntryProjectionUpdate.from_snapshot(snapshot, keys=changes)
-                previous = source.collection
-                source.collection = update.collection(previous)
-                signal = getattr(app, "collection_changed", None)
-                if signal is not None and source.collection is not previous:
-                    signal.emit(app.collection)
                 return deferred
             if not any(
                 item.code

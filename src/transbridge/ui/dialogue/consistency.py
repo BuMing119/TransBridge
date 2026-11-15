@@ -43,9 +43,7 @@ def sync_candidates(context, entry_key, text: str, drafts) -> tuple[SyncCandidat
     return tuple(candidates)
 
 
-def synchronize_translation(
-    context, entry_key, text, drafts, parent, *, projection=None, projection_sync=None
-) -> str | None:
+def synchronize_translation(context, entry_key, text, drafts, parent, *, projection=None) -> str | None:
     """Return an error to keep the editor open; cancellation leaves the applied entry intact."""
     from .sync_dialog import SyncTranslationDialog
 
@@ -66,7 +64,6 @@ def synchronize_translation(
             context,
             (source, *(item.draft for item in selected)),
             projection=projection,
-            projection_sync=projection_sync,
         )
     except Exception as exc:
         logging.getLogger(__name__).exception("Matching entry synchronization failed")

@@ -41,8 +41,8 @@ class ProjectSnapshotCommands:
         active = self._active(context)
         return self._repository.list(active.formal_variant_ref)
 
-    def restore(self, identity: str, context: RequestContext) -> OperationResult:
-        """Replace content, mark it dirty, and retain the formal Variant identity."""
+    def restore(self, identity: str, context: RequestContext, *, backup_name: str | None = None) -> OperationResult:
+        """Restore content in the formal Variant, preserving a requested preimage."""
         try:
             active = self._active(context)
             current = active.variant.snapshot()
@@ -74,6 +74,10 @@ class ProjectSnapshotCommands:
                 snapshot.label_library,
                 context.run_id or "",
             )
+            if backup_name is not None:
+                backup = self._lifecycle.save_snapshot(backup_name, context)
+                if not backup.is_success:
+                    return backup
             return self._lifecycle.commit_active_variant(
                 change_set, context, expected_project_revision=project_revision
             )

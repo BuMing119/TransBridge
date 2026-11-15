@@ -156,7 +156,6 @@ def build_persistence_v2_services(
 
     gui_project_commands = GuiProjectCommandFacade(
         project_lifecycle,
-        project_publisher.rebuild,
         projects=projects,
         variants=variants,
         baselines=baselines,

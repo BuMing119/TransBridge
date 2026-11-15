@@ -109,6 +109,11 @@ _EXTENSION_HINTS: dict[str, tuple[FormatId, ...]] = {
 }
 
 
+def filename_format_hints(suffix: str) -> tuple[FormatId, ...]:
+    """Return possible formats based only on the file extension."""
+    return _EXTENSION_HINTS.get(suffix.casefold(), ())
+
+
 class FormatCatalog:
     """Known formats, registered implementations, and bounded capabilities."""
 
@@ -144,7 +149,7 @@ class FormatCatalog:
             if adapter_probe.status is ProbeStatus.EXACT:
                 candidates.add(format_id)
 
-        hinted_formats = _EXTENSION_HINTS.get(request.source.suffix, ())
+        hinted_formats = filename_format_hints(request.source.suffix)
         evidence.extend(
             ProbeEvidence(format_id, ProbeEvidenceKind.EXTENSION, request.source.suffix, ProbeConfidence.HINT)
             for format_id in hinted_formats

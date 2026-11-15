@@ -87,7 +87,7 @@ def publish_import(target, path, label, collection, snapshot, format_id, action,
     return ToolResult(
         success=True,
         partial=task.record.get("parse_outcome") == "partial",
-        message=f"已创建并激活集合「{label}」",
+        message=(f"已创建并激活集合「{label}」" if summary["activated"] else f"已创建集合「{label}」，工作台待刷新"),
         data={
             "result_id": task.result_id,
             "action": action,
@@ -121,8 +121,22 @@ def merge_source_result(ctx, store, record, *, prepared=None):
     target = ProjectToolTarget.capture(ctx)
     path = dict(prepared.descriptor)["location"]
     expected_registration = migrate_legacy_source_registry(identity[0], (prepared.to_dict(),)).sources[0].to_dict()
+    hydration = None
+    pending_view = None
+    receipt_warning = ""
+
+    def install_view(*, view_token=None):
+        from transbridge.ui.source_hydration import slot_from_hydration, source_slot_key
+
+        nonlocal pending_view
+        if pending_view is None:
+            pending_view = source_slot_key(hydration), slot_from_hydration(hydration)
+        if not app.install_working_sources(identity, additions=(pending_view,), view_token=view_token):
+            raise ValueError("工作台暂未同步到提交后的工程版本。")
+        target.acknowledge_projection()
 
     def publish():
+        nonlocal hydration, receipt_warning
         cancellation = getattr(ctx, "cancellation_token", None)
         if cancellation is not None:
             cancellation.raise_if_cancelled()
@@ -147,32 +161,53 @@ def merge_source_result(ctx, store, record, *, prepared=None):
             raise ValueError("此前来源登记结果不确定；解析成果已保留，不能自动重放新增或认领同路径来源。")
         if existing:
             raise ValueError("该工程来源已经存在；不能将其他登记认作本次命令的成功回执。")
-        store.update_metadata(record["task_id"], registration_state="attempting")
-        record["registration_state"] = "attempting"
-        result = commands.add_prepared_source(
-            prepared,
-            context,
-            expected_variant_ref=VariantRef(VariantId(identity[1]), ProjectId(identity[0])),
-        )
-        if not result.is_success:
-            _retain_source_receipt(store, record, registration_state="failed")
-            raise ValueError("；".join(item.message for item in result.diagnostics))
-        receipt_warning = _retain_source_receipt(store, record, registered=True, registration_state="committed")
-        from transbridge.ui.source_hydration import slot_from_hydration, source_slot_key
-
+        if app.project_opening or app.project_view_failed:
+            raise ValueError("工作台尚未就绪，请恢复后再登记来源。")
+        view_token = app.begin_project_open()
         try:
+            store.update_metadata(record["task_id"], registration_state="attempting")
+            record["registration_state"] = "attempting"
+            result = commands.add_prepared_source(
+                prepared,
+                context,
+                expected_variant_ref=VariantRef(VariantId(identity[1]), ProjectId(identity[0])),
+            )
+            if not result.is_success:
+                _retain_source_receipt(store, record, registration_state="failed")
+                raise ValueError("；".join(item.message for item in result.diagnostics))
+            receipt_warning = _retain_source_receipt(store, record, registered=True, registration_state="committed")
             hydration = result.value.hydration
-            key = source_slot_key(hydration)
-            app.add_slot(key, slot_from_hydration(hydration))
-            app.activate_slot(key)
-            target.acknowledge_projection()
-        except Exception as exc:
-            return {"activated": False, "registered": True}, f"来源已登记，视图待重新加载：{exc}"
+            install_view(view_token=view_token)
+        finally:
+            app.finish_project_open(view_token)
+        if app.project_view_failed:
+            raise ValueError("工作台暂未同步到提交后的工程版本。")
         return {"activated": True, "registered": True}, receipt_warning
 
-    summary, warning = target.dispatch(publish)
+    def retry_view():
+        try:
+            install_view()
+        except Exception:
+            if app.active_version_identity == identity and not app.project_opening:
+                app.project_view_failed = True
+            raise
+
+    try:
+        summary, warning = target.dispatch(publish)
+    except Exception as exc:
+        if not record.get("registered"):
+            raise
+        summary = {"activated": False, "registered": True}
+        warning = f"来源已登记，视图待重新加载：{exc}"
+    if not summary["activated"] and hydration is not None:
+        try:
+            target.dispatch(retry_view)
+            summary["activated"] = True
+            warning = receipt_warning
+        except Exception as exc:
+            warning = f"来源已登记，视图待重新加载：{exc} 请从工作台重新打开工程。"
     try:
         store.update_metadata(record["task_id"], registered=True, registration_state="committed", merge=summary)
     except (OSError, ValueError) as exc:
-        warning = f"来源已登记，但成果回执待重试：{exc}"
+        warning = "；".join(filter(None, (warning, f"来源已登记，但成果回执待重试：{exc}")))
     return summary, warning

@@ -23,8 +23,9 @@ from transbridge.application.contracts import (
     OperationResult,
     RequestContext,
 )
+from transbridge.persistence.v2.deferred_variant_rows import DeferredVariantRows
 from transbridge.persistence.v2.ids import VariantRef
-from transbridge.persistence.v2.translation_epochs import publish_alignment_epochs
+from transbridge.persistence.v2.translation_epochs import changed_translation_keys, publish_alignment_epochs
 from transbridge.persistence.v2.variant import VariantChangeSet, VariantSnapshot
 
 from .models import (
@@ -540,8 +541,17 @@ class ProjectLifecycleService:
                 and current.project_ref == active.project_ref
                 and current.formal_variant_ref == active.formal_variant_ref
             ):
-                self._active = acknowledge_saved_changes(current, save)
-                return active_save_result(self._active, context)
+                previous = current.summary()
+                saved = self._active = acknowledge_saved_changes(current, save)
+                summary = saved.summary()
+                if self._event_publisher is not None and summary != previous:
+                    try:
+                        self._event_publisher(
+                            LifecycleEvent("active-project-saved", self._generation, previous, summary)
+                        )
+                    except Exception:
+                        logging.getLogger(__name__).exception("The project saved, but its projection update failed")
+                return active_save_result(saved, context)
             return active_save_result(acknowledge_saved_changes(active, save), context)
 
     def commit_active_variant(
@@ -789,9 +799,10 @@ class ProjectLifecycleService:
                 return _from_exception(exc, "ACTIVE_CONTENT_CHANGE_FAILED", context)
 
             def publish() -> None:
+                changes = changed_translation_keys(active.variant.snapshot().entries, variant.entries)
                 if before_publish is not None:
                     before_publish()
-                publish_alignment_epochs(active.variant, candidate.variant)
+                publish_alignment_epochs(active.variant, candidate.variant, changes=changes)
                 self._active = candidate
                 self._generation += 1
 
@@ -873,7 +884,20 @@ class ProjectLifecycleService:
             def publish() -> None:
                 verify()
                 candidate = rebase_committed_variant_save(active, save, observed_revision, observed_entries)
-                publish_alignment_epochs(active.variant, candidate.variant)
+                previous = active.variant.snapshot().entries
+                current = candidate.variant.snapshot().entries
+                if isinstance(previous, DeferredVariantRows):
+                    # The old database revision is already gone. The saved input and
+                    # current working edits provide the before-image of affected rows.
+                    previous = tuple(previous.overlay(row) for row in observed_entries)
+                    keys = {row.entry_key for row in previous}
+                    current = (
+                        current.get_many(keys)
+                        if isinstance(current, DeferredVariantRows)
+                        else tuple(row for row in current if row.entry_key in keys)
+                    )
+                changes = changed_translation_keys(previous, current)
+                publish_alignment_epochs(active.variant, candidate.variant, changes=changes)
                 self._active = candidate
                 self._generation += 1
 

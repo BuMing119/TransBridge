@@ -4,7 +4,11 @@
 from dataclasses import dataclass, replace
 
 from transbridge.application.io.identity import EntryKey, EntryRevision, ExternalEntryRef, Provenance
-from transbridge.application.projections.models import copy_projection_value
+from transbridge.application.projections.models import (
+    DeferredProjectRows,
+    copy_projection_value,
+    freeze_projection_value,
+)
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 
@@ -18,6 +22,8 @@ class EntryProjectionUpdate:
             raise ValueError("工程权威快照不可用，请重新加载工程后重试。")
         states = snapshot.values.get("entries", ())
         if keys is not None:
+            if isinstance(states, DeferredProjectRows):
+                return cls(freeze_projection_value(entry.to_dict()) for entry in states.entries.get_many(keys))
             identities = set(keys)
             states = (state for state in states if EntryKey.from_dict(state["entry_key"]) in identities)
         return cls(states)
@@ -64,6 +70,9 @@ class EntryProjectionUpdate:
         entries = []
         changed = False
         for entry in collection:
+            if self.is_tombstone(entry.identity):
+                changed = True
+                continue
             projected = self.entry(entry)
             changed |= projected is not entry
             entries.append(projected)

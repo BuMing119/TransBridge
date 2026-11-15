@@ -5,6 +5,7 @@ Story-18: Step1/Step3 面板已移除。
 Story-19: 左侧 CollectionStatsPanel 已移除，分类统计以标签组形式嵌入 Step2。
 """
 
+import logging
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -406,6 +407,7 @@ class WorkbenchWidget(QWidget):
         if self._ctx.project_commands is None or self._ctx.runtime_context is None:
             QMessageBox.warning(self, "移除未执行", "请先打开工程，再移除工程内容。")
             return
+        identity = getattr(self._ctx, "active_version_identity", None)
         scope = (
             "范围：从当前工程移除此内容、译文状态，以及已合并的汉化来源登记，不删除磁盘上的源文件。\n"
             "保存后重新打开工程，此内容也不会恢复。重新导入源文件不能保证恢复工程内的译文编辑。"
@@ -418,7 +420,27 @@ class WorkbenchWidget(QWidget):
             QMessageBox.StandardButton.No,
         )
         if ret == QMessageBox.StandardButton.Yes:
-            removed = self._ctx.project_commands.remove_source(active, self._ctx.runtime_context)
+            context = self._ctx
+            if (
+                getattr(context, "active_version_identity", None) != identity
+                or context.active_key != active
+                or getattr(context, "project_opening", False)
+                or getattr(context, "project_view_failed", False)
+            ):
+                QMessageBox.warning(self, "移除未执行", "当前工程或活动来源已变化，请重新确认。")
+                return
+            view_token = context.begin_project_open() if hasattr(context, "install_working_sources") else None
+            try:
+                removed = context.project_commands.remove_source(active, context.runtime_context)
+                if removed.is_success:
+                    if view_token is None:
+                        context.remove_slot(active)
+                    else:
+                        token, view_token = view_token, None
+                        self._refresh_removed_source(identity, removed.value.source_id, view_token=token)
+            finally:
+                if view_token is not None:
+                    context.finish_project_open(view_token)
             if not removed.is_success:
                 diagnostic = removed.diagnostics[0]
                 message = (
@@ -427,5 +449,29 @@ class WorkbenchWidget(QWidget):
                     else diagnostic.message
                 )
                 QMessageBox.warning(self, "移除失败", message)
-                return
-            self._ctx.remove_slot(active)
+
+    def _refresh_removed_source(self, identity, source_id, *, view_token=None):
+        context = self._ctx
+        installed = False
+        try:
+            if context.active_version_identity == identity:
+                installed = context.install_working_sources(identity, removals=(source_id,), view_token=view_token)
+        except (RuntimeError, ValueError):
+            logging.getLogger(__name__).exception("Could not install the workbench after removing a source")
+        finally:
+            if view_token is not None:
+                context.finish_project_open(view_token)
+        if context.active_version_identity != identity or (installed and not context.project_view_failed):
+            return
+        context.project_view_failed = True
+        message = "来源已从工作副本移除，工作台还未更新。"
+        show = getattr(self.window(), "show_message", None)
+        if show is not None:
+            show(
+                message,
+                error=True,
+                retry=lambda: self._refresh_removed_source(identity, source_id),
+                retry_label="重试刷新工作台",
+            )
+        else:
+            QMessageBox.warning(self, "工作台未更新", message)

@@ -5,11 +5,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
+import logging
 from uuid import uuid4
 
 from transbridge.application.contracts import OperationResult
 from transbridge.application.io.identity import EntryRevision
 from transbridge.application.projects.models import LifecycleSnapshot
+from transbridge.application.projects.source_input_publication import publish_source_baselines
+from transbridge.application.projects.storage_contracts import ProjectReadToken
 from transbridge.config.text_encoding import (
     DEFAULT_TEXT_ENCODING,
     TEXT_INPUT_ENCODING,
@@ -26,7 +29,10 @@ from .history import snapshot_record, write_snapshot
 from .lifecycle import _verify_project, _write_project
 from .reads import require_variant
 from .records import read_baselines, read_project, read_variant
+from .source_updates import ProjectSourceRevisionStore
 from .variant_rows import write_variant
+
+_logger = logging.getLogger(__name__)
 
 
 class HistoricalSourceRestore:
@@ -78,10 +84,11 @@ class HistoricalSourceRestore:
         restored = {item.ref: _restore_variant(item, historical, remapped, changed) for item in old_variants}
         target = restored[historical.ref]
         active_revision = next(item.revision for item in old_variants if item.ref == historical.ref)
-        token = uuid4().hex
+        transaction_id = uuid4().hex
+        diagnostics = []
 
         def publish():
-            with project_connection(path, write=True) as connection:
+            def write(connection):
                 _verify_project(connection, project, saved.envelope.revision)
                 snapshot_record(connection, identity, historical.ref)
                 for index, old in enumerate(old_variants):
@@ -90,7 +97,7 @@ class HistoricalSourceRestore:
                     write_snapshot(
                         connection,
                         LifecycleSnapshot(ref, old.ref, old, "恢复快照前"),
-                        f"{token}-{index}",
+                        f"{transaction_id}-{index}",
                         legacy_encoding_settings=legacy_encoding_settings,
                     )
                 connection.execute("DELETE FROM project_source")
@@ -112,10 +119,22 @@ class HistoricalSourceRestore:
                 for old in old_variants:
                     version = restored[old.ref]
                     write_variant(connection, version, version.entries, old.revision)
-                baseline = read_baselines(connection)
-            self.baselines.replace_many(ref, tuple(restored), baseline, allow_empty=True)
+                return read_baselines(connection)
 
-        return self.lifecycle.commit_active_content(
+            baselines = ()
+            try:
+                with project_connection(path, write=True) as connection:
+                    baselines = write(connection)
+            except Exception:
+                store = ProjectSourceRevisionStore(self.projects)
+                if store.committed_backup(project, tuple(restored.values()), transaction_id) is None:
+                    raise
+                _logger.warning("Recovered a committed historical source restore from its backup", exc_info=True)
+            diagnostics.extend(
+                publish_source_baselines(self.baselines, ref, tuple(restored), baselines, allow_empty=True)
+            )
+
+        result = self.lifecycle.commit_active_content(
             project,
             target,
             context,
@@ -123,6 +142,14 @@ class HistoricalSourceRestore:
             expected_variant_revision=active_revision,
             before_publish=publish,
             persisted=True,
+        )
+        if not result.is_success:
+            return result
+        token = ProjectReadToken(ref.identity, target.ref.identity, project.envelope.revision, target.revision)
+        return replace(
+            result,
+            value={**result.value, "source_read_token": token},
+            diagnostics=(*result.diagnostics, *diagnostics),
         )
 
 

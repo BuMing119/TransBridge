@@ -83,6 +83,8 @@ def test_xml_import_prepares_detached_and_commits_once(project, monkeypatch, kin
     host, coordinator = _host(project.ctx)
     slot = project.ctx.active_slot
     collection = slot.collection
+    notifications = []
+    project.ctx.collection_changed.connect(notifications.append)
     before = project.services.project_lifecycle.active.variant.snapshot()
     ready, release = threading.Event(), threading.Event()
     original_prepare = legacy_migration.prepare_legacy_migration
@@ -107,6 +109,8 @@ def test_xml_import_prepares_detached_and_commits_once(project, monkeypatch, kin
     after = project.services.project_lifecycle.active.variant.snapshot()
     assert after.revision == before.revision + 1
     assert project.ctx.collection.get(entry.identity).translation == "你好"
+    (published,) = notifications
+    assert published is slot.collection
     assert getattr(slot, f"{kind}_path") == str(source)
     assert not project.ctx.authoritative_projection_diverged()
 

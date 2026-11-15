@@ -1,5 +1,5 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""Commit copied tool results before changing the captured workbench projection."""
+"""Commit copied tool results against the captured workbench targets."""
 
 from __future__ import annotations
 
@@ -139,16 +139,7 @@ class ProjectToolTarget:
             )
             if not result.is_success:
                 raise ValueError("；".join(item.message for item in result.diagnostics))
-            self.variant_revision = result.value["revision"]
-            snapshot = self.app._project_projection.snapshot()
-            update = EntryProjectionUpdate.from_snapshot(snapshot, keys=changes)
-            previous = self.app.collection
-            projected = update.collection(previous)
-            self.app.active_slot.collection = projected
             self.acknowledge_projection()
-            signal = getattr(self.app, "collection_changed", None)
-            if signal is not None and projected is not previous:
-                signal.emit(self.collection)
 
         self.dispatch(commit)
         return warnings

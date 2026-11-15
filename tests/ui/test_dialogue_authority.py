@@ -116,9 +116,12 @@ def test_commit_updates_real_variant_then_projection_preserving_identity_metadat
     draft = EntryDraft.capture(context, before)
     draft.text = "  新译文\n<Alias=Player>  "
     observations = []
+    published = []
+    context.collection_changed.connect(published.append)
     lifecycle.before_publish = lambda: observations.append(context.collection.get(target.identity).translation)
     assert draft.commit(context, projection=store) is None
     assert observations == [""]  # No UI mutation before the authority commits.
+    assert len(published) == 1 and published[0] is context.collection
     states = {e.entry_key: e for e in aggregate.snapshot().entries}
     assert states[target.identity].translation == draft.text
     assert states[target.identity].stage.value == 1

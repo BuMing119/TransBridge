@@ -20,7 +20,7 @@ class CurrentEditingProject:
         active = _active(self.project_ref, self.variant_ref)
         self.harness = _harness(active, {}, event=self.publisher)
         self.publisher.bind(self.harness.service)
-        self.commands = GuiProjectCommandFacade(self.harness.service, self.publisher.rebuild)
+        self.commands = GuiProjectCommandFacade(self.harness.service)
         self.context = AppContext(
             project_projection=self.store,
             project_commands=self.commands,

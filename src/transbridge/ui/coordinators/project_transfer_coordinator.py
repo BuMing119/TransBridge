@@ -67,29 +67,45 @@ class ProjectTransferCoordinator:
             if answer != QMessageBox.StandardButton.Yes:
                 return
 
-            def restore():
-                backup = self._host.project_commands.save_snapshot(f"恢复前-{context.run_id}", context)
-                if not backup.is_success:
-                    return backup
-                return service.restore(selected.identity, context)
-
-            def finished(result):
-                if result.is_success and isinstance(result.value, dict) and result.value.get("dirty") is False:
-                    self._finish(result, "快照及来源修订已恢复")
-                    self._host.project_coordinator.restore_active_sources()
-                else:
-                    self._finish(result, "快照已加载，请保存当前翻译版本")
-
-            self._host.start_foreground_task(
-                restore,
-                message="正在加载快照…",
-                on_result=finished,
-            )
+            self._restore_snapshot(service, selected.identity, context)
 
         self._host.start_foreground_task(
             lambda: service.list(context),
             message="正在读取快照列表…",
             on_result=choose,
+        )
+
+    def _restore_snapshot(self, service, identity, context) -> None:
+        view = self._host.context
+        view_token = None
+
+        def begin():
+            nonlocal view_token
+            view_token = view.begin_project_open()
+
+        def release():
+            if view_token is not None:
+                view.finish_project_open(view_token)
+
+        def failed(message):
+            release()
+            QMessageBox.warning(self._host, "快照操作失败", message)
+
+        def finished(result):
+            token = result.value.get("source_read_token") if result.is_success else None
+            if token is None:
+                release()
+                self._finish(result, "快照已加载，请保存当前翻译版本")
+                return
+            self._finish(result, "快照及来源修订已恢复")
+            self._host.project_coordinator.refresh_committed_sources(token, context, view_token=view_token)
+
+        self._host.start_foreground_task(
+            lambda: service.restore(identity, context, backup_name=f"恢复前-{context.run_id}"),
+            message="正在加载快照…",
+            before_start=begin,
+            on_result=finished,
+            on_error=failed,
         )
 
     def delete_snapshot(self) -> None:

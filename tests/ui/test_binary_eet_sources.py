@@ -171,6 +171,7 @@ def test_legacy_step1_picker_and_worker_keep_binary_snapshot(project, monkeypatc
 
 def test_source_supplement_format_picker_offers_binary_eet(project, monkeypatch):
     host = QWidget()
+    host.app_runtime = SimpleNamespace(use_cases=SimpleNamespace(names=lambda: ("project_source_supplements",)))
     slot = SimpleNamespace(
         label="Saved",
         source_namespace="source",

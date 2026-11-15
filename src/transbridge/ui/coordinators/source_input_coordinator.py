@@ -13,6 +13,7 @@ from transbridge.ui.source_input_state import missing_source_keys
 from transbridge.ui.source_supplement_dialog import SourceSupplementDialog
 
 logger = logging.getLogger(__name__)
+_SUPPLEMENT_USE_CASE = "project_source_supplements"
 
 
 class SourceInputCoordinator:
@@ -128,6 +129,18 @@ class SourceInputCoordinator:
             if on_finished is not None:
                 on_finished(False)
             return False
+        use_cases = getattr(getattr(self._host, "app_runtime", None), "use_cases", None)
+        if use_cases is None or _SUPPLEMENT_USE_CASE not in use_cases.names():
+            if on_finished is not None:
+                on_finished(False)
+            message = "当前工程不支持补充此来源内容。"
+            if requirement == "template":
+                message += "写回插件时可在导出流程中选择原插件。"
+            if report_error is None:
+                self._host.show_message(message, error=True)
+            else:
+                report_error(message)
+            return False
         self._busy = True
         self._resume = resume
         self._on_finished = on_finished
@@ -239,7 +252,7 @@ class SourceInputCoordinator:
         return False
 
     def _service(self):
-        return self._host.app_runtime.use_cases.resolve("project_source_supplements")
+        return self._host.app_runtime.use_cases.resolve(_SUPPLEMENT_USE_CASE)
 
     def _current(self):
         return (
@@ -249,12 +262,13 @@ class SourceInputCoordinator:
             and (self._owner_current is None or self._owner_current())
         )
 
-    def _dispatch(self, operation, callback):
+    def _dispatch(self, operation, callback, *, before_start=None, on_error=None):
         started = self._host.start_foreground_task(
             operation,
             message="正在补充处理所需的输入…",
             on_result=lambda result: QTimer.singleShot(0, lambda: callback(result)),
-            on_error=self._error,
+            on_error=on_error or self._error,
+            before_start=before_start,
         )
         if not started:
             self._cancel()
@@ -292,11 +306,41 @@ class SourceInputCoordinator:
 
         def commit(remapped):
             if self._check(remapped):
-                self._dispatch(lambda: self._service().commit(remapped.value.token, self._request), self._committed)
+                self._commit(remapped.value.token)
 
         self._dispatch(lambda: self._service().remap(preview.token, mappings, self._request), commit)
 
-    def _committed(self, result):
+    def _commit(self, token):
+        view = self._host.context
+        request = self._request
+        view_token = None
+
+        def begin():
+            nonlocal view_token
+            if self._current() and hasattr(view, "begin_project_open"):
+                view_token = view.begin_project_open()
+
+        def failed(message):
+            if view_token is not None:
+                view.finish_project_open(view_token)
+            self._error(message)
+
+        self._dispatch(
+            lambda: self._service().commit(token, request),
+            lambda result: self._committed(result, view_token=view_token),
+            before_start=begin,
+            on_error=failed,
+        )
+
+    def _committed(self, result, *, view_token=None):
+        if result.is_success and (token := getattr(result.value, "active_token", None)) is not None:
+            self._token = None
+            self._host.project_coordinator.refresh_committed_sources(
+                token, self._request, view_token=view_token, on_finished=self._reopened
+            )
+            return
+        if view_token is not None:
+            self._host.context.finish_project_open(view_token)
         if not self._check(result):
             return
 

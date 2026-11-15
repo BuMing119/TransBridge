@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from transbridge.ui.project_rows import ProjectRowsCollection
+
 
 class IndexStructure:
     def __init__(self) -> None:
@@ -10,6 +12,7 @@ class IndexStructure:
         self._reading_entries = None
         self._collection = self._version = None
         self._entries = {}
+        self.removed_keys = None
 
     def source_changed(self, scope, slot, reason) -> bool:
         """Invalidate source ownership without walking an unused collection."""
@@ -32,6 +35,8 @@ class IndexStructure:
 
     def changed(self, collection) -> bool:
         """Compare relationship fields, using bounded deltas for ordinary edits."""
+        if isinstance(collection, ProjectRowsCollection):
+            return self._paged_changed(collection)
         journal = collection.change_journal
         with journal.lock:
             keys = None if collection is not self._collection else journal.since(self._version)
@@ -50,6 +55,18 @@ class IndexStructure:
                     self._entries = {entry.identity: self._structure(entry) for entry in collection}
             self._collection, self._version = collection, journal.version
         return changed
+
+    def _paged_changed(self, collection: ProjectRowsCollection) -> bool:
+        revision = collection.collection_revision
+        if collection is self._collection and revision == self._version:
+            return False
+        updates = collection.view_updates_from(self._version) if collection is self._collection else None
+        self._collection, self._version = collection, revision
+        self._entries = {}
+        self.removed_keys = None if updates is None else frozenset(row.entry_key for row in updates if row.tombstone)
+        # Sparse translation, label and external-reference changes leave the
+        # source's task relationships intact.
+        return self.removed_keys is None or bool(self.removed_keys)
 
     @property
     def keys(self):

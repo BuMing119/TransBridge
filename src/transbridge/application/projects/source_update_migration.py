@@ -4,9 +4,8 @@
 from dataclasses import dataclass, replace
 
 from transbridge.application.io import Stage
-from transbridge.application.io.identity import SourceNamespace
 from transbridge.application.io.paratranz_context_order import context_orders
-from transbridge.persistence.v2.variant import VariantSnapshot
+from transbridge.persistence.v2.variant import SourceFingerprint, VariantSnapshot
 
 from .provisioning_models import PreparedProjectSource
 
@@ -21,6 +20,14 @@ class SourceChanges:
     changed: frozenset[tuple[str, str | None]]
     unverified: frozenset[tuple[str, str | None]]
     reordered: frozenset[tuple[str, str | None]]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceMigration:
+    previous: SourceFingerprint
+    replacement: PreparedProjectSource
+    changes: SourceChanges
+    matched_keys: dict[LocalEntryKey, LocalEntryKey] | None
 
 
 def compare_source(
@@ -71,51 +78,62 @@ def compare_source(
     )
 
 
-def migrate_variant(
-    snapshot: VariantSnapshot,
-    namespace: SourceNamespace,
-    new: PreparedProjectSource,
-    changes: SourceChanges,
-    *,
-    matched_keys: dict[LocalEntryKey, LocalEntryKey] | None = None,
-) -> VariantSnapshot:
-    remapped = matched_keys or {}
-    old = {
-        remapped.get(_local_key(item), _local_key(item)): item
-        for item in snapshot.entries
-        if item.entry_key.namespace == namespace
-    }
-    retained = [item for item in snapshot.entries if item.entry_key.namespace != namespace]
-    next_namespace = new.baseline.fingerprint.namespace
-    if next_namespace != namespace and any(item.entry_key.namespace == next_namespace for item in retained):
+def migrate_variant(snapshot: VariantSnapshot, migrations: tuple[SourceMigration, ...]) -> VariantSnapshot:
+    existing = {item.namespace: item for item in snapshot.source_fingerprints}
+    old_namespaces = {item.previous.namespace for item in migrations}
+    if len(old_namespaces) != len(migrations) or any(
+        existing.get(item.previous.namespace) != item.previous for item in migrations
+    ):
+        raise ValueError("工程内翻译版本的来源不一致，无法统一更新。")
+    replacements = tuple(item.replacement.baseline.fingerprint for item in migrations)
+    if len({item.namespace for item in replacements}) != len(migrations):
+        raise ValueError("本次配对的新版文件存在相同的来源身份，请核对所选文件。")
+    if any(
+        item.namespace != migration.previous.namespace and item.namespace in existing
+        for migration, item in zip(migrations, replacements, strict=True)
+    ):
         raise ValueError("新版来源与工程中的另一个来源身份冲突。")
-    for baseline in new.baseline.entries:
-        key = (baseline.entry_key.local_key, baseline.entry_key.original)
-        before = old.get(key)
-        if before is None:
-            retained.append(baseline)
-            continue
-        review = key in changes.changed or key in changes.unverified
-        if matched_keys is not None and before.stage in {Stage.HIDDEN, Stage.LOCKED}:
-            review = False
-        retained.append(
-            replace(
-                before,
-                entry_key=baseline.entry_key,
-                stage=Stage.QUESTIONABLE if review and before.translation else before.stage,
-                revision=before.revision.next(),
-            )
-        )
-    fingerprints = tuple(item for item in snapshot.source_fingerprints if item.namespace != namespace)
-    if any(item.namespace == next_namespace for item in fingerprints):
-        raise ValueError("新版来源指纹与另一个来源身份冲突。")
+
+    fingerprints = tuple(item for item in snapshot.source_fingerprints if item.namespace not in old_namespaces)
+    old_entries = {namespace: {} for namespace in old_namespaces}
+    retained = []
+    for item in snapshot.entries:
+        group = old_entries.get(item.entry_key.namespace)
+        if group is None:
+            retained.append(item)
+        else:
+            group[_local_key(item)] = item
+    for migration in migrations:
+        retained.extend(_migrate_entries(old_entries[migration.previous.namespace], migration))
     return VariantSnapshot(
         snapshot.ref,
-        (*fingerprints, new.baseline.fingerprint),
+        (*fingerprints, *replacements),
         tuple(retained),
         snapshot.revision + 1,
         snapshot.label_library,
     )
+
+
+def _migrate_entries(old, migration):
+    matched_keys = migration.matched_keys
+    if matched_keys is not None:
+        old = {matched_keys.get(key, key): item for key, item in old.items()}
+    changes = migration.changes
+    for baseline in migration.replacement.baseline.entries:
+        key = (baseline.entry_key.local_key, baseline.entry_key.original)
+        before = old.get(key)
+        if before is None:
+            yield baseline
+            continue
+        review = key in changes.changed or key in changes.unverified
+        if matched_keys is not None and before.stage in {Stage.HIDDEN, Stage.LOCKED}:
+            review = False
+        yield replace(
+            before,
+            entry_key=baseline.entry_key,
+            stage=Stage.QUESTIONABLE if review and before.translation else before.stage,
+            revision=before.revision.next(),
+        )
 
 
 def _local_key(entry) -> LocalEntryKey:

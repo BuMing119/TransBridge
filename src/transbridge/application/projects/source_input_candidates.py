@@ -98,9 +98,9 @@ def match_input_candidates(needs: tuple[InputNeed, ...], paths: tuple[str, ...])
     Reference paths supply a basename only; they are never accessed. Suggestions
     neither validate candidate content nor reserve a path for a particular need.
     """
-    by_name: dict[str, list[str]] = {}
-    for path in paths:
-        by_name.setdefault(_basename(path).casefold(), []).append(path)
+    by_name: dict[str, list[tuple[int, str]]] = {}
+    for index, path in enumerate(paths):
+        by_name.setdefault(_basename(path).casefold(), []).append((index, path))
     matches = {}
     for need in needs:
         if need.ready:
@@ -108,8 +108,8 @@ def match_input_candidates(needs: tuple[InputNeed, ...], paths: tuple[str, ...])
         names = {need.label.casefold()}
         if need.reference_path:
             names.add(_basename(need.reference_path).casefold())
-        candidates = {path for name in names for path in by_name.get(name, ())}
-        matches[need.key] = tuple(path for path in paths if path in candidates)
+        candidates = sorted(item for name in names for item in by_name.get(name, ()))
+        matches[need.key] = tuple(path for _, path in candidates)
     return matches
 
 

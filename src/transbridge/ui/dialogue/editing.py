@@ -29,12 +29,12 @@ class EntryDraft:
     def changed(self) -> bool:
         return self.text != self.before.translation
 
-    def commit(self, context, *, projection=None, projection_sync=None) -> str | None:
+    def commit(self, context, *, projection=None) -> str | None:
         """Return an actionable failure, retaining this draft on every failed commit."""
-        return commit_drafts(context, (self,), projection=projection, projection_sync=projection_sync)
+        return commit_drafts(context, (self,), projection=projection)
 
 
-def commit_drafts(context, drafts, *, projection=None, projection_sync=None) -> str | None:
+def commit_drafts(context, drafts, *, projection=None) -> str | None:
     """Commit captured entries together, validating every snapshot before any mutation."""
     if getattr(context, "project_opening", False):
         return "工程仍在加载，草稿已保留。请等待工作台恢复后再应用。"
@@ -43,7 +43,6 @@ def commit_drafts(context, drafts, *, projection=None, projection_sync=None) -> 
     drafts = tuple(drafts)
     if not drafts:
         return None
-    scope = drafts[0].scope
     collection = context.collection
     for draft in drafts:
         if content_scope(context) != draft.scope:
@@ -79,15 +78,4 @@ def commit_drafts(context, drafts, *, projection=None, projection_sync=None) -> 
     )
     if not result.is_success:
         return result.diagnostics[0].message if result.diagnostics else "工程提交失败，草稿已保留。"
-    if content_scope(context) == scope:
-        snapshot = projection.snapshot()
-        if snapshot is None:
-            return "译文已提交，但工程权威快照不可用。请重新加载工程后核对译文。"
-        update = EntryProjectionUpdate.from_snapshot(snapshot)
-        for slot in context.slots.values():
-            slot.collection = update.collection(slot.collection)
-        if projection_sync is None:
-            context.collection_changed.emit(context.collection)
-        else:
-            projection_sync.publish_applied(context, snapshot)
     return None

@@ -499,11 +499,20 @@ class AppContext(QObject):
     def begin_project_open(self) -> int:
         return self._project_view.begin()
 
-    def install_project_open(self, token: int, snapshot: ProjectionSnapshot, slots, *, state=None) -> bool:
-        return self._project_view.install(token, snapshot, slots, state=state)
+    def install_project_open(
+        self, token: int, snapshot: ProjectionSnapshot, slots, *, state=None, recover_source_update: bool = False
+    ) -> bool:
+        return self._project_view.install(
+            token, snapshot, slots, state=state, recover_source_update=recover_source_update
+        )
 
     def finish_project_open(self, token: int) -> bool:
         return self._project_view.finish(token)
+
+    def install_working_sources(self, identity, *, additions=(), removals=(), view_token=None) -> bool:
+        return self._project_view.install_working_sources(
+            identity, additions=additions, removals=removals, view_token=view_token
+        )
 
     def close_projection(self) -> None:
         self._project_view.close()

@@ -9,7 +9,7 @@ import logging
 from PyQt6.QtCore import QObject, QTimer
 from PyQt6.QtWidgets import QMessageBox
 
-from transbridge.application.contracts import DiagnosticSeverity
+from transbridge.application.contracts import DiagnosticSeverity, DomainError, ErrorCategory, OperationResult
 from transbridge.application.projects import DirtyDecision
 from transbridge.application.projects.save_result import translations_were_saved
 from transbridge.ui.project_view_binding import ProjectViewState, prepare_project_view
@@ -72,9 +72,13 @@ class ProjectOpenOperation(QObject):
         on_success=None,
         on_failure=None,
         request_context=None,
+        source_token=None,
+        view_token=None,
     ) -> bool:
         host = self.host
-        if host.project_open_worker is not None or getattr(host.context, "project_opening", False):
+        if host.project_open_worker is not None or (
+            view_token is None and getattr(host.context, "project_opening", False)
+        ):
             host.show_message("已有项目正在后台打开，请稍候。")
             return False
         if host.save_worker is not None or getattr(host, "foreground_worker", None) is not None:
@@ -87,7 +91,8 @@ class ProjectOpenOperation(QObject):
         self.on_success = on_success
         self.on_failure = on_failure
         self.outcome = self.error = None
-        self._authority_committed = False
+        self._authority_committed = source_token is not None
+        self._refresh_projection = None
         self._save_warning = None
         self.token = None
         begin = getattr(host.context, "begin_project_open", None)
@@ -105,10 +110,13 @@ class ProjectOpenOperation(QObject):
                     host.context.variant_revision,
                 )
             )
-            self.token = begin()
+            self.token = begin() if view_token is None else view_token
+        if source_token is not None:
+            self._refresh_projection = projection
         self._set_enabled(False)
-        self._progress(0, 0, "正在校验并加载本地工程…")
+        self._progress(0, 0, "正在恢复更新后的来源视图…" if source_token else "正在校验并加载本地工程…")
         execution_context = host.runtime_context if request_context is None else request_context
+        source_key = host.context.active_key if source_token is not None else None
 
         def run():
             if dirty_decision is DirtyDecision.SAVE:
@@ -123,6 +131,10 @@ class ProjectOpenOperation(QObject):
             prepared = prepare()
             if not prepared.is_success or prepared.value is None:
                 return OpenedProjectView(prepared)
+            if source_token is not None:
+                return _prepare_replaced_source_view(
+                    prepared.value, projection, source_token, source_key, execution_context
+                )
             worker.progress.emit(0, 0, "正在加载项目版本并准备工作台…")
             options = {"dirty_decision": dirty_decision}
             if self.token is not None:
@@ -211,12 +223,23 @@ class ProjectOpenOperation(QObject):
                         if diagnostic.severity is DiagnosticSeverity.WARNING
                     )
                     if opened.get("recovery") is None:
-                        if self.token is not None:
+                        if (
+                            self._refresh_projection is not None
+                            and self._refresh_projection.snapshot() is not bundle.snapshot
+                        ):
+                            failure = ("PROJECT_VIEW_STALE", "恢复期间工程有新修改，请重试刷新工作台。")
+                        elif self.token is not None:
+                            options = {"recover_source_update": True} if self._refresh_projection is not None else {}
                             installed = self.host.context.install_project_open(
-                                self.token, bundle.snapshot, opened["view_payload"].slots, state=bundle.state
+                                self.token, bundle.snapshot, opened["view_payload"].slots, state=bundle.state, **options
                             )
                             if not installed:
-                                failure = ("PROJECT_VIEW_STALE", "工程已发生变化，请重新打开以加载最新内容。")
+                                message = (
+                                    "恢复期间工程有新修改，请重试刷新工作台。"
+                                    if self._refresh_projection is not None
+                                    else "工程已发生变化，请重新打开以加载最新内容。"
+                                )
+                                failure = ("PROJECT_VIEW_STALE", message)
                         else:
                             error = self.restore_sources(opened["sources"], opened.get("hydrations"))
                             if error is not None:
@@ -227,7 +250,8 @@ class ProjectOpenOperation(QObject):
         finally:
             if failure is not None and self._authority_committed:
                 self.host.context.project_view_failed = True
-                failure = (failure[0], f"工程已切换，但工作台恢复失败：{failure[1]}")
+                status = "源文件已更新" if self._refresh_projection is not None else "工程已切换"
+                failure = (failure[0], f"{status}，但工作台恢复失败：{failure[1]}")
             if self.token is not None:
                 try:
                     self.host.context.finish_project_open(self.token)
@@ -285,3 +309,28 @@ class ProjectOpenOperation(QObject):
         dialog.accepted.connect(lambda: QTimer.singleShot(0, lambda: self.reopen(recovery.project_path)))
         dialog.finished.connect(lambda _result: setattr(self, "recovery_dialog", None))
         dialog.open()
+
+
+def _prepare_replaced_source_view(prepared, projection, committed, source_key, context):
+    """Combine the saved source catalogue with the latest working-copy projection."""
+    reader = prepared.records.paged_read
+    snapshot = projection.snapshot()
+    values = {} if snapshot is None else snapshot.values
+    token = reader.token
+    if (
+        token.project_id != committed.project_id
+        or token.variant_id != committed.variant_id
+        or token.project_revision < committed.project_revision
+        or token.variant_revision < committed.variant_revision
+        or (values.get("project_id"), values.get("variant_id")) != (token.project_id.value, token.variant_id.value)
+        or (values.get("persisted_project_revision"), values.get("persisted_variant_revision"))
+        != (token.project_revision, token.variant_revision)
+        or values.get("project_revision") != token.project_revision
+    ):
+        error = DomainError(ErrorCategory.CONFLICT, "PROJECT_VIEW_STALE", "工程版本已变化，请重试刷新工作台。")
+        return OpenedProjectView(OperationResult.failed(error, run_id=context.run_id))
+    view = _prepare_paged_workbench_view(reader, snapshot)
+    if source_key in dict(view.slots):
+        view = replace(view, state=replace(view.state, initial_source_key=source_key))
+    result = OperationResult.completed({"name": prepared.name, "view_payload": view}, run_id=context.run_id)
+    return OpenedProjectView(result, snapshot, view.state)

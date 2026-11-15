@@ -32,13 +32,17 @@ from transbridge.application.translation.result_merge import ResultConflictPolic
 from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.paratranz.config_manager import ParatranzConfig
 from transbridge.persistence.project_store import reads
+from transbridge.persistence.project_store.lifecycle import ProjectLifecycleStore
 from transbridge.persistence.project_store.paged_reads import WORKBENCH_PAGE_SIZE
 from transbridge.persistence.project_store.paths import project_path
 from transbridge.persistence.project_store.repository import ProjectStore
 from transbridge.persistence.v2.deferred_variant_rows import DeferredVariantRows
 from transbridge.ui.context import AppContext
+from transbridge.ui.coordinators.migration_coordinator import run_migration
 from transbridge.ui.coordinators.project_coordinator import ProjectCoordinator
 from transbridge.ui.project_labels import entry_label_key
+from transbridge.ui.source_hydration import slot_from_hydration
+from transbridge.ui.workbench.translation_import_dialog import TranslationImportConfig
 from transbridge.ui.workbench.translation_table_columns import COL_INDEX, COL_ORIGINAL, COL_TRANSLATION
 from transbridge.ui.workbench.widget import WorkbenchWidget
 
@@ -477,6 +481,181 @@ def test_workbench_reloads_when_a_saved_projection_is_delivered_out_of_order(tmp
 
         _wait_until(qapp, lambda: preview._paging.resident_ready)
         assert tuple(table.entry_at_row(row).translation for row in (0, 1)) == translations
+
+
+def test_workbench_rows_follow_a_save_through_the_lifecycle(tmp_path, qapp):
+    root = tmp_path / "data"
+    database, variant = _create_batch_project(root, tmp_path)
+    store = ProjectStore(database)
+    with _workbench(root, qapp) as (host, coordinator, services):
+        failures = _begin_open(host, coordinator, database)
+        _wait_until(qapp, lambda: host.project_open_worker is None)
+        assert not failures, failures
+        collection = host.context.collection
+        key = next(iter(collection)).identity
+        assert services.gui_project_commands.update_entry(key, _CONTEXT, translation="Saved directly").is_success
+        assert services.project_lifecycle.save_active(_CONTEXT).is_success
+
+        assert collection.token == store.read_token(variant)
+        assert not host.context.dirty
+        assert next(iter(collection)).translation == "Saved directly"
+
+
+def test_paged_workbench_reconciles_a_committed_download_without_its_original_read_token(tmp_path, monkeypatch, qapp):
+    root = tmp_path / "data"
+    database, variant = _create_batch_project(root, tmp_path)
+    store = ProjectStore(database)
+    source = store.sources()[0]
+    (row,) = store.read_page(variant, namespace=source.namespace, offset=599, limit=1)
+    key, text, operation_id = row.state.entry_key, "Recovered download", uuid4().hex
+    save = ProjectLifecycleStore._save
+
+    def lose_reply(current, candidate):
+        save(current, candidate)
+        raise OSError("Lost the save acknowledgement")
+
+    def fail_verification(*_args):
+        raise OSError("The save acknowledgement cannot be read yet")
+
+    with _workbench(root, qapp) as (host, coordinator, services):
+        failures = _begin_open(host, coordinator, database)
+        _wait_until(qapp, lambda: host.project_open_worker is None)
+        assert not failures, failures
+        collection = host.context.collection
+        tracker = services.project_lifecycle.active.variant.alignment_epochs
+        invalidations = []
+        tracker.subscribe(invalidations.append)
+        commands = services.gui_project_commands
+        with monkeypatch.context() as patch:
+            patch.setattr(ProjectLifecycleStore, "_save", lose_reply)
+            patch.setattr(ProjectLifecycleStore, "verify_saved", fail_verification)
+            result = commands.replace_entry_states(
+                {key: (text, 3)},
+                _CONTEXT,
+                persist=True,
+                operation_id=operation_id,
+                application_outcomes=((key, "applied", text, 3),),
+            )
+            assert result.diagnostics[0].code == "DURABLE_VARIANT_SAVE_FAILED"
+            assert collection.token != store.read_token(variant)
+            assert not invalidations
+
+        receipt = store.receipt(operation_id)
+        assert receipt is not None
+        result = commands.reconcile_variant_save(operation_id, receipt, _CONTEXT, commit_mutation=lambda apply: apply())
+        assert result.is_success, result.diagnostics
+        assert invalidations == [(key,)]
+        assert collection.token == store.read_token(variant)
+        assert collection.get(key).translation == text
+
+
+def test_workbench_recovers_when_a_project_revision_arrives_after_a_read_conflict(tmp_path, monkeypatch, qapp):
+    root = tmp_path / "data"
+    database, _variant = _create_batch_project(root, tmp_path)
+    with _workbench(root, qapp) as (host, coordinator, services):
+        failures = _begin_open(host, coordinator, database)
+        _wait_until(qapp, lambda: host.project_open_worker is None)
+        assert not failures, failures
+        preview = host.workbench.preview
+        _wait_until(qapp, lambda: preview._paging.resident_ready)
+        lifecycle = services.project_lifecycle
+        project = lifecycle.active.project
+        revision = project.envelope.revision
+        changed = replace(project, envelope=replace(project.envelope, revision=revision + 1))
+        deliveries = []
+        with monkeypatch.context() as patch, ThreadPoolExecutor(max_workers=1) as worker:
+            patch.setattr(host.context, "safe_mutate", deliveries.append)
+            assert (
+                worker.submit(lifecycle.commit_project_update, changed, revision, _CONTEXT).result(timeout=5).is_success
+            )
+            other = next(key for key, slot in host.context.slots.items() if slot.label == "unloaded.esp")
+            host.context.activate_slot(other)
+            preview._filters_view.search_original.setText("Other 299")
+            _wait_until(qapp, lambda: preview._project_read_error.isVisible())
+            assert "请重新打开工程" in preview._project_read_error.text()
+            assert not preview._paging.resident_ready
+            (deliver,) = deliveries
+            deliver()
+
+        table = preview._table
+        _wait_until(qapp, lambda: table.model().rowCount() == 1)
+        assert table.entry_at_row(0).original == "Other 299"
+        assert preview._project_read_error.isHidden()
+
+
+def test_import_handles_a_save_before_its_workbench_projection_arrives(tmp_path, monkeypatch, qapp):
+    root = tmp_path / "data"
+    database, _variant = _create_batch_project(root, tmp_path)
+    source = write_plugin(tmp_path / "translated.esp", [(0x801, "Item001", "Imported text")])
+    config = TranslationImportConfig(import_source_path=str(source), import_format_hint="plugin.sse")
+    with _workbench(root, qapp) as (host, coordinator, services):
+        failures = _begin_open(host, coordinator, database)
+        _wait_until(qapp, lambda: host.project_open_worker is None)
+        assert not failures, failures
+        slot = host.context.active_slot
+        collection = slot.collection
+        first, second, *_ = tuple(collection)
+        commands = services.gui_project_commands
+        assert commands.update_entry(first.identity, _CONTEXT, translation="Saved before import", stage=1).is_success
+        messages, deliveries = [], []
+        host.show_message = messages.append
+        with monkeypatch.context() as patch, ThreadPoolExecutor(max_workers=1) as worker:
+            patch.setattr(host.context, "safe_mutate", deliveries.append)
+            assert worker.submit(commands.save, _CONTEXT).result(timeout=5).is_success
+            run_migration(host, slot, config)
+            _wait_until(qapp, lambda: bool(messages))
+            assert "MIGRATION_TARGET_CHANGED" in messages[-1]
+            assert slot.collection is collection
+            (deliver,) = deliveries
+            deliver()
+
+        run_migration(host, slot, config)
+        _wait_until(qapp, lambda: len(messages) == 2)
+        assert messages[-1] == "译文导入完成。"
+        assert slot.collection is collection
+        assert collection.get(first.identity).translation == "Saved before import"
+        assert collection.get(second.identity).translation == "Imported text"
+
+
+@pytest.mark.parametrize("materialized", [False, True], ids=["paged", "mixed-slots"])
+def test_import_refreshes_offscreen_entries_once_through_the_binding(tmp_path, qapp, materialized):
+    database, _variant = _create_batch_project(tmp_path / "data", tmp_path)
+    source = write_plugin(tmp_path / "translated.esp", [(0x800 + 299, "Other299", "Imported text")])
+    config = TranslationImportConfig(import_source_path=str(source), import_format_hint="plugin.sse")
+    with _workbench(tmp_path / "data", qapp) as (host, coordinator, services):
+        failures = _begin_open(host, coordinator, database)
+        _wait_until(qapp, lambda: host.project_open_worker is None)
+        assert not failures, failures
+        context = host.context
+        if materialized:
+            extra = write_plugin(tmp_path / "extra.esp", [(0x800 + 299, "Other299", "Other 299")])
+            added = services.gui_project_commands.add_source(ProjectSourceRequest(str(extra)), _CONTEXT)
+            assert added.is_success, added.diagnostics
+            other = added.value.source_id
+            context.add_slot(other, slot_from_hydration(added.value.hydration))
+        else:
+            other = next(key for key, slot in context.slots.items() if slot.label == "unloaded.esp")
+        slot = context.slots[other]
+        key = next(entry.identity for entry in slot.collection if entry.original == "Other 299")
+        context.activate_slot(other)
+        collection = slot.collection
+        table = host.workbench.preview._table
+        host.workbench.preview._filters_view.search_translation.setText("Imported text")
+        _wait_until(qapp, lambda: table.model().rowCount() == 0)
+        notifications, messages = [], []
+        context.collection_changed.connect(lambda current: notifications.append(current.get(key).translation))
+        host.show_message = messages.append
+
+        run_migration(host, slot, config)
+        _wait_until(qapp, lambda: bool(messages) and table.model().rowCount() == 1)
+
+        assert messages == ["译文导入完成。"]
+        assert notifications == ["Imported text"]
+        assert table.entry_at_row(0).identity == key
+        if not materialized:
+            assert slot.collection is collection
+        states = services.project_lifecycle.active.variant.snapshot().entries
+        assert next(entry.translation for entry in states if entry.entry_key == key) == "Imported text"
 
 
 def test_resident_workbench_scroll_updates_terminology_without_reinstalling_rows(tmp_path, monkeypatch, qapp):

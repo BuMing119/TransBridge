@@ -4,18 +4,20 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from pathlib import Path
 from uuid import uuid4
 
-from PyQt6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
-from transbridge.ui.source_update_preview import SourceUpdatePreviewDialog
+from transbridge.application.projects.source_input_candidates import collect_input_files
+from transbridge.ui.source_update_dialog import SourceUpdateDialog
 
 
 class SourceUpdateCoordinator:
     def __init__(self, host) -> None:
         self._host = host
         self._busy = False
+        self._dialog: SourceUpdateDialog | None = None
+        self._preview_token: str | None = None
 
     def start_current(self) -> None:
         if not self._available():
@@ -25,13 +27,14 @@ class SourceUpdateCoordinator:
         if not project_path:
             self._host.show_message("请先打开本地翻译工程。")
             return
-        self._start(project_path, context, recovery=False)
+        name = getattr(self._host.context, "project_name", None)
+        self._start(project_path, name or context.project_id, context, recovery=False)
 
     def start_recovery(self, recovery) -> None:
         if not self._available():
             return
         context = self._context(recovery.variant.ref.project_id.value)
-        self._start(recovery.project_path, context, recovery=True)
+        self._start(recovery.project_path, getattr(recovery, "name", context.project_id), context, recovery=True)
 
     def _available(self) -> bool:
         if getattr(self._host.context, "project_view_failed", False):
@@ -60,15 +63,15 @@ class SourceUpdateCoordinator:
     def _service(self):
         return self._host.app_runtime.use_cases.resolve("project_source_updates")
 
-    def _start(self, path, context, *, recovery: bool) -> None:
+    def _start(self, path, name, context, *, recovery: bool) -> None:
         self._busy = True
         self._dispatch(
             lambda: self._service().list_sources(path, context),
             "正在读取工程来源…",
-            lambda result: self._choose(result, path, context, recovery=recovery),
+            lambda result: self._choose(result, path, name, context, recovery=recovery),
         )
 
-    def _choose(self, result, path, context, *, recovery: bool) -> None:
+    def _choose(self, result, path, name, context, *, recovery: bool) -> None:
         if not self._check(result):
             return
         sources = result.value
@@ -76,74 +79,107 @@ class SourceUpdateCoordinator:
             self._busy = False
             self._host.show_message("此工程没有可更新的源文件。")
             return
-        labels = [f"{index + 1}. {item.label} — {item.location}" for index, item in enumerate(sources)]
-        choice, accepted = QInputDialog.getItem(self._host, "更新源文件", "选择要更新的来源：", labels, 0, False)
-        if not accepted:
-            self._busy = False
-            return
-        source = sources[labels.index(choice)]
-        filters = {
-            "plugin.sse": "插件 (*.esp *.esm *.esl)",
-            "strings.strings": "Skyrim STRINGS (*.strings)",
-            "strings.dlstrings": "Skyrim DLSTRINGS (*.dlstrings)",
-            "strings.ilstrings": "Skyrim ILSTRINGS (*.ilstrings)",
-            "xml.eet": "ESP-ESM Translator XML (*.xml)",
-            "binary.eet": "ESP-ESM Translator EET (*.eet)",
-            "xml.xt": "xTranslator XML (*.xml)",
-        }
-        replacement, _ = QFileDialog.getOpenFileName(
-            self._host,
-            "选择源文件（可选择原文件应用新的读取设置）",
-            str(Path(source.location).parent),
-            filters.get(str(source.format_id), "源文件 (*)") + ";;所有文件 (*)",
+        dialog = SourceUpdateDialog(sources, name or path, self._host)
+        self._dialog = dialog
+        dialog.discovery_requested.connect(self._discover)
+        dialog.preview_requested.connect(lambda pairs: self._prepare(path, pairs, context, recovery=recovery))
+        dialog.back_requested.connect(lambda token: self._back(token, context))
+        dialog.commit_requested.connect(lambda token: self._commit(token, context, recovery=recovery))
+        dialog.rejected.connect(lambda: self._close(context))
+        dialog.open()
+
+    def _discover(self, paths, directory) -> None:
+        dialog = self._dialog
+        dialog.set_busy(True, "正在查找新版文件…")
+        self._dispatch(
+            lambda: collect_input_files(paths, directory=directory),
+            "正在查找新版文件…",
+            dialog.show_discovery,
         )
-        if not replacement:
-            self._busy = False
-            return
+
+    def _prepare(self, path, pairs, context, *, recovery: bool) -> None:
+        self._dialog.set_busy(True, "正在准备差异预览…")
 
         def prepare(saved=True):
             if not saved:
-                self._busy = False
+                self._error("工程尚未保存。请先完成保存，再预览差异。")
                 return
             self._dispatch(
-                lambda: self._service().prepare(path, source.source_id, replacement, context),
-                "正在按项目读取设置解析来源并比较全部翻译版本…",
-                lambda prepared: self._preview(prepared, context, recovery=recovery),
+                lambda: self._service().prepare_batch(path, pairs, context),
+                "正在比较所选来源和全部翻译版本…",
+                self._preview,
             )
 
-        if not recovery:
-            self._host.save_current_project_async(on_finished=prepare)
-        else:
+        if recovery:
             prepare()
+        elif self._host.save_current_project_async(on_finished=prepare) is False:
+            prepare(False)
 
-    def _preview(self, result, context, *, recovery: bool) -> None:
+    def _preview(self, result) -> None:
         if not self._check(result):
             return
-        preview = result.value
-        dialog = SourceUpdatePreviewDialog(preview, self._host)
-        accepted = dialog.exec() == QDialog.DialogCode.Accepted
-        dialog.deleteLater()
-        if not accepted:
-            self._dispatch(
-                lambda: self._service().discard(preview.token, context),
-                "正在取消源文件更新…",
-                lambda _result: setattr(self, "_busy", False),
-            )
-            return
+        self._preview_token = result.value.token
+        self._dialog.show_preview(result.value)
+
+    def _back(self, token, context) -> None:
+        self._service().discard(token, context)
+        self._preview_token = None
+        self._dialog.show_pairing()
+
+    def _commit(self, token, context, *, recovery: bool) -> None:
+        self._dialog.set_busy(True, "正在备份工程并更新全部翻译版本…")
+        workbench_context = self._host.context
+        view_token = None
+
+        def begin():
+            nonlocal view_token
+            if workbench_context.active_project_id == context.project_id:
+                view_token = workbench_context.begin_project_open()
+
+        def finish_view():
+            if view_token is not None:
+                workbench_context.finish_project_open(view_token)
+
+        def failed(message):
+            finish_view()
+            self._service().discard(token, context)
+            self._preview_token = None
+            self._host.show_message(message)
+            self._dialog.show_pairing(message)
+
+        def finished(result):
+            if self._check(result, on_error=failed):
+                self._preview_token = None
+                if getattr(result.value, "active_token", None) is None:
+                    finish_view()
+                self._finish(result.value, context, recovery=recovery, view_token=view_token)
+
         self._dispatch(
-            lambda: self._service().commit(preview.token, context),
+            lambda: self._service().commit(token, context),
             "正在备份工程并更新全部翻译版本…",
-            lambda committed: self._finish(committed, context, recovery=recovery),
+            finished,
+            on_error=failed,
+            before_start=begin if hasattr(workbench_context, "begin_project_open") else None,
         )
 
-    def _finish(self, result, context, *, recovery: bool) -> None:
-        if not self._check(result):
-            return
+    def _close(self, context, *, accepted: bool = False) -> None:
+        dialog, self._dialog = self._dialog, None
+        token, self._preview_token = self._preview_token, None
+        if token is not None:
+            self._service().discard(token, context)
         self._busy = False
-        value = result.value
+        if dialog is not None:
+            if accepted:
+                dialog.accept()
+            dialog.deleteLater()
+
+    def _finish(self, value, context, *, recovery: bool, view_token=None) -> None:
+        self._close(context, accepted=True)
         self._host.show_message(f"源文件已更新，全部版本已迁移。更新前备份：{value.backup_path}")
         active_id = self._host.context.active_project_id
-        if not recovery or active_id in (None, context.project_id):
+        if (token := getattr(value, "active_token", None)) is not None:
+            self._host.project_coordinator.refresh_committed_sources(token, context, view_token=view_token)
+        elif not recovery or active_id in (None, context.project_id):
             self._host.project_coordinator.open_project_path(value.project_path)
         else:
             QMessageBox.information(
@@ -153,20 +189,31 @@ class SourceUpdateCoordinator:
                 "可在恢复窗口点击“重新检查来源”打开更新后的工程。",
             )
 
-    def _dispatch(self, operation, message, callback) -> None:
-        started = self._host.start_foreground_task(operation, message=message, on_result=callback, on_error=self._error)
+    def _dispatch(self, operation, message, callback, *, on_error=None, before_start=None) -> None:
+        fail = on_error or self._error
+        started = self._host.start_foreground_task(
+            operation,
+            message=message,
+            on_result=callback,
+            on_error=fail,
+            before_start=before_start,
+            disable_workbench=self._dialog is None,
+        )
         if not started:
-            self._busy = False
+            fail("另一项操作仍在进行，请稍后重试。")
 
-    def _check(self, result) -> bool:
+    def _check(self, result, *, on_error=None) -> bool:
         if result.is_success and result.value is not None:
             return True
-        self._error("\n".join(f"{item.code}: {item.message}" for item in result.diagnostics))
+        (on_error or self._error)("\n".join(f"{item.code}: {item.message}" for item in result.diagnostics))
         return False
 
     def _error(self, message: str) -> None:
-        self._busy = False
         self._host.show_message(message)
+        if self._dialog is not None:
+            self._dialog.set_busy(False, message)
+            return
+        self._busy = False
         QMessageBox.warning(self._host, "源文件更新未完成", message)
 
 

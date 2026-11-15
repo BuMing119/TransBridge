@@ -19,7 +19,7 @@ from transbridge.persistence.v2.schema import parse_json_bytes
 from .provisioning import ProjectSourceRequest
 from .source_content import source_content_identity
 from .source_encoding import with_source_read_options
-from .source_input_publication import PreparedSourcePublication, publish_source_input
+from .source_input_publication import PreparedSourceInput, PreparedSourcePublication, publish_source_input
 from .source_registry import SourceRegistrySnapshot, migrate_legacy_source_registry
 from .source_supplement_mapping import remap_rows, supplement_rows, supplement_variants
 from .source_supplement_models import SourceSupplementPreview
@@ -88,11 +88,15 @@ class ProjectSourceSupplementService:
                 expected,
                 project,
                 supplement_variants(expected.variants, prepared, rows, namespace),
-                replace(request, expected_fingerprint=prepared.baseline.fingerprint.sha256),
-                prepared,
-                SourceNamespace(namespace) if namespace else None,
+                (
+                    PreparedSourceInput(
+                        replace(request, expected_fingerprint=prepared.baseline.fingerprint.sha256),
+                        prepared,
+                        SourceNamespace(namespace) if namespace else None,
+                    ),
+                ),
                 str(self._projects.path_for(ref)),
-                preview,
+                preview.source_name,
             )
             with self._lock:
                 self._pending[token] = _SupplementDraft(publication, rows, choices)
@@ -106,15 +110,15 @@ class ProjectSourceSupplementService:
                 draft = self._get(token, context)
                 candidate = draft.publication
                 rows = remap_rows(draft.rows, draft.choices, mappings)
-                preview = _preview(token, candidate.source, candidate.expected, rows, draft.choices)
+                source_input = candidate.inputs[0]
+                preview = _preview(token, source_input.source, candidate.expected, rows, draft.choices)
                 candidate = replace(
                     candidate,
-                    preview=preview,
                     variants=supplement_variants(
                         candidate.expected.variants,
-                        candidate.source,
+                        source_input.source,
                         rows,
-                        getattr(candidate.old_namespace, "value", None),
+                        getattr(source_input.old_namespace, "value", None),
                     ),
                 )
                 self._pending[token] = _SupplementDraft(candidate, rows, draft.choices)

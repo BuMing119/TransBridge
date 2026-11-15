@@ -184,6 +184,7 @@ class ProjectRowsCollection:
             project_revision=values["persisted_project_revision"],
             variant_revision=values["persisted_variant_revision"],
         )
+        token_changed = token != self.token
         persisted_changed = token.variant_revision != self.token.variant_revision
         if persisted_changed and (committed is None or any(state.tombstone for state in committed.values())):
             self._pages.clear()
@@ -208,7 +209,7 @@ class ProjectRowsCollection:
         self.token = token
         self._authority = authority
         self._states = states
-        return changed
+        return changed or token_changed
 
     def missing_pages(self, offsets):
         return tuple(offset for offset in offsets if offset not in self._pages)

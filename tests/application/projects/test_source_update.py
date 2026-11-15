@@ -16,6 +16,7 @@ from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.persistence.project_store.connection import project_connection
 from transbridge.persistence.project_store.history import ProjectHistory
 from transbridge.persistence.project_store.repository import ProjectStore
+from transbridge.persistence.project_store.source_updates import ProjectSourceRevisionStore
 from transbridge.persistence.v2.ids import VariantRef
 from transbridge.persistence.v2.variant import VariantSnapshot
 
@@ -232,6 +233,13 @@ def test_stale_preview_rejected_without_source_registration_change(project, chan
     result = service.commit(preview.token, context)
     assert not result.is_success
     assert Path(path).read_bytes() == before
+    if change == "edit":
+        current = services.project_lifecycle.active
+        assert (
+            current.dirty
+            and next(entry for entry in current.variant.snapshot().entries if entry.entry_key == key).translation
+            == "new edit"
+        )
 
 
 def test_owner_cancel_and_duplicate_confirmation(project):
@@ -243,6 +251,27 @@ def test_owner_cancel_and_duplicate_confirmation(project):
     preview, _ = _prepare(project, [(1, "One")])
     service.discard(preview.token, context)
     assert not service.commit(preview.token, context).is_success
+
+
+def test_lost_source_commit_reply_recovers_from_its_backup_without_another_write(project, monkeypatch):
+    services, service, context, _, path, _ = project
+    preview, _ = _prepare(project)
+    original_commit = ProjectSourceRevisionStore.commit_batch
+
+    def lose_reply(*args, **kwargs):
+        original_commit(*args, **kwargs)
+        raise OSError("lost SQLite commit reply")
+
+    monkeypatch.setattr(ProjectSourceRevisionStore, "commit_batch", lose_reply)
+    result = service.commit(preview.token, context)
+    assert result.is_success, result.diagnostics
+    active = services.project_lifecycle.active
+    assert result.value.active_token == ProjectStore(path).read_token(active.formal_variant_ref.identity)
+    (backup,) = services.project_snapshots.list(context)
+    assert result.value.backup_path == f"project-snapshot:{backup.identity.removesuffix('-0')}"
+    before_retry = Path(path).read_bytes()
+    assert not service.commit(preview.token, context).is_success
+    assert Path(path).read_bytes() == before_retry
 
 
 def test_recovery_update_without_activating_target(project):

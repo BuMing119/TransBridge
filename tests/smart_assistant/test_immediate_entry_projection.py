@@ -6,11 +6,13 @@ from types import SimpleNamespace
 import pytest
 
 from tests.conftest import make_entry, make_test_collection
+from tests.smart_assistant.tools import test_source_import_authority as source_fixtures
 from tests.smart_assistant.tools.test_upload_cancellation_receipt import _context
 from tests.smart_assistant.tools.test_upload_result_lifecycle import Remote
 from transbridge.application.io.identity import EntryKey, ExternalEntryRef, SourceNamespace
 from transbridge.application.projections.models import ProjectionSnapshot
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.persistence.project_store.repository import ProjectStore
 from transbridge.smart_assistant.request_scope import apply_captured_scope
 from transbridge.smart_assistant.tool_registry import ToolRegistry
 from transbridge.smart_assistant.tools._entry_upload import upload_entries
@@ -22,6 +24,10 @@ from transbridge.smart_assistant.tools.tool_editor import (
 )
 from transbridge.smart_assistant.tools.types import ExecutionContext
 from transbridge.ui.context import CollectionSlot
+from transbridge.ui.entry_projection import EntryProjectionUpdate
+from transbridge.ui.project_rows import ProjectRowsCollection, build_paged_slots
+
+stored_project = source_fixtures.project
 
 
 def _forbid_snapshot_serialization(monkeypatch):
@@ -133,6 +139,41 @@ def test_captured_editor_scope_advances_only_after_its_own_successful_edit(curre
     assert context.collection is project.context.collection
 
 
+def test_paged_editor_reuses_the_bound_collection_without_full_range_reads(stored_project, monkeypatch):
+    project = stored_project
+    key = source_fixtures.load_source(project).identity
+    assert project.services.gui_project_commands.save(project.request).is_success
+    opener = project.services.current_project_opener
+    prepared = opener.prepare_active(project.request, paged=True)
+    assert prepared.is_success, prepared.diagnostics
+    app = project.ctx
+    token = app.begin_project_open()
+    try:
+        opened = opener.activate(prepared.value, project.request)
+        assert opened.is_success, opened.diagnostics
+        snapshot = project.services.project_projection.snapshot()
+        assert app.install_project_open(token, snapshot, build_paged_slots(prepared.value.records.paged_read))
+    finally:
+        app.finish_project_open(token)
+    collection = app.collection
+    assert isinstance(collection, ProjectRowsCollection)
+    projected = []
+    app.collection_changed.connect(projected.append)
+
+    def forbid_range(*_args, **_kwargs):
+        pytest.fail("An assistant edit must only read the affected entries")
+
+    monkeypatch.setattr(ProjectStore, "iter_entries", forbid_range)
+    context = ExecutionContext(app_context=app)
+    assert _tool_edit_translation({"entry_id": key.serialize(), "new_translation": "assistant"}, context).success
+    assert _tool_set_stage({"entry_ids": [key.serialize()], "stage": 3}, context).success
+
+    assert app.collection is context._target_collection is collection
+    assert projected == [collection, collection]
+    entry = collection.get(key)
+    assert (entry.translation, entry.stage) == ("assistant", 3)
+
+
 def test_in_place_unsubmitted_edit_is_not_overwritten(current_project_factory, monkeypatch):
     project = current_project_factory(make_test_collection(2))
     first = next(iter(project.context.collection))
@@ -186,6 +227,11 @@ def test_upload_association_builds_one_collection_and_reuses_untouched_entry(
     context, project = _context(current_project_factory, tmp_path)
     first, second, third = tuple(project.context.collection)
     _forbid_snapshot_serialization(monkeypatch)
+
+    def forbid_reprojection(*_args):
+        pytest.fail("The upload association must use the project binding's projection")
+
+    monkeypatch.setattr(EntryProjectionUpdate, "collection", forbid_reprojection)
     built = []
     bulk_load = TranslationEntryCollection._bulk_load
 

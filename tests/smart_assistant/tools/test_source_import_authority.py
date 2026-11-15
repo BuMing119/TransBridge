@@ -15,7 +15,9 @@ from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.config.text_encoding import TextEncodings
 from transbridge.persistence.task_store import TaskStore
 from transbridge.smart_assistant.tools.tool_parser import _tool_import_json, _tool_parse_eet, _tool_parse_esp
+from transbridge.smart_assistant.tools.tool_translator import _tool_merge_task_result
 from transbridge.smart_assistant.tools.types import ExecutionContext
+from transbridge.ui import source_hydration
 from transbridge.ui.context import AppContext
 
 
@@ -67,6 +69,53 @@ def test_agent_source_creation_is_saved_with_hydration(project):
     assert project.services.gui_project_commands.save(project.request).is_success
     ref = project.services.project_lifecycle.active.formal_variant_ref
     assert len(project.services.variants.load(ref).value.envelope.data["entries"]) == 1
+
+
+@pytest.mark.parametrize("failure", ["installation", "construction"])
+def test_agent_retries_source_view_without_replaying_registration(project, monkeypatch, failure):
+    monkeypatch.setattr(project.services.project_projection, "_notify", lambda _snapshot: ())
+    installer = project.ctx.install_working_sources
+    attempts = []
+    prepare_slot = source_hydration.slot_from_hydration
+    slot_attempts = []
+
+    def install(identity, **options):
+        attempts.append(options["view_token"])
+        return (failure != "installation" or len(attempts) > 1) and installer(identity, **options)
+
+    def prepare(hydration):
+        slot_attempts.append(hydration)
+        if failure == "construction" and len(slot_attempts) == 1:
+            raise RuntimeError("source slot preparation failed")
+        return prepare_slot(hydration)
+
+    monkeypatch.setattr(project.ctx, "install_working_sources", install)
+    monkeypatch.setattr(source_hydration, "slot_from_hydration", prepare)
+    lifecycle = project.services.project_lifecycle
+    before = lifecycle.active.project.envelope.revision
+    execution = ExecutionContext(app_context=project.ctx)
+    result = _tool_parse_eet({"path": str(project.source)}, execution)
+
+    assert result.success and result.data["activated"], result.message
+    assert attempts[-1] is None
+    if failure == "installation":
+        assert len(attempts) == 2 and attempts[0] is not None
+        assert len(slot_attempts) == 1
+    else:
+        assert len(attempts) == 1 and len(slot_attempts) == 2
+        assert slot_attempts[0] is slot_attempts[1]
+    assert project.ctx.active_slot.source_snapshot is not None
+    assert execution.collection is project.ctx.collection
+    committed = lifecycle.active
+    assert committed.project.envelope.revision == before + 1
+    assert not project.ctx.project_opening and not project.ctx.authoritative_projection_diverged()
+
+    project.source.unlink()
+    receipt = _tool_merge_task_result({"result_id": result.data["result_id"]}, execution)
+    assert receipt.success and receipt.data["merge"]["registered"], receipt.message
+    assert len(project.ctx.project_sources) == 1
+    assert lifecycle.active is committed
+    assert len(attempts) == (2 if failure == "installation" else 1)
 
 
 @pytest.mark.parametrize("encoding,original", [("cp1252", "Café"), ("cp936", "武器")])

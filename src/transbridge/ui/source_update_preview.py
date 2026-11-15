@@ -1,51 +1,59 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""Explicit confirmation of a prepared source update across every Variant."""
+"""Show the impact of every source in the batch before committing it."""
+
+from pathlib import PureWindowsPath
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QPlainTextEdit, QVBoxLayout
-
-from transbridge.ui.foundation.components import configure_dialog
+from PyQt6.QtWidgets import QHeaderView, QLabel, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 
-class SourceUpdatePreviewDialog(QDialog):
-    def __init__(self, preview, parent=None) -> None:
+class SourceUpdatePreview(QWidget):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        configure_dialog(self)
-        self.setWindowTitle("确认更新源文件")
         self.setAccessibleName("源文件更新预览")
-        self.resize(640, 440)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         self.summary = QLabel(self)
-        self.summary.setTextFormat(Qt.TextFormat.PlainText)
         self.summary.setWordWrap(True)
-        self.summary.setText(
-            f"来源：{preview.source_name}\n新文件：{preview.replacement_path}\n\n"
-            f"将迁移全部 {preview.variant_count} 个翻译版本。\n"
-            f"新增 {preview.added} · 移除 {preview.removed} · 原文未变 {preview.unchanged}\n"
-            f"原文变化 {preview.changed} · 原文无法核验 {preview.unverified} · 顺序变化 {preview.reordered}"
-        )
         layout.addWidget(self.summary)
-        self.details = QPlainTextEdit(self)
-        self.details.setReadOnly(True)
-        self.details.setAccessibleName("更新影响与注意事项")
-        self.details.setPlainText(
-            "匹配的译文会保留；原文变化或无法核验的译文需要重新复核。\n"
-            "更新前会备份工程及全部版本，移除条目的已保存译文保留在备份中。\n"
-            "这一步不会向 ParaTranz 写入数据。\n\n" + "\n".join(preview.warnings)
+        self.differences = QTreeWidget(self)
+        self.differences.setAccessibleName("逐来源的更新差异")
+        self.differences.setHeaderLabels(("工程来源与路径", "更新影响"))
+        self.differences.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.differences.setAlternatingRowColors(True)
+        self.differences.header().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.differences, 1)
+        note = QLabel(
+            "匹配的译文会保留。原文变化或无法核验的已有译文需要复核。\n"
+            "更新前会备份全部翻译版本，移除条目的译文可从备份找回。",
+            self,
         )
-        layout.addWidget(self.details, 1)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, parent=self
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+    def set_preview(self, preview) -> None:
+        count = len(preview.differences)
+        self.summary.setText(
+            f"将更新 {count} 个来源，涉及全部 {preview.variant_count} 个翻译版本。\n"
+            f"原文变化 {sum(item.changed for item in preview.differences)} · "
+            f"无法核验 {sum(item.unverified for item in preview.differences)} · "
+            f"移除 {sum(item.removed for item in preview.differences)}"
         )
-        self.confirm_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        self.confirm_button.setText("确认更新全部版本")
-        self.confirm_button.setAutoDefault(False)
-        cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
-        cancel.setText("取消")
-        cancel.setDefault(True)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-
-__all__ = ["SourceUpdatePreviewDialog"]
+        self.differences.clear()
+        for item in preview.differences:
+            directory = PureWindowsPath(item.current_path).parent
+            source = f"{item.source_name} · {directory}" if directory.parts else item.source_name
+            row = QTreeWidgetItem([
+                source,
+                f"原文变化 {item.changed} · 无法核验 {item.unverified} · 移除 {item.removed}",
+            ])
+            row.setToolTip(0, item.current_path or item.source_name)
+            for label, value in (
+                ("当前来源", item.current_path or "无已登记的路径"),
+                ("新版文件", item.replacement_path),
+                ("其他差异", f"新增 {item.added} · 未变 {item.unchanged} · 顺序变化 {item.reordered}"),
+            ):
+                detail = QTreeWidgetItem(row, [label, value])
+                detail.setToolTip(1, value)
+            self.differences.addTopLevelItem(row)
+            row.setExpanded(count == 1)

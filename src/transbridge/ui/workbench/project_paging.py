@@ -53,7 +53,7 @@ class WorkbenchProjectPaging(QObject):
         self._query_cancel = Event()
         self._requested_query = None
         self._terminology_window = None
-        self._outcome = None
+        self._error_key = None
         self.statistics = None
         self._statistics_key = None
         self._statistics_worker = None
@@ -87,6 +87,8 @@ class WorkbenchProjectPaging(QObject):
             self._callbacks.clear()
             if collection is not None:
                 self._display()
+        if self._error_key is not None and self._error_key != self._read_key():
+            self._clear_error()
         if collection is None:
             return False
         revision = collection.collection_revision
@@ -142,7 +144,7 @@ class WorkbenchProjectPaging(QObject):
         collection = self.collection
         if collection is None or self.resident_ready or self._closed.is_set() or self._resident_worker is not None:
             return
-        revision, token, cancelled = collection.collection_revision, collection.token, self._resident_cancel
+        key, cancelled = self._read_key(), self._resident_cancel
         rows = collection.query_rows()
         results, errors = [], []
         worker = ApiWorker(lambda: load_resident_rows(rows, cancelled), route_http_errors=False)
@@ -153,15 +155,11 @@ class WorkbenchProjectPaging(QObject):
             worker.deleteLater()
             if self._closed.is_set():
                 return
-            if (
-                cancelled.is_set()
-                or self.collection is not collection
-                or collection.collection_revision != revision
-                or collection.token != token
-            ):
+            if cancelled.is_set() or key != self._read_key():
                 self._queue_resident()
             elif results and results[0] is not None:
-                self._resident, self._resident_revision = results[0], revision
+                self._resident, self._resident_revision = results[0], key[1]
+                self._clear_error()
                 self.request_query()
             elif errors:
                 self._error(errors[0])
@@ -251,6 +249,10 @@ class WorkbenchProjectPaging(QObject):
             self.sort,
         )
 
+    def _read_key(self):
+        collection = self.collection
+        return None if collection is None else (collection, collection.collection_revision, collection.token)
+
     def _sort_requested(self, column, descending):
         self.sort = column, descending
         if self.collection is not None:
@@ -284,6 +286,7 @@ class WorkbenchProjectPaging(QObject):
         offsets = collection.missing_pages(requested)
         if not offsets:
             return
+        page_key = self._read_key()
         token = collection.token
 
         def accept(rows):
@@ -294,7 +297,11 @@ class WorkbenchProjectPaging(QObject):
             ):
                 self._display()
 
-        self._run(lambda: tuple((offset, collection.read_page(offset, token)) for offset in offsets), accept)
+        self._run(
+            lambda: tuple((offset, collection.read_page(offset, token)) for offset in offsets),
+            accept,
+            page_key=page_key,
+        )
 
     def _install_query(self, key, result):
         if self.collection is None or key != self._query_key() or self._closed.is_set():
@@ -359,14 +366,15 @@ class WorkbenchProjectPaging(QObject):
         collection = self.collection
         if collection is None or self._closed.is_set() or self._statistics_worker is not None:
             return
-        key = collection, collection.collection_revision, collection.token
+        key = self._read_key()
         if key == self._statistics_key:
             return
         worker = ApiWorker(lambda: _statistics(collection.statistics()), route_http_errors=False)
         self._statistics_worker = worker
+        errors = []
 
         def received(value):
-            if (self.collection, collection.collection_revision, collection.token) == key and not self._closed.is_set():
+            if self._read_key() == key and not self._closed.is_set():
                 self.statistics = value
                 self._statistics_key = key
                 self.host._summary = value.summary
@@ -381,12 +389,15 @@ class WorkbenchProjectPaging(QObject):
         def finished():
             self._statistics_worker = None
             worker.deleteLater()
-            current = self.collection
-            if current is not None and (current, current.collection_revision, current.token) != key:
+            if self._closed.is_set():
+                return
+            if self._read_key() != key:
                 QTimer.singleShot(0, self._request_statistics)
+            elif errors:
+                self._error(errors[0])
 
         worker.result.connect(received)
-        worker.error.connect(self._error)
+        worker.error.connect(errors.append)
         worker.finished.connect(finished)
         worker.start()
 
@@ -408,36 +419,50 @@ class WorkbenchProjectPaging(QObject):
         self._resident = self.result = None
         self._callbacks.clear()
 
-    def _run(self, operation, accept, *, query_key=None):
+    def _run(self, operation, accept, *, query_key=None, page_key=None):
         worker = ApiWorker(operation, route_http_errors=False)
         self.worker = worker
-        self._outcome = None
-        worker.result.connect(self._received)
-        worker.error.connect(self._error)
-        worker.finished.connect(lambda: self._finished(worker, accept, query_key))
+        results, errors = [], []
+
+        def finished():
+            self.worker = None
+            worker.deleteLater()
+            if self.collection is None or self._closed.is_set():
+                return
+            key = self._query_key()
+            stale_page = page_key is not None and page_key != self._read_key()
+            stale_query = query_key is not None and query_key != key
+            outcome = results[0] if results else None
+            if not (stale_page or stale_query):
+                if outcome is not None:
+                    accept(outcome)
+                elif errors:
+                    self._error(errors[0])
+            if outcome is not None or stale_page:
+                self._queue_viewport()
+            force = bool(self._callbacks) or self.selection_needs_query()
+            if (
+                (key[2:] != _DEFAULT_QUERY or force)
+                and key != self._result_key
+                and (outcome is not None or stale_query)
+            ):
+                QTimer.singleShot(0, self.request_query)
+
+        worker.result.connect(results.append)
+        worker.error.connect(errors.append)
+        worker.finished.connect(finished)
         worker.start()
 
-    def _received(self, value):
-        self._outcome = value
-
     def _error(self, error):
-        if self._closed.is_set():
-            return
-        self.host._progress.setFormat(str(error))
-        self.host._progress.show()
+        self._error_key = self._read_key()
+        label = self.host._project_read_error
+        label.setText(f"无法加载当前工程的词条。若未自动恢复，请重新打开工程。\n{error}")
+        label.show()
 
-    def _finished(self, worker, accept, query_key):
-        outcome, self._outcome, self.worker = self._outcome, None, None
-        worker.deleteLater()
-        if outcome is not None and not self._closed.is_set():
-            accept(outcome)
-            self._queue_viewport()
-        if self.collection is not None:
-            key = self._query_key()
-            force = bool(self._callbacks) or self.selection_needs_query()
-            stale = query_key is not None and query_key != key
-            if (key[2:] != _DEFAULT_QUERY or force) and key != self._result_key and (outcome is not None or stale):
-                QTimer.singleShot(0, self.request_query)
+    def _clear_error(self):
+        self._error_key = None
+        self.host._project_read_error.clear()
+        self.host._project_read_error.hide()
 
 
 def _statistics(facts):
