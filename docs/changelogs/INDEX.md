@@ -1,5 +1,15 @@
 # 变更日志索引
 
+- 2026-11-15：[ParaTranz 上传兼容唯一路径大小写变体](paratranz-categorized-upload/story-12/2026-11-15-003-upload-path-case-matching.md) — 精确路径优先，唯一大小写变体复用已有文件 ID，歧义仅阻止该文件。265 项上传相关回归及全仓 Ruff 检查通过。
+
+- 2026-11-15：[其余来源操作接入工作台恢复](source-file-update/story-01-03/2026-11-15-005-source-entry-view-recovery.md) — 跨来源快照、打开文件、拖入插件、助手登记和移除来源复用工作台安装，刷新可重试并保留草稿。
+
+- 2026-11-15：[来源替换提交与工作台恢复](source-file-update/story-01-03/2026-11-15-004-source-replacement-view-recovery.md) — SQLite 提交后缓存失效和 Qt 通知丢失均可恢复，保留后续草稿，视图重试无需重写或新增备份。168 项相关回归与全仓 Ruff 通过。
+
+- 2026-11-15：[S04 词条提交后统一刷新工作台](project-storage-redesign/story-04/2026-11-15-004-entry-projection-ownership.md) — 对话编辑、助手词条操作和导入共用工作台投影发布，覆盖分页、混合集合、草稿保留及版本切换。357 项相关回归和全仓 Ruff 检查通过。
+
+- 2026-11-15：[S04 批量更新源文件](source-file-update/story-04/2026-11-15-001-batch-source-update.md) — 多文件配对、逐项预览和一次事务迁移全部翻译版本。121 项专项通过、1 跳过，五项广域失败在改动前复现。
+
 - 2026-11-14：[语言绑定读取、历史来源兼容与全量严格输出](project-text-encoding/story-07-to-12/2026-11-14-001-language-reading-legacy-compatibility.md) — S07～S12 实现与相关 QA 完成；真实两插件及 20,075 条目项目副本验证通过。入口 656 passed；I/O 广域 1384 passed/1 skipped/1 failed，spy 适配后该文件 11 passed；项目最终 381 passed/1 skipped/7 deselected，五项既有失败已基线复证；全仓 Ruff/格式通过，未运行范围见记录。
 
 - 2026-11-14：[老项目保存时补齐缺省编码配置](project-text-encoding/story-01-to-06/2026-11-14-002-persist-missing-encoding-defaults.md) — S01 后续补充：无其他修改也可保存补齐，保留已有编码及翻译状态；125 项相关测试通过，Ruff/格式与差异检查通过。

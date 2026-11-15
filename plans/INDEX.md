@@ -74,7 +74,7 @@
 
 - [ai-task-lifecycle-history](ai-task-lifecycle-history/plan.md)：S01～S04 完成；独立 QA 的失败统计、批次原因和取消生命周期缺陷已修复，811 项相关回归及独立复验通过（2026-10-03）。
 
-- [source-file-update](source-file-update/plan.md)：通用“更新源文件…”、全部翻译版本迁移与恢复入口完成；38 项新增回归通过，联合回归 464 通过（2026-10-01）。
+- [source-file-update](source-file-update/plan.md)：工程及恢复入口支持单个和批量配对、逐来源预览、全部翻译版本迁移与整批提交。S04 专项 121 通过、1 跳过（2026-11-15）。
 
 - [paratranz-context-order](paratranz-context-order/plan.md)：4 个 Story 完成；八位序号、回读、远端仅序号更新与单文件上传闭环。追加 31 项回归通过，最新联合回归 266 通过、1 跳过、1 项已复现的既有失败（2026-10-01）。
 

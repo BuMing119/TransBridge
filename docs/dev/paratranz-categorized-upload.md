@@ -1,6 +1,6 @@
 # ParaTranz 文件上传与分类布局
 
-更新：2026-11-06。当前合同为 [ADR-047](../adr/047-opt-in-categorized-project-upload.md) 与 [ADR-049](../adr/049-task-result-lifecycle.md)；历史词条核验、批次关联保存与旧性能测量见 [S11 历史记录](../changelogs/paratranz-categorized-upload/story-11/2026-10-25-001-direct-upload-and-fixed-paths.md)，不再是常规 GUI 上传流程。
+更新：2026-11-15。当前合同为 [ADR-047](../adr/047-opt-in-categorized-project-upload.md) 与 [ADR-049](../adr/049-task-result-lifecycle.md)；历史词条核验、批次关联保存与旧性能测量见 [S11 历史记录](../changelogs/paratranz-categorized-upload/story-11/2026-10-25-001-direct-upload-and-fixed-paths.md)，不再是常规 GUI 上传流程。
 
 ## 用户操作
 
@@ -33,7 +33,7 @@ hashMatched/unchanged 是成功无变更；empty 表示没有导入内容，不�
 
 ## 执行及恢复
 
-本地生成所选文件 → 一次云端文件列表 → 按完整路径查当前 ID → 文件创建/原文更新/译文导入 → 文件回执。
+本地生成所选文件 → 一次云端文件列表 → 按完整路径查当前 ID → 文件创建/原文更新/译文导入 → 文件回执。完整路径精确匹配优先。找不到精确路径时，唯一的大小写变体可沿用其文件 ID。出现多个变体时，本次上传只将该文件标为失败并显示候选路径，其他文件继续处理。
 
 正常上传不下载云端词条，不逐条发送 strings 请求，不回读每个词条，不保存上传关联，不隐式保存本地未保存编辑。旧绑定缺失或无效不阻止新上传。
 
