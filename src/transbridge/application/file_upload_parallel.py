@@ -7,35 +7,11 @@ from dataclasses import replace
 from pathlib import PurePosixPath
 from queue import Empty, Queue
 import re
-from threading import Event, Lock
+from threading import Event
 
 from transbridge.application.categorized_upload.diagnostics import log_event, log_failure
 from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError
 from transbridge.paratranz.file_transport import FileRequestAdmission
-
-
-class UploadInventory:
-    """Serialize 404 refreshes while retaining independent confirmed creations."""
-
-    def __init__(self, inventory):
-        self._values, self._created = dict(inventory), {}
-        self._lock, self._refresh = Lock(), Lock()
-
-    def get(self, path):
-        with self._lock:
-            return self._values.get(path)
-
-    def __setitem__(self, path, file_id):
-        with self._lock:
-            self._values[path] = self._created[path] = file_id
-
-    def relocate(self, port, project_id, path):
-        with self._refresh:
-            with self._lock:
-                self._created.pop(path, None)
-            fresh = port.inventory(project_id)
-            with self._lock:
-                self._values = {**fresh, **self._created}
 
 
 class UploadChecks:
@@ -80,11 +56,12 @@ def publish_files_parallel(project_id, files, port, inventory, mode, cancelled, 
     from .file_upload import FileReceipt, FileUploadReceipt, _publish_parts, wire_records
 
     checks = UploadChecks(check_current, cancelled)
-    inventory = UploadInventory(inventory)
     admission = FileRequestAdmission(port.cancellation, checks.stopped)
-    # A.json and possible A_1.json splits share a scheduling group. One pipeline
+    # A.json and possible a_1.json splits share a scheduling group. One pipeline
     # per group runs at a time, in input order, avoiding overlapping split writes.
-    groups = {file.path: re.sub(r"(?:_\d+)+$", "", str(PurePosixPath(file.path).with_suffix(""))) for file in files}
+    groups = {
+        file.path: re.sub(r"(?:_\d+)+$", "", str(PurePosixPath(file.path).with_suffix("")).casefold()) for file in files
+    }
 
     def stopped_receipt(file):
         status = "cancelled" if cancelled() else "skipped"

@@ -5,6 +5,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
+from threading import Lock
 from typing import Protocol
 
 from transbridge.application.categorized_upload.classification import categorize_sources, source_directory_names
@@ -57,6 +58,46 @@ class FileUploadPort(Protocol):
     def translate(
         self, project_id: int, file_id: int, path: str, records: tuple[dict, ...], *, force: bool
     ) -> FileWriteResult: ...
+
+
+class UploadInventory:
+    """Resolve full paths and serialize 404 refreshes across file pipelines."""
+
+    def __init__(self, inventory: dict[str, int]):
+        self._paths = self._index(inventory)
+        self._created: dict[str, int] = {}
+        self._lock, self._refresh = Lock(), Lock()
+
+    @staticmethod
+    def _index(inventory: dict[str, int]) -> dict[str, dict[str, int]]:
+        paths: dict[str, dict[str, int]] = {}
+        for path, file_id in inventory.items():
+            paths.setdefault(path.casefold(), {})[path] = file_id
+        return paths
+
+    def resolve(self, path: str) -> tuple[str, int | None]:
+        with self._lock:
+            matches = self._paths.get(path.casefold())
+            if not matches:
+                return path, None
+            if path in matches:
+                return path, matches[path]
+            if len(matches) == 1:
+                return next(iter(matches.items()))
+            raise ValueError(f"云端存在仅大小写不同的多个路径，无法唯一定位：{'、'.join(sorted(matches))}。")
+
+    def record_created(self, path: str, file_id: int) -> None:
+        with self._lock:
+            self._paths.setdefault(path.casefold(), {})[path] = file_id
+            self._created[path] = file_id
+
+    def relocate(self, port: FileUploadPort, project_id: int, remote_path: str) -> None:
+        with self._refresh:
+            with self._lock:
+                self._created.pop(remote_path, None)
+            fresh = port.inventory(project_id)
+            with self._lock:
+                self._paths = self._index({**fresh, **self._created})
 
 
 def upload_files(sources: tuple[UploadSource, ...], *, categorized: bool) -> tuple[CategorizedFile, ...]:
@@ -125,7 +166,7 @@ def execute_file_upload(
     check_current()
     if progress:
         progress(0, len(files), "正在获取云端文件列表…")
-    inventory = port.inventory(project_id)
+    inventory = UploadInventory(port.inventory(project_id))
     if getattr(port, "max_workers", 1) > 1 and len(files) > 1:
         from .file_upload_parallel import publish_files_parallel
 
@@ -205,7 +246,11 @@ def _upload_one(project_id, path, records, inventory, port, mode, cancelled, che
     phase = "source"
     for attempt in range(2):
         try:
-            file_id = inventory.get(path)
+            remote_path, file_id = inventory.resolve(path)
+        except ValueError as exc:
+            log_failure("file_upload_resolve", exc, path=path, project_id=project_id)
+            return FileReceipt(path, "failed", str(exc), source_applied, translation_applied)
+        try:
             if mode in {"trans_safe", "trans_force"} and file_id is None:
                 return FileReceipt(path, "skipped", "仅导入译文：云端没有此文件，已跳过。")
             results = []
@@ -219,7 +264,7 @@ def _upload_one(project_id, path, records, inventory, port, mode, cancelled, che
                     if result.file_id is None:
                         raise ValueError("创建响应未返回文件 ID，结果待核实。")
                     file_id = result.file_id
-                    inventory[path] = file_id
+                    inventory.record_created(path, file_id)
                 else:
                     result = port.update(project_id, file_id, path, records)
                 results.append(result.status)
@@ -247,12 +292,7 @@ def _upload_one(project_id, path, records, inventory, port, mode, cancelled, che
             if exc.status == 404 and attempt == 0:
                 # Deleted/recreated files are ordinary path resolution, not an ID conflict.
                 try:
-                    if hasattr(inventory, "relocate"):
-                        inventory.relocate(port, project_id, path)
-                    else:
-                        fresh = port.inventory(project_id)
-                        inventory.clear()
-                        inventory.update(fresh)
+                    inventory.relocate(port, project_id, remote_path)
                 except Exception as refresh_error:
                     log_failure("file_upload_relocate", refresh_error, path=path)
                     return FileReceipt(

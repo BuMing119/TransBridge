@@ -147,6 +147,40 @@ def test_source_update_uses_incremental_and_server_hash_without_readback():
     assert len(session.calls) == 2
 
 
+@pytest.mark.parametrize("exact_exists", [False, True])
+def test_source_update_prefers_exact_path_then_unique_case_insensitive_path(exact_exists):
+    path = "BSHeartland.esm/任务/对话_[Aera the Devout's Missing Amulet].json"
+    existing = [
+        {"id": 20, "name": path.replace("Missing Amulet", "missing amulet")},
+        {"id": 30, "name": path.replace("BSHeartland.esm", "Other.esm")},
+    ]
+    if exact_exists:
+        existing.append({"id": 40, "name": path})
+    file_id = 40 if exact_exists else 20
+    port, session = gateway(existing, {"file": {"id": file_id}}, {"status": "unchanged"})
+
+    result = execute_file_upload(7, (artifact(path=path),), port, mode="both")
+
+    assert result.succeeded == 1
+    assert [(call.method, call.path_url) for call in session.calls] == [
+        ("GET", "/api/projects/7/files"),
+        ("POST", f"/api/projects/7/files/{file_id}"),
+        ("POST", f"/api/projects/7/files/{file_id}/translation"),
+    ]
+
+
+def test_ambiguous_case_insensitive_path_fails_without_writing():
+    file = artifact(path="A.esp/Quest.json")
+    variants = ("A.esp/quest.json", "A.esp/QUEST.json")
+    port, session = gateway([{"id": index, "name": path} for index, path in enumerate(variants, 1)])
+
+    result = execute_file_upload(7, (file,), port)
+
+    assert result.failed == 1 and result.retry_files == (file,)
+    assert all(path in result.files[0].message for path in variants)
+    assert [call.method for call in session.calls] == ["GET"]
+
+
 @pytest.mark.parametrize("mode,force", [("trans_safe", False), ("trans_force", True)])
 def test_translation_import_submits_keys_translations_and_stage_in_one_json(mode, force):
     port, session = gateway([{"id": 200, "name": "A.esp/人名.json"}], {"file": {"id": 200}})
@@ -182,11 +216,12 @@ def test_both_creates_with_enveloped_id_then_imports_stage_without_string_reads(
     ]
 
 
-def test_deleted_recreated_file_uses_current_path_id_after_one_404_refresh():
+@pytest.mark.parametrize("refreshed_path", ["A.esp/人名.json", "a.ESP/人名.json"])
+def test_deleted_recreated_file_uses_current_path_id_after_one_404_refresh(refreshed_path):
     port, session = gateway(
         [{"id": 20, "name": "A.esp/人名.json"}],
         (404, {}, {}),
-        [{"id": 30, "name": "A.esp/人名.json"}],
+        [{"id": 30, "name": refreshed_path}],
         {"file": {"id": 30}},
     )
     result = execute_file_upload(7, (artifact(),), port)

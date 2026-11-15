@@ -10,8 +10,7 @@ import requests
 
 from tests.paratranz.concurrent_file_support import Backend
 from tests.paratranz.test_file_publication import artifact
-from transbridge.application.file_upload import execute_file_upload
-from transbridge.application.file_upload_parallel import UploadInventory
+from transbridge.application.file_upload import UploadInventory, execute_file_upload
 from transbridge.application.ports.paratranz import ExternalServiceError
 from transbridge.paratranz.file_publication import RequestBudget
 
@@ -157,7 +156,8 @@ def test_403_stops_new_requests_but_keeps_other_already_sent_success():
     assert not any(row["path"] == "later.json" for row in backend.calls)
 
 
-def test_split_path_related_files_keep_input_order_and_complete_retry_facts():
+@pytest.mark.parametrize("related_path", ["A_1.json", "a_1.json"])
+def test_split_path_related_files_keep_input_order_and_complete_retry_facts(related_path):
     first_large = True
 
     def handle(row):
@@ -167,10 +167,10 @@ def test_split_path_related_files_keep_input_order_and_complete_retry_facts():
             return (413, {}, {})
 
     backend = Backend(handler=handle)
-    files = (artifact(4, path="A.json"), artifact(path="A_1.json"), artifact(path="B.json"))
+    files = (artifact(4, path="A.json"), artifact(path=related_path), artifact(path="B.json"))
     result = upload(backend, files, mode="orig_only")
     assert result.succeeded == 4 and not result.retry_files
-    writes = [row for row in backend.calls if row["path"] == "A_1.json"]
+    writes = [row for row in backend.calls if row["path"].casefold() == "a_1.json"]
     assert len(writes) == 2
     assert writes[0]["endpoint"].endswith("/files")
     assert not writes[1]["endpoint"].endswith("/files")
@@ -266,12 +266,12 @@ def test_inventory_refresh_preserves_an_independent_creation_confirmed_during_re
         future = pool.submit(inventory.relocate, Port(), 7, "old.json")
         try:
             assert refreshing.wait(3)
-            inventory["created.json"] = 21
+            inventory.record_created("created.json", 21)
         finally:
             release.set()
         future.result(timeout=3)
-    assert inventory.get("old.json") == 30
-    assert inventory.get("created.json") == 21
+    assert inventory.resolve("OLD.json") == ("old.json", 30)
+    assert inventory.resolve("CREATED.json") == ("created.json", 21)
 
 
 def test_owner_check_failure_stops_bounded_workers_without_deadlock_or_http_writes():
