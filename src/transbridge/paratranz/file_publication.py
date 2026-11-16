@@ -17,6 +17,7 @@ from transbridge.application.file_upload import FileWriteResult
 from transbridge.application.ports.paratranz import ExternalServiceError
 
 from .api.paratranz_files_api import ParatranzFilesAPI
+from .artifact_file_reads import ARTIFACT_FILE_THRESHOLD, ArtifactFileReads
 from .file_transport import UploadCancellation, _complete_files, _file_path
 from .paratranz_client import RetryPolicy
 
@@ -67,9 +68,9 @@ _SHARED_BUDGET = RequestBudget()
 
 
 class FilePublicationGateway(ParatranzFilesAPI):
-    """Trust file import responses; never fetch strings or persist their identities.
+    """Read and write files within the shared request budget.
 
-    Official global ceiling is 480 requests/minute/user (OpenAPI 0.5.7).
+    Official global ceiling is 480 requests/minute/user (OpenAPI 0.7.0).
     This gateway conservatively paces at 2 requests/second and retries only explicit
     429 rejections, respecting Retry-After. Ambiguous POST failures are not replayed.
     """
@@ -173,6 +174,26 @@ class FilePublicationGateway(ParatranzFilesAPI):
             result[path] = file_id
             ids.add(file_id)
         return result
+
+    @contextmanager
+    def force_comparison(self, project_id, inventory, selected_ids, *, progress=None):
+        """Use the same fresh export and selected-file reader as project downloads."""
+        if len(selected_ids) < ARTIFACT_FILE_THRESHOLD:
+            yield None
+            return
+        archive = ArtifactFileReads(self.config)
+        lock = Lock()
+
+        def read(project_id, file_id):
+            # The archive shares its cumulative read limit across upload workers.
+            with lock:
+                return archive.get_file_translation(project_id, file_id)
+
+        try:
+            archive.prepare(project_id, inventory, selected_ids, cancellation=self.cancellation, progress=progress)
+            yield read
+        finally:
+            archive.close()
 
     def create(self, project_id, path, records):
         target = PurePosixPath(path)

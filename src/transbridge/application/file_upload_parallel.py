@@ -52,7 +52,9 @@ class UploadChecks:
                 ready.set()
 
 
-def publish_files_parallel(project_id, files, port, inventory, mode, cancelled, check_current, progress):
+def publish_files_parallel(
+    project_id, files, port, inventory, mode, cancelled, check_current, progress, *, archive_reader=None
+):
     from .file_upload import FileReceipt, FileUploadReceipt, _publish_parts, wire_records
 
     checks = UploadChecks(check_current, cancelled)
@@ -81,7 +83,16 @@ def publish_files_parallel(project_id, files, port, inventory, mode, cancelled, 
             retry_files = []
             try:
                 parts = _publish_parts(
-                    project_id, file, records, inventory, child, mode, cancelled, checks.request, retry_files
+                    project_id,
+                    file,
+                    records,
+                    inventory,
+                    child,
+                    mode,
+                    cancelled,
+                    checks.request,
+                    retry_files,
+                    archive_reader=archive_reader,
                 )
             finally:
                 child.close()

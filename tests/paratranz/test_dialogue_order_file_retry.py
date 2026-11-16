@@ -93,15 +93,17 @@ def test_413_partial_failure_and_receipt_retry_keep_complete_source_numbers(dial
 def test_translation_only_413_keeps_keys_and_never_sends_display_context(dialogue_file, mode, force):
     expected = [{name: row[name] for name in ("key", "translation", "stage")} for row in wire_records(dialogue_file)]
     before = tuple(entry.to_dict() for entry in dialogue_file.entries)
+    comparisons = ([{"key": row["key"], "translation": ""} for row in expected],) if force else ()
     port, session = gateway(
         [{"id": 20, "name": dialogue_file.path}],
+        *comparisons,
         (413, {}, {}),
         {"file": {"id": 20}},
         {"file": {"id": 20}},
     )
     result = execute_file_upload(7, (dialogue_file,), port, mode=mode)
     assert result.succeeded == 1 and not result.retry_files
-    payloads = [json.loads(request.body) for request in session.calls[1:]]
+    payloads = [json.loads(request.body) for request in session.calls if request.method == "POST"]
     assert [payload["items"] for payload in payloads] == [expected, expected[:2], expected[2:]]
     assert all(payload["force"] is force for payload in payloads)
     assert all(set(row) == {"key", "translation", "stage"} for payload in payloads for row in payload["items"])

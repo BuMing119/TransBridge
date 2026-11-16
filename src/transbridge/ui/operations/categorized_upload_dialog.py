@@ -148,7 +148,7 @@ class CategorizedUploadDialog(QDialog):
         for label, value in (
             ("仅更新原文（增量保留云端其他词条，不修改已有译文）", "orig_only"),
             ("仅安全导入译文（保留人工译文，不新增文件或词条）", "trans_safe"),
-            ("仅强制导入译文（覆盖人工译文，不新增文件或词条）", "trans_force"),
+            ("仅强制导入差异译文（跳过空译文）", "trans_force"),
             ("增量更新原文并安全导入译文", "both"),
         ):
             self._mode.addItem(label, value)
@@ -271,10 +271,10 @@ class CategorizedUploadDialog(QDialog):
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Warning)
         dialog.setWindowTitle("确认强制更新译文")
-        dialog.setText("强制更新会覆盖 ParaTranz 上已有的译文，包括人工译文。")
+        dialog.setText("强制导入会用本地差异译文覆盖 ParaTranz 上的对应译文，包括人工译文。")
         dialog.setInformativeText(
-            "空译文也会覆盖已有译文：如果上传内容中某个词条的译文为空，"
-            "ParaTranz 上该词条原有的译文将被清空。\n\n确定要继续强制上传吗？"
+            "后台会按文件比对当前云端译文，只上传本地非空且不同的译文。"
+            "空译文或纯空白译文会跳过。\n\n确定要继续强制上传吗？"
         )
         dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         dialog.button(QMessageBox.StandardButton.Yes).setText("仍要强制上传")

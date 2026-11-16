@@ -69,7 +69,7 @@ def test_force_upload_confirms_at_execution_for_all_layouts_and_scopes(qapp, wor
         assert len(observed) == 2
         for title, text, default_cancel, escape_cancel, worker in observed:
             assert title == "确认强制更新译文"
-            assert "人工译文" in text and "空译文也会覆盖已有译文" in text and "将被清空" in text
+            assert "人工译文" in text and "只上传本地非空且不同的译文" in text and "纯空白译文会跳过" in text
             assert default_cancel and escape_cancel and worker is None
     finally:
         subject.close()

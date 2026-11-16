@@ -1,8 +1,9 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""File-scoped ParaTranz publication; the server owns key matching and import policy."""
+"""File-scoped ParaTranz publication and force-import comparison."""
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 from threading import Lock
@@ -13,7 +14,7 @@ from transbridge.application.categorized_upload.diagnostics import log_event, lo
 from transbridge.application.categorized_upload.models import CategorizedFile, UploadSource
 from transbridge.application.io.paratranz_context_order import context_orders, format_ordered_context
 from transbridge.application.io.paratranz_mapping import paratranz_record_from_entry
-from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError
+from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError, ParaTranzEntry
 
 UPLOAD_MODES = ("orig_only", "trans_safe", "trans_force", "both")
 
@@ -54,6 +55,8 @@ class FileUploadPort(Protocol):
     def create(self, project_id: int, path: str, records: tuple[dict, ...]) -> FileWriteResult: ...
 
     def update(self, project_id: int, file_id: int, path: str, records: tuple[dict, ...]) -> FileWriteResult: ...
+
+    def get_file_translation(self, project_id: int, file_id: int) -> list[Mapping]: ...
 
     def translate(
         self, project_id: int, file_id: int, path: str, records: tuple[dict, ...], *, force: bool
@@ -148,10 +151,10 @@ def execute_file_upload(
     check_current: Callable[[], None] = lambda: None,
     progress: Callable[[int, int, str], None] | None = None,
 ) -> FileUploadReceipt:
-    """One inventory, at most two writes per file; no string APIs or local commits.
+    """One inventory, at most two writes per file before splitting; no local commits.
 
     Only an explicit 404 permits one path refresh/replan. Timeouts are uncertain,
-    never replayed. Server-side safe/force imports decide which translations apply.
+    never replayed. Force imports compare against the current target file first.
     """
     if mode not in UPLOAD_MODES:
         raise ValueError("未知文件上传模式。")
@@ -166,11 +169,51 @@ def execute_file_upload(
     check_current()
     if progress:
         progress(0, len(files), "正在获取云端文件列表…")
-    inventory = UploadInventory(port.inventory(project_id))
+    paths = port.inventory(project_id)
+    inventory = UploadInventory(paths)
+    with ExitStack() as resources:
+        archive_reader = None
+        prepare = getattr(port, "force_comparison", None) if mode == "trans_force" else None
+        if prepare is not None:
+            selected_ids = _comparison_file_ids(files, inventory)
+            status = (lambda message: progress(0, len(files), message)) if progress else None
+            try:
+                archive_reader = resources.enter_context(prepare(project_id, paths, selected_ids, progress=status))
+            except Exception as exc:
+                log_failure("force_upload_archive_prepare", exc, project_id=project_id)
+                was_cancelled = cancelled() or (
+                    isinstance(exc, ExternalServiceError) and exc.category is ExternalServiceCategory.CANCELLED
+                )
+                state = "cancelled" if was_cancelled else "failed"
+                message = "已取消强制导入。" if was_cancelled else f"无法准备云端压缩包，本次未强制导入：{exc}"
+                return FileUploadReceipt(tuple(FileReceipt(file.path, state, message) for file in files), files)
+        return _publish_files(
+            project_id, files, port, inventory, mode, cancelled, check_current, progress, archive_reader
+        )
+
+
+def _comparison_file_ids(files, inventory):
+    selected_ids = set()
+    for file in files:
+        if not any(entry.translation.strip() for entry in file.entries):
+            continue
+        try:
+            _path, file_id = inventory.resolve(file.path)
+        except ValueError:
+            # The ordinary publish path reports this file's ambiguity.
+            continue
+        if file_id is not None:
+            selected_ids.add(file_id)
+    return selected_ids
+
+
+def _publish_files(project_id, files, port, inventory, mode, cancelled, check_current, progress, archive_reader):
     if getattr(port, "max_workers", 1) > 1 and len(files) > 1:
         from .file_upload_parallel import publish_files_parallel
 
-        return publish_files_parallel(project_id, files, port, inventory, mode, cancelled, check_current, progress)
+        return publish_files_parallel(
+            project_id, files, port, inventory, mode, cancelled, check_current, progress, archive_reader=archive_reader
+        )
     receipts = []
     retry_files = []
     stopped = ""
@@ -200,7 +243,18 @@ def execute_file_upload(
             receipts.append(FileReceipt(file.path, "failed", str(exc)))
             retry_files.append(file)
             continue
-        parts = _publish_parts(project_id, file, records, inventory, port, mode, cancelled, check_current, retry_files)
+        parts = _publish_parts(
+            project_id,
+            file,
+            records,
+            inventory,
+            port,
+            mode,
+            cancelled,
+            check_current,
+            retry_files,
+            archive_reader=archive_reader,
+        )
         receipts.extend(parts)
         for item in parts:
             log_event(
@@ -218,7 +272,9 @@ def execute_file_upload(
     return FileUploadReceipt(tuple(receipts), tuple(retry_files))
 
 
-def _publish_parts(project_id, file, records, inventory, port, mode, cancelled, check_current, retry_files):
+def _publish_parts(
+    project_id, file, records, inventory, port, mode, cancelled, check_current, retry_files, *, archive_reader=None
+):
     """Retain deterministic 413 splitting without remapping keys or source order."""
     target = PurePosixPath(file.path)
     counter = 0
@@ -226,7 +282,9 @@ def _publish_parts(project_id, file, records, inventory, port, mode, cancelled, 
     def publish(rows, entries, split=False):
         nonlocal counter
         part_path = str(target.with_name(f"{target.stem}_{counter + 1}{target.suffix}")) if split else file.path
-        result = _upload_one(project_id, part_path, rows, inventory, port, mode, cancelled, check_current)
+        result = _upload_one(
+            project_id, part_path, rows, inventory, port, mode, cancelled, check_current, archive_reader=archive_reader
+        )
         if result.status == "too_large" and len(rows) > 1:
             middle = len(rows) // 2
             return (*publish(rows[:middle], entries[:middle], True), *publish(rows[middle:], entries[middle:], True))
@@ -240,7 +298,7 @@ def _publish_parts(project_id, file, records, inventory, port, mode, cancelled, 
     return publish(records, file.entries)
 
 
-def _upload_one(project_id, path, records, inventory, port, mode, cancelled, check_current):
+def _upload_one(project_id, path, records, inventory, port, mode, cancelled, check_current, *, archive_reader=None):
     source_applied = translation_applied = False
     attempted = False
     phase = "source"
@@ -274,9 +332,22 @@ def _upload_one(project_id, path, records, inventory, port, mode, cancelled, che
                 check_current()
                 if cancelled():
                     return FileReceipt(path, "cancelled", "已取消后续译文导入。", source_applied, translation_applied)
+                force = mode == "trans_force"
+                translations = records
+                if force:
+                    phase = "translation_check"
+                    # A post-time 404 can invalidate the archive's file identity.
+                    read = archive_reader if attempt == 0 and archive_reader is not None else port.get_file_translation
+                    translations = _force_translation_changes(project_id, file_id, records, read)
+                    check_current()
+                    if cancelled():
+                        return FileReceipt(path, "cancelled", "已取消强制导入译文。")
+                    if not translations:
+                        return FileReceipt(path, "unchanged", "没有可强制导入的非空差异译文。")
+                    phase = "translation"
                 attempted = True
                 result = _translate_parts(
-                    project_id, file_id, path, records, port, mode == "trans_force", cancelled, check_current
+                    project_id, file_id, path, translations, port, force, cancelled, check_current
                 )
                 results.append(result.status)
                 translation_applied = result.status == "applied"
@@ -299,12 +370,14 @@ def _upload_one(project_id, path, records, inventory, port, mode, cancelled, che
                         path, "failed", f"重新定位文件失败：{refresh_error}", source_applied, translation_applied
                     )
                 continue
-            if exc.status == 413:
+            if exc.status == 413 and phase != "translation_check":
                 if phase == "translation":
                     return FileReceipt(path, "failed", "译文单项超过服务器大小限制，未创建其他文件。", source_applied)
                 return FileReceipt(path, "too_large", "文件过大。", source_applied, translation_applied)
             if exc.category is ExternalServiceCategory.CANCELLED:
                 status, message = "cancelled", "请求已取消；已提交的文件操作可能已生效。"
+            elif phase == "translation_check":
+                status, message = "failed", f"无法读取云端译文进行比较，本次未强制导入：{exc}"
             elif exc.status == 403:
                 status, message = "failed", "权限不足：文件译文导入需要管理员以上权限，未回退到词条接口。"
             elif exc.status == 423:
@@ -318,6 +391,8 @@ def _upload_one(project_id, path, records, inventory, port, mode, cancelled, che
             return FileReceipt(path, status, message, source_applied, translation_applied, exc.status)
         except Exception as exc:
             log_failure("file_upload_request", exc, path=path, project_id=project_id)
+            if phase == "translation_check":
+                return FileReceipt(path, "failed", f"无法比较云端译文，本次未强制导入：{exc}")
             return FileReceipt(
                 path,
                 "uncertain" if attempted else "failed",
@@ -326,6 +401,26 @@ def _upload_one(project_id, path, records, inventory, port, mode, cancelled, che
                 translation_applied,
             )
     raise RuntimeError("unreachable file upload state")
+
+
+def _force_translation_changes(project_id, file_id, records, read):
+    candidates = {row["key"]: row for row in records if row["translation"].strip()}
+    if not candidates:
+        return ()
+    rows = read(project_id, file_id)
+    if not isinstance(rows, list) or not all(isinstance(row, Mapping) for row in rows):
+        raise ValueError("云端文件词条数据无效。")
+
+    cloud = {}
+    for row in rows:
+        entry = ParaTranzEntry.from_mapping(row)
+        if entry.file_id is not None and entry.file_id != file_id:
+            raise ValueError("云端返回了目标文件以外的词条。")
+        if entry.key in candidates:
+            if entry.key in cloud or "translation" not in row:
+                raise ValueError("云端词条 key 重复或缺少译文，无法安全比较。")
+            cloud[entry.key] = entry.translation
+    return tuple(row for key, row in candidates.items() if key in cloud and row["translation"] != cloud[key])
 
 
 def _translate_parts(project_id, file_id, path, records, port, force, cancelled, check_current):

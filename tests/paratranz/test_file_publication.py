@@ -2,17 +2,20 @@
 
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 import json
 from threading import Event
+from zipfile import ZipFile
 
 import pytest
 import requests
 
 from transbridge.application.categorized_upload.models import CategorizedFile
-from transbridge.application.file_upload import execute_file_upload
+from transbridge.application.file_upload import execute_file_upload, wire_records
 from transbridge.config.paratranz import ParatranzConfig
 from transbridge.config.paratranz_credentials import UnavailableCredentialStore
 from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.paratranz.artifact_file_reads import ARTIFACT_FILE_THRESHOLD, ArtifactFileReads
 from transbridge.paratranz.file_publication import FilePublicationGateway, RequestBudget
 
 
@@ -36,7 +39,7 @@ class Responses(requests.Session):
         return response
 
 
-def gateway(*responses, cancel=None, budget=None):
+def gateway(*responses, cancel=None, budget=None, session_factory=None):
     session = Responses(responses)
     config = ParatranzConfig(
         token="file-publication-test-token",
@@ -44,7 +47,10 @@ def gateway(*responses, cancel=None, budget=None):
         credential_store=UnavailableCredentialStore(),
         environment={},
     )
-    return FilePublicationGateway(config, session=session, cancel=cancel, budget=budget or RequestBudget(0)), session
+    port = FilePublicationGateway(
+        config, session=session, cancel=cancel, budget=budget or RequestBudget(0), session_factory=session_factory
+    )
+    return port, session
 
 
 def artifact(count=1, path="A.esp/人名.json"):
@@ -181,19 +187,176 @@ def test_ambiguous_case_insensitive_path_fails_without_writing():
     assert [call.method for call in session.calls] == ["GET"]
 
 
-@pytest.mark.parametrize("mode,force", [("trans_safe", False), ("trans_force", True)])
-def test_translation_import_submits_keys_translations_and_stage_in_one_json(mode, force):
+def test_safe_translation_import_submits_keys_translations_and_stage_in_one_json():
     port, session = gateway([{"id": 200, "name": "A.esp/人名.json"}], {"file": {"id": 200}})
-    result = execute_file_upload(7, (artifact(2000),), port, mode=mode)
+    result = execute_file_upload(7, (artifact(2000),), port, mode="trans_safe")
     assert result.succeeded == 1
     request = session.calls[1]
     assert request.path_url == "/api/projects/7/files/200/translation"
     payload = json.loads(request.body)
-    assert payload["force"] is force and payload["skip"] is False
+    assert payload["force"] is False and payload["skip"] is False
     assert payload["filename"] == "人名.json"
     assert len(payload["items"]) == 2000
     assert all(set(row) == {"key", "translation", "stage"} for row in payload["items"])
     assert len(session.calls) == 2
+
+
+def test_force_import_sends_only_existing_keys_with_nonblank_different_translations():
+    file = artifact(6)
+    file = replace(
+        file,
+        entries=tuple(
+            replace(entry, translation=translation)
+            for entry, translation in zip(file.entries, ("译文", "", " \t", " 新译文 ", "缺失", "新填"), strict=True)
+        ),
+    )
+    remote = [
+        {"key": key, "translation": translation, "stage": 1}
+        for key, translation in zip(("0", "1", "2", "3", "5"), ("译文", "保留一", "保留二", "旧译文", ""), strict=True)
+    ]
+    port, session = gateway([{"id": 20, "name": file.path}], remote, {"file": {"id": 20}})
+    receipt = execute_file_upload(7, (file,), port, mode="trans_force")
+
+    assert receipt.succeeded == 1 and not receipt.retry_files
+    assert [call.method for call in session.calls] == ["GET", "GET", "POST"]
+    assert session.calls[1].path_url == session.calls[2].path_url == "/api/projects/7/files/20/translation"
+    payload = json.loads(session.calls[2].body)
+    assert payload["force"] is True
+    assert payload["items"] == [
+        {"key": "3", "translation": " 新译文 ", "stage": 3},
+        {"key": "5", "translation": "新填", "stage": 3},
+    ]
+
+
+def test_force_import_does_not_read_or_write_a_file_with_only_blank_translations():
+    file = artifact()
+    file = replace(file, entries=(replace(file.entries[0], translation="　\t"),))
+    port, session = gateway([{"id": 20, "name": file.path}])
+    receipt = execute_file_upload(7, (file,), port, mode="trans_force")
+
+    assert receipt.files[0].status == "unchanged" and not receipt.retry_files
+    assert len(session.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "remote",
+    [
+        requests.Timeout("read timed out"),
+        (413, {}, {}),
+        {"results": [{"key": "0", "translation": "旧"}]},
+        [{"key": "0", "translation": "旧", "file": 21}],
+        [{"key": "0"}],
+        [{"key": "0", "translation": "旧"}, {"key": "0", "translation": "旧"}],
+    ],
+)
+def test_force_import_never_writes_when_a_remote_comparison_is_unavailable(remote):
+    file = artifact()
+    port, session = gateway([{"id": 20, "name": file.path}], remote)
+    receipt = execute_file_upload(7, (file,), port, mode="trans_force")
+
+    assert receipt.files[0].status == "failed" and receipt.retry_files == (file,)
+    assert [call.method for call in session.calls] == ["GET", "GET"]
+
+
+def test_force_import_reloads_comparison_when_write_detects_a_replaced_file():
+    file = artifact()
+    port, session = gateway(
+        [{"id": 20, "name": file.path}],
+        [{"key": "0", "translation": "旧"}],
+        (404, {}, {}),
+        [{"id": 21, "name": file.path}],
+        [{"key": "0", "translation": "译文"}],
+    )
+    receipt = execute_file_upload(7, (file,), port, mode="trans_force")
+
+    assert receipt.files[0].status == "unchanged" and not receipt.retry_files
+    assert [(call.method, call.path_url) for call in session.calls] == [
+        ("GET", "/api/projects/7/files"),
+        ("GET", "/api/projects/7/files/20/translation"),
+        ("POST", "/api/projects/7/files/20/translation"),
+        ("GET", "/api/projects/7/files"),
+        ("GET", "/api/projects/7/files/21/translation"),
+    ]
+
+
+@pytest.mark.parametrize("count", [ARTIFACT_FILE_THRESHOLD - 1, ARTIFACT_FILE_THRESHOLD])
+def test_force_comparison_uses_fresh_selected_archive_at_download_threshold(monkeypatch, count):
+    files = tuple(artifact(path=f"A.esp/{index}.json") for index in range(count))
+    inventory = [{"id": index + 1, "name": file.path} for index, file in enumerate(files)]
+    inventory.append({"id": 1000, "name": "B.esp/other.json"})
+    package = []
+
+    class Download:
+        def __init__(self, config):
+            pass
+
+        def download(self, project_id, path, *, cancellation, progress):
+            assert project_id == 7
+            package.append(path)
+            with ZipFile(path, "w") as zip_file:
+                for index, file in enumerate(files):
+                    row = wire_records(file)[0]
+                    if index == 0:
+                        row["translation"] = "旧译文"
+                    zip_file.writestr(f"raw/{file.path}.json", json.dumps([row]))
+                zip_file.writestr("raw/B.esp/other.json.json", "unrelated data")
+
+    def archive(config):
+        return ArtifactFileReads(config, downloader_factory=Download)
+
+    monkeypatch.setattr("transbridge.paratranz.file_publication.ArtifactFileReads", archive)
+    use_archive = count == ARTIFACT_FILE_THRESHOLD
+    children = []
+
+    def session_factory():
+        session = Responses(({"file": {"id": 1}},))
+        children.append(session)
+        return session
+
+    if use_archive:
+        port, session = gateway(inventory, session_factory=session_factory)
+    else:
+        port, session = gateway(inventory, *([{"key": "0", "translation": "译文"}],) * count)
+    receipt = execute_file_upload(7, files, port, mode="trans_force")
+
+    assert receipt.succeeded == count and not receipt.retry_files
+    if use_archive:
+        assert len(package) == 1 and not package[0].parent.exists()
+        assert [call.method for call in session.calls] == ["GET"]
+        (write,) = [call for child in children for call in child.calls]
+        assert write.method == "POST" and write.path_url == "/api/projects/7/files/1/translation"
+        assert json.loads(write.body)["items"] == [{"key": "0", "translation": "译文", "stage": 3}]
+    else:
+        assert not package
+        assert [call.path_url for call in session.calls[1:]] == [
+            f"/api/projects/7/files/{file['id']}/translation" for file in inventory[:-1]
+        ]
+        assert all(call.method == "GET" for call in session.calls)
+
+
+def test_force_archive_failure_cleans_up_and_keeps_files_for_manual_retry(monkeypatch):
+    files = tuple(artifact(path=f"A.esp/{index}.json") for index in range(ARTIFACT_FILE_THRESHOLD))
+    inventory = [{"id": index + 1, "name": file.path} for index, file in enumerate(files)]
+    package = []
+
+    class Download:
+        def __init__(self, config):
+            pass
+
+        def download(self, project_id, path, **kwargs):
+            package.append(path)
+            path.write_bytes(b"invalid zip")
+
+    monkeypatch.setattr(
+        "transbridge.paratranz.file_publication.ArtifactFileReads",
+        lambda config: ArtifactFileReads(config, downloader_factory=Download),
+    )
+    port, session = gateway(inventory)
+    receipt = execute_file_upload(7, files, port, mode="trans_force")
+
+    assert receipt.retry_files == files and all(item.status == "failed" for item in receipt.files)
+    assert len(package) == 1 and not package[0].parent.exists()
+    assert [call.method for call in session.calls] == ["GET"]
 
 
 @pytest.mark.parametrize("status", ["hashMatched", "unchanged"])
@@ -299,19 +462,23 @@ def test_duplicate_file_keys_fail_locally_without_post():
 
 def test_oversized_translation_import_chunks_inside_same_file():
     port, session = gateway(
-        [{"id": 20, "name": "A.esp/人名.json"}], (413, {}, {}), {"file": {"id": 20}}, {"file": {"id": 20}}
+        [{"id": 20, "name": "A.esp/人名.json"}],
+        [{"key": str(index), "translation": "旧"} for index in range(4)],
+        (413, {}, {}),
+        {"file": {"id": 20}},
+        {"file": {"id": 20}},
     )
     result = execute_file_upload(7, (artifact(4),), port, mode="trans_force")
     assert result.succeeded == 1
     assert all(call.path_url == "/api/projects/7/files/20/translation" for call in session.calls[1:])
-    assert [len(json.loads(call.body)["items"]) for call in session.calls[1:]] == [4, 2, 2]
+    assert [len(json.loads(call.body)["items"]) for call in session.calls[2:]] == [4, 2, 2]
 
 
 def test_single_oversized_translation_does_not_create_split_files():
-    port, session = gateway([{"id": 20, "name": "A.esp/人名.json"}], (413, {}, {}))
+    port, session = gateway([{"id": 20, "name": "A.esp/人名.json"}], [{"key": "0", "translation": ""}], (413, {}, {}))
     result = execute_file_upload(7, (artifact(),), port, mode="trans_force")
     assert result.failed == 1
-    assert len(session.calls) == 2
+    assert len(session.calls) == 3
 
 
 def test_both_reports_source_committed_when_translation_permission_denied():
