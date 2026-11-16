@@ -2,6 +2,7 @@
 from .paratranz_announcements_api import ParatranzAnnouncementsAPI
 from .paratranz_contribution_api import ParatranzScoresAPI
 from .paratranz_export_api import ParatranzExportAPI
+from .paratranz_file_labels_api import ParatranzFileLabelsAPI
 from .paratranz_files_api import ParatranzFilesAPI
 from .paratranz_history_api import ParatranzHistoryAPI
 from .paratranz_issues_api import ParatranzIssuesAPI
@@ -20,6 +21,7 @@ __all__ = [
     "ParatranzTasksAPI",
     "ParatranzProjectAPI",
     "ParatranzFilesAPI",
+    "ParatranzFileLabelsAPI",
     "ParatranzStringsAPI",
     "ParatranzTermsAPI",
     "ParatranzMembersAPI",

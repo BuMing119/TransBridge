@@ -3,21 +3,34 @@ from transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzIssuesAPI(ParatranzClient):
-    def list_issues(self, project_id: int, status: int | None = None):
+    def list_issues(
+        self,
+        project_id: int,
+        status: int | None = None,
+        *,
+        page: int | None = None,
+        page_size: int | None = None,
+        uid: int | None = None,
+        cancellation=None,
+    ):
         """
         获取讨论列表
 
         Args:
             project_id: 项目 ID
             status: 筛选状态，0=讨论中，1=已关闭（不传则返回全部）
+            page, page_size: 页码及每页条数。省略使用服务端默认值。
+            uid: 按发帖用户筛选。
 
         Returns:
             分页结果，含额外字段 closedCount（已关闭数）和 openCount（讨论中数）
         """
-        params = {}
-        if status is not None:
-            params["status"] = status
-        return self._request("GET", f"/projects/{project_id}/issues", params=params if params else None)
+        return self._request(
+            "GET",
+            f"/projects/{project_id}/issues",
+            params={"status": status, "page": page, "pageSize": page_size, "uid": uid},
+            cancellation=cancellation,
+        )
 
     def create_issue(self, project_id: int, title: str, content: str):
         """

@@ -77,6 +77,8 @@ class NewIssueDialog(QDialog):
 
 
 class IssuesTab(QWidget):
+    _PAGE_SIZE = 50
+
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx
@@ -84,6 +86,7 @@ class IssuesTab(QWidget):
         self._project_id: int | None = None
         self._current_issue: dict | None = None
         self._status_filter = 0  # 0=open, 1=closed
+        self._page = 1
         self._gen = 0
         self._detail_gen = 0
         self._access_ok = True
@@ -114,7 +117,7 @@ class IssuesTab(QWidget):
 
         toolbar = QHBoxLayout()
         refresh_btn = QPushButton("刷新")
-        refresh_btn.clicked.connect(self.load_issues)
+        refresh_btn.clicked.connect(lambda: self.load_issues())
         self._new_btn = QPushButton("新建讨论")
         self._new_btn.clicked.connect(self._create_issue)
         for button in (refresh_btn, self._new_btn):
@@ -131,6 +134,17 @@ class IssuesTab(QWidget):
         self._list_status.setTextFormat(Qt.TextFormat.PlainText)
         self._list_status.setWordWrap(True)
         left_layout.addWidget(self._list_status)
+        paging = QHBoxLayout()
+        self._previous_btn = QPushButton("上一页")
+        self._next_btn = QPushButton("下一页")
+        for button in (self._previous_btn, self._next_btn):
+            ComponentStyle.apply_static(button, ComponentKind.BUTTON)
+            button.setEnabled(False)
+            paging.addWidget(button)
+        paging.addStretch()
+        self._previous_btn.clicked.connect(lambda: self.load_issues(page=self._page - 1))
+        self._next_btn.clicked.connect(lambda: self.load_issues(page=self._page + 1))
+        left_layout.addLayout(paging)
 
         splitter.addWidget(left)
 
@@ -200,14 +214,17 @@ class IssuesTab(QWidget):
 
     def _on_status_changed(self, idx: int):
         self._status_filter = idx
-        self.load_issues()
+        self.load_issues(page=1)
 
     def _on_project_changed(self, project):
         self._gen += 1
         self._clear_detail()
         self._project_id = project.get("id") if project else None
+        self._page = 1
         self._list.clear()
         self._list_status.setText("选择项目查看讨论" if not project else "")
+        self._previous_btn.setEnabled(False)
+        self._next_btn.setEnabled(False)
         self._access_ok = True
 
         if project and self._project_id:
@@ -237,38 +254,54 @@ class IssuesTab(QWidget):
         if allowed != self._access_ok:
             self._on_project_changed(project)
 
-    def load_issues(self):
+    def load_issues(self, *, page: int | None = None):
         if not self._project_id or not self._access_ok:
             return
         config = self._ctx.config
         pid = self._project_id
         status = self._status_filter
+        self._page = page if page is not None else self._page
+        page = self._page
         self._gen += 1
         gen = self._gen
         self._clear_detail()
         self._list.clear()
-        self._list_status.setText("正在加载讨论…")
+        self._list_status.setText(f"正在加载第 {page} 页讨论…")
+        self._previous_btn.setEnabled(False)
+        self._next_btn.setEnabled(False)
 
         def _fetch():
             api = ParatranzIssuesAPI(token=config.token, config=config)
-            return _extract_list(api.list_issues(pid, status=status))
+            try:
+                return api.list_issues(pid, status=status, page=page, page_size=self._PAGE_SIZE)
+            finally:
+                api.close()
 
-        def _on_done(issues):
+        def _on_done(payload):
             if self._gen != gen:
                 return
-            self._on_issues_loaded(issues)
+            self._on_issues_loaded(payload)
+
+        def _on_error(error):
+            if self._gen == gen:
+                self._list_status.setText(f"第 {page} 页加载失败：{error}\n请点击刷新重试。")
+                self._previous_btn.setEnabled(page > 1)
 
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
-        w.error.connect(
-            lambda e: self._list_status.setText(f"加载失败：{e}\n请点击刷新重试。") if self._gen == gen else None
-        )
+        w.error.connect(_on_error)
         w.start()
         self._workers.append(w)
 
-    def _on_issues_loaded(self, issues: list):
+    def _on_issues_loaded(self, payload):
+        issues = _extract_list(payload)
+        page_count = payload.get("pageCount") if isinstance(payload, dict) else None
+        has_next = self._page < page_count if type(page_count) is int else len(issues) >= self._PAGE_SIZE
+        self._previous_btn.setEnabled(self._page > 1)
+        self._next_btn.setEnabled(has_next)
         self._list.clear()
-        self._list_status.setText(f"共 {len(issues)} 个讨论" if issues else "当前分类暂无讨论")
+        message = f"第 {self._page} 页 · {len(issues)} 个讨论" if issues else f"第 {self._page} 页暂无讨论"
+        self._list_status.setText(message)
         for issue in issues:
             title = issue.get("title", "（无标题）")
             item = QListWidgetItem(title)
@@ -440,7 +473,7 @@ class IssuesTab(QWidget):
             return api.create_issue(pid, data["title"], data["content"])
 
         w = ApiWorker(_create)
-        w.result.connect(lambda _: self.load_issues() if self._project_id == pid else None)
+        w.result.connect(lambda _: self.load_issues(page=1) if self._project_id == pid else None)
         w.error.connect(lambda e: QMessageBox.critical(self, "创建失败", e))
         w.start()
         self._workers.append(w)

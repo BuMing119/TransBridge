@@ -1,5 +1,5 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""项目公告接口，依据 ParaTranz OpenAPI 0.5.7（2026-11-03 核对）。
+"""项目公告接口，依据 ParaTranz OpenAPI 0.7.0。
 
 文档：https://paratranz.cn/api-docs?format=json 。所有路径均相对于 /api。
 认证、错误分类与取消由 ParatranzClient 处理；HTTP 错误抛出 ExternalServiceError。
@@ -33,7 +33,7 @@ class ParatranzAnnouncementsAPI(ParatranzClient):
         Args:
             project_id: 项目 ID。
             page: 页码，默认 1。
-            page_size: 每页数量，默认 50，官方范围为 1–800。
+            page_size: 每页数量，默认 50，官方范围为 1–1000。
             bumped: True 时仅返回已置顶公告；False 不限置顶，None 不发送该参数。
             category: 公告分类筛选；None 不发送，空字符串仍原样发送。
             cancellation: 可选协作式取消令牌，在发送请求及处理响应时检查。

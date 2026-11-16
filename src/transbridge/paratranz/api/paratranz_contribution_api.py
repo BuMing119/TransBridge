@@ -1,5 +1,5 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""贡献查询接口；依据 https://paratranz.cn/api-docs?format=json（OpenAPI 0.5.7）。"""
+"""贡献查询接口，依据 ParaTranz OpenAPI 0.7.0。"""
 
 from transbridge.paratranz.paratranz_client import ParatranzClient
 
@@ -35,6 +35,7 @@ class ParatranzScoresAPI(ParatranzClient):
 
         Returns:
             含 page、pageSize、rowCount、pageCount、results 的分页对象。
+            指定 begin 或 end 时服务端省略 rowCount 和 pageCount。
             results 为 Score 列表，含 id、createdAt、uid、project、base、multiplier、value。
 
         Raises:

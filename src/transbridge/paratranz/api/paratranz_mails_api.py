@@ -3,9 +3,9 @@ from transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzMailsAPI(ParatranzClient):
-    def list_mails(self, page: int = 1, page_size: int = 50):
+    def list_mails(self, page: int = 1, page_size: int = 50, *, cancellation=None):
         """获取私信列表（分页）"""
-        return self._request("GET", "/mails", params={"page": page, "pageSize": page_size})
+        return self._request("GET", "/mails", params={"page": page, "pageSize": page_size}, cancellation=cancellation)
 
     def send_mail(self, to: int, content: str):
         """
@@ -17,11 +17,16 @@ class ParatranzMailsAPI(ParatranzClient):
         """
         return self._request("POST", "/mails", json={"to": to, "content": content})
 
-    def get_conversation(self, user_id: int):
+    def get_conversation(self, user_id: int, *, before: int | None = None, limit: int | None = None, cancellation=None):
         """
-        获取与某用户的对话记录（按时间排列）
+        获取与某用户的私信。默认近 50 条，最多 100 条。before 查询 ID 更小的记录。
 
         Returns:
             Mail 数组，每项含 id, createdAt, from, to, content, html, status（0=未读, 1=已读）
         """
-        return self._request("GET", f"/mails/conversations/{user_id}")
+        return self._request(
+            "GET",
+            f"/mails/conversations/{user_id}",
+            params={"before": before, "limit": limit},
+            cancellation=cancellation,
+        )

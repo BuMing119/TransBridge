@@ -268,12 +268,31 @@ class TestExportArtifact(unittest.TestCase):
     @patch(_PT_PROJECT_API_PATH)
     def test_export_artifact_success(self, mock_api):
         mock_service = MagicMock()
-        mock_service.trigger_export.return_value = {"job_id": "abc"}
-        mock_service.get_artifacts.return_value = [{"url": "https://example.com/artifact.zip"}]
+        old = {"id": 3, "createdAt": "2026-11-15T00:00:00Z"}
+        current = {"id": 4, "createdAt": "2026-11-15T00:00:01Z"}
+        mock_service.trigger_export.return_value = {"id": 9, "status": 0}
+        mock_service.get_job.return_value = {"id": 9, "status": 1}
+        mock_service.get_latest_artifact.side_effect = [old, old, current]
         mock_api.return_value = mock_service
 
-        r = self.func({"project_id": 1}, self.ctx)
+        with patch("transbridge.smart_assistant.tools.tool_paratranz.time.sleep"):
+            r = self.func({"project_id": 1}, self.ctx)
         self.assertTrue(r.success)
+        self.assertEqual(r.data, current)
+        mock_service.get_job.assert_called_once_with(1, 9, cancellation=None)
+
+    @patch(_PT_PROJECT_API_PATH)
+    def test_report_failed_job_without_fetching_another_artifact(self, mock_api):
+        service = mock_api.return_value
+        service.trigger_export.return_value = {"id": 9, "status": 2}
+        service.get_latest_artifact.return_value = None
+
+        r = self.func({"project_id": 1}, self.ctx)
+
+        self.assertFalse(r.success)
+        self.assertIn("导出任务 9 执行失败", r.message)
+        service.get_latest_artifact.assert_called_once_with(1, cancellation=None)
+        service.get_job.assert_not_called()
 
     @patch(_PT_PROJECT_API_PATH)
     def test_export_cancellation_propagates(self, mock_api):

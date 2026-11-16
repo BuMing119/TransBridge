@@ -3,7 +3,7 @@
 MailsDialog: 私信（Mails）对话框，左侧对话列表 + 右侧消息流。
 """
 
-from PyQt6.QtCore import QSignalBlocker, Qt
+from PyQt6.QtCore import QSignalBlocker, Qt, QTimer
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QDialog,
@@ -47,6 +47,9 @@ def _user_name(user_obj, fallback_id) -> str:
 
 
 class MailsDialog(QDialog):
+    _INBOX_PAGE_SIZE = 100
+    _CONVERSATION_PAGE_SIZE = 50
+
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx
@@ -56,6 +59,12 @@ class MailsDialog(QDialog):
         self._my_uid = (ctx.current_user or {}).get("id")
         self._mail_gen = 0
         self._conv_gen = 0
+        self._mails: list[dict] = []
+        self._mails_page = 0
+        self._has_more_mails = False
+        self._messages: list[dict] = []
+        self._before: int | None = None
+        self._retry_before: int | None = None
         self._drafts: dict[int, str] = {}
         self._sending_uids: set[int] = set()
         self._closed = False
@@ -78,7 +87,7 @@ class MailsDialog(QDialog):
         left_layout.setContentsMargins(0, 0, 0, 0)
         toolbar = QHBoxLayout()
         refresh_btn = QPushButton("刷新")
-        refresh_btn.clicked.connect(self._load_mails)
+        refresh_btn.clicked.connect(lambda: self._load_mails())
         new_btn = QPushButton("新建私信")
         new_btn.clicked.connect(self._new_mail)
         for button in (refresh_btn, new_btn):
@@ -91,6 +100,11 @@ class MailsDialog(QDialog):
         self._conv_list = QListWidget()
         self._conv_list.currentItemChanged.connect(self._on_conv_clicked)
         left_layout.addWidget(self._conv_list, stretch=1)
+        self._more_mails_btn = QPushButton("加载更多对话")
+        ComponentStyle.apply_static(self._more_mails_btn, ComponentKind.BUTTON)
+        self._more_mails_btn.setAutoDefault(False)
+        self._more_mails_btn.clicked.connect(lambda: self._load_mails(page=self._mails_page + 1))
+        left_layout.addWidget(self._more_mails_btn)
         splitter.addWidget(left)
 
         # 右侧：对话详情
@@ -109,12 +123,19 @@ class MailsDialog(QDialog):
         self._conversation_status.setWordWrap(True)
         self._conversation_status.setTextFormat(Qt.TextFormat.PlainText)
         right_layout.addWidget(self._conversation_status)
+        message_actions = QHBoxLayout()
+        message_actions.addStretch()
+        self._more_messages_btn = QPushButton("加载更早消息")
+        self._more_messages_btn.setEnabled(False)
+        self._more_messages_btn.clicked.connect(lambda: self._load_conversation(self._current_uid, before=self._before))
         self._retry_btn = QPushButton("重试加载")
-        ComponentStyle.apply_static(self._retry_btn, ComponentKind.BUTTON)
-        self._retry_btn.setAutoDefault(False)
-        self._retry_btn.clicked.connect(lambda: self._load_conversation(self._current_uid))
+        self._retry_btn.clicked.connect(lambda: self._load_conversation(self._current_uid, before=self._retry_before))
+        for button in (self._more_messages_btn, self._retry_btn):
+            ComponentStyle.apply_static(button, ComponentKind.BUTTON)
+            button.setAutoDefault(False)
+            message_actions.addWidget(button)
         self._retry_btn.hide()
-        right_layout.addWidget(self._retry_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        right_layout.addLayout(message_actions)
 
         # 消息流（滚动区域，最新消息在底部）
         self._msg_scroll = QScrollArea()
@@ -148,25 +169,42 @@ class MailsDialog(QDialog):
         splitter.setSizes([240, 560])
         layout.addWidget(splitter)
 
-    def _load_mails(self):
+    def _load_mails(self, *, page: int = 1):
+        if self._closed:
+            return
         config = self._ctx.config
         self._mail_gen += 1
         gen = self._mail_gen
+        self._more_mails_btn.setEnabled(False)
 
         def _fetch():
             api = ParatranzMailsAPI(token=config.token, config=config)
-            return _extract_list(api.list_mails(page_size=100))
+            try:
+                return api.list_mails(page=page, page_size=self._INBOX_PAGE_SIZE)
+            finally:
+                api.close()
 
-        def _on_done(mails):
+        def _on_done(payload):
             if self._closed or self._mail_gen != gen:
                 return
-            self._on_mails_loaded(mails)
+            mails = _extract_list(payload)
+            page_count = payload.get("pageCount") if isinstance(payload, dict) else None
+            self._mails_page = page
+            self._has_more_mails = page < page_count if type(page_count) is int else len(mails) >= self._INBOX_PAGE_SIZE
+            self._more_mails_btn.setEnabled(self._has_more_mails)
+            if page == 1:
+                self._mails.clear()
+            self._mails.extend(mails)
+            self._on_mails_loaded(self._mails)
+
+        def _on_error(error):
+            if not self._closed and self._mail_gen == gen:
+                self._more_mails_btn.setEnabled(self._has_more_mails)
+                QMessageBox.warning(self, "加载失败", error)
 
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
-        w.error.connect(
-            lambda e: QMessageBox.warning(self, "加载失败", e) if not self._closed and self._mail_gen == gen else None
-        )
+        w.error.connect(_on_error)
         w.start()
         self._workers.append(w)
 
@@ -177,14 +215,16 @@ class MailsDialog(QDialog):
         for mail in mails:
             from_id = mail.get("from")
             to_id = mail.get("to")
-            other_id = to_id if from_id == my_uid else from_id
+            other_id = mail.get("uid", to_id if from_id == my_uid else from_id)
+            if other_id is None:
+                continue
 
             # 尝试从嵌套 user 对象取显示名
             if from_id == my_uid:
                 other_user = mail.get("toUser") or mail.get("to_user") or {}
             else:
                 other_user = mail.get("fromUser") or mail.get("from_user") or {}
-            other_name = _user_name(other_user, other_id)
+            other_name = _user_name(mail.get("user") or other_user, other_id)
 
             if other_id not in seen:
                 seen[other_id] = {"uid": other_id, "name": other_name, "last": mail}
@@ -202,18 +242,22 @@ class MailsDialog(QDialog):
             reverse=True,
         )
 
+        scrollbar = self._conv_list.verticalScrollBar()
+        scroll_position = scrollbar.value()
         with QSignalBlocker(self._conv_list):
             self._conv_list.clear()
             for info in sorted_convs:
                 last = info["last"]
                 name = info["name"]
                 preview = str(last.get("content", ""))[:30]
-                unread = last.get("status") == 0
+                unread_count = last.get("unreadCount")
+                unread = unread_count > 0 if type(unread_count) is int else last.get("status") == 0
                 item = QListWidgetItem(f"{'[未读] ' if unread else ''}{name}\n{preview}")
                 item.setData(Qt.ItemDataRole.UserRole, {"uid": info["uid"], "name": name})
                 self._conv_list.addItem(item)
                 if info["uid"] == self._current_uid:
                     self._conv_list.setCurrentItem(item)
+        scrollbar.setValue(scroll_position)
 
     def _on_conv_clicked(self, item: QListWidgetItem | None, _previous=None):
         if item is None:
@@ -237,32 +281,40 @@ class MailsDialog(QDialog):
         self._send_input.setPlainText(self._drafts.get(uid, ""))
         self._send_input.setEnabled(True)
         self._send_btn.setEnabled(uid not in self._sending_uids)
+        self._messages.clear()
+        self._before = None
+        self._retry_before = None
+        self._more_messages_btn.setEnabled(False)
         self._clear_messages()
         self._conversation_status.clear()
         self._retry_btn.hide()
 
-    def _load_conversation(self, uid: int | None):
+    def _load_conversation(self, uid: int | None, *, before: int | None = None):
         if self._closed or uid is None or uid != self._current_uid:
             return
         config = self._ctx.config
         self._conv_gen += 1
         gen = self._conv_gen
-        self._clear_messages()
-        self._conversation_status.setText("正在加载对话…")
+        self._conversation_status.setText("正在加载更早消息…" if before is not None else "正在加载对话…")
+        self._more_messages_btn.setEnabled(False)
         self._retry_btn.hide()
 
         def _fetch():
             api = ParatranzMailsAPI(token=config.token, config=config)
-            return api.get_conversation(uid)
+            try:
+                return api.get_conversation(uid, before=before, limit=self._CONVERSATION_PAGE_SIZE)
+            finally:
+                api.close()
 
         def _on_done(messages):
             if self._closed or self._conv_gen != gen:
                 return
-            self._on_conversation_loaded(messages)
+            self._on_conversation_loaded(messages, before=before)
 
         def _on_error(error):
             if not self._closed and self._conv_gen == gen:
                 self._conversation_status.setText(f"加载对话失败：{error}")
+                self._retry_before = before
                 self._retry_btn.show()
 
         w = ApiWorker(_fetch)
@@ -278,14 +330,29 @@ class MailsDialog(QDialog):
                 it.widget().hide()
                 it.widget().deleteLater()
 
-    def _on_conversation_loaded(self, messages):
+    def _on_conversation_loaded(self, payload, *, before: int | None):
+        page = _extract_list(payload)
+        page_by_id = {msg["id"]: msg for msg in page if type(msg.get("id")) is int and msg["id"] > 0}
+        if before is not None:
+            older = {msg_id: msg for msg_id, msg in page_by_id.items() if msg_id < before}
+            self._messages.extend(older.values())
+            self._before = min(older) if older and len(page) >= self._CONVERSATION_PAGE_SIZE else None
+        elif page_by_id.keys() & {msg.get("id") for msg in self._messages}:
+            # A refresh after sending can overlap already loaded history.
+            self._messages = [msg for msg in self._messages if msg.get("id") not in page_by_id] + page
+        else:
+            self._messages = page
+            self._before = min(page_by_id) if page_by_id and len(page) >= self._CONVERSATION_PAGE_SIZE else None
+        self._more_messages_btn.setEnabled(self._before is not None)
+        self._render_messages(keep_position=before is not None)
+
+    def _render_messages(self, *, keep_position: bool):
+        scrollbar = self._msg_scroll.verticalScrollBar()
+        offset_from_bottom = scrollbar.maximum() - scrollbar.value() if keep_position else 0
         self._clear_messages()
         my_uid = self._my_uid
         # 按时间升序排列（最新消息在底部）
-        msgs = sorted(
-            messages if isinstance(messages, list) else [],
-            key=lambda m: m.get("createdAt", ""),
-        )
+        msgs = sorted(self._messages, key=lambda msg: (msg.get("createdAt") or "", msg.get("id") or 0))
         self._conversation_status.setText(f"共 {len(msgs)} 条消息" if msgs else "（暂无消息）")
         self._retry_btn.hide()
         for msg in msgs:
@@ -316,8 +383,13 @@ class MailsDialog(QDialog):
             # 插入到 stretch 之前，保持时间顺序从上到下
             self._msg_layout.insertWidget(self._msg_layout.count() - 1, wrapper)
 
-        # 滚动到底部（最新消息）
-        self._msg_scroll.verticalScrollBar().setValue(self._msg_scroll.verticalScrollBar().maximum())
+        generation = self._conv_gen
+
+        def _restore_scroll():
+            if not self._closed and self._conv_gen == generation:
+                scrollbar.setValue(scrollbar.maximum() - offset_from_bottom)
+
+        QTimer.singleShot(0, _restore_scroll)
 
     def _send_message(self):
         if self._closed or self._current_uid is None or self._current_uid in self._sending_uids:

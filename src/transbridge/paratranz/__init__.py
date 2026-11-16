@@ -13,6 +13,7 @@ _EXPORTS = {
     "ParatranzConfig": "config_manager",
     "ParatranzProjectAPI": "api.paratranz_project_api",
     "ParatranzFilesAPI": "api.paratranz_files_api",
+    "ParatranzFileLabelsAPI": "api.paratranz_file_labels_api",
     "ParatranzStringsAPI": "api.paratranz_strings_api",
     "ParatranzTermsAPI": "api.paratranz_terms_api",
     "ParaTranzTermsService": "terms_service",

@@ -9,14 +9,25 @@ class ParatranzTermsAPI(ParatranzClient):
         page: int = 1,
         page_size: int = 50,
         *,
+        text: str | None = None,
+        term: str | None = None,
+        term_id: int | None = None,
+        order_by: str | None = None,
         cancellation=None,
         raw_response: bool = False,
     ):
-        """获取术语列表（分页）"""
+        """分页查询术语，支持模糊搜索、精确术语或 ID 筛选及排序。"""
         return self._request(
             "GET",
             f"/projects/{project_id}/terms",
-            params={"page": page, "pageSize": page_size},
+            params={
+                "page": page,
+                "pageSize": page_size,
+                "text": text,
+                "term": term,
+                "id": term_id,
+                "orderBy": order_by,
+            },
             cancellation=cancellation,
             expected_type=(list, dict),
             raw_response=raw_response,
@@ -45,13 +56,14 @@ class ParatranzTermsAPI(ParatranzClient):
             raw_response=raw_response,
         )
 
-    def import_terms(self, project_id: int, filepath: str):
+    def import_terms(self, project_id: int, filepath: str, *, overwrite: bool = False, cancellation=None):
         """
-        批量导入术语（上传 JSON 文件）
+        批量导入术语（JSON 或 CSV）。
 
         Args:
             project_id: 项目 ID
-            filepath: 本地 JSON 文件路径
+            filepath: 本地 JSON 或 CSV 文件路径。
+            overwrite: 删除导入文件中未出现的现有术语。默认仅新增与更新。
 
         JSON 文件格式:
         [
@@ -65,10 +77,17 @@ class ParatranzTermsAPI(ParatranzClient):
         ]
 
         Returns:
-            {"inserted": int, "updated": int, "deleted": int}
+            返回 inserted 和 updated。覆盖导入时另含 deleted。
         """
         with open(filepath, "rb") as f:
-            return self._request("PUT", f"/projects/{project_id}/terms", files={"file": f})
+            return self._request(
+                "PUT",
+                f"/projects/{project_id}/terms",
+                params={"overwrite": 1} if overwrite else None,
+                files={"file": f},
+                cancellation=cancellation,
+                retryable=False,
+            )
 
     def get_term(self, project_id: int, term_id: int):
         """获取术语信息"""

@@ -8,11 +8,17 @@ from copy import deepcopy
 from datetime import datetime
 from functools import wraps
 import logging
+import time
 from types import SimpleNamespace
 
 from transbridge.application.io.identity import EntryRevision, SourceNamespace
 from transbridge.application.io.paratranz_context_order import context_orders
-from transbridge.application.ports.paratranz import ParaTranzEntry, ParaTranzProject
+from transbridge.application.ports.paratranz import (
+    ExportJobStatus,
+    ParaTranzEntry,
+    ParaTranzExportJob,
+    ParaTranzProject,
+)
 from transbridge.application.projects import (
     ParaTranzProjectBinding,
     ParaTranzTargetResolver,
@@ -26,6 +32,7 @@ from transbridge.application.sync import (
     SyncOperation,
 )
 from transbridge.application.tasks import TaskCancelled
+from transbridge.paratranz.artifact_download import is_new_artifact
 from transbridge.paratranz.sync_snapshot import ParaTranzRemoteSnapshotAdapter
 
 from .base import ToolResult, require_collection
@@ -426,25 +433,31 @@ def _tool_export_artifact(args: dict, ctx) -> ToolResult:
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
-        # 触发导出
         cancellation = _cancellation(ctx)
-        job = client.trigger_export(pid, cancellation=cancellation)
-        # m9: 30秒阻塞轮询占用Agent工作线程，后续可优化为异步回调
-        # 轮询等待完成（最长 30 秒）
-        import time
-
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            if cancellation is None:
-                time.sleep(2)
-            elif cancellation.wait(2):
+        baseline = client.get_latest_artifact(pid, cancellation=cancellation)
+        job_data = client.trigger_export(pid, cancellation=cancellation)
+        job = ParaTranzExportJob.from_mapping(job_data)
+        deadline = time.monotonic() + 30
+        while True:
+            if cancellation is not None:
                 cancellation.raise_if_cancelled()
-            artifacts = client.get_artifacts(pid, cancellation=cancellation)
-            if artifacts:
-                latest = artifacts[-1] if isinstance(artifacts, (list, tuple)) else artifacts
-                result = latest if isinstance(latest, dict) else {"artifact": str(latest)}
-                return ToolResult.ok("工件导出完成", data=result)
-        return ToolResult.ok("导出已触发，仍在处理中（超时未完成）", data={"job": job, "status": "pending"})
+            job.raise_if_failed()
+            if job.status is ExportJobStatus.SUCCEEDED:
+                latest = client.get_latest_artifact(pid, cancellation=cancellation)
+                if latest is not None and is_new_artifact(latest, baseline):
+                    return ToolResult.ok("工件导出完成", data=dict(latest))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            delay = min(2, remaining)
+            if cancellation is None:
+                time.sleep(delay)
+            elif cancellation.wait(delay):
+                cancellation.raise_if_cancelled()
+            if job.status is ExportJobStatus.PENDING:
+                job_data = client.get_job(pid, job.job_id, cancellation=cancellation)
+                job = ParaTranzExportJob.from_mapping(job_data, expected_id=job.job_id)
+        return ToolResult.ok("导出已触发，仍在处理中（超时未完成）", data={"job": job_data, "status": "pending"})
     except TaskCancelled:
         raise
     except Exception as exc:
@@ -778,10 +791,8 @@ def _register_paratranz_tools():
                     "①Export a translation artifact package (.zip) from ParaTranz. "
                     "②Parameters: project_id (optional). "
                     "Write permission, long-running, and confirmation required. ③Returns artifact data on success, or "
-                    '{job,status:"pending"} on timeout. Rule: asynchronous flow: trigger_export starts the job → '
-                    "get_artifacts is polled every 2 seconds for up to 30 seconds → "
-                    "artifact data is returned on success, or "
-                    "pending on timeout."
+                    '{job,status:"pending"} on timeout. Polls the triggered job every 2 seconds for up to '
+                    "30 seconds. Returns fresh artifact data after the job succeeds or an error if it fails."
                 ),
                 "execute": _tool_export_artifact,
                 "permission": "write",

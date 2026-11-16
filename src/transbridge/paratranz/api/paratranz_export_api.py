@@ -1,5 +1,5 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""导出压缩包接口，依据 https://paratranz.cn/api-docs?format=json v0.5.7。
+"""ParaTranz OpenAPI 0.7.0 的项目导出、构建任务和下载记录。
 
 列表仅管理员可读；最近结果与下载权限由项目配置决定，两者不能混用。
 HTTP/解析错误由公共客户端转换为 ExternalServiceError，取消信号原样传播。
@@ -7,8 +7,53 @@ HTTP/解析错误由公共客户端转换为 ExternalServiceError，取消信号
 
 from transbridge.paratranz.paratranz_client import ParatranzClient
 
+from .artifact_response import save_artifact_response
+
 
 class ParatranzExportAPI(ParatranzClient):
+    def list_jobs(
+        self,
+        project_id: int,
+        *,
+        status: int | None = None,
+        limit: int | None = None,
+        job_type: str | None = None,
+        cancellation=None,
+    ):
+        """获取项目的构建和导出任务，按创建时间倒序。"""
+        return self._request(
+            "GET",
+            f"/projects/{project_id}/jobs",
+            params={"status": status, "limit": limit, "type": job_type},
+            cancellation=cancellation,
+            expected_type=list,
+        )
+
+    def get_job(self, project_id: int, job_id: int, *, cancellation=None):
+        """获取单个构建任务的状态和结果。"""
+        return self._request(
+            "GET", f"/projects/{project_id}/jobs/{job_id}", cancellation=cancellation, expected_type=dict
+        )
+
+    def get_download_records(
+        self,
+        project_id: int,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        begin: str | None = None,
+        end: str | None = None,
+        cancellation=None,
+    ):
+        """分页读取项目压缩包下载记录，需项目管理员权限。"""
+        return self._request(
+            "GET",
+            f"/projects/{project_id}/artifacts/records",
+            params={"page": page, "pageSize": page_size, "begin": begin, "end": end},
+            cancellation=cancellation,
+            expected_type=dict,
+        )
+
     def get_artifacts(self, project_id: int, *, page: int = 1, page_size: int = 50, cancellation=None):
         """GET /projects/{projectId}/artifacts：获取导出历史列表，仅管理员可用。
 
@@ -57,8 +102,8 @@ class ParatranzExportAPI(ParatranzClient):
             cancellation: 可选协作取消信号。
 
         Returns:
-            Job 对象，包含 id、status（0=未开始，1=执行中，2=成功，-1=失败）等字段。
-            返回不代表压缩包已生成；调用方需等待新的导出结果。超时不自动重发 POST。
+            Job 对象，包含 id、status（0=等待或执行中，1=成功，2=失败）等字段。
+            调用方可用 get_job 查询完成状态。超时不自动重发 POST。
         """
         return self._request(
             "POST",
@@ -90,13 +135,4 @@ class ParatranzExportAPI(ParatranzClient):
             stream=True,
         )
 
-        try:
-            with open(save_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if cancellation is not None:
-                        cancellation.raise_if_cancelled()
-                    f.write(chunk)
-        finally:
-            response.close()
-
-        return save_path
+        return save_artifact_response(response, save_path, cancellation=cancellation)

@@ -1,15 +1,17 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""翻译记忆建议接口，依据官方 OpenAPI v0.5.7（2026-11-03 核对）。
+"""翻译记忆和机器翻译建议接口，依据 ParaTranz OpenAPI 0.7.0。
 
 文档：https://paratranz.cn/api-docs?format=json。
-该接口开销高，调用方必须串行调用并复用缓存，不应批量并发或高频轮询。
+建议接口开销高，调用方须串行调用并复用缓存。
 """
+
+from typing import Literal
 
 from transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzSuggestionsAPI(ParatranzClient):
-    """读取翻译建议；不创建翻译、不触发机器翻译。"""
+    """查询翻译建议，保留远端词条内容。"""
 
     def get_suggestions(
         self,
@@ -57,4 +59,45 @@ class ParatranzSuggestionsAPI(ParatranzClient):
             raw_response=raw_response,
             cancellation=cancellation,
             retryable=False,
+        )
+
+    def get_machine_translation(
+        self,
+        project_id: int,
+        string_id: int,
+        *,
+        service: Literal["google", "youdao", "baidu", "deepl"] = "google",
+        api_key: str | None = None,
+        app_key: str | None = None,
+        app_secret: str | None = None,
+        force: bool = False,
+        model: str | None = None,
+        is_pro: bool | None = None,
+        action: str | None = None,
+        cancellation=None,
+    ):
+        """翻译指定词条原文。目标语言为 other 时可返回 None。
+
+        参数按机翻服务选择。Google/DeepL 用 api_key，有道/百度用 app_key
+        和 app_secret。结果缓存 7 天，调用方需串行调用。
+        """
+        params = {
+            "service": service,
+            "apiKey": api_key,
+            "appKey": app_key,
+            "appSecret": app_secret,
+            "force": "true" if force else None,
+            "model": model,
+            "isPro": str(is_pro).lower() if is_pro is not None else None,
+            "action": action,
+        }
+        return self._request(
+            "GET",
+            f"/projects/{project_id}/strings/{string_id}/suggestions/mt",
+            params=params,
+            expected_type=(dict, type(None)),
+            cancellation=cancellation,
+            retryable=False,
+            allow_redirects=False,
+            sensitive_values=tuple(value for value in (api_key, app_key, app_secret) if value),
         )

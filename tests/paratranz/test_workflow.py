@@ -11,6 +11,7 @@ import zipfile
 
 import pytest
 
+from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError
 from transbridge.paratranz.config_manager import ParatranzConfig
 from transbridge.paratranz.workflow.artifact import ArtifactWorkflow
 
@@ -38,6 +39,7 @@ class TestArtifactWorkflow:
     def _make_workflow(self) -> tuple[ArtifactWorkflow, MagicMock]:
         workflow = ArtifactWorkflow(make_config())
         mock_api = MagicMock()
+        mock_api.trigger_export.return_value = {"id": 17, "status": 1}
         workflow._api = mock_api
         return workflow, mock_api
 
@@ -151,6 +153,43 @@ class TestArtifactWorkflow:
 
         mock_api.download_artifacts.assert_called_once()
         assert result == save_path
+
+    def test_export_job_failure_preserves_existing_zip(self, tmp_path):
+        workflow, mock_api = self._make_workflow()
+        target = tmp_path / "export.zip"
+        target.write_bytes(b"existing zip")
+        mock_api.get_artifacts.return_value = {"results": [{"id": 12}]}
+        mock_api.trigger_export.return_value = {"id": 17, "status": 0}
+        mock_api.get_job.return_value = {"id": 17, "status": 2}
+
+        with pytest.raises(RuntimeError, match="导出任务 17 执行失败"):
+            workflow.trigger_and_download(7, target)
+
+        mock_api.get_job.assert_called_once_with(7, 17, cancellation=None)
+        mock_api.get_artifacts.assert_called_once_with(7)
+        mock_api.download_artifacts.assert_not_called()
+        assert target.read_bytes() == b"existing zip"
+        assert list(tmp_path.iterdir()) == [target]
+
+    def test_export_request_error_keeps_reportable_server_details(self, tmp_path):
+        workflow, mock_api = self._make_workflow()
+        target = tmp_path / "export.zip"
+        mock_api.get_artifacts.return_value = {"results": []}
+        mock_api.trigger_export.return_value = {"id": 17, "status": 0}
+        mock_api.get_job.side_effect = ExternalServiceError(
+            ExternalServiceCategory.LOCKED,
+            "request failed",
+            status=423,
+            request_id="server-report-id",
+            remote_code="FILE_BUSY",
+        )
+
+        with pytest.raises(RuntimeError, match="REMOTE_LOCKED.*status=423.*request_id=server-report-id.*FILE_BUSY"):
+            workflow.trigger_and_download(7, target)
+
+        mock_api.get_job.assert_called_once_with(7, 17, cancellation=None)
+        mock_api.download_artifacts.assert_not_called()
+        assert not target.exists()
 
     # ── extract：正确解压 zip ────────────────────────────────────
 

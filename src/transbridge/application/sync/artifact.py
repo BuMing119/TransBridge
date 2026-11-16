@@ -26,7 +26,14 @@ from transbridge.application.io.publish import (
     PublishCommitGuard,
     PublishFilesystemPort,
 )
-from transbridge.application.ports.paratranz import CancellationPort, ExternalServiceError, ParaTranzPort
+from transbridge.application.ports.paratranz import (
+    CancellationPort,
+    ExportJobFailed,
+    ExportJobStatus,
+    ExternalServiceError,
+    ParaTranzExportJob,
+    ParaTranzPort,
+)
 
 from .models import canonical_hash
 
@@ -130,11 +137,13 @@ class ParaTranzArtifactPublisher:
                 cancellation=request.cancellation,
             )
             _raise_if_cancelled(request.cancellation)
-            self._remote.trigger_export(
+            started = self._remote.trigger_export(
                 request.project_id,
                 cancellation=request.cancellation,
             )
-            artifact = self._poll_artifact(request, baseline)
+            # Custom adapters predating get_job can still check artifact freshness.
+            job = ParaTranzExportJob.from_mapping(started) if hasattr(self._remote, "get_job") else None
+            artifact = self._poll_artifact(request, baseline, job)
             _raise_if_cancelled(request.cancellation)
             self._filesystem.exclusive_create(stage, mode=0o600)
             downloaded = self._remote.download_artifact(
@@ -239,7 +248,19 @@ class ParaTranzArtifactPublisher:
                 f"REMOTE_{exc.category.value.upper()}",
                 "The remote artifact operation failed.",
                 retryable=_retryable_external(exc),
+                details=tuple(
+                    (key, value)
+                    for key, value in (
+                        ("status", exc.status),
+                        ("request_id", exc.request_id),
+                        ("remote_code", exc.remote_code),
+                    )
+                    if value is not None
+                ),
             )
+        except ExportJobFailed as exc:
+            self._cleanup(stage)
+            return _artifact_failed(request.run_id, "ARTIFACT_JOB_FAILED", str(exc))
         except _ArtifactFailure as exc:
             if published and manifest is not None:
                 return _artifact_partial(request.run_id, target, manifest, exc.code, exc.safe_message)
@@ -276,15 +297,21 @@ class ParaTranzArtifactPublisher:
         self,
         request: ArtifactPublishRequest,
         baseline: Sequence[Mapping[str, Any]],
+        job: ParaTranzExportJob | None,
     ) -> dict[str, Any]:
         baseline_states = {_artifact_identity(dict(item)): _artifact_ready(dict(item)) for item in baseline}
+        if job is not None:
+            job.raise_if_failed()
         for attempt in range(request.max_poll_attempts):
             _raise_if_cancelled(request.cancellation)
             try:
-                artifacts = self._remote.get_artifacts(
-                    request.project_id,
-                    cancellation=request.cancellation,
-                )
+                if job is not None and job.status is ExportJobStatus.PENDING:
+                    payload = self._remote.get_job(request.project_id, job.job_id, cancellation=request.cancellation)
+                    job = ParaTranzExportJob.from_mapping(payload, expected_id=job.job_id)
+                    job.raise_if_failed()
+                artifacts = ()
+                if job is None or job.status is ExportJobStatus.SUCCEEDED:
+                    artifacts = self._remote.get_artifacts(request.project_id, cancellation=request.cancellation)
             except ExternalServiceError as exc:
                 if not _retryable_external(exc) or attempt + 1 >= request.max_poll_attempts:
                     raise
@@ -387,10 +414,17 @@ def _is_sha256(value: str) -> bool:
     return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
 
 
-def _artifact_failed(run_id: str, code: str, message: str, *, retryable: bool = False) -> OperationResult[dict]:
+def _artifact_failed(
+    run_id: str,
+    code: str,
+    message: str,
+    *,
+    retryable: bool = False,
+    details: tuple[tuple[str, Any], ...] = (),
+) -> OperationResult[dict]:
     return OperationResult(
         OperationOutcome.FAILED,
-        diagnostics=(Diagnostic(code, message, category=ErrorCategory.EXTERNAL, retryable=retryable),),
+        diagnostics=(Diagnostic(code, message, category=ErrorCategory.EXTERNAL, retryable=retryable, details=details),),
         counts=OperationCounts(failed=1),
         run_id=run_id,
     )

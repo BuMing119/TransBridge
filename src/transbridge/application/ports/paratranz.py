@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 from typing import Any, Protocol
 
 
@@ -20,6 +20,10 @@ class ExternalServiceCategory(StrEnum):
     TRANSPORT = "transport"
     INVALID_RESPONSE = "invalid_response"
     CANCELLED = "cancelled"
+    INVALID_REQUEST = "invalid_request"
+    METHOD_NOT_ALLOWED = "method_not_allowed"
+    LOCKED = "locked"
+    FAILED_DEPENDENCY = "failed_dependency"
 
 
 class ExternalServiceError(RuntimeError):
@@ -32,12 +36,14 @@ class ExternalServiceError(RuntimeError):
         *,
         status: int | None = None,
         request_id: str | None = None,
+        remote_code: str | None = None,
         retry_after: float | None = None,
         safe_context: Mapping[str, str] | None = None,
     ) -> None:
         self.category = category
         self.status = status
         self.request_id = request_id
+        self.remote_code = remote_code
         self.retry_after = retry_after
         self.safe_context = tuple(sorted((safe_context or {}).items()))
         details = [message]
@@ -45,9 +51,49 @@ class ExternalServiceError(RuntimeError):
             details.append(f"status={status}")
         if request_id:
             details.append(f"request_id={request_id}")
+        if remote_code:
+            details.append(f"remote_code={remote_code}")
         if self.safe_context:
             details.append("context=" + repr(dict(self.safe_context)))
         super().__init__("; ".join(details))
+
+
+class ExportJobStatus(IntEnum):
+    PENDING = 0
+    SUCCEEDED = 1
+    FAILED = 2
+
+
+class ExportJobFailed(RuntimeError):
+    def __init__(self, job_id: int) -> None:
+        self.job_id = job_id
+        super().__init__(f"ParaTranz 导出任务 {job_id} 执行失败。")
+
+
+@dataclass(frozen=True, slots=True)
+class ParaTranzExportJob:
+    job_id: int
+    status: ExportJobStatus
+
+    @classmethod
+    def from_mapping(cls, payload: object, *, expected_id: int | None = None) -> ParaTranzExportJob:
+        job_id = payload.get("id") if isinstance(payload, Mapping) else None
+        status = payload.get("status") if isinstance(payload, Mapping) else None
+        if (
+            type(job_id) is not int
+            or job_id < 1
+            or (expected_id is not None and job_id != expected_id)
+            or type(status) is not int
+            or status not in (0, 1, 2)
+        ):
+            raise ExternalServiceError(
+                ExternalServiceCategory.INVALID_RESPONSE, "ParaTranz export job ID or status is invalid"
+            )
+        return cls(job_id, ExportJobStatus(status))
+
+    def raise_if_failed(self) -> None:
+        if self.status is ExportJobStatus.FAILED:
+            raise ExportJobFailed(self.job_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +247,10 @@ class ParaTranzPort(Protocol):
     ) -> tuple[ParaTranzUploadHistory, ...]: ...
 
     def trigger_export(self, project_id: int, *, cancellation: CancellationPort | None = None) -> Mapping[str, Any]: ...
+
+    def get_job(
+        self, project_id: int, job_id: int, *, cancellation: CancellationPort | None = None
+    ) -> Mapping[str, Any]: ...
 
     def get_artifacts(
         self, project_id: int, *, cancellation: CancellationPort | None = None

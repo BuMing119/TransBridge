@@ -329,6 +329,17 @@ class ParaTranzService:
             return (dict(payload),)
         return tuple(dict(item) for item in self._items(payload, "results", "artifacts"))
 
+    def get_job(
+        self, project_id: int, job_id: int, *, cancellation: CancellationPort | None = None
+    ) -> Mapping[str, Any]:
+        return self._mapping(self._exports.get_job(project_id, job_id, cancellation=cancellation), "export job")
+
+    def get_latest_artifact(
+        self, project_id: int, *, cancellation: CancellationPort | None = None
+    ) -> Mapping[str, Any] | None:
+        payload = self._exports.get_latest_artifact(project_id, cancellation=cancellation)
+        return None if payload is None else self._mapping(payload, "latest artifact")
+
     def download_artifact(
         self,
         project_id: int,

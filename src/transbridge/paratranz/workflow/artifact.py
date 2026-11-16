@@ -5,11 +5,10 @@ ArtifactWorkflow：触发 ParaTranz 导出，轮询完成状态，下载并解�
 工作流：
   1. 记录当前最新 artifact 的 createdAt 时间 t0
   2. 调用 trigger_export() 触发新导出
-  3. 以固定间隔轮询 get_artifacts()，直到出现 createdAt > t0 的新记录（或超时）
+  3. 按任务 ID 查询构建状态，成功后等待新的导出记录
   4. 调用 download_artifacts() 将压缩包写入本地
   5. 可选：extract() 解压到目标目录
 
-注意：ParaTranz 目前无独立 Job 状态查询接口，采用轮询 artifacts.createdAt 的降级策略。
 """
 
 from collections.abc import Callable, Mapping
@@ -87,10 +86,17 @@ class ArtifactWorkflow:
                 max_poll_attempts=max(1, math.ceil(timeout / poll_interval)),
             )
         )
-        if result.outcome is OperationOutcome.FAILED and result.diagnostics[0].code == "ARTIFACT_POLL_TIMEOUT":
+        diagnostic = result.diagnostics[0] if result.diagnostics else None
+        code = diagnostic.code if diagnostic else "ARTIFACT_PUBLISH_FAILED"
+        if result.outcome is OperationOutcome.FAILED and code == "ARTIFACT_POLL_TIMEOUT":
             raise TimeoutError(f"导出超时（超过 {timeout:.0f} 秒），请稍后到 ParaTranz 网站手动下载。")
+        if diagnostic is not None and code == "ARTIFACT_JOB_FAILED":
+            raise RuntimeError(diagnostic.message)
+        if diagnostic is not None and code.startswith("REMOTE_"):
+            details = ", ".join(f"{key}={value}" for key, value in diagnostic.details)
+            error = f"ParaTranz 导出请求失败（{code}）"
+            raise RuntimeError(f"{error} · {details}" if details else error)
         if result.outcome not in {OperationOutcome.COMPLETED, OperationOutcome.PARTIAL}:
-            code = result.diagnostics[0].code if result.diagnostics else "ARTIFACT_PUBLISH_FAILED"
             raise RuntimeError(f"ParaTranz artifact publication failed ({code})")
         notify("导出完成，已通过校验并原子发布。")
         notify(f"已下载至：{save_path}")
@@ -133,6 +139,8 @@ class _LegacyArtifactPort:
                 payload = self._api.get_artifacts(project_id)
             else:
                 payload = self._api.get_artifacts(project_id, cancellation=cancellation)
+        except ExternalServiceError:
+            raise
         except RuntimeError as exc:
             raise ExternalServiceError(
                 ExternalServiceCategory.TRANSPORT,
@@ -157,11 +165,16 @@ class _LegacyArtifactPort:
             if cancellation is None:
                 return self._api.trigger_export(project_id)
             return self._api.trigger_export(project_id, cancellation=cancellation)
+        except ExternalServiceError:
+            raise
         except RuntimeError as exc:
             raise ExternalServiceError(
                 ExternalServiceCategory.TRANSPORT,
                 "ParaTranz export trigger failed",
             ) from exc
+
+    def get_job(self, project_id: int, job_id: int, *, cancellation: CancellationPort | None = None):
+        return self._api.get_job(project_id, job_id, cancellation=cancellation)
 
     def download_artifact(
         self,
@@ -178,6 +191,8 @@ class _LegacyArtifactPort:
                 destination,
                 cancellation=cancellation,
             )
+        except ExternalServiceError:
+            raise
         except RuntimeError as exc:
             raise ExternalServiceError(
                 ExternalServiceCategory.TRANSPORT,

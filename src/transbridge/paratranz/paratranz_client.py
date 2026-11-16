@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from math import isfinite
 import ssl
 import time
 from typing import Any
+from urllib.parse import quote, quote_plus
 import uuid
 
 import requests
@@ -18,10 +21,9 @@ from transbridge.application.ports.paratranz import (
     ExternalServiceCategory,
     ExternalServiceError,
 )
-from transbridge.config.paratranz_credentials import (
-    UnavailableCredentialStore,
-    redact_credential_data,
-)
+from transbridge.application.security.diagnostic_logging import diagnostic_credentials
+from transbridge.application.security.redaction import SecretRedactor
+from transbridge.config.paratranz_credentials import UnavailableCredentialStore
 
 from .config_manager import ParatranzConfig
 
@@ -69,6 +71,7 @@ class ParatranzClient:
     """Compatibility HTTP adapter implementing the typed remote boundary."""
 
     _IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
+    _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 
     def __init__(
         self,
@@ -122,42 +125,76 @@ class ParatranzClient:
             raise ParatranzCredentialRequiredError()
         return headers
 
-    def _safe(self, value: Any) -> Any:
-        return redact_credential_data(value, self.config._secret)
-
+    @staticmethod
     def _error(
-        self,
         category: ExternalServiceCategory,
         message: str,
         *,
         endpoint: str,
+        redactor: SecretRedactor,
         status: int | None = None,
         request_id: str | None = None,
+        remote_code: str | None = None,
         retry_after: float | None = None,
         response_text: str | None = None,
     ) -> ExternalServiceError:
-        context = {"endpoint": str(self._safe(endpoint))}
+        context = {"endpoint": redactor.redact_text(endpoint)}
         if response_text:
-            context["response"] = str(self._safe(response_text))[:512]
-        safe_request_id = str(self._safe(request_id))[:128] if request_id else None
+            context["response"] = redactor.redact_text(response_text)[:512]
         return ExternalServiceError(
             category,
             message,
             status=status,
-            request_id=safe_request_id,
+            request_id=" ".join(redactor.redact_text(request_id).splitlines())[:128] if request_id else None,
+            remote_code=" ".join(redactor.redact_text(remote_code).splitlines())[:128] if remote_code else None,
             retry_after=retry_after,
             safe_context=context,
+        )
+
+    def _status_error(
+        self,
+        response: requests.Response,
+        category: ExternalServiceCategory,
+        *,
+        endpoint: str,
+        request_id: str,
+        redactor: SecretRedactor,
+    ) -> ExternalServiceError:
+        body = {}
+        try:
+            response_text = response.text
+        except requests.RequestException as exc:
+            response_text = str(exc)
+        else:
+            try:
+                decoded = json.loads(response_text)
+            except ValueError:
+                decoded = None
+            if isinstance(decoded, dict):
+                body = decoded
+        remote_id, code, message = (body.get(key) for key in ("id", "code", "message"))
+        return self._error(
+            category,
+            "ParaTranz request failed",
+            endpoint=endpoint,
+            redactor=redactor,
+            status=response.status_code,
+            request_id=remote_id if isinstance(remote_id, str) and remote_id.strip() else request_id,
+            remote_code=str(code) if type(code) in (str, int) else None,
+            retry_after=self._retry_after(response),
+            response_text=message if isinstance(message, str) and message.strip() else response_text,
         )
 
     @staticmethod
     def _retry_after(response: requests.Response) -> float | None:
         raw = response.headers.get("Retry-After")
-        if not raw:
+        if not isinstance(raw, str) or not raw:
             return None
         try:
-            return max(float(raw), 0.0)
+            seconds = float(raw)
         except ValueError:
             return None
+        return max(seconds, 0.0) if isfinite(seconds) else None
 
     def _wait(self, delay: float, cancellation: CancellationPort | None) -> None:
         if cancellation is None:
@@ -178,9 +215,10 @@ class ParatranzClient:
         retryable: bool | None = None,
         expected_type: type | tuple[type, ...] | None = None,
         raw_response: bool = False,
+        sensitive_values: tuple[str, ...] = (),
         **kwargs: Any,
     ) -> Any:
-        """Send one typed request with safe retry and cancellation checkpoints."""
+        """Send one typed request, protecting any per-call secrets in diagnostics."""
 
         normalized_method = method.upper()
         retryable_operation = (
@@ -196,107 +234,131 @@ class ParatranzClient:
         headers["X-Request-ID"] = request_id
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
+        diagnostic_values = tuple(
+            representation
+            for value in (headers["Authorization"].removeprefix("Bearer "), *sensitive_values)
+            if value
+            for representation in (
+                value,
+                quote(value, safe=""),
+                quote_plus(value),
+                json.dumps(value, ensure_ascii=False)[1:-1],
+                json.dumps(value)[1:-1],
+            )
+        )
+        redactor = SecretRedactor(known_secrets=diagnostic_values)
 
         for attempt in range(1, self.retry_policy.max_attempts + 1):
             if cancellation is not None:
                 cancellation.raise_if_cancelled()
             try:
-                response = self._session.request(
-                    method=normalized_method,
-                    url=url,
-                    headers=headers,
-                    timeout=self.config.timeout,
-                    **kwargs,
-                )
-            except requests.Timeout as exc:
-                error = self._error(
-                    ExternalServiceCategory.TIMEOUT,
-                    "ParaTranz request timed out",
-                    endpoint=endpoint,
-                    request_id=request_id,
-                    response_text=str(exc),
-                )
-                if not retryable_operation or attempt == self.retry_policy.max_attempts:
-                    raise error from None
-                self._wait(self.retry_policy.delay(attempt), cancellation)
-                continue
+                with diagnostic_credentials(*diagnostic_values):
+                    response = self._session.request(
+                        method=normalized_method,
+                        url=url,
+                        headers=headers,
+                        timeout=self.config.timeout,
+                        **kwargs,
+                    )
             except requests.RequestException as exc:
+                timed_out = isinstance(exc, requests.Timeout)
                 error = self._error(
-                    ExternalServiceCategory.TRANSPORT,
-                    "ParaTranz transport failed",
+                    ExternalServiceCategory.TIMEOUT if timed_out else ExternalServiceCategory.TRANSPORT,
+                    "ParaTranz request timed out" if timed_out else "ParaTranz transport failed",
                     endpoint=endpoint,
+                    redactor=redactor,
                     request_id=request_id,
                     response_text=str(exc),
                 )
-                if not retryable_operation or attempt == self.retry_policy.max_attempts:
-                    raise error from None
-                self._wait(self.retry_policy.delay(attempt), cancellation)
-                continue
+                can_retry = True
+            else:
+                handed_off = False
+                try:
+                    if cancellation is not None:
+                        cancellation.raise_if_cancelled()
+                    response_request_id = response.headers.get("X-Request-ID") or response.headers.get(
+                        "X-Correlation-ID"
+                    )
+                    if not isinstance(response_request_id, str) or not response_request_id.strip():
+                        response_request_id = request_id
+                    category = self._status_category(response.status_code)
+                    if category is None:
+                        if raw_response:
+                            handed_off = True
+                            return response
+                        return self._decode_response(
+                            response,
+                            endpoint=endpoint,
+                            request_id=response_request_id,
+                            redactor=redactor,
+                            expected_type=expected_type,
+                            cancellation=cancellation,
+                        )
+                    error = self._status_error(
+                        response, category, endpoint=endpoint, request_id=response_request_id, redactor=redactor
+                    )
+                    can_retry = response.status_code in self._RETRYABLE_STATUSES
+                finally:
+                    if not handed_off and response.raw is not None:
+                        response.close()
 
-            if cancellation is not None:
-                cancellation.raise_if_cancelled()
-            response_request_id = (
-                response.headers.get("X-Request-ID") or response.headers.get("X-Correlation-ID") or request_id
-            )
-            retry_after = self._retry_after(response)
-            category = self._status_category(response.status_code)
-            if category is not None:
-                error = self._error(
-                    category,
-                    "ParaTranz request failed",
-                    endpoint=endpoint,
-                    status=response.status_code,
-                    request_id=response_request_id,
-                    retry_after=retry_after,
-                    response_text=response.text,
-                )
-                can_retry = category in {
-                    ExternalServiceCategory.RATE_LIMITED,
-                    ExternalServiceCategory.UNAVAILABLE,
-                }
-                if not retryable_operation or not can_retry or attempt == self.retry_policy.max_attempts:
-                    raise error
-                self._wait(self.retry_policy.delay(attempt, retry_after), cancellation)
-                continue
-
-            if raw_response:
-                return response
-            if response.status_code == 204 or not response.content.strip():
-                return None
-            try:
-                result = response.json()
-            except ValueError:
-                raise self._error(
-                    ExternalServiceCategory.INVALID_RESPONSE,
-                    "ParaTranz returned malformed JSON",
-                    endpoint=endpoint,
-                    status=response.status_code,
-                    request_id=response_request_id,
-                ) from None
-            if expected_type is not None and not isinstance(result, expected_type):
-                raise self._error(
-                    ExternalServiceCategory.INVALID_RESPONSE,
-                    "ParaTranz response schema is invalid",
-                    endpoint=endpoint,
-                    status=response.status_code,
-                    request_id=response_request_id,
-                )
-            if cancellation is not None:
-                cancellation.raise_if_cancelled()
-            return result
+            if not retryable_operation or not can_retry or attempt == self.retry_policy.max_attempts:
+                raise error from None
+            self._wait(self.retry_policy.delay(attempt, error.retry_after), cancellation)
         raise RuntimeError("unreachable ParaTranz retry state")
+
+    def _decode_response(
+        self,
+        response: requests.Response,
+        *,
+        endpoint: str,
+        request_id: str,
+        redactor: SecretRedactor,
+        expected_type: type | tuple[type, ...] | None,
+        cancellation: CancellationPort | None,
+    ) -> Any:
+        if response.status_code == 204 or not response.content.strip():
+            return None
+        result = None
+        message = None
+        try:
+            result = response.json()
+        except ValueError:
+            message = "ParaTranz returned malformed JSON"
+        else:
+            if expected_type is not None and not isinstance(result, expected_type):
+                message = "ParaTranz response schema is invalid"
+        if message:
+            raise self._error(
+                ExternalServiceCategory.INVALID_RESPONSE,
+                message,
+                endpoint=endpoint,
+                redactor=redactor,
+                status=response.status_code,
+                request_id=request_id,
+            ) from None
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
+        return result
 
     @staticmethod
     def _status_category(status: int) -> ExternalServiceCategory | None:
         if 200 <= status < 300:
             return None
+        if 500 <= status < 600:
+            return ExternalServiceCategory.UNAVAILABLE
+        if not 400 <= status < 500:
+            return ExternalServiceCategory.INVALID_RESPONSE
         return {
             401: ExternalServiceCategory.AUTHENTICATION,
             403: ExternalServiceCategory.AUTHORIZATION,
             404: ExternalServiceCategory.NOT_FOUND,
+            405: ExternalServiceCategory.METHOD_NOT_ALLOWED,
             409: ExternalServiceCategory.CONFLICT,
+            423: ExternalServiceCategory.LOCKED,
+            424: ExternalServiceCategory.FAILED_DEPENDENCY,
             429: ExternalServiceCategory.RATE_LIMITED,
-        }.get(status, ExternalServiceCategory.UNAVAILABLE)
+        }.get(status, ExternalServiceCategory.INVALID_REQUEST)
 
     def _request_multipart(
         self,

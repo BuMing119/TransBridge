@@ -1,8 +1,11 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Generate and download a fresh project export for one batch read."""
 
+from collections.abc import Mapping
 from datetime import datetime
 from time import sleep
+
+from transbridge.application.ports.paratranz import ExportJobStatus, ParaTranzExportJob
 
 from .api.paratranz_export_api import ParatranzExportAPI
 
@@ -28,14 +31,24 @@ class FreshArtifactDownload:
             if baseline is not None:
                 _identity(baseline)
             _check_cancelled(cancellation)
-            job = api.trigger_export(project_id, cancellation=cancellation)
-            if not isinstance(job, dict) or job.get("status") == -1:
+            started = api.trigger_export(project_id, cancellation=cancellation)
+            get_job = getattr(api, "get_job", None)
+            job = ParaTranzExportJob.from_mapping(started) if get_job is not None else None
+            if job is not None:
+                job.raise_if_failed()
+            elif not isinstance(started, dict) or started.get("status") == -1:
+                # Older injected adapters only expose the artifact metadata poll.
                 raise ValueError("ParaTranz 未能启动压缩包生成，请检查项目导出状态。")
             for attempt in range(self.max_polls):
                 notify(f"正在等待新压缩包生成（{attempt + 1}/{self.max_polls}）…")
-                latest = api.get_latest_artifact(project_id, cancellation=cancellation)
-                if latest is not None and _newer(latest, baseline):
-                    break
+                if job is not None and job.status is ExportJobStatus.PENDING:
+                    payload = get_job(project_id, job.job_id, cancellation=cancellation)
+                    job = ParaTranzExportJob.from_mapping(payload, expected_id=job.job_id)
+                    job.raise_if_failed()
+                if job is None or job.status is ExportJobStatus.SUCCEEDED:
+                    latest = api.get_latest_artifact(project_id, cancellation=cancellation)
+                    if latest is not None and is_new_artifact(latest, baseline):
+                        break
                 if attempt + 1 < self.max_polls:
                     if cancellation is None:
                         sleep(self.poll_interval)
@@ -55,7 +68,7 @@ class FreshArtifactDownload:
 
 
 def _identity(artifact):
-    if not isinstance(artifact, dict) or type(artifact.get("id")) is not int or artifact["id"] < 1:
+    if not isinstance(artifact, Mapping) or type(artifact.get("id")) is not int or artifact["id"] < 1:
         raise ValueError("ParaTranz 导出结果缺少有效身份。")
     timestamp = artifact.get("createdAt")
     try:
@@ -67,7 +80,8 @@ def _identity(artifact):
     return artifact["id"], created
 
 
-def _newer(artifact, baseline):
+def is_new_artifact(artifact, baseline):
+    """Check that a project's latest artifact is distinct from and newer than the baseline."""
     identity = _identity(artifact)
     if baseline is None:
         return True

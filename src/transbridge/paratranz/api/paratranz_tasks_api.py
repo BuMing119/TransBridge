@@ -1,7 +1,8 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""项目任务接口，依据 ParaTranz OpenAPI 0.5.7（2026-11-03 核对）。
+"""项目任务接口，依据 ParaTranz OpenAPI 0.7.0。
 
 官方文档：https://paratranz.cn/api-docs?format=json
+项目须开启任务功能（extra.task），否则服务端返回 403。
 项目须开启 ``extra.task``。读取要求项目成员权限，写入要求管理员以上权限；
 未登录返回 401，无权限返回 403。参数、任务状态及权限最终由服务端校验。
 所有方法接受可选的 ``cancellation`` 协作取消令牌；HTTP/响应错误通过
@@ -12,30 +13,46 @@ from typing import Literal
 
 from transbridge.paratranz.paratranz_client import ParatranzClient
 
+from .artifact_response import save_artifact_response
+
 
 class ParatranzTasksAPI(ParatranzClient):
     """管理项目任务、任务文件以及显式关联的任务词条。"""
 
-    def list_tasks(self, project_id: int, page: int = 1, page_size: int = 20, *, cancellation=None):
+    def list_tasks(
+        self,
+        project_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        *,
+        lightweight: bool = False,
+        name: str | None = None,
+        ids: list[int] | None = None,
+        cancellation=None,
+    ):
         """GET /projects/{projectId}/tasks：获取任务分页列表，需项目成员权限。
 
         Args:
             project_id: 项目 ID，项目须开启任务功能。
             page: 页码，默认 1。
             page_size: 每页数量，默认 20，最小为 1。
+            lightweight: 返回最多 100 项的轻量数组，不分页。
+            name, ids: 在轻量模式中按标题或任务 ID 搜索。
             cancellation: 可选协作取消令牌。
 
         Returns:
             含 page、pageSize、rowCount、pageCount、results 的字典。
             results 为 Task 对象列表：置顶任务优先，其余按创建时间倒序。
             任务可含 assignees；列表中 taskFiles.file 仅为文件 ID，未展开文件对象。
+            轻量模式返回 id、title、status、deadline 组成的数组。
         """
+        params = {"list": 1, "name": name, "id": ids} if lightweight else {"page": page, "pageSize": page_size}
         return self._request(
             "GET",
             f"/projects/{project_id}/tasks",
-            params={"page": page, "pageSize": page_size},
+            params=params,
             cancellation=cancellation,
-            expected_type=dict,
+            expected_type=list if lightweight else dict,
         )
 
     def create_task(self, project_id: int, data: dict, *, cancellation=None):
@@ -243,3 +260,43 @@ class ParatranzTasksAPI(ParatranzClient):
             expected_type=dict,
             retryable=False,
         )
+
+    def get_task_artifact(
+        self, project_id: int, task_id: int, kind: Literal["source", "translation"], *, cancellation=None
+    ):
+        """查询最近一次任务原文或译文导出。尚无产物时返回 None。"""
+        return self._request(
+            "GET",
+            f"/projects/{project_id}/tasks/{task_id}/artifacts",
+            params={"kind": kind},
+            expected_type=(dict, type(None)),
+            cancellation=cancellation,
+        )
+
+    def trigger_task_export(
+        self, project_id: int, task_id: int, kind: Literal["source", "translation"], *, cancellation=None
+    ):
+        """请求原文或译文导出，返回可查询的构建任务。"""
+        return self._request(
+            "POST",
+            f"/projects/{project_id}/tasks/{task_id}/artifacts",
+            json={"kind": kind},
+            expected_type=dict,
+            cancellation=cancellation,
+        )
+
+    def download_task_artifact(
+        self,
+        project_id: int,
+        task_id: int,
+        kind: Literal["source", "translation"],
+        save_path: str,
+        *,
+        cancellation=None,
+    ) -> str:
+        """跟随重定向并流式保存任务的最新导出压缩包。"""
+        endpoint = f"/projects/{project_id}/tasks/{task_id}/artifacts/download"
+        response = self._request(
+            "GET", endpoint, params={"kind": kind}, stream=True, raw_response=True, cancellation=cancellation
+        )
+        return save_artifact_response(response, save_path, cancellation=cancellation)

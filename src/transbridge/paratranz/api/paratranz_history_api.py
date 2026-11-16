@@ -1,5 +1,5 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""历史查询接口；依据 https://paratranz.cn/api-docs?format=json（OpenAPI 0.5.7）。"""
+"""历史查询接口，依据 ParaTranz OpenAPI 0.7.0。"""
 
 from transbridge.paratranz.paratranz_client import ParatranzClient
 
@@ -102,8 +102,34 @@ class ParatranzHistoryAPI(ParatranzClient):
             expected_type=(list, dict),
         )
 
-    def get_term_history(self, project_id: int, term_id: int, page: int = 1, page_size: int = 50):
-        """获取术语历史记录"""
+    def get_file_revision(self, project_id: int, revision_id: int, *, cancellation=None):
+        """读取单个文件上传或译文导入归档。"""
         return self._request(
-            "GET", f"/projects/{project_id}/terms/{term_id}/history", params={"page": page, "pageSize": page_size}
+            "GET",
+            f"/projects/{project_id}/files/revisions/{revision_id}",
+            expected_type=dict,
+            cancellation=cancellation,
         )
+
+    def revert_file_revision(self, project_id: int, revision_id: int, *, cancellation=None):
+        """将文件词条回滚到指定归档。创建文件的归档不可回滚。"""
+        return self._request(
+            "POST",
+            f"/projects/{project_id}/files/revisions/{revision_id}",
+            json={"op": "revert"},
+            expected_type=dict,
+            cancellation=cancellation,
+        )
+
+    def delete_file_revision(self, project_id: int, revision_id: int, *, cancellation=None):
+        """删除指定文件归档。"""
+        return self._request(
+            "DELETE",
+            f"/projects/{project_id}/files/revisions/{revision_id}",
+            cancellation=cancellation,
+            retryable=False,
+        )
+
+    def get_term_history(self, project_id: int, term_id: int, page: int = 1, page_size: int = 50, *, cancellation=None):
+        """读取全部术语历史。page 和 page_size 仅为旧调用签名保留。"""
+        return self._request("GET", f"/projects/{project_id}/terms/{term_id}/history", cancellation=cancellation)

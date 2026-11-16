@@ -5,7 +5,7 @@ from threading import Event
 
 import pytest
 
-from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError
+from transbridge.application.ports.paratranz import ExportJobFailed, ExternalServiceCategory, ExternalServiceError
 from transbridge.paratranz.artifact_download import FreshArtifactDownload
 from transbridge.paratranz.file_transport import UploadCancellation
 
@@ -105,3 +105,56 @@ def test_explicit_failed_job_is_not_polled(tmp_path):
     with pytest.raises(ValueError, match="未能启动"):
         downloader(api).download(7, tmp_path / "export.zip")
     assert api.calls == ["latest", "trigger"] and api.closed
+
+
+class APIWithJobStatus(API):
+    def __init__(self, artifacts, statuses, *, job=None):
+        super().__init__(artifacts, job=job)
+        self.statuses = iter(statuses)
+
+    def get_job(self, project_id, job_id, **kwargs):
+        self.calls.append(("job", project_id, job_id))
+        return next(self.statuses)
+
+
+def test_polls_triggered_job_and_waits_for_its_new_artifact(tmp_path):
+    api = APIWithJobStatus([OLD, OLD, NEW, NEW], [{"id": 12, "status": 0}, {"id": 12, "status": 1}])
+    destination = tmp_path / "export.zip"
+    downloader(api).download(7, destination)
+
+    assert api.calls == ["latest", "trigger", ("job", 7, 12), ("job", 7, 12), "latest", "latest", "download", "latest"]
+    assert api.closed and destination.read_bytes() == b"synthetic"
+
+
+@pytest.mark.parametrize("failed_immediately", [False, True])
+def test_official_job_failure_stops_before_download(tmp_path, failed_immediately):
+    failure = {"id": 12, "status": 2}
+    api = APIWithJobStatus([OLD], [failure], job=failure if failed_immediately else None)
+    destination = tmp_path / "export.zip"
+    with pytest.raises(ExportJobFailed) as caught:
+        downloader(api).download(7, destination)
+
+    assert caught.value.job_id == 12 and not destination.exists()
+    assert api.calls == ["latest", "trigger"] + ([] if failed_immediately else [("job", 7, 12)])
+    assert api.closed
+
+
+@pytest.mark.parametrize("bad_job", [{"id": 19, "status": 1}, {"id": 12, "status": True}, {"id": 12}])
+def test_wrong_or_malformed_job_cannot_authorize_download(tmp_path, bad_job):
+    api = APIWithJobStatus([OLD], [bad_job])
+    destination = tmp_path / "export.zip"
+    with pytest.raises(ExternalServiceError) as caught:
+        downloader(api).download(7, destination)
+
+    assert caught.value.category is ExternalServiceCategory.INVALID_RESPONSE
+    assert api.closed and not destination.exists()
+
+
+def test_running_job_does_not_read_or_download_unrelated_new_artifact(tmp_path):
+    api = APIWithJobStatus([OLD, NEW], [{"id": 12, "status": 0}] * 2)
+    destination = tmp_path / "export.zip"
+    with pytest.raises(TimeoutError):
+        downloader(api, 2).download(7, destination)
+
+    assert api.calls == ["latest", "trigger", ("job", 7, 12), ("job", 7, 12)]
+    assert api.closed and not destination.exists()
