@@ -1,5 +1,7 @@
 # 变更日志索引
 
+- 2026-11-16：[ParaTranz OpenAPI 0.7.0 接口与流程对齐](paratranz-openapi-070/story-01-to-03/2026-11-16-001-openapi-070.md) — 补齐 21 项接口和已覆盖接口的参数，按构建任务状态导出，保留服务端错误诊断，补齐讨论和私信分页。
+
 - 2026-11-15：[ParaTranz 上传兼容唯一路径大小写变体](paratranz-categorized-upload/story-12/2026-11-15-003-upload-path-case-matching.md) — 精确路径优先，唯一大小写变体复用已有文件 ID，歧义仅阻止该文件。265 项上传相关回归及全仓 Ruff 检查通过。
 
 - 2026-11-15：[其余来源操作接入工作台恢复](source-file-update/story-01-03/2026-11-15-005-source-entry-view-recovery.md) — 跨来源快照、打开文件、拖入插件、助手登记和移除来源复用工作台安装，刷新可重试并保留草稿。

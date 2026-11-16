@@ -574,7 +574,7 @@ BSA 模式禁止覆盖来源依赖的原归档，避免仅包含 STRINGS 的输�
 |------|-------------------|------|
 | 仅更新原文 | `orig_only` | 不改动已有译文 |
 | 仅导入译文 — 安全 | `trans_safe` | 不覆盖已人工编辑的词条；新文件跳过 |
-| 仅导入译文 — 强制覆盖 | `trans_force` | 覆盖所有译文；新文件跳过 |
+| 仅强制导入差异译文 | `trans_force` | 比对当前云端译文，提交不同的非空本地译文 |
 | 更新原文并导入译文 | `both` | 安全模式，不覆盖已人工编辑的词条 |
 
 #### UploadCard — `_UploadModeDialog` 上传模式
@@ -601,7 +601,7 @@ BSA 模式禁止覆盖来源依赖的原归档，避免仅包含 STRINGS 的输�
 |------|-------------------|------|-----------|
 | 仅更新原文 | `orig_only` | `reupload_file` | `upload_file` |
 | 仅导入译文 — 安全 | `trans_safe` | `update_file_translation(force=False)` | 跳过 |
-| 仅导入译文 — 强制覆盖 | `trans_force` | `update_file_translation(force=True)` | 跳过 |
+| 仅强制导入差异译文 | `trans_force` | 比对后按文件导入非空差异，使用 `force=true` | 跳过 |
 | 更新原文并导入译文 | `both` | `reupload_file` → `update_file_translation(force=False)` | `upload_file` → `update_file_translation` |
 
 "仅导入译文"选中时，子选项（安全/强制）才启用。

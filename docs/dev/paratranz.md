@@ -275,8 +275,12 @@ def _make_file_field(field_name: str, filename: str, data: bytes) -> RequestFiel
 
 | 方法 | HTTP | 端点 | 说明 |
 |------|------|------|------|
-| `get_artifacts(project_id)` | GET | `/projects/{id}/artifacts` | 获取最近导出结果 |
+| `get_artifacts(project_id)` | GET | `/projects/{id}/artifacts` | 分页读取导出历史 |
+| `get_latest_artifact(project_id)` | GET | `/projects/{id}/artifacts/latest` | 获取最近导出结果 |
 | `trigger_export(project_id)` | POST | `/projects/{id}/artifacts` | 触发导出（仅管理员） |
+| `list_jobs(project_id)` | GET | `/projects/{id}/jobs` | 查看构建任务列表 |
+| `get_job(project_id, job_id)` | GET | `/projects/{id}/jobs/{jobId}` | 查询构建任务状态 |
+| `get_download_records(project_id)` | GET | `/projects/{id}/artifacts/records` | 分页读取下载记录（仅管理员） |
 | `download_artifacts(project_id, save_path)` | GET | `/projects/{id}/artifacts/download` | 下载导出压缩包 |
 
 ---
@@ -287,7 +291,7 @@ def _make_file_field(field_name: str, filename: str, data: bytes) -> RequestFiel
 
 当前普通/分类 GUI 共用 `application/file_upload.py` 与 `paratranz/file_publication.py`。
 每次读取一次文件列表，按完整路径定位后整文件创建、增量更新原文或批量导入译文/状态；
-不调用逐词条写接口、不逐条回读、不保存上传关联。安全/强制覆盖、哈希跳过由服务端执行。
+强制导入先按文件取云端现译，只提交本地非空且不同的译文。少于 50 个文件逐文件读取，达到 50 个使用与同步下载相同的新项目压缩包。
 API 参数、权限、423/429、取消和下载范围见 [文件上传说明](paratranz-categorized-upload.md)。
 
 ### ParaTranzUploader（兼容调用）
@@ -302,7 +306,7 @@ API 参数、权限、423/429、取消和下载范围见 [文件上传说明](pa
 translation_mode:
   "orig_only"   — 仅更新原文，不碰译文（默认）
   "trans_safe"  — 仅导入译文，不覆盖已人工编辑的词条；新建文件跳过
-  "trans_force" — 仅导入译文，强制覆盖所有译文；新建文件跳过
+  "trans_force" — 强制导入现有文件中非空且与云端不同的译文
   "both"        — 更新原文并安全导入译文（不覆盖人工编辑）；新建文件创建后再导入译文
 ```
 
@@ -376,19 +380,17 @@ application/sync/project_download.py 管理本轮下载、匹配和清理，down
 ```
 trigger_and_download(project_id, save_path, poll_interval, timeout)
     │
-    ├─► 1. 记录当前最新 artifact 的 createdAt 时间 t0
+    ├─► 1. 记录已存在的导出结果
     │
     ├─► 2. 调用 trigger_export() 触发新导出
     │
-    ├─► 3. 轮询 get_artifacts()，直到出现 createdAt > t0 的新记录
-    │       （或超时抛出 TimeoutError）
+    ├─► 3. 按任务 ID 轮询 get_job()，成功后等待新导出结果
+    │       （服务端报告失败时立即返回，等待超时时抛出 TimeoutError）
     │
     ├─► 4. 调用 download_artifacts() 下载压缩包
     │
     └─► 5. 返回保存路径
 ```
-
-**注意**: ParaTranz 目前无独立 Job 状态查询接口，采用轮询 `artifacts.createdAt` 的降级策略。
 
 **extract() 方法**: 解压导出压缩包到目标目录。
 
@@ -497,7 +499,6 @@ HTTP 客户端使用 `ExternalServiceError`，携带错误类别、可用状态�
 3. **诊断脱敏**: 认证错误按类别记录，已知凭据不进入日志；排查使用请求编号、操作编号和错误摘要
 4. **目录自动创建**: `get_data_dir()` 会在目录不存在时自动创建
 5. **中文文件名**: 使用 RFC 5987 编码解决 urllib3 2.x 的乱码问题
-6. **导出轮询**: 无独立 Job 状态接口，采用轮询 `createdAt` 策略
 
 ---
 
