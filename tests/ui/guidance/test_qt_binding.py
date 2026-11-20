@@ -4,12 +4,14 @@ from collections import Counter
 from types import SimpleNamespace
 
 from PyQt6.QtCore import QObject, pyqtSignal
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 import pytest
 
 from transbridge.application.io import FormatId
 from transbridge.config.ui_preferences import GuidanceMode, UiPreferenceSaveResult, UiPreferenceSnapshot
 from transbridge.converter.translation_entry import STAGE_QUESTIONABLE, STAGE_UNTRANSLATED
+from transbridge.ui.guidance.controller import GuidanceController
+from transbridge.ui.guidance.models import GuidanceContextIdentity, GuidanceKind, GuidanceProjection
 from transbridge.ui.guidance.qt import GuidanceBanner, GuidanceBinding
 from transbridge.ui.project_rows import ProjectRowsCollection
 from transbridge.ui.shell.action_catalog import IntentId
@@ -52,10 +54,14 @@ class _Preferences:
 def test_binding_projects_context_events_and_dispatches_one_intent(qapp):
     context = _Context()
     view = GuidanceBanner()
+    view.resize(1200, 70)
     dispatched = []
-    binding = GuidanceBinding(context, view, dispatched.append, preferences=_Preferences())
+    preferences = _Preferences()
+    preferences.mode = GuidanceMode.GUIDED
+    binding = GuidanceBinding(context, view, dispatched.append, preferences=preferences)
 
     assert view.accessibleName() == "当前任务引导"
+    assert view.isVisible()
     assert view._primary.accessibleName()
     assert view.findChild(type(view._headline), "guidance-headline").text() == "新建本地翻译工程"
     context.active_project_id = "project-1"
@@ -74,6 +80,7 @@ def test_binding_projects_context_events_and_dispatches_one_intent(qapp):
     context.collection_changed.emit(context.collection)
     assert view._headline.text() == "检查翻译问题"
     binding.close()
+    view.close()
 
 
 def test_compact_mode_keeps_primary_capability(qapp):
@@ -86,9 +93,47 @@ def test_compact_mode_keeps_primary_capability(qapp):
     view.mode_requested.emit(GuidanceMode.COMPACT.value)
 
     assert preferences.mode is GuidanceMode.COMPACT
+    assert view.isVisible()
     assert view._primary.text() == primary
     assert view._primary.isEnabled()
     binding.close()
+    view.close()
+
+
+def test_auto_banner_releases_layout_space_and_reappears_for_failures(qapp):
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    layout.setSpacing(8)
+    header = QLabel("工程")
+    layout.addWidget(header)
+    view = GuidanceBanner(host)
+    layout.addWidget(view)
+    table = QLabel("词条")
+    layout.addWidget(table, 1)
+    controller = GuidanceController(view.render, lambda _intent: None)
+    identity = GuidanceContextIdentity(project_id="project")
+    host.resize(750, 450)
+    host.show()
+    try:
+        controller.project(GuidanceProjection(identity, 0, 0, GuidanceKind.REVIEW_PENDING))
+        qapp.processEvents()
+        compact_y = table.y()
+        assert view.isHidden()
+        assert not view._collapse.isVisibleTo(host)
+        assert compact_y == header.y() + header.height() + layout.spacing()
+
+        controller.project(GuidanceProjection(identity, 0, 1, GuidanceKind.FAILED, reason="任务写入失败"))
+        qapp.processEvents()
+        assert view.isVisibleTo(host)
+        assert "任务写入失败" in view._reason.text()
+        assert table.y() > compact_y
+
+        controller.project(GuidanceProjection(identity, 0, 2, GuidanceKind.PUBLISH_PENDING))
+        qapp.processEvents()
+        assert view.isHidden()
+        assert table.y() == compact_y
+    finally:
+        host.close()
 
 
 def test_paged_guidance_uses_current_statistics_without_iterating_sources(qapp):

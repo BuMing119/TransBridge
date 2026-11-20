@@ -41,7 +41,7 @@ def test_settings_intent_configures_consent_without_a_project(monkeypatch):
     try:
         descriptor = DEFAULT_ACTION_CATALOG.get(IntentId.SETTINGS_TERMINOLOGY_ALIGNMENT)
         assert descriptor.section is ActionSection.SETTINGS
-        assert descriptor.label == "AI 术语位置判断…"
+        assert descriptor.label == "AI 术语定位偏好…"
         assert composition.dispatch(descriptor.intent_id).accepted
         assert calls == [window]
     finally:
@@ -73,23 +73,35 @@ def test_settings_menu_can_reenable_remembered_rejection(monkeypatch, isolated_a
         window.close()
 
 
-def test_clear_cache_menu_and_intent_are_disabled_without_a_variant():
+def test_ai_service_entry_opens_its_existing_settings_page():
     window = _window()
+    opened = []
+    window.tool_windows.show_ui_settings = opened.append
     composition = ShellIntentComposition(window)
     try:
         MenuBuilder(window, composition.menu_callbacks()).build()
         settings = next(action.menu() for action in window.menuBar().actions() if action.text() == "设置")
-        action = next(
-            action for action in settings.actions() if action.data() == IntentId.SETTINGS_ALIGNMENT_CACHE_CLEAR.value
-        )
-        assert not action.isEnabled()
+        action = next(action for action in settings.actions() if action.data() == IntentId.SETTINGS_SERVICES)
+        assert action.text() == "AI 服务与 API…"
+        action.trigger()
+        assert opened == ["ai_service"]
+    finally:
+        composition.close()
+        window.close()
+
+
+def test_clear_cache_intent_is_disabled_without_a_variant():
+    window = _window()
+    composition = ShellIntentComposition(window)
+    try:
+        assert not composition.router.availability(IntentId.SETTINGS_ALIGNMENT_CACHE_CLEAR).enabled
         assert not composition.dispatch(IntentId.SETTINGS_ALIGNMENT_CACHE_CLEAR).accepted
     finally:
         composition.close()
         window.close()
 
 
-def test_clear_cache_menu_uses_current_preview_and_rechecks_opening_state():
+def test_clear_cache_intent_uses_current_preview_and_rechecks_opening_state():
     window = _window()
     calls = []
     window.context.active_version_identity = ("project", "variant-b")
@@ -102,17 +114,11 @@ def test_clear_cache_menu_uses_current_preview_and_rechecks_opening_state():
     )
     composition = ShellIntentComposition(window)
     try:
-        MenuBuilder(window, composition.menu_callbacks()).build()
-        settings = next(action.menu() for action in window.menuBar().actions() if action.text() == "设置")
-        action = next(
-            action for action in settings.actions() if action.data() == IntentId.SETTINGS_ALIGNMENT_CACHE_CLEAR.value
-        )
-        assert action.isEnabled()
-        action.trigger()
+        assert composition.router.availability(IntentId.SETTINGS_ALIGNMENT_CACHE_CLEAR).enabled
+        assert composition.dispatch(IntentId.SETTINGS_ALIGNMENT_CACHE_CLEAR).accepted
         assert calls == [("project", "variant-b")]
         window.context.project_opening = True
-        settings.aboutToShow.emit()
-        assert not action.isEnabled()
+        assert not composition.router.availability(IntentId.SETTINGS_ALIGNMENT_CACHE_CLEAR).enabled
         assert not composition.dispatch(IntentId.SETTINGS_ALIGNMENT_CACHE_CLEAR).accepted
         assert len(calls) == 1
     finally:

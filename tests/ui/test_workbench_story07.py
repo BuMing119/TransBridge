@@ -117,14 +117,13 @@ def test_summary_uses_canonical_stage_meaning_even_when_translation_text_is_empt
         assert {entry.stage for entry in presenter.apply(entries, {})} == stages
 
 
-def test_summary_cards_explain_how_grouped_counts_map_to_translation_stages() -> None:
+def test_summary_filters_explain_how_grouped_counts_map_to_translation_stages() -> None:
     view = StatisticsSummaryView()
     view.set_summary(StatisticsSummary(total=12, untranslated=2, needs_review=3, completed=6, hidden=1))
 
-    assert view._buttons["review"]._label.text() == "有疑问"
+    assert view._buttons["review"].text() == "有疑问 3"
     assert view._buttons["review"].toolTip() == "翻译状态：有疑问，共 3 条；点击筛选"
-    assert view._buttons["completed"]._label.text() == "已翻译"
-    assert view._buttons["completed"]._icon_id == "circle-check"
+    assert view._buttons["completed"].text() == "已翻译 6"
     assert view._buttons["completed"].toolTip() == "包括翻译状态：已翻译、已检查、已审核、已锁定，共 6 条；点击筛选"
     view.close()
 
@@ -148,6 +147,7 @@ def test_context_actions_expose_reasons_and_view_emits_one_stable_intent() -> No
     assert review.reason == "当前没有“有疑问”状态的词条"
     assert emitted == [IntentId.TRANSLATION_AI.value]
     assert IntentId.TRANSLATION_AI_BATCH not in view._buttons
+    assert IntentId.TRANSLATION_REVIEW not in view._buttons
     assert all(item.intent_id is not IntentId.TRANSLATION_AI_BATCH for item in states)
     assert view._ai_button.menu() is None
     view.close()
@@ -197,10 +197,13 @@ def test_ai_action_tracks_other_loaded_content_when_current_collection_is_empty(
 def test_label_management_is_separate_from_label_filter_and_advanced_is_progressive() -> None:
     view = FiltersView(on_changed=lambda: None, on_manage_labels=lambda: None)
 
-    assert view.manage_labels_button.parent() is view.search_widget
-    assert view.category_widget.isHidden()
+    assert view.manage_labels_button.parent() is view.filter_options
     view.set_content_visible(True)
+    assert view.filter_options.isHidden()
+    assert view.clear_button.isHidden()
     assert view.category_widget.isHidden()
+    view.filter_button.setChecked(True)
+    assert not view.filter_options.isHidden()
     view.advanced_button.setChecked(True)
     view.build_categories([_entry(1, 0, "")])
 

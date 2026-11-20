@@ -93,6 +93,7 @@ class GuidanceBanner(QFrame):
         ComponentStyle.apply_static(self._close, ComponentKind.BUTTON)
         self._close.clicked.connect(self.hide_requested)
         root.addWidget(self._close)
+        self.hide()
 
     def render(self, value: GuidancePresentation) -> None:
         state = value.state
@@ -100,7 +101,7 @@ class GuidanceBanner(QFrame):
         self._headline.set_full_text(state.headline)
         self._headline.setToolTip(state.headline)
         explanation = " · ".join(value.explanation_lines)
-        self._reason.set_full_text(f"ⓘ  {explanation}" if explanation else "")
+        self._reason.set_full_text(explanation)
         self._reason.setToolTip("\n".join(value.explanation_lines))
         status_text = f"{state.headline}。{state.reason}"
         update_accessible_state(self, status_text)
@@ -153,6 +154,7 @@ class GuidanceBanner(QFrame):
             pass
         self._collapse.clicked.connect(self.restore_requested if collapsed or hidden else self.collapse_requested)
         self._close.setVisible(not hidden and not streamlined)
+        self.setVisible(value.show_banner)
 
     def _emit_mode(self) -> None:
         value = self._mode.currentData()

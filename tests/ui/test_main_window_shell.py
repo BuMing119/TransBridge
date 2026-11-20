@@ -58,6 +58,10 @@ def _callbacks(calls: list[str]) -> MenuCallbacks:
         show_mails=callback("mails"),
         show_about=callback("about"),
         manual_save=callback("save"),
+        exit_app=callback("exit"),
+        manage_variants=callback("versions"),
+        manage_history=callback("snapshots"),
+        open_project_properties=callback("properties"),
     )
 
 
@@ -74,13 +78,13 @@ def test_menu_builder_connects_each_intent_once() -> None:
 
     assert calls == ["prepare_content", "upload", "assistant", "history_search", "appearance"]
     assert handles.prepare_content.data() == IntentId.WORKBENCH_CONTENT_PREPARE.value
-    assert handles.prepare_content.text() == "打开翻译文件…"
+    assert handles.prepare_content.text() == "添加翻译文件…"
     assert handles.smart_assistant is handles.view_assistant
     assert handles.smart_assistant.shortcut().toString() == "Ctrl+Shift+I"
     assert handles.smart_assistant.data() == IntentId.VIEW_SMART_ASSISTANT.value
     assert handles.history_search.data() == IntentId.TRANSLATION_HISTORY_SEARCH.value
     assert handles.appearance.data() == IntentId.SETTINGS_APPEARANCE.value
-    assert handles.appearance.text() == "设置…"
+    assert handles.appearance.text() == "通用设置…"
     assert handles.appearance.statusTip() == "管理外观、AI 服务、Embedding、ParaTranz 与默认参数"
     assert not any(shortcut.key().toString() == "Ctrl+K" for shortcut in window.findChildren(QShortcut))
     window.close()
@@ -92,10 +96,159 @@ def test_menu_builder_uses_task_oriented_top_level_navigation() -> None:
 
     labels = [action.text() for action in window.menuBar().actions()]
 
-    assert labels == ["文件", "项目", "翻译", "同步与发布", "视图", "设置", "帮助"]
+    assert labels == ["工程", "翻译", "ParaTranz", "视图", "设置", "帮助"]
     assert "小工具" not in labels
     assert "账户" not in labels
     window.close()
+
+
+def test_menu_tree_has_the_approved_six_groups_and_keeps_legacy_handles() -> None:
+    window = QMainWindow()
+    calls = []
+    handles = MenuBuilder(window, _callbacks(calls)).build()
+    groups = (
+        (
+            "工程",
+            ActionSection.PROJECT,
+            (
+                IntentId.PROJECT_CREATE,
+                IntentId.PROJECT_OPEN,
+                IntentId.PROJECT_SAVE,
+                None,
+                IntentId.WORKBENCH_CONTENT_PREPARE,
+                IntentId.PROJECT_SOURCE_UPDATE,
+                None,
+                IntentId.PROJECT_VARIANT_MANAGE,
+                IntentId.PROJECT_SNAPSHOT_MANAGE,
+                IntentId.PROJECT_PROPERTIES,
+                None,
+                IntentId.PROJECT_IMPORT,
+                IntentId.PROJECT_EXPORT,
+                None,
+                IntentId.PROJECT_DELETE,
+                IntentId.APP_EXIT,
+            ),
+        ),
+        (
+            "翻译",
+            ActionSection.TRANSLATION,
+            (
+                IntentId.SOURCE_MIGRATE,
+                IntentId.TRANSLATION_AI,
+                None,
+                IntentId.TERMINOLOGY_WORKBENCH,
+                IntentId.TRANSLATION_DICTIONARY,
+                IntentId.TRANSLATION_HISTORY_SEARCH,
+                None,
+                IntentId.PUBLISH_WRITE,
+                IntentId.PUBLISH_WRITE_BATCH,
+                None,
+                IntentId.PUBLISH_FOMOD,
+            ),
+        ),
+        (
+            "ParaTranz",
+            ActionSection.SYNC_PUBLISH,
+            (
+                IntentId.SYNC_UPLOAD,
+                IntentId.SYNC_UPLOAD_BATCH,
+                IntentId.SYNC_DOWNLOAD,
+                None,
+                IntentId.PROJECT_REFRESH,
+                None,
+                IntentId.SETTINGS_ACCOUNT,
+                IntentId.SETTINGS_MESSAGES,
+            ),
+        ),
+        ("视图", ActionSection.VIEW, (IntentId.VIEW_SMART_ASSISTANT, IntentId.TASK_OPEN_ACTIVITY)),
+        (
+            "设置",
+            ActionSection.SETTINGS,
+            (
+                IntentId.SETTINGS_APPEARANCE,
+                None,
+                IntentId.SETTINGS_SERVICES,
+                IntentId.SETTINGS_TERMINOLOGY_ALIGNMENT,
+            ),
+        ),
+        ("帮助", ActionSection.HELP, (IntentId.HELP_CONTEXT, IntentId.HELP_ABOUT)),
+    )
+    actions = {}
+    shortcuts = []
+    try:
+        for top, (name, section, expected) in zip(window.menuBar().actions(), groups, strict=True):
+            assert top.text() == name
+            actual = []
+            for action in top.menu().actions():
+                if not action.isVisible():
+                    continue
+                if action.isSeparator():
+                    actual.append(None)
+                    continue
+                assert action.menu() is None
+                intent = IntentId(action.data())
+                assert intent not in actions
+                actions[intent] = action
+                descriptor = DEFAULT_ACTION_CATALOG.get(intent)
+                assert descriptor.section is section
+                assert descriptor.label == action.text()
+                assert ".transbridge" not in action.text()
+                actual.append(intent)
+                if action.shortcut().toString():
+                    shortcuts.append(action.shortcut().toString())
+            assert tuple(actual) == expected
+        assert sorted(shortcuts) == ["Ctrl+Q", "Ctrl+R", "Ctrl+S", "Ctrl+Shift+I"]
+        for intent in (IntentId.PROJECT_VARIANT_MANAGE, IntentId.PROJECT_SNAPSHOT_MANAGE, IntentId.PROJECT_PROPERTIES):
+            actions[intent].trigger()
+        assert not handles.variant_menu.isVisible()
+        handles.new_variant.trigger()
+        handles.copy_variant.trigger()
+        handles.save_snapshot.trigger()
+        handles.load_snapshot.trigger()
+        assert calls == [
+            "versions",
+            "snapshots",
+            "properties",
+            "new_variant",
+            "copy_variant",
+            "save_snapshot",
+            "load_snapshot",
+        ]
+    finally:
+        window.close()
+
+
+def test_shortcuts_trigger_existing_callbacks_once_in_both_menu_states() -> None:
+    calls = []
+    window = QMainWindow()
+    central = QWidget()
+    central.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    window.setCentralWidget(central)
+    bar = ProgressiveMenuBar(window)
+    window.setMenuBar(bar)
+    MenuBuilder(window, _callbacks(calls)).build()
+    bar.bind_existing_menus()
+    try:
+        window.show()
+        window.activateWindow()
+        central.setFocus()
+        _APP.processEvents()
+        QTest.mouseMove(central, QPoint(10, 10))
+        bar.collapse()
+        assert not bar.is_expanded
+        ctrl = Qt.KeyboardModifier.ControlModifier
+        expected = ["save", "refresh", "assistant", "exit"]
+        for expand in (False, True):
+            if expand:
+                bar.expand()
+            QTest.keyClick(central, Qt.Key.Key_S, ctrl)
+            QTest.keyClick(central, Qt.Key.Key_R, ctrl)
+            QTest.keyClick(central, Qt.Key.Key_I, ctrl | Qt.KeyboardModifier.ShiftModifier)
+            QTest.keyClick(central, Qt.Key.Key_Q, ctrl)
+            assert calls[-4:] == expected
+        assert calls == expected * 2
+    finally:
+        window.close()
 
 
 def test_progressive_menu_bar_reveals_existing_top_level_actions_in_place() -> None:
@@ -124,10 +277,9 @@ def test_progressive_menu_bar_reveals_existing_top_level_actions_in_place() -> N
     assert bar.is_expanded
     assert not bar.compact_action.isVisible()
     assert [action.text() for action in bar.menu_actions] == [
-        "文件",
-        "项目",
+        "工程",
         "翻译",
-        "同步与发布",
+        "ParaTranz",
         "视图",
         "设置",
         "帮助",
@@ -156,7 +308,7 @@ def test_progressive_menu_bar_keeps_one_account_action_and_collapses_after_point
     window.show()
     _APP.processEvents()
 
-    settings_menu = next(action.menu() for action in bar.menu_actions if action.text() == "设置")
+    settings_menu = next(action.menu() for action in bar.menu_actions if action.text() == "ParaTranz")
     account_action = next(
         action for action in settings_menu.actions() if action.data() == IntentId.SETTINGS_ACCOUNT.value
     )
@@ -248,7 +400,7 @@ def test_download_has_one_discoverable_menu_and_catalog_action_with_legacy_alias
     window = QMainWindow()
     handles = MenuBuilder(window, _callbacks([])).build()
     try:
-        assert handles.download.text() == "从paratranz上同步"
+        assert handles.download.text() == "下载并合并…"
         assert handles.download.isVisible()
         assert not handles.batch_download.isVisible()
         downloads = [item for item in DEFAULT_ACTION_CATALOG.all() if item.intent_id is IntentId.SYNC_DOWNLOAD]
@@ -374,8 +526,8 @@ def test_menu_uses_optional_foundation_locale_without_changing_intent_identity()
 
     handles = MenuBuilder(window, _callbacks([])).build()
 
-    assert window.menuBar().actions()[5].text() == "译:设置"
-    assert handles.appearance.text() == "译:设置…"
+    assert window.menuBar().actions()[4].text() == "译:设置"
+    assert handles.appearance.text() == "译:通用设置…"
     assert handles.appearance.statusTip() == "译:管理外观、AI 服务、Embedding、ParaTranz 与默认参数"
     assert handles.appearance.data() == IntentId.SETTINGS_APPEARANCE.value
     window.close()

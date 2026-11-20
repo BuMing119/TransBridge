@@ -151,6 +151,11 @@ def test_step2_render_progress_keeps_summary_vertical_position(monkeypatch) -> N
     _APP.processEvents()
     before_y = view._summary_view.y()
 
+    assert view._progress.isHidden()
+    view.set_parsing(True)
+    assert view._progress.isVisible()
+    view.set_parsing(False)
+    assert view._progress.isHidden()
     view._on_render_progress(1, 10)
     _APP.processEvents()
     active_y = view._summary_view.y()

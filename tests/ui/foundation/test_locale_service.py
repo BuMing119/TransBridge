@@ -165,7 +165,7 @@ def test_source_resources_are_discoverable_without_install_path_assumptions() ->
 def test_source_template_covers_menu_catalog_and_critical_settings_msgids() -> None:
     template = source_template().read_text(encoding="utf-8")
     msgids = set(re.findall(r'^msgid "(.*)"$', template, flags=re.MULTILINE))
-    menu_msgids = {"文件", "项目", "翻译版本", "翻译", "同步与发布", "视图", "设置", "帮助"}
+    menu_msgids = {"工程", "翻译版本", "翻译", "ParaTranz", "视图", "设置", "帮助"}
     menu_msgids.update(item.label for item in DEFAULT_ACTION_CATALOG.all())
     menu_msgids.update(item.status_tip for item in DEFAULT_ACTION_CATALOG.all() if item.status_tip)
     settings_msgids = {

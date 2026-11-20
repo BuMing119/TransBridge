@@ -43,12 +43,15 @@ class IntentId(StrEnum):
     PROJECT_RENAME = "project.rename"
     PROJECT_SOURCE_UPDATE = "project.source-update"
     PROJECT_TEXT_ENCODING = "project.text-encoding"
+    PROJECT_PROPERTIES = "project.properties"
     PROJECT_DELETE = "project.delete"
+    PROJECT_VARIANT_MANAGE = "project.variant.manage"
     PROJECT_VARIANT_CREATE = "project.variant.create"
     PROJECT_VARIANT_COPY = "project.variant.copy"
     PROJECT_SNAPSHOT_SAVE = "project.snapshot.save"
     PROJECT_SNAPSHOT_LOAD = "project.snapshot.load"
     PROJECT_SNAPSHOT_DELETE = "project.snapshot.delete"
+    PROJECT_SNAPSHOT_MANAGE = "project.snapshot.manage"
     PROJECT_EXPORT = "project.export-transbridge"
     PROJECT_IMPORT = "project.import-transbridge"
     SOURCE_MIGRATE = "source.apply-migration"
@@ -158,28 +161,40 @@ class ActionCatalog:
 DEFAULT_ACTION_CATALOG = ActionCatalog((
     ActionDescriptor(
         IntentId.PROJECT_CREATE,
-        "新建本地翻译工程…",
+        "新建工程…",
         ActionSection.PROJECT,
-        aliases=("选择插件", "创建插件工程", "ESP", "ESM", "ESL"),
+        aliases=("新建本地翻译工程", "选择插件", "创建插件工程", "ESP", "ESM", "ESL"),
     ),
-    ActionDescriptor(IntentId.PROJECT_OPEN, "打开本地翻译工程…", ActionSection.PROJECT),
-    ActionDescriptor(IntentId.PROJECT_SAVE, "保存当前工程", ActionSection.PROJECT, shortcut="Ctrl+S"),
+    ActionDescriptor(IntentId.PROJECT_OPEN, "打开工程…", ActionSection.PROJECT, aliases=("打开本地翻译工程",)),
+    ActionDescriptor(
+        IntentId.PROJECT_SAVE, "保存工程", ActionSection.PROJECT, shortcut="Ctrl+S", aliases=("保存当前工程",)
+    ),
     ActionDescriptor(IntentId.PROJECT_RENAME, "重命名当前工程…", ActionSection.PROJECT),
     ActionDescriptor(IntentId.PROJECT_SOURCE_UPDATE, "更新源文件…", ActionSection.PROJECT),
     ActionDescriptor(IntentId.PROJECT_TEXT_ENCODING, "文本编码…", ActionSection.PROJECT),
     ActionDescriptor(
+        IntentId.PROJECT_PROPERTIES,
+        "工程属性…",
+        ActionSection.PROJECT,
+        status_tip="查看工程名称，进入重命名和文本编码设置",
+    ),
+    ActionDescriptor(
         IntentId.PROJECT_DELETE,
-        "删除本地工程…",
+        "删除工程…",
         ActionSection.PROJECT,
         danger=DangerLevel.DESTRUCTIVE,
+        aliases=("删除本地工程",),
     ),
     ActionDescriptor(
         IntentId.PROJECT_REFRESH,
-        "刷新工程列表",
-        ActionSection.PROJECT,
+        "刷新项目列表",
+        ActionSection.SYNC_PUBLISH,
         placement=IntentPlacement.CONTEXTUAL,
         shortcut="Ctrl+R",
+        aliases=("刷新工程列表", "刷新 ParaTranz 项目列表"),
+        status_tip="刷新 ParaTranz 云端项目列表",
     ),
+    ActionDescriptor(IntentId.PROJECT_VARIANT_MANAGE, "管理翻译版本…", ActionSection.PROJECT),
     ActionDescriptor(IntentId.PROJECT_VARIANT_CREATE, "新建翻译版本…", ActionSection.PROJECT),
     ActionDescriptor(IntentId.PROJECT_VARIANT_COPY, "复制当前翻译版本…", ActionSection.PROJECT),
     ActionDescriptor(IntentId.PROJECT_SNAPSHOT_SAVE, "创建历史还原点…", ActionSection.PROJECT),
@@ -195,8 +210,15 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
         ActionSection.PROJECT,
         danger=DangerLevel.DESTRUCTIVE,
     ),
-    ActionDescriptor(IntentId.PROJECT_EXPORT, "导出 .transbridge…", ActionSection.FILE),
-    ActionDescriptor(IntentId.PROJECT_IMPORT, "导入 .transbridge…", ActionSection.FILE, danger=DangerLevel.CAUTION),
+    ActionDescriptor(IntentId.PROJECT_SNAPSHOT_MANAGE, "历史还原…", ActionSection.PROJECT, aliases=("快照",)),
+    ActionDescriptor(IntentId.PROJECT_EXPORT, "导出工程包…", ActionSection.PROJECT, aliases=("导出 .transbridge",)),
+    ActionDescriptor(
+        IntentId.PROJECT_IMPORT,
+        "导入工程包…",
+        ActionSection.PROJECT,
+        danger=DangerLevel.CAUTION,
+        aliases=("导入 .transbridge",),
+    ),
     ActionDescriptor(
         IntentId.SOURCE_MIGRATE,
         "导入译文…",
@@ -248,97 +270,115 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ),
     ActionDescriptor(
         IntentId.WORKBENCH_CONTENT_PREPARE,
-        "打开翻译文件…",
-        ActionSection.TRANSLATION,
+        "添加翻译文件…",
+        ActionSection.PROJECT,
         placement=IntentPlacement.CONTEXTUAL,
-        aliases=("当前工程加载插件", "添加新插件", "解析插件", "打开文件", "EET", "SST", "DSD JSON", "ParaTranz JSON"),
+        aliases=(
+            "打开翻译文件",
+            "当前工程加载插件",
+            "添加新插件",
+            "解析插件",
+            "打开文件",
+            "EET",
+            "SST",
+            "DSD JSON",
+            "ParaTranz JSON",
+        ),
         status_tip="打开文件作为当前工程的新翻译内容；可同时导入一份已有译文",
     ),
     ActionDescriptor(
         IntentId.SYNC_UPLOAD,
-        "上传当前内容至 ParaTranz…",
+        "上传当前内容…",
         ActionSection.SYNC_PUBLISH,
         danger=DangerLevel.CAUTION,
+        aliases=("上传当前内容至 ParaTranz",),
     ),
     ActionDescriptor(
         IntentId.SYNC_UPLOAD_BATCH,
-        "批量上传至 ParaTranz…",
+        "批量上传…",
         ActionSection.SYNC_PUBLISH,
         danger=DangerLevel.CAUTION,
+        aliases=("批量上传至 ParaTranz",),
     ),
     ActionDescriptor(
         IntentId.SYNC_DOWNLOAD,
-        "从paratranz上同步",
+        "下载并合并…",
         ActionSection.SYNC_PUBLISH,
         danger=DangerLevel.CAUTION,
-        aliases=("下载更新", "下载", "批量下载", "下载合并", "下载并合并", "ParaTranz"),
+        aliases=("从paratranz上同步", "下载更新", "下载", "批量下载", "下载合并", "ParaTranz"),
+        status_tip="从 ParaTranz 下载译文，审阅后合并到本地翻译内容",
     ),
     ActionDescriptor(
         IntentId.PUBLISH_WRITE,
-        "导出文件…",
-        ActionSection.SYNC_PUBLISH,
+        "导出当前文件…",
+        ActionSection.TRANSLATION,
         placement=IntentPlacement.PRIMARY,
         danger=DangerLevel.CAUTION,
-        aliases=("写回当前文件", "DSD JSON", "ParaTranz JSON"),
+        aliases=("导出文件", "写回当前文件", "DSD JSON", "ParaTranz JSON"),
         status_tip="选择当前文件的输出格式和保存位置，自动检查后导出",
     ),
     ActionDescriptor(
         IntentId.PUBLISH_WRITE_BATCH,
         "批量导出文件…",
-        ActionSection.SYNC_PUBLISH,
+        ActionSection.TRANSLATION,
         danger=DangerLevel.CAUTION,
         aliases=("批量写回文件",),
     ),
     ActionDescriptor(
         IntentId.PUBLISH_FOMOD,
         "FOMOD 安装包翻译…",
-        ActionSection.SYNC_PUBLISH,
+        ActionSection.TRANSLATION,
         danger=DangerLevel.CAUTION,
     ),
     ActionDescriptor(
         IntentId.VIEW_SMART_ASSISTANT,
-        "智能助手面板",
+        "智能助手",
         ActionSection.VIEW,
         shortcut="Ctrl+Shift+I",
         checkable=True,
-        aliases=("聊天", "助手"),
+        aliases=("智能助手面板", "聊天", "助手"),
     ),
     ActionDescriptor(
         IntentId.SETTINGS_APPEARANCE,
-        "设置…",
+        "通用设置…",
         ActionSection.SETTINGS,
         aliases=("通用设置", "主题", "浅色", "深色", "语言", "无障碍", "AI 设置", "Embedding 设置", "ParaTranz 设置"),
         status_tip="管理外观、AI 服务、Embedding、ParaTranz 与默认参数",
     ),
     ActionDescriptor(
         IntentId.SETTINGS_SERVICES,
-        "服务与 API 配置…",
+        "AI 服务与 API…",
         ActionSection.SETTINGS,
-        status_tip="配置 ParaTranz 与 AI 服务连接",
+        aliases=("服务与 API 配置",),
+        status_tip="打开统一设置中的 AI 服务页面，管理 API 与模型",
     ),
     ActionDescriptor(
         IntentId.SETTINGS_TERMINOLOGY_ALIGNMENT,
-        "AI 术语位置判断…",
+        "AI 术语定位偏好…",
         ActionSection.SETTINGS,
+        aliases=("AI 术语位置判断",),
         status_tip="更改自动 AI 术语位置判断及启动询问偏好",
     ),
     ActionDescriptor(
         IntentId.SETTINGS_ALIGNMENT_CACHE_CLEAR,
         "清除当前版本定位缓存",
-        ActionSection.SETTINGS,
+        ActionSection.PROJECT,
         status_tip="清除当前翻译版本的定位判断，不修改译文或其他版本的缓存",
     ),
-    ActionDescriptor(IntentId.SETTINGS_ACCOUNT, "ParaTranz 账户信息", ActionSection.SETTINGS),
-    ActionDescriptor(IntentId.SETTINGS_MESSAGES, "ParaTranz 私信", ActionSection.SETTINGS),
+    ActionDescriptor(
+        IntentId.SETTINGS_ACCOUNT, "账户信息…", ActionSection.SYNC_PUBLISH, aliases=("ParaTranz 账户信息",)
+    ),
+    ActionDescriptor(IntentId.SETTINGS_MESSAGES, "私信…", ActionSection.SYNC_PUBLISH, aliases=("ParaTranz 私信",)),
     ActionDescriptor(IntentId.HELP_CONTEXT, "功能与术语帮助", ActionSection.HELP),
     ActionDescriptor(IntentId.HELP_ABOUT, "关于 TransBridge", ActionSection.HELP),
     ActionDescriptor(IntentId.HELP_CHECK_UPDATE, "检查更新", ActionSection.HELP),
-    ActionDescriptor(IntentId.APP_EXIT, "退出", ActionSection.FILE, shortcut="Ctrl+Q"),
+    ActionDescriptor(IntentId.APP_EXIT, "退出", ActionSection.PROJECT, shortcut="Ctrl+Q"),
     ActionDescriptor(
         IntentId.TASK_OPEN_ACTIVITY,
-        "查看任务与结果",
+        "任务与结果…",
         ActionSection.VIEW,
         placement=IntentPlacement.CONTEXTUAL,
+        aliases=("查看任务与结果",),
     ),
     ActionDescriptor(
         IntentId.TASK_RETRY,

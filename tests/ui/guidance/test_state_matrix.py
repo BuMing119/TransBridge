@@ -6,8 +6,10 @@ from transbridge.ui.guidance import (
     GuidanceContextIdentity,
     GuidanceIntentId,
     GuidanceKind,
+    GuidanceMode,
     GuidanceProjection,
     build_guidance_state,
+    present_guidance,
 )
 
 
@@ -111,3 +113,35 @@ def test_missing_configuration_lists_all_gaps_and_requires_them() -> None:
             revision=1,
             kind=GuidanceKind.MISSING_CONFIGURATION,
         )
+
+
+@pytest.mark.parametrize(
+    ("kind", "show_auto"),
+    [
+        (GuidanceKind.NO_PROJECT, False),
+        (GuidanceKind.EMPTY_PROJECT, False),
+        (GuidanceKind.LOADING_CONTENT, False),
+        (GuidanceKind.UNTRANSLATED, False),
+        (GuidanceKind.REVIEW_PENDING, False),
+        (GuidanceKind.PUBLISH_PENDING, False),
+        (GuidanceKind.MISSING_CONFIGURATION, True),
+        (GuidanceKind.FAILED, True),
+        (GuidanceKind.PARTIAL_FAILURE, True),
+    ],
+)
+def test_auto_only_shows_actionable_guidance_while_explicit_modes_keep_their_banner(kind, show_auto) -> None:
+    state = build_guidance_state(
+        GuidanceProjection(
+            GuidanceContextIdentity(),
+            0,
+            0,
+            kind,
+            missing_configuration=("AI 服务",) if kind is GuidanceKind.MISSING_CONFIGURATION else (),
+        )
+    )
+    auto = present_guidance(state, GuidanceMode.AUTO)
+    assert auto.show_banner == show_auto
+    for mode in (GuidanceMode.GUIDED, GuidanceMode.COMPACT):
+        explicit = present_guidance(state, mode)
+        assert explicit.show_banner
+        assert explicit.command_signature == auto.command_signature

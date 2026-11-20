@@ -409,7 +409,7 @@ class DropRouter:
         if item.kind is DropKind.PLUGIN:
             return DropCandidatePlan(IntentId.PROJECT_CREATE, tuple(payload), "使用该插件准备新建本地翻译工程")
         if item.kind is DropKind.PROJECT_ARCHIVE:
-            return DropCandidatePlan(IntentId.PROJECT_IMPORT, tuple(payload), "检查并导入该 .transbridge 工程归档")
+            return DropCandidatePlan(IntentId.PROJECT_IMPORT, tuple(payload), "检查并导入此工程包")
         if item.kind is DropKind.PROJECT_DATABASE:
             return DropCandidatePlan(IntentId.PROJECT_OPEN, tuple(payload), "打开该工作区项目")
         if item.kind is DropKind.FOMOD_ARCHIVE:

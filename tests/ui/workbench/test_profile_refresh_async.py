@@ -153,8 +153,11 @@ def test_close_rejects_queued_completion_and_read_errors_are_actionable():
     pool.calls[0].run()
     wait_profile(controller)
     assert "workspace is read-only" in controller.state.detail
+    assert controller.state.load_error == "workspace is read-only"
     assert not controller.state.enabled
     controller.refresh()
+    assert controller.state.loading
+    assert not controller.state.load_error
     pool.calls[1].run()
     before = controller.state
     count = len(previews)

@@ -418,31 +418,21 @@ QComboBox QAbstractItemView {{
 }}
 
 QPushButton[tbSummaryItem="true"] {{
+    color: {muted.canonical};
     background: transparent;
-    border: 0;
-    border-right: 1px solid {subtle_border.canonical};
-    border-radius: 0;
-    min-height: 62px;
-    padding: 0;
+    border: 1px solid transparent;
+    border-radius: {radius}px;
+    min-height: 22px;
+    padding: 1px 9px;
 }}
 QPushButton[tbSummaryItem="true"]:hover {{ background: {control_hover.canonical}; }}
-QPushButton[tbSummaryItem="true"][summaryKey="completed"] {{ border-right: 0; }}
-QPushButton[tbSummaryItem="true"] QLabel[tbSummaryIcon="true"] {{
+QPushButton[tbSummaryItem="true"]:checked {{
     color: {focus.canonical};
-    font-size: 20pt;
-}}
-QPushButton[tbSummaryItem="true"] QLabel[tbSummaryLabel="true"] {{
-    color: {muted.canonical};
-    font-size: {small_size:g}pt;
-}}
-QPushButton[tbSummaryItem="true"] QLabel[tbSummaryValue="true"] {{
-    color: {text.canonical};
-    font-size: 15pt;
+    background: {nav_selected.canonical};
     font-weight: 600;
 }}
-QPushButton[tbSummaryItem="true"][summaryKey="completed"] QLabel[tbSummaryIcon="true"] {{
-    color: {success.canonical};
-}}
+QPushButton[tbSummaryItem="true"]:focus {{ border-color: {focus.canonical}; }}
+QPushButton[tbSummaryItem="true"]:disabled {{ color: {disabled_text.canonical}; }}
 
 QPushButton[tbComponentKind="badge"] {{
     color: {muted.canonical};
@@ -458,11 +448,6 @@ QPushButton[tbComponentKind="badge"]:checked {{
     border-color: {focus.canonical};
 }}
 
-QWidget#tbWorkflowActions {{
-    background: {surface.canonical};
-    border: 0;
-    border-bottom: 1px solid {subtle_border.canonical};
-}}
 QTableView[tbComponentKind="table"] {{
     color: {text.canonical};
     background: {surface.canonical};

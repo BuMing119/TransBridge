@@ -10,6 +10,7 @@ from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QDockWidget, QMessageBox
 
 from transbridge.converter.translation_entry import STAGE_QUESTIONABLE
+from transbridge.ui.coordinators.project_dialogs import ProjectDialogs
 from transbridge.ui.guidance.qt import GuidanceBinding
 from transbridge.ui.workbench.alignment_consent import get_alignment_consent
 
@@ -52,6 +53,7 @@ class ShellIntentComposition:
         self._task_navigation = None
         self._task_overlay_host_geometry: QRect | None = None
         self._drop_controller: ShellDropController | None = None
+        self._project_dialogs = ProjectDialogs(host, dispatch=self.dispatch, availability=self.router.availability)
         self._register_handlers()
 
     def menu_callbacks(self) -> MenuCallbacks:
@@ -95,6 +97,9 @@ class ShellIntentComposition:
             update_source=callback(IntentId.PROJECT_SOURCE_UPDATE),
             change_text_encoding=callback(IntentId.PROJECT_TEXT_ENCODING),
             delete_project=callback(IntentId.PROJECT_DELETE),
+            manage_variants=callback(IntentId.PROJECT_VARIANT_MANAGE),
+            manage_history=callback(IntentId.PROJECT_SNAPSHOT_MANAGE),
+            open_project_properties=callback(IntentId.PROJECT_PROPERTIES),
             exit_app=callback(IntentId.APP_EXIT),
         )
 
@@ -177,6 +182,7 @@ class ShellIntentComposition:
             self._task_overlay_host_geometry = None
         if self._drop_controller is not None:
             self._drop_controller.close()
+        self._project_dialogs.close()
         self.router.close()
 
     def _register_handlers(self) -> None:
@@ -198,6 +204,17 @@ class ShellIntentComposition:
             availability=lambda: host.project_text_encoding_coordinator.availability(),
         )
         register(IntentId.PROJECT_DELETE, self._delete_project)
+        register(
+            IntentId.PROJECT_VARIANT_MANAGE, _call(self._project_dialogs.open_variants), availability=self._has_project
+        )
+        register(
+            IntentId.PROJECT_SNAPSHOT_MANAGE,
+            _call(self._project_dialogs.open_history),
+            availability=self._project_dialogs.history_availability,
+        )
+        register(
+            IntentId.PROJECT_PROPERTIES, _call(self._project_dialogs.open_properties), availability=self._has_project
+        )
         register(
             IntentId.PROJECT_VARIANT_CREATE, _call(host.variant_coordinator.new_variant), availability=self._has_project
         )

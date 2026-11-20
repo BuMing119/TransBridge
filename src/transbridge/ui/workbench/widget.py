@@ -17,24 +17,25 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMenu,
     QMessageBox,
-    QPushButton,
     QSizePolicy,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
+from transbridge.ui.foundation.components.elided_combo_box import ElidedComboBox
 from transbridge.ui.guidance.qt import GuidanceBanner
-from transbridge.ui.shell.action_catalog import IntentId
+from transbridge.ui.shell.action_catalog import DEFAULT_ACTION_CATALOG, IntentId
 from transbridge.ui.windowing import show_and_activate
 
 from ._project_bar import ProjectBar
+from .project_configuration_view import ProjectConfigurationView
 from .remote_target_view import RemoteTargetView
 from .step2 import Step2PreviewWidget
 from .terminology_profile_bar import TerminologyProfileBar
 from .terminology_profile_controller import TerminologyProfileUiController
+from .workflow_actions_view import WorkflowActionsView
 from .workflow_presenter import WorkbenchHierarchyViewState, WorkbenchWorkflowPresenter
 
 
@@ -99,27 +100,31 @@ class WorkbenchWidget(QWidget):
         self._project_bar.snapshot_load_requested.connect(
             lambda: self.intent_requested.emit(IntentId.PROJECT_SNAPSHOT_LOAD.value)
         )
+        self._project_bar.ai_history_requested.connect(self.ai_tasks.open_history)
         project_row.addWidget(self._project_bar, 1)
-        self._ai_history_button = QPushButton("AI 任务记录")
-        self._ai_history_button.clicked.connect(self.ai_tasks.open_history)
-        project_row.addWidget(self._ai_history_button)
 
         self._remote_target = RemoteTargetView(self._ctx, self)
 
+        self._workflow_actions = WorkflowActionsView(context_card, separate_status=True)
+        self._workflow_actions.set_management_menu(self._build_collection_menu())
         self._collection_bar = self._build_collection_bar()
-        content_row.addWidget(self._collection_bar, 3)
-        content_row.addWidget(self._remote_target, 2)
+        content_row.addWidget(self._collection_bar, 1)
+        content_row.addWidget(self._workflow_actions)
         layout.addWidget(context_card)
 
         self._terminology_profile_bar = None
         if self._terminology_profile_factory is not None:
             self._terminology_profile_bar = TerminologyProfileBar(self)
-            layout.addWidget(self._terminology_profile_bar)
+        self._project_configuration = ProjectConfigurationView(self._remote_target, self._terminology_profile_bar, self)
+        self._project_bar.configuration_action = self._project_configuration.action
+        layout.addWidget(self._project_configuration)
 
         self._guidance_banner = GuidanceBanner(self)
         layout.addWidget(self._guidance_banner)
 
-        self._step2 = Step2PreviewWidget(self._ctx, theme_view=self._theme_view)
+        self._step2 = Step2PreviewWidget(
+            self._ctx, theme_view=self._theme_view, workflow_actions=self._workflow_actions
+        )
         self._step2.intent_requested.connect(self.intent_requested.emit)
         layout.addWidget(self._step2)
 
@@ -187,7 +192,7 @@ class WorkbenchWidget(QWidget):
     def open_management_menu(self) -> None:
         """Open the secondary management surface for the canonical intent."""
 
-        self._manage_button.showMenu()
+        self._workflow_actions.open_management_menu()
 
     # ── Step2 progress proxy ──────────────────────────────────
 
@@ -284,9 +289,9 @@ class WorkbenchWidget(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
 
-        row.addWidget(QLabel("翻译内容 ·"))
+        row.addWidget(QLabel("当前内容"))
 
-        self._collection_combo = QComboBox()
+        self._collection_combo = ElidedComboBox()
         self._collection_combo.setAccessibleName("当前翻译内容")
         self._collection_combo.setMinimumWidth(180)
         self._collection_combo.setMinimumContentsLength(16)
@@ -295,40 +300,30 @@ class WorkbenchWidget(QWidget):
         self._collection_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self._collection_combo.currentIndexChanged.connect(self._on_collection_switch)
         row.addWidget(self._collection_combo, stretch=1)
+        return bar
 
-        self._btn_import = QPushButton("导入译文…")
-        self._btn_import.setAccessibleName("导入译文")
-        self._btn_import.setFlat(True)
-        ComponentStyle.apply_static(self._btn_import, ComponentKind.BUTTON)
+    def _build_collection_menu(self) -> QMenu:
+        manage_menu = QMenu(self)
+        manage_menu.setAccessibleName("翻译内容管理")
+        self._btn_new = manage_menu.addAction(DEFAULT_ACTION_CATALOG.get(IntentId.WORKBENCH_CONTENT_PREPARE).label)
+        self._btn_new.setToolTip("选择插件、XML、EET、SST 或 JSON 作为当前工程的新翻译内容")
+        self._btn_new.triggered.connect(self._on_new_slot)
+        self._btn_import = manage_menu.addAction("导入译文…")
         self._btn_import.setToolTip(
             "从已翻译插件、DSD JSON、ParaTranz JSON、XML、EET、SST 或 Strings 导入当前内容的译文"
         )
-        self._btn_import.clicked.connect(lambda: self.intent_requested.emit(IntentId.SOURCE_MIGRATE.value))
-        row.addWidget(self._btn_import)
-
-        self._manage_button = QToolButton()
-        self._manage_button.setAccessibleName("管理当前翻译内容")
-        self._manage_button.setText("管理 ▾")
-        self._manage_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        ComponentStyle.apply_static(self._manage_button, ComponentKind.BUTTON)
-        manage_menu = QMenu(self._manage_button)
+        self._btn_import.triggered.connect(lambda: self.intent_requested.emit(IntentId.SOURCE_MIGRATE.value))
+        manage_menu.addSeparator()
         self._btn_terminology = manage_menu.addAction("构建术语库…")
         self._btn_terminology.setToolTip("构建、检查、调整并发布当前工程的术语库")
         self._btn_terminology.triggered.connect(
             lambda: self.intent_requested.emit(IntentId.TERMINOLOGY_WORKBENCH.value)
         )
         manage_menu.addSeparator()
-        self._btn_new = manage_menu.addAction("打开翻译文件…")
-        self._btn_new.setToolTip("选择插件、XML、EET、SST 或 JSON 作为当前工程的新翻译内容")
-        self._btn_new.triggered.connect(self._on_new_slot)
-        manage_menu.addSeparator()
         self._btn_remove = manage_menu.addAction("移除当前翻译内容…")
         self._btn_remove.setToolTip("移除当前翻译内容（不删除源文件）")
         self._btn_remove.triggered.connect(self._on_remove_slot)
-        self._manage_button.setMenu(manage_menu)
-        row.addWidget(self._manage_button)
-
-        return bar
+        return manage_menu
 
     def _rebuild_collection_combo(self):
         """根据 ctx.slots 重建下拉列表。无集合时禁用控件。"""
@@ -373,6 +368,7 @@ class WorkbenchWidget(QWidget):
             self._collection_combo.setCurrentIndex(active_idx)
         finally:
             self._collection_combo.blockSignals(False)
+            self._collection_combo.setToolTip(self._collection_combo.currentText())
 
     @staticmethod
     def _content_display_label(key: str, slot) -> str:
@@ -391,6 +387,7 @@ class WorkbenchWidget(QWidget):
         return None
 
     def _on_collection_switch(self, index: int):
+        self._collection_combo.setToolTip(self._collection_combo.currentText())
         key = self._collection_combo.itemData(index)
         if key and key != self._ctx.active_key:
             self._ctx.activate_slot(key)

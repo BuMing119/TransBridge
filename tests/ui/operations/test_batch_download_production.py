@@ -266,7 +266,7 @@ def test_real_shell_and_current_project_routes_open_the_same_source_selector(
     host.download_card.update_batch_visibility()
     window = None
     try:
-        assert host.operation_menu.download.text() == "从paratranz上同步"
+        assert host.operation_menu.download.text() == "下载并合并…"
         assert not host.operation_menu.batch_download.isVisible()
         assert host.download_card.batch_btn.isHidden()
         if entrypoint == "menu":

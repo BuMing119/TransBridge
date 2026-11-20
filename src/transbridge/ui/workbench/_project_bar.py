@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QPalette
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QAction, QPalette
 from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QInputDialog, QLabel, QMenu, QPushButton, QSizePolicy, QWidget
 
 from transbridge.ui.foundation.adapters import DomainBrushes, ThemeView
@@ -18,7 +18,7 @@ from transbridge.ui.foundation.components import (
     make_primary_button,
     reserve_text_width,
 )
-from transbridge.ui.foundation.tabler_icons import tabler_icon
+from transbridge.ui.foundation.components.elided_combo_box import ElidedComboBox
 from transbridge.ui.text_encoding import context_text_encodings, text_encoding_summary
 from transbridge.ui.workbench.save_presenter import SavePhase, SaveStatePresenter, SaveTarget, SaveViewState
 from transbridge.ui.workbench.workflow_presenter import WorkbenchHierarchyViewState, WorkbenchWorkflowPresenter
@@ -41,6 +41,7 @@ class ProjectBar(QWidget):
     snapshot_save_requested = pyqtSignal()
     snapshot_load_requested = pyqtSignal()
     snapshot_delete_requested = pyqtSignal()
+    ai_history_requested = pyqtSignal()
 
     def __init__(self, ctx, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(parent)
@@ -51,6 +52,7 @@ class ProjectBar(QWidget):
         self._domain_factory = DomainBrushes if theme_view is None else theme_view.domain_brushes
         self._workflow_presenter = WorkbenchWorkflowPresenter()
         self._save_presenter = SaveStatePresenter()
+        self.configuration_action: QAction | None = None
         self._hierarchy_state = self._workflow_presenter.hierarchy(
             project_id=None,
             project_name=None,
@@ -61,50 +63,39 @@ class ProjectBar(QWidget):
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 2, 0, 2)
-        layout.setSpacing(4)
+        layout.setSpacing(8)
 
-        # ── 项目名（可编辑） ──
-        layout.addWidget(QLabel("本地工程 ·"))
-        self._project_label = ElidedLabel("无项目")
-        self._project_label.setAccessibleName("当前本地翻译工程")
+        self._rename_btn = QPushButton()
+        ComponentStyle.apply_static(self._rename_btn, ComponentKind.BUTTON)
+        self._rename_btn.clicked.connect(self._on_project_menu)
+        self._rename_btn.setMinimumWidth(144)
+        self._rename_btn.setMaximumWidth(270)
+        self._rename_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        layout.addWidget(self._rename_btn, 1)
+
+        self._project_label = ElidedLabel(parent=self._rename_btn)
+        self._project_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._project_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._project_label.setMinimumWidth(120)
         project_font = self._project_label.font()
         project_font.setBold(True)
         self._project_label.setFont(project_font)
-        layout.addWidget(self._project_label, 1)
-
-        self._rename_btn = QPushButton("...")
-        self._rename_btn.setFixedWidth(28)
-        self._rename_btn.setFlat(True)
-        ComponentStyle.apply_static(self._rename_btn, ComponentKind.BUTTON)
-        self._rename_btn.setToolTip("管理本地工程")
-        self._rename_btn.setAccessibleName("管理本地翻译工程")
-        self._rename_btn.clicked.connect(self._on_project_menu)
-        layout.addWidget(self._rename_btn)
+        name_layout = QHBoxLayout(self._rename_btn)
+        name_layout.setContentsMargins(12, 0, 12, 0)
+        name_layout.addWidget(self._project_label, 1)
 
         # ── 版本下拉 ──
-        layout.addWidget(QLabel(" 翻译版本 ·"))
-        self._variant_combo = QComboBox()
+        self._variant_label = QLabel("版本")
+        layout.addWidget(self._variant_label)
+        self._variant_combo = ElidedComboBox()
         self._variant_combo.setAccessibleName("当前翻译版本")
         self._variant_combo.setMinimumWidth(100)
-        self._variant_combo.setMinimumContentsLength(8)
+        self._variant_combo.setMinimumContentsLength(5)
         self._variant_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self._variant_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         ComponentStyle.apply_static(self._variant_combo, ComponentKind.INPUT)
         self._variant_combo.currentIndexChanged.connect(self._on_variant_selected)
-        layout.addWidget(self._variant_combo)
-
-        # ── 版本管理按钮 ──
-        self._variant_menu_btn = QPushButton()
-        self._variant_menu_btn.setFixedWidth(28)
-        self._variant_menu_btn.setIconSize(QSize(16, 16))
-        self._variant_menu_btn.setFlat(True)
-        ComponentStyle.apply_static(self._variant_menu_btn, ComponentKind.BUTTON)
-        self._variant_menu_btn.setToolTip("管理版本")
-        self._variant_menu_btn.setAccessibleName("管理翻译版本")
-        self._variant_menu_btn.clicked.connect(self._on_variant_menu)
-        self._refresh_variant_icon()
-        layout.addWidget(self._variant_menu_btn)
+        layout.addWidget(self._variant_combo, 1)
 
         # ── 保存按钮 ──
         self._save_btn = make_primary_button("保存")
@@ -126,27 +117,11 @@ class ProjectBar(QWidget):
         self._save_status.setFont(status_font)
         layout.addWidget(self._save_status, 1)
 
-        layout.addStretch()
-
-        # ── 项目管理按钮 ──
-        self._btn_new = QPushButton("+ 新建项目")
-        self._btn_new.setAccessibleName("新建本地翻译工程")
-        self._btn_new.setFlat(True)
-        ComponentStyle.apply_static(self._btn_new, ComponentKind.BUTTON)
-        self._btn_new.clicked.connect(self.new_project_requested.emit)
-        layout.addWidget(self._btn_new)
-
-        self._btn_open = QPushButton("打开项目")
-        self._btn_open.setAccessibleName("打开本地翻译工程")
-        self._btn_open.setFlat(True)
-        ComponentStyle.apply_static(self._btn_open, ComponentKind.BUTTON)
-        self._btn_open.clicked.connect(self.open_project_requested.emit)
-        layout.addWidget(self._btn_open)
-
         # 监听状态变化
         ctx.workspace_changed.connect(self.refresh)
         ctx.project_changed.connect(self.refresh)
         ctx.variant_changed.connect(self._on_external_variant_change)
+        self.refresh()
         if theme_view is not None:
             self._apply_theme(theme_view.snapshot())
             theme_view.subscribe(self, self._apply_theme)
@@ -154,6 +129,7 @@ class ProjectBar(QWidget):
     # ── 版本下拉 ──────────────────────────────────────────────
 
     def _on_variant_selected(self, index: int):
+        self._variant_combo.setToolTip(self._variant_combo.currentText())
         if index < 0:
             return
         variant_id = self._variant_combo.currentData()
@@ -170,11 +146,11 @@ class ProjectBar(QWidget):
                     break
         finally:
             self._variant_combo.blockSignals(False)
+        self._variant_combo.setToolTip(self._variant_combo.currentText())
 
     # ── 版本管理菜单 ──────────────────────────────────────────
 
-    def _on_variant_menu(self):
-        menu = QMenu(self)
+    def _populate_variant_menu(self, menu: QMenu) -> None:
         menu.addAction("新建版本...", lambda: self.variant_add_requested.emit())
         menu.addAction("复制当前版本...", lambda: self.variant_copy_requested.emit())
 
@@ -195,8 +171,6 @@ class ProjectBar(QWidget):
         snapshots.addAction("载入历史还原点…", self.snapshot_load_requested.emit)
         snapshots.addAction("删除历史还原点…", self.snapshot_delete_requested.emit)
 
-        menu.exec(self._variant_menu_btn.mapToGlobal(self._variant_menu_btn.rect().bottomLeft()))
-
     # ── 重命名项目 ────────────────────────────────────────────
 
     def _on_rename_project(self):
@@ -210,9 +184,22 @@ class ProjectBar(QWidget):
 
     def _on_project_menu(self) -> None:
         menu = QMenu(self)
-        menu.addAction("重命名工程…", self._on_rename_project)
-        menu.addAction("更新源文件…", self.source_update_requested.emit)
+        menu.setToolTipsVisible(True)
+        menu.addAction("新建工程…", self.new_project_requested.emit)
+        menu.addAction("打开工程…", self.open_project_requested.emit)
+        menu.addSeparator()
+        if self.configuration_action is not None:
+            menu.addAction(self.configuration_action)
+        versions = menu.addMenu("管理翻译版本")
+        versions.setEnabled(bool(self._ctx.active_variant_id))
+        self._populate_variant_menu(versions)
+        menu.addAction("AI 任务记录…", self.ai_history_requested.emit)
+        menu.addSeparator()
+        rename = menu.addAction("重命名工程…", self._on_rename_project)
+        update = menu.addAction("更新源文件…", self.source_update_requested.emit)
         project_id = self._ctx.active_project_id
+        rename.setEnabled(bool(project_id))
+        update.setEnabled(bool(project_id))
         encoding = menu.addAction("文本编码…", self.text_encoding_requested.emit)
         encoding.setEnabled(bool(project_id and getattr(self._ctx, "project_text_encodings", None)))
         if encoding.isEnabled():
@@ -229,7 +216,10 @@ class ProjectBar(QWidget):
                 "删除本地工程…",
                 lambda: self.project_delete_requested.emit(str(project_id), str(name)),
             )
-        menu.exec(self._rename_btn.mapToGlobal(self._rename_btn.rect().bottomLeft()))
+        try:
+            menu.exec(self._rename_btn.mapToGlobal(self._rename_btn.rect().bottomLeft()))
+        finally:
+            menu.deleteLater()
 
     # ── 刷新 ──────────────────────────────────────────────────
 
@@ -255,7 +245,7 @@ class ProjectBar(QWidget):
         return SaveTarget(str(project_id), str(project_name), str(variant_id), variant_name or str(variant_id))
 
     def _apply_save_state(self, state: SaveViewState) -> None:
-        self._save_status.set_full_text(state.message)
+        self._save_status.set_full_text(state.message.partition(" · ")[0])
         self._save_status.setToolTip(state.diagnostic or state.message)
         self._save_status.setAccessibleDescription(state.diagnostic or state.message)
         domain_keys = {
@@ -307,7 +297,9 @@ class ProjectBar(QWidget):
             self._variant_combo.clear()
             if project_name and variants:
                 for v in variants:
-                    self._variant_combo.addItem(str(v["name"]), str(v["id"]))
+                    name = str(v["name"])
+                    self._variant_combo.addItem(name, str(v["id"]))
+                    self._variant_combo.setItemData(self._variant_combo.count() - 1, name, Qt.ItemDataRole.ToolTipRole)
                 if variant:
                     for i in range(self._variant_combo.count()):
                         if self._variant_combo.itemData(i) == variant:
@@ -315,29 +307,23 @@ class ProjectBar(QWidget):
                             break
         finally:
             self._variant_combo.blockSignals(False)
+        self._variant_combo.setToolTip(self._variant_combo.currentText())
+        self._variant_label.setVisible(bool(project_name))
+        project_text = project_name or "工程"
+        self._project_label.set_full_text(project_text)
+        self._project_label.setToolTip(project_text)
+        self._rename_btn.setToolTip(f"{project_text} · 打开工程菜单")
+        self._rename_btn.setAccessibleName(f"{project_text} · 打开工程菜单")
 
         if project_name:
-            self._project_label.set_full_text(project_name)
-            self._project_label.setToolTip(project_name)
-            self._rename_btn.setVisible(True)
             self._variant_combo.setVisible(True)
-            self._variant_menu_btn.setVisible(True)
             self._save_btn.setVisible(True)
-            self._btn_new.setVisible(False)
-            self._btn_open.setVisible(False)
             target = self._target()
             if target is not None:
                 self._apply_save_state(self._save_presenter.show_target(target, dirty=self._ctx.dirty))
         else:
-            empty_label = "无项目 - 请新建或打开项目"
-            self._project_label.set_full_text(empty_label)
-            self._project_label.setToolTip(empty_label)
-            self._rename_btn.setVisible(False)
             self._variant_combo.setVisible(False)
-            self._variant_menu_btn.setVisible(False)
             self._save_btn.setVisible(False)
-            self._btn_new.setVisible(True)
-            self._btn_open.setVisible(True)
             self._apply_save_state(self._save_presenter.clear())
 
     # ── 保存反馈 ──────────────────────────────────────────────
@@ -398,11 +384,7 @@ class ProjectBar(QWidget):
         except Exception:  # noqa: BLE001 - preserve the last-good visual state
             return
         self._domain = domain
-        self._refresh_variant_icon()
         project_palette = self._project_label.palette()
         project_palette.setColor(QPalette.ColorRole.WindowText, domain.report("info").foreground.color())
         self._project_label.setPalette(project_palette)
         self._apply_save_state(self._save_presenter.state)
-
-    def _refresh_variant_icon(self) -> None:
-        self._variant_menu_btn.setIcon(tabler_icon(self._variant_menu_btn, "plus", 16))

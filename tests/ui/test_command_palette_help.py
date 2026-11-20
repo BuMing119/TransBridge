@@ -77,6 +77,19 @@ def test_search_result_preserves_authoritative_disabled_reason() -> None:
     assert controller.is_open
 
 
+def test_original_menu_search_terms_still_find_the_same_operations() -> None:
+    model = CommandPaletteModel(_availability)
+    for term, intent in (
+        ("新建本地翻译工程", IntentId.PROJECT_CREATE),
+        ("打开翻译文件", IntentId.WORKBENCH_CONTENT_PREPARE),
+        ("刷新工程列表", IntentId.PROJECT_REFRESH),
+        ("从paratranz上同步", IntentId.SYNC_DOWNLOAD),
+        ("服务与 API 配置", IntentId.SETTINGS_SERVICES),
+        ("导入 .transbridge", IntentId.PROJECT_IMPORT),
+    ):
+        assert model.search(term).results[0].intent_id is intent
+
+
 def test_dangerous_result_returns_confirmation_request_and_never_dispatches_itself() -> None:
     model = CommandPaletteModel(_availability)
     controller = CommandPaletteController(model)

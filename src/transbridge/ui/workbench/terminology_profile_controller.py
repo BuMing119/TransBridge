@@ -222,13 +222,21 @@ class TerminologyProfileUiController(QObject):
     def _loading(self, message):
         self._refresh_pending = True
         self._render(
-            replace(self._state, enabled=False, can_manage=False, detail=message, selection_error="", loading=True)
+            replace(
+                self._state,
+                enabled=False,
+                can_manage=False,
+                detail=message,
+                selection_error="",
+                loading=True,
+                load_error="",
+            )
         )
 
     def _refresh_failed(self, identity, error):
         self._refresh_pending = False
         self._preview.set_terminology_profile(None)
-        self._render(TerminologyProfileBarState(detail=f"译名方案不可用：{error}"))
+        self._render(TerminologyProfileBarState(detail=f"译名方案不可用：{error}", load_error=str(error)))
 
     def _refreshed(self, identity, result):
         self._refresh_pending = False

@@ -7,11 +7,7 @@ msgstr ""
 "X-TransBridge-Catalog-Version: source-1\n"
 
 #: ui/shell/menu_builder.py
-msgid "文件"
-msgstr ""
-
-#: ui/shell/menu_builder.py
-msgid "项目"
+msgid "工程"
 msgstr ""
 
 #: ui/shell/menu_builder.py
@@ -23,7 +19,7 @@ msgid "翻译"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "同步与发布"
+msgid "ParaTranz"
 msgstr ""
 
 #: ui/shell/menu_builder.py
@@ -39,19 +35,23 @@ msgid "帮助"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "新建本地翻译工程…"
+msgid "新建工程…"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "打开本地翻译工程…"
+msgid "打开工程…"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "保存当前工程"
+msgid "保存工程"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "刷新工程列表"
+msgid "刷新项目列表"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "刷新 ParaTranz 云端项目列表"
 msgstr ""
 
 #: ui/shell/menu_builder.py
@@ -71,11 +71,11 @@ msgid "载入历史还原点…"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "导出 .transbridge…"
+msgid "导出工程包…"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "导入 .transbridge…"
+msgid "导入工程包…"
 msgstr ""
 
 #: ui/shell/action_catalog.py
@@ -111,7 +111,7 @@ msgid "管理当前翻译内容"
 msgstr ""
 
 #: ui/shell/action_catalog.py
-msgid "打开翻译文件…"
+msgid "添加翻译文件…"
 msgstr ""
 
 #: ui/shell/action_catalog.py
@@ -122,20 +122,44 @@ msgstr ""
 msgid "更新源文件…"
 msgstr ""
 
-#: ui/shell/menu_builder.py
-msgid "上传当前内容至 ParaTranz…"
-msgstr ""
-
-#: ui/shell/menu_builder.py
-msgid "批量上传至 ParaTranz…"
-msgstr ""
-
-#: ui/shell/menu_builder.py
-msgid "从paratranz上同步"
+#: ui/shell/action_catalog.py
+msgid "文本编码…"
 msgstr ""
 
 #: ui/shell/action_catalog.py
-msgid "导出文件…"
+msgid "管理翻译版本…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "历史还原…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "工程属性…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "查看工程名称，进入重命名和文本编码设置"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "上传当前内容…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "批量上传…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "下载并合并…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "从 ParaTranz 下载译文，审阅后合并到本地翻译内容"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "导出当前文件…"
 msgstr ""
 
 #: ui/shell/action_catalog.py
@@ -155,18 +179,18 @@ msgid "FOMOD 安装包翻译…"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "智能助手面板"
+msgid "智能助手"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "外观与通用设置…"
+msgid "通用设置…"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "服务与 API 配置…"
+msgid "AI 服务与 API…"
 msgstr ""
 
-msgid "AI 术语位置判断…"
+msgid "AI 术语定位偏好…"
 msgstr ""
 
 msgid "清除当前版本定位缓存"
@@ -179,11 +203,11 @@ msgid "更改自动 AI 术语位置判断及启动询问偏好"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "ParaTranz 账户信息"
+msgid "账户信息…"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "ParaTranz 私信"
+msgid "私信…"
 msgstr ""
 
 #: ui/shell/menu_builder.py
@@ -199,7 +223,7 @@ msgid "退出"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "查看任务与结果"
+msgid "任务与结果…"
 msgstr ""
 
 #: ui/shell/menu_builder.py
@@ -211,7 +235,7 @@ msgid "选择应用主题、语言与无障碍选项"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "配置 ParaTranz 与 AI 服务连接"
+msgid "打开统一设置中的 AI 服务页面，管理 API 与模型"
 msgstr ""
 
 #: ui/settings_dialog.py
@@ -415,10 +439,6 @@ msgid "选择一个或多个翻译内容，使用统一的 AI 翻译任务"
 msgstr ""
 
 #: ui/shell/action_catalog.py
-msgid "设置…"
-msgstr ""
-
-#: ui/shell/action_catalog.py
 msgid "管理外观、AI 服务、Embedding、ParaTranz 与默认参数"
 msgstr ""
 
@@ -427,7 +447,7 @@ msgid "重命名当前工程…"
 msgstr ""
 
 #: ui/shell/action_catalog.py
-msgid "删除本地工程…"
+msgid "删除工程…"
 msgstr ""
 
 #: ui/shell/action_catalog.py

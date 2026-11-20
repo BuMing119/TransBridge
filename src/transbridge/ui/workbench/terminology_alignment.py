@@ -247,7 +247,4 @@ class AlignmentBarBinding(QObject):
             self._scheduled_key = None
             self._timer.stop()
         message = "" if preview is None else preview.alignment_message
-        detail = self._notice or message or ("" if state is None else state.detail)
-        self._bar.detail.set_full_text(detail)
-        self._bar.detail.setToolTip(detail)
-        self._bar.detail.setAccessibleDescription(detail)
+        self._bar.set_alignment_detail(self._notice or message)

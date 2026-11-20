@@ -10,7 +10,6 @@ from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QMainWindow, QMenu
 
 from .action_catalog import DEFAULT_ACTION_CATALOG, ActionCatalog, IntentId
-from .alignment_cache_actions import bind_alignment_cache_action
 
 VoidCallback = Callable[[], None]
 
@@ -56,6 +55,9 @@ class MenuCallbacks:
     delete_project: VoidCallback = lambda: None
     delete_snapshot: VoidCallback = lambda: None
     exit_app: VoidCallback | None = None
+    manage_variants: VoidCallback = lambda: None
+    manage_history: VoidCallback = lambda: None
+    open_project_properties: VoidCallback = lambda: None
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +119,9 @@ class MenuBuilder:
     ) -> QAction:
         descriptor = self._catalog.get(intent_id)
         action = self._action(menu, self._gettext(descriptor.label), callback, descriptor.shortcut)
+        if descriptor.shortcut:
+            # The top-level menu can be hidden while the window shortcut is active.
+            self._window.addAction(action)
         action.setData(intent_id.value)
         action.setProperty("intent_id", intent_id.value)
         action.setCheckable(descriptor.checkable)
@@ -129,74 +134,56 @@ class MenuBuilder:
         callbacks = self._callbacks
         bar = self._window.menuBar()
 
-        file_menu = bar.addMenu(self._gettext("文件"))
-        import_transbridge = self._intent_action(file_menu, IntentId.PROJECT_IMPORT, callbacks.import_transbridge)
-        export_transbridge = self._intent_action(file_menu, IntentId.PROJECT_EXPORT, callbacks.export_transbridge)
-        file_menu.addSeparator()
-        self._intent_action(file_menu, IntentId.APP_EXIT, callbacks.exit_app or self._window.close)
-
-        project_menu = bar.addMenu(self._gettext("项目"))
+        project_menu = bar.addMenu(self._gettext("工程"))
         self._intent_action(project_menu, IntentId.PROJECT_CREATE, callbacks.new_project)
         self._intent_action(project_menu, IntentId.PROJECT_OPEN, callbacks.open_project)
         self._intent_action(project_menu, IntentId.PROJECT_SAVE, callbacks.manual_save)
-        self._intent_action(project_menu, IntentId.PROJECT_RENAME, callbacks.rename_project)
+        project_menu.addSeparator()
+        prepare_content = self._intent_action(
+            project_menu, IntentId.WORKBENCH_CONTENT_PREPARE, callbacks.prepare_content
+        )
         self._intent_action(project_menu, IntentId.PROJECT_SOURCE_UPDATE, callbacks.update_source)
-        encoding = self._intent_action(project_menu, IntentId.PROJECT_TEXT_ENCODING, callbacks.change_text_encoding)
-
-        def sync_encoding() -> None:
-            coordinator = getattr(self._window, "project_text_encoding_coordinator", None)
-            encoding.setEnabled(coordinator is not None and coordinator.availability()[0])
-
-        project_menu.aboutToShow.connect(sync_encoding)
-        sync_encoding()
+        project_menu.addSeparator()
+        self._intent_action(project_menu, IntentId.PROJECT_VARIANT_MANAGE, callbacks.manage_variants)
+        self._intent_action(project_menu, IntentId.PROJECT_SNAPSHOT_MANAGE, callbacks.manage_history)
+        self._intent_action(project_menu, IntentId.PROJECT_PROPERTIES, callbacks.open_project_properties)
+        project_menu.addSeparator()
+        import_transbridge = self._intent_action(project_menu, IntentId.PROJECT_IMPORT, callbacks.import_transbridge)
+        export_transbridge = self._intent_action(project_menu, IntentId.PROJECT_EXPORT, callbacks.export_transbridge)
+        project_menu.addSeparator()
         self._intent_action(project_menu, IntentId.PROJECT_DELETE, callbacks.delete_project)
-        project_menu.addSeparator()
-        variant_menu = project_menu.addMenu(self._gettext("翻译版本"))
-        new_variant = self._intent_action(variant_menu, IntentId.PROJECT_VARIANT_CREATE, callbacks.new_variant)
-        copy_variant = self._intent_action(variant_menu, IntentId.PROJECT_VARIANT_COPY, callbacks.copy_variant)
-        variant_menu.addSeparator()
-        save_snapshot = self._intent_action(variant_menu, IntentId.PROJECT_SNAPSHOT_SAVE, callbacks.save_snapshot)
-        load_snapshot = self._intent_action(variant_menu, IntentId.PROJECT_SNAPSHOT_LOAD, callbacks.load_snapshot)
-        self._intent_action(variant_menu, IntentId.PROJECT_SNAPSHOT_DELETE, callbacks.delete_snapshot)
-        project_menu.addSeparator()
-        self._intent_action(project_menu, IntentId.PROJECT_REFRESH, callbacks.refresh_projects)
+        self._intent_action(project_menu, IntentId.APP_EXIT, callbacks.exit_app or self._window.close)
 
         translation_menu = bar.addMenu(self._gettext("翻译"))
-        prepare_content = self._intent_action(
-            translation_menu,
-            IntentId.WORKBENCH_CONTENT_PREPARE,
-            callbacks.prepare_content,
-        )
         migrate = self._intent_action(translation_menu, IntentId.SOURCE_MIGRATE, callbacks.migrate)
-        translation_menu.addSeparator()
         ai_translator = self._intent_action(translation_menu, IntentId.TRANSLATION_AI, callbacks.open_ai_translator)
+        translation_menu.addSeparator()
+        terminology = self._intent_action(translation_menu, IntentId.TERMINOLOGY_WORKBENCH, callbacks.open_terminology)
         dictionary = self._intent_action(translation_menu, IntentId.TRANSLATION_DICTIONARY, callbacks.open_dictionary)
         history_search = self._intent_action(
             translation_menu,
             IntentId.TRANSLATION_HISTORY_SEARCH,
             callbacks.open_history_search,
         )
-        terminology = self._intent_action(
-            translation_menu,
-            IntentId.TERMINOLOGY_WORKBENCH,
-            callbacks.open_terminology,
-        )
+        translation_menu.addSeparator()
+        write = self._intent_action(translation_menu, IntentId.PUBLISH_WRITE, callbacks.write)
+        batch_write = self._intent_action(translation_menu, IntentId.PUBLISH_WRITE_BATCH, callbacks.batch_write)
+        translation_menu.addSeparator()
+        fomod = self._intent_action(translation_menu, IntentId.PUBLISH_FOMOD, callbacks.open_fomod)
 
-        sync_menu = bar.addMenu(self._gettext("同步与发布"))
+        sync_menu = bar.addMenu(self._gettext("ParaTranz"))
         upload = self._intent_action(sync_menu, IntentId.SYNC_UPLOAD, callbacks.upload)
         batch_upload = self._intent_action(sync_menu, IntentId.SYNC_UPLOAD_BATCH, callbacks.batch_upload)
-        sync_menu.addSeparator()
         download = self._intent_action(sync_menu, IntentId.SYNC_DOWNLOAD, callbacks.download)
         batch_download = self._intent_action(sync_menu, IntentId.SYNC_DOWNLOAD_BATCH, callbacks.batch_download)
         batch_download.setVisible(False)
         sync_menu.addSeparator()
-        write = self._intent_action(sync_menu, IntentId.PUBLISH_WRITE, callbacks.write)
-        batch_write = self._intent_action(sync_menu, IntentId.PUBLISH_WRITE_BATCH, callbacks.batch_write)
+        self._intent_action(sync_menu, IntentId.PROJECT_REFRESH, callbacks.refresh_projects)
         sync_menu.addSeparator()
-        fomod = self._intent_action(sync_menu, IntentId.PUBLISH_FOMOD, callbacks.open_fomod)
+        self._intent_action(sync_menu, IntentId.SETTINGS_ACCOUNT, callbacks.show_user)
+        self._intent_action(sync_menu, IntentId.SETTINGS_MESSAGES, callbacks.show_mails)
 
         view_menu = bar.addMenu(self._gettext("视图"))
-        self._intent_action(view_menu, IntentId.TASK_OPEN_ACTIVITY, callbacks.show_task_activity)
         smart_assistant = self._intent_action(
             view_menu,
             IntentId.VIEW_SMART_ASSISTANT,
@@ -204,6 +191,7 @@ class MenuBuilder:
         )
         # Compatibility handles deliberately point to one authoritative QAction.
         view_assistant = smart_assistant
+        self._intent_action(view_menu, IntentId.TASK_OPEN_ACTIVITY, callbacks.show_task_activity)
 
         settings_menu = bar.addMenu(self._gettext("设置"))
         appearance = self._intent_action(settings_menu, IntentId.SETTINGS_APPEARANCE, callbacks.show_appearance)
@@ -212,19 +200,17 @@ class MenuBuilder:
         self._intent_action(
             settings_menu, IntentId.SETTINGS_TERMINOLOGY_ALIGNMENT, callbacks.show_terminology_alignment
         )
-        clear_cache = self._intent_action(
-            settings_menu, IntentId.SETTINGS_ALIGNMENT_CACHE_CLEAR, callbacks.clear_alignment_cache
-        )
-        bind_alignment_cache_action(clear_cache, settings_menu, self._window)
-        settings_menu.addSeparator()
-        self._intent_action(settings_menu, IntentId.SETTINGS_ACCOUNT, callbacks.show_user)
-        self._intent_action(settings_menu, IntentId.SETTINGS_MESSAGES, callbacks.show_mails)
-
         help_menu = bar.addMenu(self._gettext("帮助"))
         self._intent_action(help_menu, IntentId.HELP_CONTEXT, callbacks.show_context_help)
         self._intent_action(help_menu, IntentId.HELP_ABOUT, callbacks.show_about)
 
-        # QAction owns discoverable shortcuts.  Ctrl+K stays available for S12.
+        # These handles predate the management windows; existing callers can
+        # still trigger them without duplicating entries in the menu bar.
+        variant_menu = QMenu(self._gettext("翻译版本"), self._window)
+        new_variant = self._intent_action(variant_menu, IntentId.PROJECT_VARIANT_CREATE, callbacks.new_variant)
+        copy_variant = self._intent_action(variant_menu, IntentId.PROJECT_VARIANT_COPY, callbacks.copy_variant)
+        save_snapshot = self._intent_action(variant_menu, IntentId.PROJECT_SNAPSHOT_SAVE, callbacks.save_snapshot)
+        load_snapshot = self._intent_action(variant_menu, IntentId.PROJECT_SNAPSHOT_LOAD, callbacks.load_snapshot)
 
         return MenuHandles(
             prepare_content=prepare_content,

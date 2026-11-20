@@ -6,11 +6,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
+from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from transbridge.application.terminology_profiles import PublishedTerminologyProfile
 from transbridge.application.terminology_profiles.transition_projection import same_profile_revision
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, ElidedLabel
+from transbridge.ui.foundation.components.elided_combo_box import ElidedComboBox
 
 APPLIED_SCHEME = "__transbridge_applied_scheme__"
 
@@ -33,6 +34,7 @@ class TerminologyProfileBarState:
     loading: bool = False
     applied_revision: PublishedTerminologyProfile | None = None
     base_snapshot: object = None
+    load_error: str = ""
 
     @property
     def is_preview(self) -> bool:
@@ -49,28 +51,34 @@ class TerminologyProfileBar(QWidget):
     selection_requested = pyqtSignal(object)
     manage_requested = pyqtSignal()
     alignment_requested = pyqtSignal()
+    status_changed = pyqtSignal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setAccessibleName("译名方案")
-        row = QHBoxLayout(self)
-        row.setContentsMargins(10, 0, 10, 4)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        row = QHBoxLayout()
         row.setSpacing(6)
+        layout.addLayout(row)
+        self.state = TerminologyProfileBarState()
+        self.alignment_detail = ""
 
         row.addWidget(QLabel("预览译名 ·", self))
-        self.combo = QComboBox(self)
+        self.combo = ElidedComboBox(self)
         self.combo.setAccessibleName("预览译名方案")
         self.combo.setMinimumWidth(180)
         self.combo.setMinimumContentsLength(14)
         self.combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         ComponentStyle.apply_static(self.combo, ComponentKind.INPUT)
         self.combo.currentIndexChanged.connect(self._selection_changed)
-        row.addWidget(self.combo)
+        row.addWidget(self.combo, 1)
 
         self.detail = ElidedLabel(parent=self)
         self.detail.setAccessibleName("译名方案状态")
-        row.addWidget(self.detail, 1)
+        layout.addWidget(self.detail)
 
         self.alignment_button = QPushButton("重新定位", self)
         self.alignment_button.setAccessibleName("重试或取消自动术语定位")
@@ -92,6 +100,7 @@ class TerminologyProfileBar(QWidget):
         self.render(TerminologyProfileBarState())
 
     def render(self, state: TerminologyProfileBarState) -> None:
+        self.state = state
         self.combo.blockSignals(True)
         try:
             self.combo.clear()
@@ -103,13 +112,23 @@ class TerminologyProfileBar(QWidget):
         finally:
             self.combo.blockSignals(False)
         self.combo.setEnabled(state.enabled)
+        self.combo.setToolTip(self.combo.currentText())
         self.manage_button.setEnabled(state.can_manage)
         self.manage_button.setToolTip(
             "创建、复制、编辑或归档译名方案。" if state.can_manage else "打开工程后可管理译名方案。"
         )
-        self.detail.set_full_text(state.detail)
-        self.detail.setToolTip(state.detail)
-        self.detail.setAccessibleDescription(state.detail)
+        self._update_detail()
+
+    def set_alignment_detail(self, detail: str) -> None:
+        if self.alignment_detail != detail:
+            self.alignment_detail = detail
+            self._update_detail()
+
+    def _update_detail(self) -> None:
+        detail = " ".join(filter(None, (self.state.detail, self.alignment_detail)))
+        self.detail.set_full_text(detail)
+        self.detail.setToolTip(detail)
+        self.status_changed.emit()
 
     def _selection_changed(self, index: int) -> None:
         if index >= 0:

@@ -42,9 +42,11 @@ def preview(monkeypatch):
 def test_summary_and_review_retain_text_and_other_filters(preview):
     state = FilterState(search_all="Dragon", categories=frozenset({"人名"}), search_key="key")
     preview.apply_filter_state(state.to_mapping())
-    preview._summary_view._buttons["review"].click()
+    buttons = preview._summary_view._buttons
+    buttons["review"].click()
     assert [entry.id for entry in preview.filtered_entries()] == ["1"]
     assert preview._filters_view.state().search_all == "Dragon"
+    assert [key for key, button in buttons.items() if button.isChecked()] == ["review"]
 
     preview.apply_filter_state(state.to_mapping())
     composition = object.__new__(ShellIntentComposition)
@@ -53,6 +55,12 @@ def test_summary_and_review_retain_text_and_other_filters(preview):
     assert [entry.id for entry in preview.filtered_entries()] == ["1"]
     assert preview.get_filter_state()["category"] == ["人名"]
     assert preview.get_filter_state()["search_all"] == "Dragon"
+    assert buttons["review"].isChecked()
+
+    preview._filters_view.toggle_stage(0)
+    assert all(not button.isChecked() for button in buttons.values())
+    preview._filters_view.reset_filters()
+    assert buttons["total"].isChecked()
 
 
 def test_scope_does_not_claim_unselected_rows_and_export_remains_whole_file(preview):
@@ -85,6 +93,7 @@ def test_hidden_filters_are_visible_in_summary_and_reset_clears_every_dimension(
     filters.advanced_button.setChecked(False)
     assert filters.stage_widget.isHidden()
     assert not filters.active_summary.isHidden()
+    assert not filters.clear_button.isHidden()
     assert "有疑问" in filters.active_summary.text()
     assert "Dragon" in filters.active_summary.text()
     assert [entry.id for entry in preview.filtered_entries()] == ["1"]
@@ -93,6 +102,7 @@ def test_hidden_filters_are_visible_in_summary_and_reset_clears_every_dimension(
     assert len(preview.filtered_entries()) == 3
     assert filters.active_summary.isHidden()
     assert not filters.clear_button.isEnabled()
+    assert filters.clear_button.isHidden()
 
 
 def test_reset_also_clears_labels_and_focus(preview):

@@ -15,6 +15,7 @@ class RemoteTargetViewState:
     action_text: str
     can_clear: bool
     semantic_state: str
+    summary: str = ""
 
 
 class RemoteTargetPresenter:
@@ -26,6 +27,7 @@ class RemoteTargetPresenter:
                 "选择…",
                 False,
                 "warning",
+                "ParaTranz · 未绑定",
             )
         names = {
             ParaTranzTargetStatus.UNVERIFIED: "待验证",
@@ -40,6 +42,8 @@ class RemoteTargetPresenter:
         label = target.project_name or f"项目 #{target.project_id}"
         status = names.get(target.status, target.status.value)
         semantic = "success" if target.status is ParaTranzTargetStatus.AVAILABLE else "info"
+        if target.status is ParaTranzTargetStatus.TEMPORARILY_UNAVAILABLE:
+            semantic = "warning"
         if target.status in {
             ParaTranzTargetStatus.NOT_FOUND,
             ParaTranzTargetStatus.NOT_MEMBER,
@@ -48,12 +52,18 @@ class RemoteTargetPresenter:
             ParaTranzTargetStatus.AUTHENTICATION_FAILED,
         }:
             semantic = "error"
+        summary = (
+            f"ParaTranz · {label}"
+            if target.status is ParaTranzTargetStatus.AVAILABLE
+            else (f"ParaTranz · {status} · {label}")
+        )
         return RemoteTargetViewState(
             f"ParaTranz · {label}",
             target.reason or f"#{target.project_id} · {status}",
             "更换…",
             target.source.value == "project_binding",
             semantic,
+            summary,
         )
 
 

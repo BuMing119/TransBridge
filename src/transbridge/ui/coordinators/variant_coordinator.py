@@ -1,4 +1,6 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
+from dataclasses import replace
+
 from PyQt6.QtWidgets import QMessageBox
 
 
@@ -10,62 +12,63 @@ class VariantCoordinator:
 
     def new_variant(self):
         """创建空白新版本。"""
-        from PyQt6.QtWidgets import QInputDialog
-
-        name, ok = QInputDialog.getText(self._host, "新建版本", "版本名称:")
-        if not ok or not name.strip():
-            return
-        display_name = name.strip()
-
-        def _create() -> None:
-            self._host.start_foreground_task(
-                lambda: self._host.project_commands.create_variant(
-                    display_name,
-                    self._host.runtime_context,
-                ),
-                message=f"正在创建版本「{display_name}」…",
-                on_result=lambda result: self._finish_v2_variant_operation(
-                    result,
-                    success_message=f"版本「{display_name}」已创建",
-                    reload_source=True,
-                ),
-            )
-
-        if self._host.context.dirty:
-            self._host.save_current_project_async(on_finished=lambda saved: saved and _create())
-        else:
-            _create()
-        return
+        self._create_variant(copy_active=False)
 
     def copy_variant(self):
         """从当前版本复制创建新版本。"""
+        self._create_variant(copy_active=True)
+
+    def _active_identity(self) -> tuple[str | None, str | None]:
+        context = self._host.context
+        return context.active_project_id, context.active_variant_id
+
+    def _check_active(self, identity) -> bool:
+        context = self._host.context
+        if (
+            identity == self._active_identity()
+            and not getattr(context, "project_opening", False)
+            and not getattr(context, "project_view_failed", False)
+        ):
+            return True
+        self._host.show_message("工程或翻译版本已变化，请重新执行版本操作。")
+        return False
+
+    def _create_variant(self, *, copy_active: bool):
         from PyQt6.QtWidgets import QInputDialog
 
-        name, ok = QInputDialog.getText(self._host, "复制版本", "新版本名称:")
-        if not ok or not name.strip():
+        identity = self._active_identity()
+        if not all(identity) or self._host.runtime_context is None or self._host.project_commands is None:
+            self._host.show_message("请先打开一个可用的工程版本。")
+            return
+        title = "复制版本" if copy_active else "新建版本"
+        name, ok = QInputDialog.getText(self._host, title, "新版本名称:" if copy_active else "版本名称:")
+        if not ok or not name.strip() or not self._check_active(identity):
             return
         display_name = name.strip()
+        request = replace(self._host.runtime_context, project_id=identity[0], variant_id=identity[1])
+        verb = "复制" if copy_active else "创建"
 
-        def _copy() -> None:
+        def start() -> None:
+            if not self._check_active(identity):
+                return
             self._host.start_foreground_task(
                 lambda: self._host.project_commands.create_variant(
                     display_name,
-                    self._host.runtime_context,
-                    copy_active=True,
+                    request,
+                    copy_active=copy_active,
                 ),
-                message=f"正在复制版本「{display_name}」…",
+                message=f"正在{verb}版本「{display_name}」…",
                 on_result=lambda result: self._finish_v2_variant_operation(
                     result,
-                    success_message=f"版本「{display_name}」已复制",
+                    success_message=f"版本「{display_name}」已{verb}",
                     reload_source=True,
                 ),
             )
 
         if self._host.context.dirty:
-            self._host.save_current_project_async(on_finished=lambda saved: saved and _copy())
+            self._host.save_current_project_async(on_finished=lambda saved: saved and start())
         else:
-            _copy()
-        return
+            start()
 
     def switch_variant(self, name: str):
         """从 ProjectBar 下拉切换版本。"""
@@ -75,7 +78,8 @@ class VariantCoordinator:
         from transbridge.application.projects import DirtyDecision
         from transbridge.persistence.v2 import ProjectId, ProjectRef, VariantId, VariantRef
 
-        project_id = self._host.context.active_project_id
+        identity = self._active_identity()
+        project_id, _variant_id = identity
         if project_id is None:
             self._host.show_message("没有活动项目。")
             return
@@ -95,13 +99,19 @@ class VariantCoordinator:
                 self._host.workbench.project_bar.refresh()
                 return
             if answer == QMessageBox.StandardButton.Yes:
+                if not self._check_active(identity):
+                    return
                 self._host.save_current_project_async(
                     on_finished=lambda saved: (
-                        self.switch_variant(name) if saved else self._host.workbench.project_bar.refresh()
+                        self.switch_variant(name)
+                        if saved and self._check_active(identity)
+                        else self._host.workbench.project_bar.refresh()
                     )
                 )
                 return
             decision = DirtyDecision.DISCARD
+        if not self._check_active(identity):
+            return
         opener = getattr(self._host, "current_project_opener", None)
         if getattr(opener, "supports_paged_workbench", False):
             if not self._host.project_coordinator.open_project_variant(

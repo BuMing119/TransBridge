@@ -8,7 +8,7 @@ from enum import StrEnum
 
 from transbridge.config.ui_preferences import GuidanceMode
 
-from .models import GuidanceIntent, GuidanceIntentId, GuidanceState
+from .models import GuidanceIntent, GuidanceIntentId, GuidanceKind, GuidanceState
 
 
 class GuidanceVisibility(StrEnum):
@@ -24,6 +24,14 @@ class GuidancePresentation:
     effective_mode: GuidanceMode
     visibility: GuidanceVisibility
     explanation_lines: tuple[str, ...]
+
+    @property
+    def show_banner(self) -> bool:
+        return self.configured_mode is not GuidanceMode.AUTO or self.state.kind in {
+            GuidanceKind.MISSING_CONFIGURATION,
+            GuidanceKind.FAILED,
+            GuidanceKind.PARTIAL_FAILURE,
+        }
 
     @property
     def primary_intent(self) -> GuidanceIntent:

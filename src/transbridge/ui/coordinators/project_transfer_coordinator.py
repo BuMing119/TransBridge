@@ -27,55 +27,97 @@ class ProjectTransferCoordinator:
     def _is_closing(self) -> bool:
         return getattr(self._host, "close_pending", False)
 
-    def save_snapshot(self) -> None:
-        if not self._host.context.active_variant_id:
-            QMessageBox.warning(self._host, "快照", "请先打开一个翻译版本。")
-            return
-        name, ok = QInputDialog.getText(self._host, "创建历史还原点", "快照名称:")
-        if not ok or not name.strip():
-            return
+    def _snapshot_scope(self) -> tuple[str, str] | None:
+        view = self._host.context
+        if view.active_project_id and view.active_variant_id:
+            return view.active_project_id, view.active_variant_id
+        return None
+
+    def _check_snapshot_scope(self, scope: tuple[str, str] | None) -> bool:
+        view = self._host.context
+        if (
+            scope is None
+            or scope != self._snapshot_scope()
+            or self._is_closing()
+            or getattr(view, "project_opening", False)
+            or getattr(view, "project_view_failed", False)
+        ):
+            self._host.show_message("当前工程或翻译版本不可用，请重新打开历史还原。")
+            return False
+        return True
+
+    def save_snapshot(self, *, scope=None, on_finished=None) -> bool:
+        scope = self._snapshot_scope() if scope is None else scope
+        if not self._check_snapshot_scope(scope):
+            return False
         context = self._context()
-        self._host.start_foreground_task(
+        name, ok = QInputDialog.getText(self._host, "创建历史还原点", "快照名称:")
+        if not ok or not name.strip() or not self._check_snapshot_scope(scope):
+            return False
+        return self._host.start_foreground_task(
             lambda: self._host.project_commands.save_snapshot(name.strip(), context),
             message="正在保存快照…",
             on_result=lambda result: self._finish(result, "快照已保存"),
+            on_finished=on_finished,
+        )
+
+    def list_snapshots(self, scope: tuple[str, str], *, on_result, on_error=None, on_finished=None) -> bool:
+        if not self._check_snapshot_scope(scope):
+            return False
+        context = self._context()
+        service = self._service("project_snapshots")
+        return self._host.start_foreground_task(
+            lambda: service.list(context),
+            message="正在读取历史还原点…",
+            on_result=on_result,
+            on_error=on_error,
+            on_finished=on_finished,
+            disable_workbench=False,
         )
 
     def load_snapshot(self) -> None:
-        if not self._host.context.active_variant_id:
-            QMessageBox.warning(self._host, "快照", "请先打开一个翻译版本。")
+        self._choose_snapshot(self.restore_snapshot, "载入历史还原点")
+
+    def delete_snapshot(self) -> None:
+        self._choose_snapshot(self.remove_snapshot, "删除历史还原点")
+
+    def _choose_snapshot(self, apply, title: str) -> None:
+        scope = self._snapshot_scope()
+        if scope is None:
+            self._host.show_message("请先打开一个翻译版本。")
             return
-        context = self._context()
-        service = self._service("project_snapshots")
 
         def choose(snapshots):
+            if not self._check_snapshot_scope(scope):
+                return
             if not snapshots:
-                QMessageBox.information(self._host, "无快照", "当前版本无可用快照。")
+                QMessageBox.information(self._host, "无历史还原点", "当前版本尚无历史还原点。")
                 return
             items = [f"{item.name}（修订 {item.revision} · {item.identity[:8]}）" for item in snapshots]
-            choice, ok = QInputDialog.getItem(self._host, "载入历史还原点", "选择快照:", items, 0, False)
-            if not ok:
-                return
-            selected = snapshots[items.index(choice)]
-            answer = QMessageBox.question(
-                self._host,
-                "确认加载",
-                "加载快照会替换当前版本内容。若快照包含旧来源，工程版本会同步恢复来源修订。\n"
-                "系统会保留恢复前的还原点。是否继续？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
+            choice, ok = QInputDialog.getItem(self._host, title, "选择还原点:", items, 0, False)
+            if ok:
+                apply(snapshots[items.index(choice)], scope)
 
-            self._restore_snapshot(service, selected.identity, context)
+        self.list_snapshots(scope, on_result=choose)
 
-        self._host.start_foreground_task(
-            lambda: service.list(context),
-            message="正在读取快照列表…",
-            on_result=choose,
+    def restore_snapshot(self, snapshot, scope: tuple[str, str], *, on_finished=None) -> bool:
+        if not self._check_snapshot_scope(scope):
+            return False
+        context = self._context()
+        answer = QMessageBox.question(
+            self._host,
+            "确认恢复",
+            f"恢复“{snapshot.name}”会替换当前版本内容。若还原点包含旧来源，工程版本会同步恢复来源修订。\n"
+            "系统会保留恢复前的还原点。是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes or not self._check_snapshot_scope(scope):
+            return False
+        return self._restore_snapshot(
+            self._service("project_snapshots"), snapshot.identity, context, on_finished=on_finished
         )
 
-    def _restore_snapshot(self, service, identity, context) -> None:
+    def _restore_snapshot(self, service, identity, context, *, on_finished=None) -> bool:
         view = self._host.context
         view_token = None
 
@@ -90,17 +132,22 @@ class ProjectTransferCoordinator:
         def failed(message):
             release()
             QMessageBox.warning(self._host, "快照操作失败", message)
+            if on_finished is not None:
+                on_finished()
 
         def finished(result):
             token = result.value.get("source_read_token") if result.is_success else None
             if token is None:
                 release()
                 self._finish(result, "快照已加载，请保存当前翻译版本")
+                if on_finished is not None:
+                    on_finished()
                 return
             self._finish(result, "快照及来源修订已恢复")
-            self._host.project_coordinator.refresh_committed_sources(token, context, view_token=view_token)
+            options = {} if on_finished is None else {"on_finished": lambda _success: on_finished()}
+            self._host.project_coordinator.refresh_committed_sources(token, context, view_token=view_token, **options)
 
-        self._host.start_foreground_task(
+        return self._host.start_foreground_task(
             lambda: service.restore(identity, context, backup_name=f"恢复前-{context.run_id}"),
             message="正在加载快照…",
             before_start=begin,
@@ -108,41 +155,25 @@ class ProjectTransferCoordinator:
             on_error=failed,
         )
 
-    def delete_snapshot(self) -> None:
-        if not self._host.context.active_variant_id:
-            QMessageBox.warning(self._host, "快照", "请先打开一个翻译版本。")
-            return
+    def remove_snapshot(self, snapshot, scope: tuple[str, str], *, on_finished=None) -> bool:
+        if not self._check_snapshot_scope(scope):
+            return False
         context = self._context()
         service = self._service("project_snapshots")
-
-        def choose(snapshots):
-            if not snapshots:
-                QMessageBox.information(self._host, "无快照", "当前版本无可删除的历史还原点。")
-                return
-            items = [f"{item.name}（修订 {item.revision} · {item.identity[:8]}）" for item in snapshots]
-            choice, ok = QInputDialog.getItem(self._host, "删除历史还原点", "选择快照:", items, 0, False)
-            if not ok:
-                return
-            selected = snapshots[items.index(choice)]
-            answer = QMessageBox.warning(
-                self._host,
-                "确认删除历史还原点",
-                f"将永久删除“{selected.name}”。此操作不可撤销，是否继续？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-            self._host.start_foreground_task(
-                lambda: service.delete(selected.identity, context),
-                message="正在删除历史还原点…",
-                on_result=lambda result: self._finish(result, "历史还原点已删除"),
-            )
-
-        self._host.start_foreground_task(
-            lambda: service.list(context),
-            message="正在读取快照列表…",
-            on_result=choose,
+        answer = QMessageBox.warning(
+            self._host,
+            "确认删除历史还原点",
+            f"将永久删除“{snapshot.name}”。此操作不可撤销，是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes or not self._check_snapshot_scope(scope):
+            return False
+        return self._host.start_foreground_task(
+            lambda: service.delete(snapshot.identity, context),
+            message="正在删除历史还原点…",
+            on_result=lambda result: self._finish(result, "历史还原点已删除"),
+            on_finished=on_finished,
         )
 
     def export_transbridge(self) -> None:
@@ -151,7 +182,7 @@ class ProjectTransferCoordinator:
             return
         path, _ = QFileDialog.getSaveFileName(
             self._host,
-            "导出 .transbridge",
+            "导出工程包",
             f"{self._host.context.project_name}.transbridge",
             "TransBridge 项目 (*.transbridge);;所有文件 (*)",
         )
@@ -175,7 +206,7 @@ class ProjectTransferCoordinator:
         if path is None:
             path, _ = QFileDialog.getOpenFileName(
                 self._host,
-                "导入 .transbridge 项目包",
+                "导入工程包",
                 "",
                 "TransBridge 项目 (*.transbridge)",
             )

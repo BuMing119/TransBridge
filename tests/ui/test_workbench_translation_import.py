@@ -53,13 +53,13 @@ def test_toolbar_never_starts_an_unowned_json_worker_in_subprocess():
         widget._ctx = SimpleNamespace()
         widget.show_step2_progress = lambda *a: None
         widget.hide_step2_progress = lambda: None
-        bar = widget._build_collection_bar()
+        menu = widget._build_collection_menu()
         observed = []
         widget.intent_requested.connect(observed.append)
-        widget._btn_import.click()
+        widget._btn_import.trigger()
         assert observed == [IntentId.SOURCE_MIGRATE.value]
         app.processEvents()
-        bar.close()
+        menu.close()
         widget.close()
     """)
     root = Path(__file__).resolve().parents[2]
@@ -114,7 +114,7 @@ def toolbar(project):
     widget = WorkbenchWidget.__new__(WorkbenchWidget)
     QWidget.__init__(widget)
     widget._ctx = project.ctx
-    bar = widget._build_collection_bar()
+    menu = widget._build_collection_menu()
     widget.intent_requested.connect(composition.dispatch)
     yield SimpleNamespace(host=host, widget=widget, progress=progress)
     for worker in host.workers:
@@ -122,13 +122,13 @@ def toolbar(project):
         assert not worker.isRunning()
     project.app.processEvents()
     router.close()
-    bar.close()
+    menu.close()
     widget.close()
     host.close()
 
 
 def _open_import(toolbar, source):
-    toolbar.widget._btn_import.click()
+    toolbar.widget._btn_import.trigger()
     dialogs = tuple(toolbar.host.parse_coordinator._owned_dialogs)
     assert len(dialogs) == 1
     dialog = dialogs[0]
@@ -244,7 +244,7 @@ def test_project_edit_during_import_rejects_stale_plugin_draft(project, toolbar,
 
 
 def test_toolbar_without_loaded_source_explains_import_requirement(project, toolbar):
-    toolbar.widget._btn_import.click()
+    toolbar.widget._btn_import.trigger()
     assert not toolbar.host.workers
     assert not toolbar.host.parse_coordinator._owned_dialogs
     assert toolbar.host.messages
@@ -254,7 +254,7 @@ def test_dsd_import_into_saved_plugin_source_uses_native_locator(project, toolba
     entry = _source(project)
     source = project.root / "translated.json"
     source.write_text(json.dumps([{"form_id": "00000800|source.esp", "type": "NPC_ FULL", "string": "你好"}]))
-    toolbar.widget._btn_import.click()
+    toolbar.widget._btn_import.trigger()
     dialog = next(iter(toolbar.host.parse_coordinator._owned_dialogs))
     assert dialog.prefill_migration_source(str(source), "json", "json.dsd")
     dialog.accept()
@@ -266,7 +266,7 @@ def test_dsd_import_into_saved_plugin_source_uses_native_locator(project, toolba
 def test_import_dialog_rejects_target_changed_before_submit(project, toolbar):
     entry = _source(project)
     source = write_plugin(project.root / "translated.esp", [(0x800, "TestNpc", "导入译文")])
-    toolbar.widget._btn_import.click()
+    toolbar.widget._btn_import.trigger()
     dialog = next(iter(toolbar.host.parse_coordinator._owned_dialogs))
     assert dialog.prefill_migration_source(str(source), "plugin")
     result = project.ctx.project_commands.replace_entry_states(
@@ -287,7 +287,7 @@ def test_import_dialog_does_not_apply_old_source_to_another_variant(project, too
     assert project.ctx.project_commands.save(project.request).is_success
     original_identity = project.ctx.active_version_identity
     source = write_plugin(project.root / "translated.esp", [(0x800, "TestNpc", "导入译文")])
-    toolbar.widget._btn_import.click()
+    toolbar.widget._btn_import.trigger()
     dialog = next(iter(toolbar.host.parse_coordinator._owned_dialogs))
     assert dialog.prefill_migration_source(str(source), "plugin")
     assert project.ctx.project_commands.create_variant("Another", project.request, copy_active=True).is_success

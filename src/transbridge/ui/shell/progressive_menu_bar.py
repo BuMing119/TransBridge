@@ -31,7 +31,7 @@ class ProgressiveMenuBar(QMenuBar):
         self._keyboard_focus_active = False
         self._compact_action = QAction("☰", self)
         self._compact_action.setToolTip("展开主菜单")
-        self._compact_action.setStatusTip("显示文件、项目、翻译、设置和帮助等完整菜单")
+        self._compact_action.setStatusTip("显示完整应用菜单")
         self._compact_action.triggered.connect(self.expand)
         self.addAction(self._compact_action)
 

@@ -107,7 +107,7 @@ class StatisticsSummary:
         return cls(len(entries), untranslated, needs_review, completed, hidden)
 
     def metrics(self) -> tuple[StatisticsMetric, ...]:
-        """Return summary cards using the canonical translation-stage vocabulary."""
+        """Return status counts using the canonical translation-stage vocabulary."""
 
         completed_labels = "、".join(STAGE_LABELS[stage] for stage in _COMPLETED_STAGE_SEQUENCE)
         return (
@@ -138,6 +138,10 @@ class StatisticsSummary:
         except KeyError:
             raise KeyError(key) from None
         return replace(current, stages=stages)
+
+    @staticmethod
+    def active_filter(stages: frozenset[int]) -> str | None:
+        return next((key for key, value in _SUMMARY_STAGE_FILTERS.items() if key != "hidden" and value == stages), None)
 
 
 @dataclass(frozen=True, slots=True)

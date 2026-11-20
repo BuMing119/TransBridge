@@ -13,6 +13,7 @@ from tests.ui.fixtures.project_runtime import (
     write_project_package,
 )
 from transbridge.application.contracts import RequestContext
+from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
 from transbridge.application.projects import ProjectProvisioningRequest
 from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.bootstrap.runtime import UseCaseRegistry
@@ -110,20 +111,37 @@ def test_v2_ui_snapshots_and_archive_roundtrip_without_legacy_setters(qapp, tmp_
 
 
 def test_project_bar_snapshot_actions_dispatch_real_shell_intents(qapp, monkeypatch):
-    context = AppContext()
+    store = ProjectionStore(
+        ProjectionSnapshot(
+            "project:layout",
+            0,
+            0,
+            {
+                "project_id": "layout",
+                "project_name": "测试工程",
+                "variant_id": "default",
+                "variants": [{"id": "default", "name": "默认"}],
+            },
+        )
+    )
+    context = AppContext(project_projection=store)
     widget = WorkbenchWidget(context)
     intents = []
     widget.intent_requested.connect(intents.append)
 
     def choose_snapshot_actions(menu, *_args):
-        submenu = next(action.menu() for action in menu.actions() if action.text() == "管理快照")
-        for action in submenu.actions():
+        versions = next(action.menu() for action in menu.actions() if action.text() == "管理翻译版本")
+        assert versions.isEnabled()
+        snapshots = next(action.menu() for action in versions.actions() if action.text() == "管理快照")
+        for action in snapshots.actions():
             action.trigger()
 
     monkeypatch.setattr(QMenu, "exec", choose_snapshot_actions)
-    widget.project_bar._on_variant_menu()
+    widget.project_bar._rename_btn.click()
     assert intents == [IntentId.PROJECT_SNAPSHOT_SAVE.value, IntentId.PROJECT_SNAPSHOT_LOAD.value]
     widget.close()
+    context.close_projection()
+    store.close()
 
 
 def test_import_chooser_installs_current_package_without_format_choice(qapp, tmp_path, monkeypatch):

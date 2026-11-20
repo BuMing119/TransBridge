@@ -1,5 +1,5 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""The current Variant's cache action, shared by menu and intent dispatch."""
+"""The current Variant's cache action and availability."""
 
 from .action_catalog import IntentId
 
@@ -26,11 +26,3 @@ def register_alignment_cache_action(router, host):
         lambda _payload: _preview(host).clear_alignment_cache(),
         availability=lambda: _available(host),
     )
-
-
-def bind_alignment_cache_action(action, menu, host):
-    def refresh():
-        action.setEnabled(_available(host)[0])
-
-    menu.aboutToShow.connect(refresh)
-    refresh()

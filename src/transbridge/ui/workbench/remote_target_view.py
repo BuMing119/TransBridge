@@ -190,6 +190,7 @@ class ParaTranzTargetDialog(QDialog):
 
 class RemoteTargetView(QWidget):
     binding_changed = pyqtSignal()
+    state_changed = pyqtSignal(object)
 
     def __init__(self, ctx, parent=None) -> None:
         super().__init__(parent)
@@ -227,7 +228,8 @@ class RemoteTargetView(QWidget):
     def refresh(self) -> None:
         target = self._ctx.resolve_paratranz_target()
         state = self._presenter.present(target)
-        self._label.set_full_text(state.title)
+        self.state = state
+        self._label.set_full_text(state.summary or state.title)
         detail = state.title if not state.detail else f"{state.title}\n{state.detail}"
         self._label.setToolTip(detail)
         self._label.setAccessibleDescription(detail)
@@ -235,6 +237,7 @@ class RemoteTargetView(QWidget):
         self._choose.setText(state.action_text)
         self._choose.setEnabled(self._ctx.active_project_id is not None)
         self._clear.setVisible(state.can_clear)
+        self.state_changed.emit(state)
 
     def choose_target(self) -> None:
         if self._ctx.active_project_id is None:

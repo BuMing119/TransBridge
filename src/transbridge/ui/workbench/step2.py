@@ -1,7 +1,7 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """
 步骤2：解析结果预览。
-显示解析进度、四格统计卡以及全部词条预览表格。
+显示解析进度、状态筛选和词条预览表格。
 支持多选标签筛选、文本搜索、行内编辑、三态标记（★/?/✓）。
 """
 
@@ -79,7 +79,14 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     intent_requested = pyqtSignal(str)
     entry_edit_requested = pyqtSignal(object)
 
-    def __init__(self, ctx, parent=None, *, theme_view: ThemeView | None = None):
+    def __init__(
+        self,
+        ctx,
+        parent=None,
+        *,
+        theme_view: ThemeView | None = None,
+        workflow_actions: WorkflowActionsView | None = None,
+    ):
         super().__init__(parent)
         self._ctx = ctx
         self._theme_view = theme_view
@@ -100,7 +107,8 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._workflow_presenter = WorkbenchWorkflowPresenter()
         self._summary = StatisticsSummary(0, 0, 0, 0)
         self._tag_buttons: dict[str | int | None, QPushButton] = {}  # 标签按钮
-        self._init_ui()
+        self._workflow_actions = workflow_actions or WorkflowActionsView(self)
+        self._init_ui(show_workflow_actions=workflow_actions is None)
         self._dialogue_reading_order = DialogueReadingOrderCoordinator(self)
         ctx.project_changed.connect(self._dialogue_reading_order.invalidate_context)
         ctx.variant_changed.connect(self._dialogue_reading_order.invalidate_context)
@@ -125,10 +133,11 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         if getattr(ctx, "uses_authoritative_projection", False):
             ctx.label_data_changed.connect(self._reload_projected_labels)
             self._reload_projected_labels()
+        self._update_workflow_actions()
 
     # ── 初始化 UI ────────────────────────────────────────────────────────────
 
-    def _init_ui(self):
+    def _init_ui(self, *, show_workflow_actions: bool):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(8)
@@ -138,10 +147,12 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
         self._progress.setFixedHeight(8)
+        self._progress.setTextVisible(False)
         progress_policy = self._progress.sizePolicy()
         progress_policy.setRetainSizeWhenHidden(True)
         self._progress.setSizePolicy(progress_policy)
         ComponentStyle.apply_static(self._progress, ComponentKind.PROGRESS)
+        self._progress.hide()
         outer.addWidget(self._progress)
         self._project_read_error = QLabel(self)
         self._project_read_error.setTextFormat(Qt.TextFormat.PlainText)
@@ -154,9 +165,8 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         outer.addWidget(self._terminology_status)
 
         # 可点击的紧凑摘要；它只改变 FilterState，不直接操作数据。
-        self._summary_view = StatisticsSummaryView(self, theme_view=self._theme_view)
+        self._summary_view = StatisticsSummaryView(self)
         self._summary_view.filter_requested.connect(self._on_summary_filter_requested)
-        outer.addWidget(self._summary_view)
 
         self._filters_view = FiltersView(
             on_changed=self._on_filters_changed,
@@ -165,6 +175,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             theme_view=self._theme_view,
         )
         outer.addWidget(self._filters_view)
+        outer.addWidget(self._summary_view)
         # Compatibility aliases while external consumers migrate to the public
         # filter/selection ports.
         self._category_filters = self._filters_view.category_filters
@@ -194,14 +205,16 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_context_menu)
 
-        self._workflow_actions = WorkflowActionsView(self)
         self._workflow_actions.intent_requested.connect(self.intent_requested.emit)
         self._table_surface = QFrame(self)
         self._table_surface.setObjectName("tbTableSurface")
         table_layout = QVBoxLayout(self._table_surface)
         table_layout.setContentsMargins(0, 0, 0, 0)
         table_layout.setSpacing(0)
-        table_layout.addWidget(self._workflow_actions)
+        if show_workflow_actions:
+            outer.addWidget(self._workflow_actions)
+        else:
+            outer.addWidget(self._workflow_actions.status_view)
         table_layout.addWidget(self._table, stretch=1)
         outer.addWidget(self._table_surface, stretch=1)
         self._inline_edits = InlineEditController(
@@ -288,6 +301,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         )
 
     def set_parsing(self, parsing: bool):
+        self._progress.setVisible(parsing)
         if parsing:
             self._progress.setRange(0, 0)
         else:
@@ -310,6 +324,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             self._dialogue_reading_order.set_entries(())
             self._category_filters.clear()
             self._stage_filters.clear()
+            self._summary_view.set_stage_filter(frozenset())
             self._entry_labels.clear()
             self._label_filters.clear()
             self._focus_labeled = False
@@ -372,6 +387,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     def _build_stage_tags(self):
         stats = self._paging.statistics
         self._filters_view.build_stages(self._entries, counts=None if stats is None else stats.stages)
+        self._summary_view.set_stage_filter(frozenset(self._stage_filters))
 
     def _on_stage_tag_clicked(self, stage: int | None):
         self._filters_view.toggle_stage(stage)
@@ -413,6 +429,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     def _on_filters_changed(self) -> None:
         self._focus_labeled = self._filters_view.focus_labeled
         if self._paging.collection is not None:
+            self._summary_view.set_stage_filter(frozenset(self._stage_filters))
             self._paging.request_query()
             return
         self._build_category_tags()
@@ -739,6 +756,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._focus_labeled = False
         self._filters_view.sync_focus_style()
         if self._paging.collection is not None:
+            self._summary_view.set_stage_filter(frozenset())
             self._paging.request_query()
             self._paging.locate(entry_id, select=True)
             return
