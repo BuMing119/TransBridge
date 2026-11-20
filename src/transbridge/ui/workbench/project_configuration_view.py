@@ -31,10 +31,7 @@ class ProjectConfigurationView(QWidget):
         self._profile_notice.setTextFormat(Qt.TextFormat.PlainText)
         self._profile_notice.setAccessibleName("译名方案与定位状态")
         layout.addWidget(self._profile_notice)
-        self._target_notice = ElidedLabel()
-        self._target_notice.setTextFormat(Qt.TextFormat.PlainText)
-        self._target_notice.setAccessibleName("ParaTranz 同步目标异常")
-        layout.addWidget(self._target_notice)
+        layout.addWidget(remote_target)
         self.panel = QFrame()
         ComponentStyle.apply_static(self.panel, ComponentKind.CARD)
         panel_layout = QVBoxLayout(self.panel)
@@ -50,7 +47,6 @@ class ProjectConfigurationView(QWidget):
         if profile_bar is not None:
             panel_layout.addWidget(profile_bar)
             profile_bar.status_changed.connect(self._render)
-        panel_layout.addWidget(remote_target)
         remote_target.state_changed.connect(self._render_target)
         layout.addWidget(self.panel)
         self._close_panel()
@@ -68,13 +64,7 @@ class ProjectConfigurationView(QWidget):
         collapsed = self.panel.isHidden()
         target = self._remote_state
         target_summary = target.summary or target.title
-        target_alert = target.can_clear and target.semantic_state in {"warning", "error"}
         target_detail = f"{target_summary}\n{target.detail}" if target.detail else target_summary
-        self._target_notice.set_full_text(target_summary)
-        self._target_notice.setToolTip(target_detail)
-        self._target_notice.setAccessibleDescription(target_detail)
-        ComponentStyle.apply_state(self._target_notice, SemanticState(target.semantic_state))
-        self._target_notice.setVisible(collapsed and target_alert)
 
         summary, profile_notice, profile_detail, semantic = self._profile_presentation()
         self.action.setToolTip("\n".join(filter(None, (summary, target_detail))))
@@ -83,7 +73,7 @@ class ProjectConfigurationView(QWidget):
         self._profile_notice.setAccessibleDescription(profile_detail)
         ComponentStyle.apply_state(self._profile_notice, semantic)
         self._profile_notice.setVisible(collapsed and bool(profile_notice))
-        self.setVisible(not collapsed or bool(profile_notice) or target_alert)
+        self.show()
 
     def _profile_presentation(self) -> tuple[str, str, str, SemanticState]:
         bar = self._profile_bar

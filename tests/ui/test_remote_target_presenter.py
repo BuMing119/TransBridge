@@ -32,7 +32,7 @@ def test_remote_target_presenter_distinguishes_unbound_and_mismatch() -> None:
         )
     )
 
-    assert unbound.action_text == "选择…"
+    assert unbound.action_text == "绑定项目…"
     assert not unbound.can_clear
     assert mismatch.title == "ParaTranz · Cloud"
     assert mismatch.can_clear

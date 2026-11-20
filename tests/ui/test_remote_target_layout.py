@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
+import pytest
 
 from transbridge.application.projects import (
     ParaTranzTargetSource,
@@ -91,13 +93,48 @@ def test_binding_state_keeps_remote_target_action_geometry() -> None:
     view.show()
     _APP.processEvents()
     unbound_choose = view._choose.geometry()
-    reserved_clear_width = view._clear.width()
+    reserved_more_width = view._more.width()
+    assert view._more.isHidden()
+    assert view._choose.text() == "绑定项目…"
 
     context.target = context._target("远端项目")
     view.refresh()
     _APP.processEvents()
 
     assert view._choose.geometry() == unbound_choose
-    assert view._clear.width() == reserved_clear_width
-    assert not view._clear.isHidden()
+    assert view._more.width() == reserved_more_width
+    assert not view._more.isHidden()
+    assert view._choose.text() == "更换…"
+    assert [action.text() for action in view._more.menu().actions()] == ["解除绑定"]
+    assert not view._more.menu().isVisible()
     view.close()
+
+
+@pytest.mark.parametrize("width", [280, 360, 420, 980])
+@pytest.mark.parametrize(
+    "status,visible_status",
+    [
+        (ParaTranzTargetStatus.AVAILABLE, ""),
+        (ParaTranzTargetStatus.ACCOUNT_MISMATCH, "账号不一致"),
+        (ParaTranzTargetStatus.TEMPORARILY_UNAVAILABLE, "暂时无法验证"),
+    ],
+)
+def test_binding_status_and_actions_fit_narrow_row(width, status, visible_status) -> None:
+    context = _Context()
+    context.target = replace(context._target("很长的远端项目名称" * 20), status=status, reason="目标状态的完整说明")
+    view = RemoteTargetView(context)
+    view.resize(width, 32)
+    view.show()
+    _APP.processEvents()
+    try:
+        assert view.width() == width
+        assert view.rect().contains(view._choose.geometry())
+        assert view.rect().contains(view._more.geometry())
+        assert visible_status in view._label.full_text
+        if width >= 420:
+            assert visible_status in view._label.text()
+        assert "目标状态的完整说明" in view._label.toolTip()
+        assert context.target.project_name in view._label.toolTip()
+        assert not view._label.text().endswith(context.target.project_name)
+    finally:
+        view.close()

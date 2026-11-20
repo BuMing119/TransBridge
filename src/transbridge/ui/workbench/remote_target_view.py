@@ -15,9 +15,11 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -30,6 +32,7 @@ from transbridge.paratranz.project_catalog import (
 )
 from transbridge.paratranz.service import ParaTranzService
 from transbridge.ui.foundation.components import (
+    ComponentDensity,
     ComponentKind,
     ComponentStyle,
     ElidedLabel,
@@ -200,29 +203,40 @@ class RemoteTargetView(QWidget):
         self._presenter = RemoteTargetPresenter()
         self._catalog = ParaTranzProjectCatalog()
         self._config_revision = 0
+        self._project_generation = 0
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
         self._label = ElidedLabel(parent=self)
+        self._label.setTextFormat(Qt.TextFormat.PlainText)
+        self._label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._label.setAccessibleName("当前 ParaTranz 同步目标")
         row.addWidget(self._label, 1)
-        self._choose = QPushButton("选择…", self)
-        ComponentStyle.apply_static(self._choose, ComponentKind.BUTTON)
-        reserve_text_width(self._choose, ("选择…", "更换…"))
+        self._choose = QPushButton("绑定项目…", self)
+        ComponentStyle.apply_static(self._choose, ComponentKind.BUTTON, ComponentDensity.COMPACT)
+        reserve_text_width(self._choose, ("绑定项目…", "更换…"))
         self._choose.clicked.connect(self.choose_target)
         row.addWidget(self._choose)
-        self._clear = QPushButton("解除", self)
-        self._clear.setFlat(True)
-        ComponentStyle.apply_static(self._clear, ComponentKind.BUTTON)
-        clear_policy = self._clear.sizePolicy()
-        clear_policy.setRetainSizeWhenHidden(True)
-        self._clear.setSizePolicy(clear_policy)
-        self._clear.clicked.connect(self.clear_target)
-        row.addWidget(self._clear)
+        self._more = QToolButton(self)
+        self._more.setText("…")
+        self._more.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._more.setAccessibleName("ParaTranz 绑定操作")
+        self._more.setToolTip("ParaTranz 绑定操作")
+        self._more.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        ComponentStyle.apply_static(self._more, ComponentKind.BUTTON, ComponentDensity.COMPACT)
+        more_policy = self._more.sizePolicy()
+        more_policy.setRetainSizeWhenHidden(True)
+        self._more.setSizePolicy(more_policy)
+        menu = QMenu(self._more)
+        self._clear = menu.addAction("解除绑定")
+        self._clear.triggered.connect(self.clear_target)
+        self._more.setMenu(menu)
+        row.addWidget(self._more)
         ctx.paratranz_binding_changed.connect(lambda _binding: self.refresh())
         ctx.config_changed.connect(self._on_config_changed)
         ctx.user_changed.connect(lambda _user: self.refresh())
-        ctx.project_changed.connect(self.refresh)
+        ctx.project_changed.connect(self._on_project_changed)
         self.refresh()
 
     def refresh(self) -> None:
@@ -235,18 +249,31 @@ class RemoteTargetView(QWidget):
         self._label.setAccessibleDescription(detail)
         ComponentStyle.apply_state(self._label, SemanticState(state.semantic_state))
         self._choose.setText(state.action_text)
-        self._choose.setEnabled(self._ctx.active_project_id is not None)
-        self._clear.setVisible(state.can_clear)
+        editable = self._can_edit_binding()
+        self._choose.setEnabled(editable)
+        self._choose.setToolTip("" if editable else "请先打开一个可用的本地工程。")
+        self._more.setVisible(state.can_clear)
+        self._more.setEnabled(editable)
+        self._clear.setEnabled(editable and state.can_clear)
         self.state_changed.emit(state)
 
     def choose_target(self) -> None:
-        if self._ctx.active_project_id is None:
+        if not self._can_edit_binding():
             return
+        project_id = self._ctx.active_project_id
+        project_generation = self._project_generation
         dialog = ParaTranzTargetDialog(self._ctx, self._catalog, self._config_revision, self)
         if not dialog.exec():
             return
         project = dialog.selected_project()
         if project is None:
+            return
+        if (
+            self._ctx.active_project_id != project_id
+            or self._project_generation != project_generation
+            or not self._can_edit_binding()
+        ):
+            QMessageBox.warning(self, "工程已变化", "本地工程已变化或正在切换，请重新选择 ParaTranz 同步目标。")
             return
         endpoint, frozen_user_id, config_revision = dialog.target_context
         user_id = None if self._ctx.current_user is None else self._ctx.current_user.get("id")
@@ -280,6 +307,8 @@ class RemoteTargetView(QWidget):
         self.binding_changed.emit()
 
     def clear_target(self) -> None:
+        if not self._can_edit_binding() or not self.state.can_clear:
+            return
         try:
             result = self._ctx.clear_paratranz_binding()
         except RuntimeError as exc:
@@ -290,6 +319,18 @@ class RemoteTargetView(QWidget):
             QMessageBox.critical(self, "解除失败", message)
             return
         self.binding_changed.emit()
+
+    def _can_edit_binding(self) -> bool:
+        return (
+            self._ctx.active_project_id is not None
+            and not getattr(self._ctx, "project_opening", False)
+            and not getattr(self._ctx, "project_view_failed", False)
+        )
+
+    def _on_project_changed(self) -> None:
+        self._project_generation += 1
+        self._more.menu().close()
+        self.refresh()
 
     def _on_config_changed(self, _config) -> None:
         self._config_revision += 1

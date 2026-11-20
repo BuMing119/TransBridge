@@ -114,12 +114,15 @@ def test_project_name_menu_exposes_history_and_configuration(monkeypatch):
 
     monkeypatch.setattr(QMenu, "exec", execute)
     try:
-        assert configuration.isHidden()
+        assert not configuration.isHidden()
+        assert not widget._remote_target.isHidden()
         widget.project_bar._rename_btn.click()
         assert operations == ["new", "open", "history"]
         assert not configuration.panel.isHidden()
         configuration._collapse.click()
-        assert configuration.isHidden()
+        assert not configuration.isHidden()
+        assert configuration.panel.isHidden()
+        assert not widget._remote_target.isHidden()
     finally:
         widget.close()
 
@@ -169,7 +172,8 @@ def test_collapsed_configuration_exposes_load_preview_and_remote_failure(monkeyp
     profile = TerminologyProfileBar()
     view = ProjectConfigurationView(remote, profile)
     try:
-        assert view.isHidden()
+        assert not view.isHidden()
+        assert not remote.isHidden()
         assert "译名 · 项目默认" in view.action.toolTip()
         assert "ParaTranz · 远端工程" in view.action.toolTip()
         profile.render(TerminologyProfileBarState(loading=True, detail="正在读取译名方案…"))
@@ -187,10 +191,15 @@ def test_collapsed_configuration_exposes_load_preview_and_remote_failure(monkeyp
         remote.refresh()
         assert view.panel.isHidden()
         assert not view._profile_notice.isHidden()
-        assert not view._target_notice.isHidden()
+        assert not remote.isHidden()
         assert "译名方案不可用：只读" in view._profile_notice.full_text
-        assert "账号不一致" in view._target_notice.full_text
-        assert "登录账号已变化" in view._target_notice.toolTip()
+        assert "账号不一致" in remote._label.full_text
+        assert "登录账号已变化" in remote._label.toolTip()
+        view.expand()
+        assert not remote.isHidden()
+        assert not view.panel.isAncestorOf(remote)
+        view._collapse.click()
+        assert not remote.isHidden()
     finally:
         view.close()
 

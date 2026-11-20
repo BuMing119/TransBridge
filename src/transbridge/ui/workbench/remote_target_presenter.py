@@ -24,7 +24,7 @@ class RemoteTargetPresenter:
             return RemoteTargetViewState(
                 "ParaTranz · 未绑定",
                 target.reason or "选择一个云端项目作为当前工程的默认同步目标。",
-                "选择…",
+                "绑定项目…",
                 False,
                 "warning",
                 "ParaTranz · 未绑定",
