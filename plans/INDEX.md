@@ -187,7 +187,7 @@
 | ui-presentation-modularization | 已完成（2026-08-19） | 8 | [plan](ui-presentation-modularization/plan.md) |
 | ui-foundation-framework | 已完成（2026-08-24） | 9 | [plan](ui-foundation-framework/plan.md) |
 | guided-ui-workflows | 已完成（2026-08-24）；S02/S04 多插件扩展已补录（2026-10-20） | 13/13 | [plan](guided-ui-workflows/plan.md) · [S10 QA](../docs/test-reports/guided-ui-workflows-s10-qa-2026-08-24.md) · [多插件建项 QA](../docs/test-reports/guided-multi-plugin-project-qa-2026-10-20.md) |
-| modern-workbench-visual-shell | 已完成（2026-11-17，S08 六组菜单与工程管理入口） | 8/8 | [plan](modern-workbench-visual-shell/plan.md) |
+| modern-workbench-visual-shell | ✔️ 已完成（含 S07 ParaTranz 就地绑定跟进，2026-11-20） | 8/8 | [plan](modern-workbench-visual-shell/plan.md) |
 | batch-operations | ✔️ | 7/7 | [plan](batch-operations/plan.md) · [s01](batch-operations/stories/story-01-batch-esp.md) [s02](batch-operations/stories/story-02-batch-upload.md) [s03](batch-operations/stories/story-03-batch-download.md) [s04](batch-operations/stories/story-04-batch-write.md) [s05](batch-operations/stories/story-05-batch-translation.md) [s06](batch-operations/stories/story-06-multi-slot.md) [s07](batch-operations/stories/story-07-strings-batch.md) |
 | vector-term-retrieval | ✔️ | — | [plan](vector-term-retrieval/plan.md) |
 | stage-unification | ✔️ | 3/3 | [plan](stage-unification/plan.md) · [s01](stage-unification/plan.md#story-01) · [s02](stage-unification/plan.md#story-02) · [s03](stage-unification/plan.md#story-03) |
