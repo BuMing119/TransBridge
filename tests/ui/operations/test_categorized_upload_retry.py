@@ -29,9 +29,10 @@ def test_manual_retry_relocates_uncertain_creation_without_replaying_success(har
 
     assert (second.success_count, second.failed_count, second.retry_count) == (1, 0, 0)
     assert len(harness.remote.files) == 2
-    assert harness.remote.reads == [("inventory", 42), ("inventory", 42)]
-    assert [write[0] for write in harness.remote.writes[before:]] == ["source", "translations"]
-    assert {write[2] for write in harness.remote.writes[before:]} == {pending}
+    pending_id = next(file.file_id for file in harness.remote.files.values() if file.path == pending)
+    assert harness.remote.reads == [("inventory", 42), ("inventory", 42), ("translation", pending_id)]
+    assert harness.remote.writes[before:] == []
+    assert harness.session.last_receipt.files[0].status == "unchanged"
     with pytest.raises(ValueError, match="没有可补传"):
         harness.session.retry_upload(bridge._progress, Event())
 
@@ -57,6 +58,11 @@ def test_manual_retry_survives_inventory_failure_and_uses_frozen_translation(har
 
 
 def test_manual_retry_can_be_cancelled_and_keeps_only_unfinished_files(harness, monkeypatch):
+    for source in bridge._snapshot(harness).sources:
+        for entry in source.entries:
+            assert harness.services.gui_project_commands.update_entry(
+                entry.identity, harness.request_context, translation="待上传译文", stage=1
+            ).is_success
     selection = bridge._selection(harness, "both")
     harness.cancel.set()
     assert bridge._upload(harness, selection).retry_count == 2
@@ -71,6 +77,7 @@ def test_manual_retry_can_be_cancelled_and_keeps_only_unfinished_files(harness, 
     monkeypatch.setattr(harness.remote, "create_file", cancel_after_create)
     result = harness.session.retry_upload(bridge._progress, harness.cancel)
     assert result.cancelled_count == result.retry_count == 2
+    assert harness.session.last_receipt.files[0].source_applied
     harness.cancel.clear()
     monkeypatch.setattr(harness.remote, "create_file", create)
     assert harness.session.retry_upload(bridge._progress, harness.cancel).retry_count == 0

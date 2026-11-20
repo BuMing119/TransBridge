@@ -5,9 +5,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from transbridge.application.categorized_upload import UploadSource, categorize_sources
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import FormatId, ParatranzJsonAdapter, SourceDescriptor, WriteRequest
+from transbridge.application.io.paratranz_classification import classify_selection
+from transbridge.application.io.paratranz_context_order import PARATRANZ_CONTEXT_ORDER_METADATA
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.parser.plugin.dialogue_order_evidence import DialogueOrderEvidence
@@ -29,13 +30,13 @@ def export_to_categorized_json_files(
     writing individual files must not reassign their order positions.
     """
     output_dir = Path(output_dir)
-    groups = categorize_sources((
-        UploadSource("local", "local", tuple(collection), dialogue_order, classification_entries),
-    ))
+    entries = tuple(collection)
+    complete = entries if classification_entries is None else classification_entries
+    groups = classify_selection(entries, complete, dialogue_order=dialogue_order)
     output_dir.mkdir(parents=True, exist_ok=True)
     adapter = ParatranzJsonAdapter()
     for group in groups:
-        file_path = output_dir / group.path.partition("/")[2]
+        file_path = output_dir / group.path
         file_path.parent.mkdir(parents=True, exist_ok=True)
         result = adapter.write(
             WriteRequest(
@@ -45,7 +46,15 @@ def export_to_categorized_json_files(
                 0,
                 RequestContext("categorized-paratranz-export"),
                 new_template=b"",
-                options=(("ensure_ascii", ensure_ascii), ("indent", indent), ("context_source_order", False)),
+                options=(
+                    ("ensure_ascii", ensure_ascii),
+                    ("indent", indent),
+                    ("context_source_order", True),
+                    (
+                        "context_order_values",
+                        tuple(dict(e.metadata)[PARATRANZ_CONTEXT_ORDER_METADATA] for e in group.entries),
+                    ),
+                ),
             )
         )
         if result.outcome is not OperationOutcome.COMPLETED:

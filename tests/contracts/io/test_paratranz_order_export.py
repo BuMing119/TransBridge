@@ -26,10 +26,9 @@ def test_local_export_projects_sparse_zero_based_order_without_mutation(tmp_path
     before = tuple(entry.to_dict() for entry in entries)
     target = tmp_path / "out.json"
     assert _write(target, entries).outcome is OperationOutcome.COMPLETED
-    assert [record["context"] for record in _payload(target)] == [
-        "00000428|INFO:NAM1|00ABCDEF",
-        "00000000|INFO:NAM1|00ABCDEF",
-    ]
+    rows = _payload(target)
+    assert [record["key"] for record in rows] == ["00000428|TB2|later", "00000000|TB2|first"]
+    assert all(record["context"] == "INFO:NAM1|00ABCDEF" for record in rows)
     assert tuple(entry.to_dict() for entry in entries) == before
 
 
@@ -41,9 +40,8 @@ def test_categorized_fallback_is_global_and_preserves_complete_dialogue_order(tm
     )
     export_to_categorized_json_files(TranslationEntryCollection(entries), tmp_path)
     dialogue = _payload(next(tmp_path.glob("任务/对话_*.json")))
-    assert [record["key"] for record in dialogue] == ["first", "later"]
-    assert [record["context"][:8] for record in dialogue] == ["00000000", "00000002"]
-    assert _payload(tmp_path / "书籍_书名.json")[0]["context"] == "00000001|BOOK:FULL"
+    assert [record["key"] for record in dialogue] == ["00000000|TB2|first", "00000002|TB2|later"]
+    assert _payload(tmp_path / "书籍_书名.json")[0]["key"] == "00000001|TB2|book"
 
 
 @pytest.mark.parametrize("orders", [(2, None, 0), (1, 1, 0)])
@@ -51,7 +49,23 @@ def test_incomplete_or_duplicate_source_order_uses_unique_input_positions(tmp_pa
     entries = tuple(_entry(str(index), order=order) for index, order in enumerate(orders))
     target = tmp_path / "out.json"
     assert _write(target, entries).outcome is OperationOutcome.COMPLETED
-    assert [record["context"][:8] for record in _payload(target)] == ["00000000", "00000001", "00000002"]
+    assert [record["key"] for record in _payload(target)] == ["00000000|TB2|0", "00000001|TB2|1", "00000002|TB2|2"]
+
+
+def test_categorized_subset_preserves_global_positions_for_free_text_without_dialogue_evidence(tmp_path):
+    complete = (_entry("book", "BOOK:FULL"), _entry("note", "12345678|user note"), _entry("empty", None))
+    export_to_categorized_json_files(
+        TranslationEntryCollection(complete[1:]), tmp_path, classification_entries=complete
+    )
+    note, empty = _payload(tmp_path / "其他.json")
+    assert (note["key"], note["context"]) == ("00000001|TB2|note", "12345678|user note")
+    assert empty["key"] == "00000002|TB2|empty" and "context" not in empty
+
+
+def test_order_does_not_hide_a_duplicate_identity(tmp_path):
+    result = _write(tmp_path / "duplicate.json", (_entry("same", order=2), _entry("same", order=7)))
+    assert result.outcome is OperationOutcome.FAILED
+    assert {diagnostic.code for diagnostic in result.diagnostics} == {"PARATRANZ_KEY_DUPLICATE"}
 
 
 def test_generic_paratranz_dto_roundtrip_does_not_acquire_prefix(tmp_path):

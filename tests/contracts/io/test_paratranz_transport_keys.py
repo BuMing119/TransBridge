@@ -77,8 +77,45 @@ def test_direct_json_export_of_same_key_originals_succeeds(tmp_path):
     target = tmp_path / "out.json"
     result = _write(target, entries)
     assert result.outcome is OperationOutcome.COMPLETED, result.diagnostics
+    assert [row["key"] for row in json.loads(target.read_text(encoding="utf-8"))] == [
+        f"{i:08d}|TB2|{encode_key(item.identity, item.original)}" for i, item in enumerate(entries)
+    ]
     parsed = _parse(target, namespace=NS)
     assert tuple(item.entry_key for item in parsed.entries) == tuple(item.identity for item in entries)
+
+
+@pytest.mark.parametrize("key", ["00000001|TB2|literal", "12345678|literal", "__transbridge_key__:literal"])
+def test_literal_key_roundtrips_without_stacking_order_envelopes(tmp_path, key):
+    path = tmp_path / "literal.json"
+    entry = TranslationEntry(key, key, "Original", "", 0, None)
+    assert _write(path, (entry,)).outcome is OperationOutcome.COMPLETED
+    first = path.read_bytes()
+    assert first.count(b"|TB2|") == 1
+    parsed = _parse(path)
+    assert parsed.entries[0].key == key
+    assert _write(path, (parsed.entries[0].to_translation_entry(),)).outcome is OperationOutcome.COMPLETED
+    assert path.read_bytes() == first
+
+
+def test_empty_ordered_payload_reports_one_invalid_row(tmp_path):
+    path = tmp_path / "input.json"
+    path.write_text('[{"key":"00000009|TB2|","original":"x"},{"key":"normal","original":"y"}]')
+    parsed = _parse(path)
+    assert parsed.outcome is OperationOutcome.PARTIAL
+    assert [entry.key for entry in parsed.entries] == ["normal"]
+    assert parsed.diagnostics[0].code == "PARATRANZ_TRANSPORT_KEY_INVALID"
+
+
+def test_unnumbered_native_write_escapes_a_literal_tb2_key(tmp_path):
+    path = tmp_path / "literal.json"
+    key = "00000010|TB2|user-defined"
+    entry = TranslationEntry(key, key, "Original", "", 0, None)
+    assert _write(path, (entry,), options=(("context_source_order", False),)).outcome is OperationOutcome.COMPLETED
+    parsed = _parse(path)
+    assert parsed.entries[0].key == key and parsed.entries[0].display_order is None
+    first = path.read_bytes()
+    assert _write(path, (parsed.entries[0].to_translation_entry(),)).outcome is OperationOutcome.COMPLETED
+    assert path.read_bytes() == first
 
 
 def test_invalid_transport_row_has_diagnostic_and_other_rows_still_import():

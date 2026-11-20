@@ -48,7 +48,13 @@ def test_ordered_context_roundtrip_preserves_wire_data_and_local_classification(
     target = tmp_path / "out.json"
     result = _write(target, (output,))
     assert result.outcome is OperationOutcome.COMPLETED, result.diagnostics
-    assert json.loads(target.read_text(encoding="utf-8")) == [payload]
+    expected = {**payload, "key": "00000428|TB2|" + payload["key"], "context": context}
+    assert json.loads(target.read_text(encoding="utf-8")) == [expected]
+    reparsed = _parse(target)
+    assert reparsed.entries[0].entry_key == dto.entry_key
+    assert dict(reparsed.entries[0].to_translation_entry().metadata)[PARATRANZ_CONTEXT_ORDER_METADATA] == 428
+    assert _write(target, reparsed.entries).outcome is OperationOutcome.COMPLETED
+    assert json.loads(target.read_text(encoding="utf-8")) == [expected]
     assert entry.context == context
 
 
@@ -73,6 +79,25 @@ def test_legacy_and_unrecognized_context_is_not_stripped(tmp_path, context):
     entry = parsed.entries[0].to_translation_entry()
     assert entry.context == context
     assert PARATRANZ_CONTEXT_ORDER_METADATA not in dict(entry.metadata)
+
+
+def test_explicit_export_reuses_imported_orders_and_leaves_unrecognized_keys_intact(tmp_path):
+    source = tmp_path / "source.json"
+    source.write_text(
+        json.dumps([
+            {"key": "99999999|TB2|last", "original": "Last", "context": "00000013|BOOK:FULL"},
+            {"key": "０００００００２|TB2|literal", "original": "First", "context": "00000002|BOOK:FULL"},
+        ]),
+        encoding="utf-8",
+    )
+    parsed = _parse(source)
+    assert [entry.key for entry in parsed.entries] == ["last", "０００００００２|TB2|literal"]
+    target = tmp_path / "export.json"
+    result = _write(target, parsed.entries, options=(("context_source_order", True), ("sort_by_key", True)))
+    assert result.outcome is OperationOutcome.COMPLETED
+    rows = json.loads(target.read_text(encoding="utf-8"))
+    assert [row["key"] for row in rows] == ["00000002|TB2|０００００００２|TB2|literal", "99999999|TB2|last"]
+    assert [row["context"] for row in rows] == ["BOOK:FULL", "BOOK:FULL"]
 
 
 def test_remote_snapshot_normalizes_context_without_hiding_remote_order_changes():

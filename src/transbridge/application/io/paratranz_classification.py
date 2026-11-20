@@ -54,8 +54,7 @@ def classify_entries(
             base = (context or "").partition("|")[0]
             category, path = _CATEGORY_BY_CONTEXT.get(base, ("其他", "其他.json"))
         metadata = dict(entry.metadata)
-        if projected or PARATRANZ_CONTEXT_ORDER_METADATA in metadata:
-            metadata[PARATRANZ_CONTEXT_ORDER_METADATA] = order
+        metadata[PARATRANZ_CONTEXT_ORDER_METADATA] = order
         groups[category, path].append(
             replace(entry, context=format_ordered_context(entry.context, order), metadata=tuple(metadata.items()))
         )
@@ -63,6 +62,38 @@ def classify_entries(
     if len({group.path.casefold() for group in result}) != len(result):
         raise ValueError("分类文件路径冲突，未合并不同分类。")
     return result
+
+
+def classify_selection(
+    entries: tuple[TranslationEntry, ...],
+    complete: tuple[TranslationEntry, ...],
+    *,
+    dialogue_order: DialogueOrderEvidence | None = None,
+) -> tuple[ClassifiedGroup, ...]:
+    """Number and classify the complete source before projecting the selected rows."""
+    selected = {entry.identity: entry for entry in entries}
+    if len(selected) != len(entries):
+        raise ValueError("分类包含重复词条身份。")
+    complete_keys = {entry.identity for entry in complete}
+    if len(complete_keys) != len(complete):
+        raise ValueError("分类的完整来源包含重复词条身份。")
+    if not selected.keys() <= complete_keys:
+        raise ValueError("分类的完整来源未覆盖所选词条。")
+    groups = []
+    for group in classify_entries(complete, dialogue_order=dialogue_order):
+        items = tuple(
+            _selected_entry(selected[entry.identity], entry) for entry in group.entries if entry.identity in selected
+        )
+        if items:
+            groups.append(replace(group, entries=items))
+    return tuple(groups)
+
+
+def _selected_entry(actual, projected):
+    """Keep current translations/states while borrowing only the export display projection."""
+    metadata = dict(actual.metadata)
+    metadata[PARATRANZ_CONTEXT_ORDER_METADATA] = dict(projected.metadata)[PARATRANZ_CONTEXT_ORDER_METADATA]
+    return replace(actual, context=projected.context, metadata=tuple(metadata.items()))
 
 
 def path_component(value: str, fallback: str) -> str:

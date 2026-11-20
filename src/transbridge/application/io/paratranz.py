@@ -35,12 +35,9 @@ from .contracts import (
     WriteRequest,
 )
 from .identity import SourceNamespace
-from .paratranz_context_order import context_orders, format_ordered_context, validate_context_order
-from .paratranz_mapping import (
-    ParatranzEntry,
-    map_paratranz_records,
-    paratranz_record_from_entry,
-)
+from .paratranz_export import records_for_write
+from .paratranz_keys import split_ordered_key
+from .paratranz_mapping import map_paratranz_records
 
 
 class ParatranzJsonAdapter:
@@ -224,7 +221,7 @@ class ParatranzJsonAdapter:
                 Diagnostic("PARATRANZ_WRITE_CANCELLED", "ParaTranz JSON write was cancelled."),
                 run_id=request.context.run_id,
             )
-        _, diagnostics, failed_indices = self._records_for_write(request)
+        _, diagnostics, failed_indices = records_for_write(request)
         if diagnostics:
             return OperationResult(
                 OperationOutcome.FAILED,
@@ -246,7 +243,7 @@ class ParatranzJsonAdapter:
                 counts=validation.counts,
                 run_id=validation.run_id,
             )
-        records, _, _ = self._records_for_write(request)
+        records, _, _ = records_for_write(request)
         options = dict(request.options)
         if options.get("sort_by_key", False):
             records.sort(key=lambda item: item["key"])
@@ -303,97 +300,6 @@ class ParatranzJsonAdapter:
             mcp=supported,
             publish=unavailable,
         )
-
-    def _records_for_write(
-        self,
-        request: WriteRequest,
-    ) -> tuple[list[dict[str, object]], tuple[Diagnostic, ...], tuple[int, ...]]:
-        options = dict(request.options)
-        preserve_extensions = options.get("preserve_extensions", True)
-        if not isinstance(preserve_extensions, bool):
-            return [], (Diagnostic("PARATRANZ_OPTION_INVALID", "preserve_extensions must be boolean."),), (-1,)
-
-        ordered_context = options.get("context_source_order")
-        if ordered_context is not None and not isinstance(ordered_context, bool):
-            return [], (Diagnostic("PARATRANZ_OPTION_INVALID", "context_source_order must be boolean."),), (-1,)
-        try:
-            orders = options.get("context_order_values")
-            if orders is not None:
-                if not isinstance(orders, (tuple, list)) or len(orders) != len(request.entries):
-                    raise ValueError("context_order_values must match the entry count.")
-                for order in orders:
-                    validate_context_order(order)
-            else:
-                orders = context_orders(request.entries)
-        except (TypeError, ValueError) as exc:
-            return [], (Diagnostic("PARATRANZ_CONTEXT_ORDER_INVALID", str(exc)),), (-1,)
-
-        records: dict[int, dict[str, object]] = {}
-        diagnostics: list[Diagnostic] = []
-        failed: set[int] = set()
-        for index, entry in enumerate(request.entries):
-            try:
-                records[index] = paratranz_record_from_entry(entry, preserve_extensions=preserve_extensions)
-                if ordered_context is True or (ordered_context is None and not isinstance(entry, ParatranzEntry)):
-                    context = records[index].get("context")
-                    if context is not None:
-                        records[index]["context"] = format_ordered_context(context, orders[index])
-            except (TypeError, ValueError) as exc:
-                diagnostics.append(
-                    Diagnostic(
-                        "PARATRANZ_ENTRY_WRITE_INVALID",
-                        str(exc),
-                        details=(
-                            ("record_index", index),
-                            ("key", _safe_key(entry)),
-                            ("id", _safe_id(entry)),
-                        ),
-                    )
-                )
-                failed.add(index)
-
-        key_groups: dict[str, list[int]] = {}
-        id_groups: dict[tuple[str, object], list[int]] = {}
-        for index, record in records.items():
-            key_groups.setdefault(str(record["key"]), []).append(index)
-            if "id" in record:
-                opaque_id = record["id"]
-                id_groups.setdefault((type(opaque_id).__name__, opaque_id), []).append(index)
-        for key, indices in key_groups.items():
-            if len(indices) > 1:
-                for index in indices:
-                    failed.add(index)
-                    diagnostics.append(
-                        Diagnostic(
-                            "PARATRANZ_KEY_DUPLICATE",
-                            "The ParaTranz key occurs more than once in the write request.",
-                            details=(
-                                ("record_index", index),
-                                ("key", key),
-                                ("id", records[index].get("id")),
-                                ("conflicting_indices", tuple(indices)),
-                            ),
-                        )
-                    )
-        for opaque_key, indices in id_groups.items():
-            distinct_keys = {records[index]["key"] for index in indices}
-            if len(distinct_keys) > 1:
-                for index in indices:
-                    failed.add(index)
-                    diagnostics.append(
-                        Diagnostic(
-                            "PARATRANZ_ID_CONFLICT",
-                            "The ParaTranz id points to different local keys in the write request.",
-                            details=(
-                                ("record_index", index),
-                                ("key", records[index]["key"]),
-                                ("id", records[index].get("id")),
-                                ("external_ref", repr(opaque_key)),
-                            ),
-                        )
-                    )
-        valid_records = [records[index] for index in sorted(records) if index not in failed]
-        return valid_records, tuple(diagnostics), tuple(sorted(failed))
 
     def _failed_parse(
         self,
@@ -473,18 +379,6 @@ def _indent_option(value: object) -> int | None:
     return value
 
 
-def _safe_key(entry: object) -> str | None:
-    entry_key = getattr(entry, "entry_key", None) or getattr(entry, "identity", None)
-    return entry_key.local_key if hasattr(entry_key, "local_key") else None
-
-
-def _safe_id(entry: object) -> str | int | None:
-    for reference in getattr(entry, "external_refs", ()):
-        if getattr(reference, "system", None) == "paratranz":
-            return reference.opaque_id
-    return None
-
-
 def _reject_json_constant(value: str) -> None:
     raise ValueError(f"Non-finite JSON number is not permitted: {value}")
 
@@ -514,7 +408,11 @@ def _json_object(pairs: list[tuple[str, object]]) -> _JsonObject:
 def _identity_fingerprint(payload: object, *, fallback: str) -> str:
     if not isinstance(payload, list):
         return fallback
-    keys = sorted(item.get("key") for item in payload if isinstance(item, dict) and isinstance(item.get("key"), str))
+    keys = sorted(
+        split_ordered_key(item["key"])[0]
+        for item in payload
+        if isinstance(item, dict) and isinstance(item.get("key"), str)
+    )
     if not keys:
         return hashlib.sha256(b"json.paratranz:empty").hexdigest()
     material = json.dumps(keys, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")

@@ -39,7 +39,9 @@ def context_orders(entries: Sequence[Any]) -> tuple[int, ...]:
     orders: list[int | None] = []
     for entry in entries:
         metadata = dict(getattr(entry, "metadata", ()))
-        order = metadata.get("plugin.source_order", metadata.get(PARATRANZ_CONTEXT_ORDER_METADATA))
+        order = metadata.get(
+            "plugin.source_order", metadata.get(PARATRANZ_CONTEXT_ORDER_METADATA, getattr(entry, "display_order", None))
+        )
         if type(order) is int and order >= 0:
             validate_context_order(order)
         else:

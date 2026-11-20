@@ -32,7 +32,7 @@ def test_additional_record_types_export_to_existing_categories(tmp_path: Path, p
     export_to_categorized_json_files(TranslationEntryCollection(entries), tmp_path)
 
     local = {path.name: json.loads(path.read_text(encoding="utf-8")) for path in tmp_path.glob("*.json")}
-    assert {path: {record["key"] for record in records} for path, records in local.items()} == expected
+    assert {path: {record["context"] for record in records} for path, records in local.items()} == expected
     files = upload_files((UploadSource("source", "Plugin.esp", entries),), categorized=True)
     assert local == {file.path.removeprefix("Plugin.esp/"): list(wire_records(file)) for file in files}
     assert all(
@@ -115,9 +115,9 @@ def test_categorized_export_uses_local_key_and_only_real_external_id(tmp_path: P
     outputs = tuple(tmp_path.glob("*.json"))
     assert len(outputs) == 1
     payload = json.loads(outputs[0].read_text(encoding="utf-8"))
-    assert payload[0]["key"] == "stable-business-key"
+    assert payload[0]["key"] == "00000000|TB2|stable-business-key"
     assert payload[0]["id"] == 73
-    assert payload[1]["key"] == "stable-without-remote"
+    assert payload[1]["key"] == "00000001|TB2|stable-without-remote"
     assert "id" not in payload[1]
     assert all("schema_version" not in item and "entry_key" not in item for item in payload)
 
@@ -138,7 +138,7 @@ def test_categorized_dialogue_export_restores_complete_plugin_source_order(tmp_p
 
     output = next(tmp_path.glob("任务/*.json"))
     payload = json.loads(output.read_text(encoding="utf-8"))
-    assert [item["key"] for item in payload] == ["first", "second", "third"]
+    assert [item["key"] for item in payload] == ["00000000|TB2|first", "00000001|TB2|second", "00000002|TB2|third"]
     assert all(not any(key.startswith("plugin.") for key in item) for item in payload)
 
 
@@ -153,7 +153,7 @@ def test_categorized_dialogue_export_keeps_collection_order_for_incomplete_metad
 
     output = next(tmp_path.glob("任务/*.json"))
     payload = json.loads(output.read_text(encoding="utf-8"))
-    assert [item["key"] for item in payload] == ["third", "legacy", "first"]
+    assert [item["key"] for item in payload] == ["00000000|TB2|third", "00000001|TB2|legacy", "00000002|TB2|first"]
 
 
 def test_categorized_dialogue_export_keeps_collection_order_for_duplicate_source_order(tmp_path: Path) -> None:
@@ -167,7 +167,11 @@ def test_categorized_dialogue_export_keeps_collection_order_for_duplicate_source
 
     output = next(tmp_path.glob("任务/*.json"))
     payload = json.loads(output.read_text(encoding="utf-8"))
-    assert [item["key"] for item in payload] == ["first-seen", "duplicate", "zero"]
+    assert [item["key"] for item in payload] == [
+        "00000000|TB2|first-seen",
+        "00000001|TB2|duplicate",
+        "00000002|TB2|zero",
+    ]
 
 
 def test_categorized_export_matches_upload_paths_records_and_preserves_source(tmp_path: Path) -> None:

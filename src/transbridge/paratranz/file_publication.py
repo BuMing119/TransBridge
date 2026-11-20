@@ -14,10 +14,13 @@ import requests
 
 from transbridge.application.categorized_upload.diagnostics import log_timing
 from transbridge.application.file_upload import FileWriteResult
-from transbridge.application.ports.paratranz import ExternalServiceError
+from transbridge.application.file_upload_diff import IncompleteUploadSnapshot
+from transbridge.application.file_upload_renames import PartialRenameError
+from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError
 
 from .api.paratranz_files_api import ParatranzFilesAPI
-from .artifact_file_reads import ARTIFACT_FILE_THRESHOLD, ArtifactFileReads
+from .api.paratranz_strings_api import ParatranzStringsAPI
+from .artifact_file_reads import ARTIFACT_FILE_THRESHOLD, ArtifactFileReads, IncompleteArtifactFields
 from .file_transport import UploadCancellation, _complete_files, _file_path
 from .paratranz_client import RetryPolicy
 
@@ -67,7 +70,7 @@ class RequestBudget:
 _SHARED_BUDGET = RequestBudget()
 
 
-class FilePublicationGateway(ParatranzFilesAPI):
+class FilePublicationGateway(ParatranzFilesAPI, ParatranzStringsAPI):
     """Read and write files within the shared request budget.
 
     Official global ceiling is 480 requests/minute/user (OpenAPI 0.7.0).
@@ -187,7 +190,10 @@ class FilePublicationGateway(ParatranzFilesAPI):
         def read(project_id, file_id):
             # The archive shares its cumulative read limit across upload workers.
             with lock:
-                return archive.get_file_translation(project_id, file_id)
+                try:
+                    return archive.get_file_translation(project_id, file_id)
+                except IncompleteArtifactFields as exc:
+                    raise IncompleteUploadSnapshot(str(exc)) from exc
 
         try:
             archive.prepare(project_id, inventory, selected_ids, cancellation=self.cancellation, progress=progress)
@@ -212,6 +218,39 @@ class FilePublicationGateway(ParatranzFilesAPI):
         items = tuple({field: record[field] for field in ("key", "translation", "stage")} for record in records)
         result = self.import_translations(project_id, file_id, PurePosixPath(path).name, items, force=force)
         return _write_result(result)
+
+    def rename_keys(self, project_id, items):
+        """Edit by existing ID. Only an explicit size rejection justifies splitting."""
+        if not items:
+            return
+        ids = [item["id"] for item in items]
+        if any(type(value) is not int or value <= 0 for value in ids) or len(set(ids)) != len(ids):
+            raise ValueError("排序码更新需要唯一且有效的云端词条 ID。")
+        confirmed = set()
+        pending = [items]
+        try:
+            while pending:
+                part = pending.pop()
+                try:
+                    result = self.batch_strings(project_id, "edit", items=list(part))
+                except ExternalServiceError as exc:
+                    if exc.status != 413 or len(part) < 2:
+                        raise
+                    middle = len(part) // 2
+                    pending.extend((part[middle:], part[:middle]))
+                    continue
+                expected = {item["id"] for item in part}
+                if isinstance(result, list) and all(type(value) is int for value in result):
+                    returned = set(result)
+                    if returned <= expected and len(returned) == len(result):
+                        confirmed.update(returned)
+                        if returned == expected:
+                            continue
+                raise ExternalServiceError(ExternalServiceCategory.INVALID_RESPONSE, "服务端未完整确认排序码更新。")
+        except ExternalServiceError as exc:
+            if confirmed:
+                raise PartialRenameError(confirmed, exc) from exc
+            raise
 
 
 def _log_response(method, endpoint, attempt, queued, started, *, result=None, error=None):

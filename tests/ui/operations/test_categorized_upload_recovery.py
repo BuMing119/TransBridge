@@ -22,7 +22,11 @@ def test_same_path_replacement_uses_current_id_without_review(harness):
     assert bridge._upload(harness).success_count == 2
     old_id, old = next(iter(harness.remote.files.items()))
     del harness.remote.files[old_id]
-    harness.remote.files[99] = replace(old, file_id=99, entries=tuple(replace(row, file_id=99) for row in old.entries))
+    harness.remote.files[99] = replace(
+        old,
+        file_id=99,
+        entries=tuple(replace(row, file_id=99, original="Replaced source") for row in old.entries),
+    )
     harness.remote.writes.clear()
     assert bridge._upload(harness).success_count == 2
     assert any(write[1] == 99 for write in harness.remote.writes)

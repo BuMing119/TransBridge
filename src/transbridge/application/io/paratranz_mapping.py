@@ -17,7 +17,7 @@ from .paratranz_context_order import (
     format_ordered_context,
     parse_ordered_context,
 )
-from .paratranz_keys import ParaTranzKeyError, decode_key, encode_key
+from .paratranz_keys import ParaTranzKeyError, decode_key, encode_key, export_key, split_ordered_key
 
 PARATRANZ_SYSTEM = "paratranz"
 PARATRANZ_CORE_FIELDS = frozenset({"id", "key", "original", "translation", "stage", "context"})
@@ -36,6 +36,7 @@ class ParatranzEntry:
     external_refs: tuple[ExternalEntryRef, ...] = ()
     extensions: tuple[tuple[str, Any], ...] = ()
     source_index: int | None = None
+    key_order: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.original, str):
@@ -63,6 +64,10 @@ class ParatranzEntry:
     def key(self) -> str:
         return self.entry_key.local_key
 
+    @property
+    def display_order(self) -> int | None:
+        return self.key_order if self.key_order is not None else parse_ordered_context(self.context)[1]
+
     def paratranz_ref(self) -> ExternalEntryRef | None:
         references = tuple(reference for reference in self.external_refs if reference.system == PARATRANZ_SYSTEM)
         if len(references) > 1:
@@ -73,7 +78,8 @@ class ParatranzEntry:
         """Project the transport record without using its remote ID as local identity."""
         from transbridge.converter.translation_entry import TranslationEntry
 
-        context, order = parse_ordered_context(self.context)
+        context, _ = parse_ordered_context(self.context)
+        order = self.display_order
         metadata = ((PARATRANZ_EXTENSION_METADATA, _json_clone(dict(self.extensions))),)
         if order is not None:
             metadata += ((PARATRANZ_CONTEXT_ORDER_METADATA, order),)
@@ -248,7 +254,10 @@ def map_paratranz_record(
         (name, _json_clone(value)) for name, value in record.items() if name not in PARATRANZ_CORE_FIELDS
     )
     try:
-        identity = decode_key(key, record["original"], namespace)
+        transport_key, order = split_ordered_key(key)
+        if not transport_key.strip():
+            raise ParaTranzKeyError("排序前缀后缺少传输 key。")
+        identity = decode_key(transport_key, record["original"], namespace)
     except ParaTranzKeyError as exc:
         return None, _diagnostic("PARATRANZ_TRANSPORT_KEY_INVALID", str(exc), index, record)
     return (
@@ -261,12 +270,15 @@ def map_paratranz_record(
             external_refs,
             extensions,
             index,
+            order,
         ),
         None,
     )
 
 
-def paratranz_record_from_entry(entry: Any, *, preserve_extensions: bool = True) -> dict[str, Any]:
+def paratranz_record_from_entry(
+    entry: Any, *, preserve_extensions: bool = True, key_order: int | None = None
+) -> dict[str, Any]:
     """Map a V2 DTO/snapshot/compatible entry without synthesizing a remote id."""
 
     entry_key = _entry_key(entry)
@@ -275,9 +287,16 @@ def paratranz_record_from_entry(entry: Any, *, preserve_extensions: bool = True)
     stage = getattr(entry, "stage", 0)
     context = getattr(entry, "context", None)
     ParatranzEntry(entry_key, original, translation, stage, context)
-    order = dict(getattr(entry, "metadata", ())).get(PARATRANZ_CONTEXT_ORDER_METADATA)
-    if order is not None:
-        context = format_ordered_context(context, order)
+    key = encode_key(entry_key, original)
+    if key_order is None and isinstance(entry, ParatranzEntry):
+        key_order = entry.key_order
+    if key_order is not None:
+        key = export_key(key, key_order)
+        context, _ = parse_ordered_context(context)
+    else:
+        order = dict(getattr(entry, "metadata", ())).get(PARATRANZ_CONTEXT_ORDER_METADATA)
+        if order is not None:
+            context = format_ordered_context(context, order)
 
     references = tuple(
         reference for reference in getattr(entry, "external_refs", ()) if reference.system == PARATRANZ_SYSTEM
@@ -285,7 +304,7 @@ def paratranz_record_from_entry(entry: Any, *, preserve_extensions: bool = True)
     if len(references) > 1:
         raise ValueError("an entry cannot have more than one ParaTranz external reference")
 
-    record: dict[str, Any] = {"key": encode_key(entry_key, original), "original": original}
+    record: dict[str, Any] = {"key": key, "original": original}
     if references:
         record["id"] = references[0].opaque_id
     record["translation"] = translation

@@ -12,6 +12,7 @@ from tests.application.projects import test_categorized_upload as project_tests
 from transbridge.application.categorized_upload import RemoteEntry, RemoteFile
 from transbridge.application.file_upload import FileWriteResult
 from transbridge.application.io.identity import ExternalEntryRef
+from transbridge.application.io.paratranz_keys import split_ordered_key
 from transbridge.application.projects.remote_binding import ParaTranzTargetStatus
 from transbridge.application.projects.variant_commands import EntryStatePatch
 from transbridge.converter.translation_entry import TranslationEntry
@@ -90,6 +91,40 @@ class _Remote:
         self.files[file_id] = replace(file, entries=tuple(current.values()))
         self.writes.append(("source", file_id, path))
         return FileWriteResult("applied" if changed else "hashMatched", file_id)
+
+    def get_file_translation(self, project_id, file_id):
+        assert project_id == 42
+        self.reads.append(("translation", file_id))
+        return [
+            {
+                "id": entry.remote_id,
+                "fileId": file_id,
+                "key": entry.key,
+                "original": entry.original,
+                "translation": entry.translation,
+                "context": entry.context,
+                "stage": entry.stage,
+            }
+            for entry in self.files[file_id].entries
+        ]
+
+    def rename_keys(self, project_id, items):
+        assert project_id == 42 and items
+        replacements = {item["id"]: item for item in items}
+        for file_id, file in self.files.items():
+            entries = tuple(
+                replace(
+                    entry,
+                    key=replacements[entry.remote_id]["key"],
+                    context=replacements[entry.remote_id].get("context", entry.context),
+                )
+                if entry.remote_id in replacements
+                else entry
+                for entry in file.entries
+            )
+            if entries != file.entries:
+                self.files[file_id] = replace(file, entries=entries)
+                self.writes.append(("keys", file_id, file.path))
 
     def translate(self, project_id, file_id, path, records, *, force):
         file = self.files[file_id]
@@ -203,6 +238,56 @@ def test_repeated_upload_reuses_current_files_with_server_noops(harness):
     assert _upload(harness).success_count == 2
     assert set(harness.remote.files) == ids
     assert {row.status for row in harness.session.last_receipt.files} == {"unchanged"}
+
+
+@pytest.mark.parametrize("categorized", [False, True])
+@pytest.mark.parametrize("mode", ["orig_only", "trans_safe", "trans_force", "both"])
+def test_all_upload_modes_reconcile_legacy_keys_without_replacing_server_entries(harness, categorized, mode):
+    harness.session.categorized = categorized
+    for source in _snapshot(harness).sources:
+        for entry in source.entries:
+            assert harness.services.gui_project_commands.update_entry(
+                entry.identity, harness.request_context, translation="本地新译文", stage=3
+            ).is_success
+    before = _snapshot(harness)
+    assert _upload(harness).success_count == 2
+    entry_ids = {}
+    for file_id, file in tuple(harness.remote.files.items()):
+        rows = []
+        for entry in file.entries:
+            key, order = split_ordered_key(entry.key)
+            assert order is not None
+            rows.append(
+                replace(entry, key=key, context=f"{order:08d}|{entry.context}", translation="旧云端译文", stage=1)
+            )
+        harness.remote.files[file_id] = replace(file, entries=tuple(rows))
+        entry_ids[file_id] = tuple(entry.remote_id for entry in rows)
+    harness.remote.reads.clear()
+    harness.remote.writes.clear()
+
+    receipt = _upload(harness, _selection(harness, mode))
+
+    assert receipt.success_count == 2 and receipt.failed_count == receipt.retry_count == 0
+    assert harness.remote.reads[0] == ("inventory", 42)
+    assert {item for item in harness.remote.reads[1:]} == {("translation", file_id) for file_id in entry_ids}
+    expected_kinds = {
+        "orig_only": {"keys"},
+        "both": {"keys", "translations"},
+        "trans_safe": {"translations"},
+        "trans_force": {"translations"},
+    }[mode]
+    assert {write[0] for write in harness.remote.writes} == expected_kinds
+    for file_id, file in harness.remote.files.items():
+        assert tuple(entry.remote_id for entry in file.entries) == entry_ids[file_id]
+        assert all(
+            (split_ordered_key(entry.key)[1] is not None) == (mode in {"orig_only", "both"}) for entry in file.entries
+        )
+        expected_translation = "旧云端译文" if mode == "orig_only" else "本地新译文"
+        assert all(entry.translation == expected_translation for entry in file.entries)
+    assert _snapshot(harness) == before
+    harness.remote.writes.clear()
+    assert _upload(harness, _selection(harness, mode)).success_count == 2
+    assert harness.remote.writes == []
 
 
 def test_overlapping_upload_is_rejected_but_later_upload_allowed(harness, monkeypatch):

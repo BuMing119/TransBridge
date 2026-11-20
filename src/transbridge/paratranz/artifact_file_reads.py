@@ -19,6 +19,10 @@ _MAX_SELECTED_BYTES = 512 * 1024**2
 _logger = logging.getLogger(__name__)
 
 
+class IncompleteArtifactFields(ValueError):
+    """The selected archive member does not contain the fields needed for comparison."""
+
+
 class ArtifactFileReads:
     def __init__(self, config, *, downloader_factory=FreshArtifactDownload):
         self.downloader = downloader_factory(config)
@@ -82,7 +86,12 @@ class ArtifactFileReads:
                 _logger.info("Archive file recovered from fallback: %s -> %s", path, name)
             return rows
         details = "；".join(f"{name}：{exc}" for name, exc in failures[:5])
-        raise ValueError(f"压缩包文件不是完整词条 JSON：{path}（{details}）") from failures[0][1]
+        error_type = (
+            IncompleteArtifactFields
+            if all(isinstance(err, IncompleteArtifactFields) for _, err in failures)
+            else ValueError
+        )
+        raise error_type(f"压缩包文件不是完整词条 JSON：{path}（{details}）") from failures[0][1]
 
     def _read_member(self, name):
         info = self._archive.getinfo(name)
@@ -124,8 +133,10 @@ def _validate_entries(rows, file_id, *, complete):
     if not isinstance(rows, list):
         raise ValueError("需要包含原文、译文和状态的完整词条列表")
     for row in rows:
-        if not isinstance(row, dict) or not required <= row.keys():
-            raise ValueError("缺少完整词条字段：" + "/".join(sorted(required)))
+        if not isinstance(row, dict):
+            raise ValueError("压缩包词条数据无效。")
+        if not required <= row.keys():
+            raise IncompleteArtifactFields("缺少完整词条字段：" + "/".join(sorted(required - row.keys())))
         entry = ParaTranzEntry.from_mapping(row)
         if entry.file_id is not None and entry.file_id != file_id:
             raise ValueError("云端返回了目标文件以外的词条。")

@@ -84,9 +84,10 @@ def test_writer_and_wire_share_frozen_numbers_and_shards(source, tmp_path):
     file = dialogue(files)
     export_to_categorized_json_files(TranslationEntryCollection(entries), tmp_path, dialogue_order=evidence)
     exported = json.loads((tmp_path / "任务/对话_[Fixture Quest].json").read_text(encoding="utf-8"))
-    assert exported == list(wire_records(file))
+    published = list(wire_records(file))
+    assert exported == published
     shards = (replace(file, entries=file.entries[:2]), replace(file, entries=file.entries[2:]))
-    assert [row for shard in shards for row in wire_records(shard)] == exported
+    assert [row for shard in shards for row in wire_records(shard)] == published
 
 
 def test_download_matches_after_reordering_and_display_prefix_change(source):

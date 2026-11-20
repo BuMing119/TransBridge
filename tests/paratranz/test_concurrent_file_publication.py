@@ -1,6 +1,7 @@
 """Real overlapping file requests with synthetic, independently owned sessions."""
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 import json
 from threading import Event, get_ident
 from time import monotonic
@@ -167,7 +168,9 @@ def test_split_path_related_files_keep_input_order_and_complete_retry_facts(rela
             return (413, {}, {})
 
     backend = Backend(handler=handle)
-    files = (artifact(4, path="A.json"), artifact(path=related_path), artifact(path="B.json"))
+    related = artifact(path=related_path)
+    related = replace(related, entries=(replace(related.entries[0], original="Related source"),))
+    files = (artifact(4, path="A.json"), related, artifact(path="B.json"))
     result = upload(backend, files, mode="orig_only")
     assert result.succeeded == 4 and not result.retry_files
     writes = [row for row in backend.calls if row["path"].casefold() == "a_1.json"]

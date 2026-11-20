@@ -4,9 +4,7 @@
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextvars import copy_context
 from dataclasses import replace
-from pathlib import PurePosixPath
 from queue import Empty, Queue
-import re
 from threading import Event
 
 from transbridge.application.categorized_upload.diagnostics import log_event, log_failure
@@ -53,17 +51,25 @@ class UploadChecks:
 
 
 def publish_files_parallel(
-    project_id, files, port, inventory, mode, cancelled, check_current, progress, *, archive_reader=None
+    project_id,
+    files,
+    port,
+    inventory,
+    mode,
+    cancelled,
+    check_current,
+    progress,
+    *,
+    archive_reader=None,
+    defer_renames=None,
 ):
-    from .file_upload import FileReceipt, FileUploadReceipt, _publish_parts, wire_records
+    from .file_upload import FileReceipt, FileUploadReceipt, _publish_parts, _split_group, wire_records
 
     checks = UploadChecks(check_current, cancelled)
     admission = FileRequestAdmission(port.cancellation, checks.stopped)
     # A.json and possible a_1.json splits share a scheduling group. One pipeline
     # per group runs at a time, in input order, avoiding overlapping split writes.
-    groups = {
-        file.path: re.sub(r"(?:_\d+)+$", "", str(PurePosixPath(file.path).with_suffix("")).casefold()) for file in files
-    }
+    groups = {file.path: _split_group(file.path) for file in files}
 
     def stopped_receipt(file):
         status = "cancelled" if cancelled() else "skipped"
@@ -93,6 +99,7 @@ def publish_files_parallel(
                     checks.request,
                     retry_files,
                     archive_reader=archive_reader,
+                    defer_renames=defer_renames,
                 )
             finally:
                 child.close()

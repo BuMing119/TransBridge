@@ -3,15 +3,36 @@
 
 import base64
 import hashlib
+import re
 
 from .identity import EntryKey, SourceNamespace
+from .paratranz_context_order import validate_context_order
 
 _PREFIX = "__transbridge_key__:"
 _VERSION = _PREFIX + "v1:"
+_ORDER_PREFIX = re.compile(r"([0-9]{8})\|TB2\|")
 
 
 class ParaTranzKeyError(ValueError):
     """A transport key cannot prove its original local identity."""
+
+
+def split_ordered_key(key: str) -> tuple[str, int | None]:
+    """Remove exactly one local export envelope, leaving its v1 payload intact."""
+    match = _ORDER_PREFIX.match(key)
+    if match is None:
+        return key, None
+    return key[match.end() :], int(match[1])
+
+
+def export_key(transport_key: str, order: int | None) -> str:
+    """Escape literal TB2 lookalikes even when preserving an unnumbered native record."""
+    if _ORDER_PREFIX.match(transport_key):
+        transport_key = f"{_VERSION}k:{_pack(transport_key)}"
+    if order is None:
+        return transport_key
+    validate_context_order(order)
+    return f"{order:08d}|TB2|{transport_key}"
 
 
 def encode_key(identity: EntryKey, original: str) -> str:
@@ -40,7 +61,7 @@ def decode_key(key: str, original: str, namespace: SourceNamespace) -> EntryKey:
         return EntryKey(namespace, local_key, original)
     if len(parts) == 2 and parts[0] == "k":
         local_key = _unpack(parts[1])
-        if local_key.startswith(_PREFIX):
+        if local_key.startswith(_PREFIX) or _ORDER_PREFIX.match(local_key):
             return EntryKey(namespace, local_key)
     raise ParaTranzKeyError("TransBridge 传输 key 格式无效。")
 

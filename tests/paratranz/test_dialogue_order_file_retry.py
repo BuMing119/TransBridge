@@ -10,10 +10,11 @@ import pytest
 import requests
 
 from tests.dialogue_order_support import dialogue_bytes
-from tests.paratranz.test_file_publication import gateway
+from tests.paratranz.test_file_publication import gateway, remote_rows
 from transbridge.application.categorized_upload import UploadSource, categorize_sources
 from transbridge.application.file_upload import execute_file_upload, wire_records
 from transbridge.application.io.paratranz_context_order import parse_ordered_context
+from transbridge.application.io.paratranz_keys import split_ordered_key
 from transbridge.parser.plugin.dialogue_order_evidence import read_dialogue_order_evidence
 from transbridge.parser.plugin_parser import PluginParser
 
@@ -42,7 +43,8 @@ def dialogue_file():
         "Later reply",
     ]
     # QUST and BOOK occupy positions in the complete source before this file.
-    assert [parse_ordered_context(row["context"])[1] for row in wire_records(result)] == [2, 3, 4, 5, 6]
+    assert [split_ordered_key(row["key"])[1] for row in wire_records(result)] == [2, 3, 4, 5, 6]
+    assert all(parse_ordered_context(row["context"])[1] is None for row in wire_records(result))
     return result
 
 
@@ -93,10 +95,10 @@ def test_413_partial_failure_and_receipt_retry_keep_complete_source_numbers(dial
 def test_translation_only_413_keeps_keys_and_never_sends_display_context(dialogue_file, mode, force):
     expected = [{name: row[name] for name in ("key", "translation", "stage")} for row in wire_records(dialogue_file)]
     before = tuple(entry.to_dict() for entry in dialogue_file.entries)
-    comparisons = ([{"key": row["key"], "translation": ""} for row in expected],) if force else ()
+    comparisons = remote_rows(dialogue_file, translation="", stage=0)
     port, session = gateway(
         [{"id": 20, "name": dialogue_file.path}],
-        *comparisons,
+        comparisons,
         (413, {}, {}),
         {"file": {"id": 20}},
         {"file": {"id": 20}},

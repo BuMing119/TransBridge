@@ -41,8 +41,10 @@ def plan(local, remote):
     )
 
 
-def files(*, categorized=True, entries=None):
-    sources = (UploadSource("a", "A.esp", entries or (qualified("One"), qualified("Two"))),)
+def files(*, categorized=True, entries=None, complete=None):
+    sources = (
+        UploadSource("a", "A.esp", entries or (qualified("One"), qualified("Two")), classification_entries=complete),
+    )
     return upload_files(sources, categorized=categorized)
 
 
@@ -73,7 +75,7 @@ def test_selection_order_and_layout_do_not_change_transport_keys():
     expected = {row["original"]: row["key"] for row in wire_records(files()[0])}
     for subset in (entries[:1], entries[1:], tuple(reversed(entries))):
         for categorized in (True, False):
-            rows = wire_records(files(categorized=categorized, entries=subset)[0])
+            rows = wire_records(files(categorized=categorized, entries=subset, complete=entries)[0])
             assert all(row["key"] == expected[row["original"]] for row in rows)
 
 
@@ -86,11 +88,11 @@ def test_identical_local_identity_is_still_rejected_without_post():
 
 
 def test_plain_upload_rejects_identical_identity_before_post():
-    artifact = files(categorized=False, entries=(qualified(), qualified()))[0]
     port, session = gateway([])
-    receipt = execute_file_upload(7, (artifact,), port)
-    assert receipt.failed == 1 and len(session.calls) == 1
-    assert session.calls[0].method == "GET"
+    with pytest.raises(ValueError, match="重复词条身份"):
+        artifact = files(categorized=False, entries=(qualified(), qualified()))[0]
+        execute_file_upload(7, (artifact,), port)
+    assert session.calls == []
 
 
 def test_413_splitting_preserves_encoded_keys():

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from transbridge.application.io.identity import EntryKey, ExternalEntryRef, SourceNamespace
 from transbridge.application.io.paratranz_context_order import parse_ordered_context
-from transbridge.application.io.paratranz_keys import decode_key
+from transbridge.application.io.paratranz_keys import decode_key, split_ordered_key
 from transbridge.application.ports.paratranz import CancellationPort, ParaTranzEntry, ParaTranzPort
 from transbridge.application.sync.models import RemoteEntrySnapshot, canonical_hash
 
@@ -51,8 +51,13 @@ def _snapshot(
     }
     reference = None if entry.remote_id is None else ExternalEntryRef("paratranz", scope, entry.remote_id)
     context, order = parse_ordered_context(entry.context)
+    key = entry.key
+    if decode_keys:
+        key, key_order = split_ordered_key(key)
+        if key_order is not None:
+            order = key_order
     return RemoteEntrySnapshot(
-        entry_key=decode_key(entry.key, entry.original, namespace) if decode_keys else EntryKey(namespace, entry.key),
+        entry_key=decode_key(key, entry.original, namespace) if decode_keys else EntryKey(namespace, key),
         remote_revision=canonical_hash(payload),
         original=entry.original,
         translation=entry.translation,

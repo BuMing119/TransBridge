@@ -53,10 +53,10 @@ def test_explicit_json_export_uses_distinct_structures_and_preserves_sources(tmp
         else:
             assert {"key", "original", "translation", "stage"} <= rows[0].keys()
             assert rows[0]["translation"] == "译文0"
-            assert (
-                rows[0]["key"] == paratranz_record_from_entry(next(iter(context.active_slot.collection)))["key"]
-                or batch
-            )
+            assert rows[0]["key"].startswith("00000000|TB2|")
+            if not batch:
+                inner = paratranz_record_from_entry(next(iter(context.active_slot.collection)))["key"]
+                assert rows[0]["key"] == "00000000|TB2|" + inner
     assert all(Path(path).read_bytes() == data for path, data in originals.items())
 
 

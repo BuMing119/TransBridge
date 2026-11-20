@@ -49,12 +49,14 @@ class Backend:
             else (
                 "download"
                 if request.method == "GET"
+                else "keys"
+                if request.method == "PUT" and endpoint.endswith("/strings")
                 else "translation"
                 if endpoint.endswith("/translation")
                 else "source"
             )
         )
-        path = ""
+        path, records = "", None
         if request.method == "POST" and request.headers.get("Content-Type", "").startswith("multipart/"):
             message = BytesParser(policy=policy.default).parsebytes(
                 b"Content-Type: " + request.headers["Content-Type"].encode() + b"\r\n\r\n" + request.body
@@ -63,6 +65,7 @@ class Backend:
             for part in message.iter_parts():
                 if part.get_param("name", header="content-disposition") == "file":
                     path = part.get_filename()
+                    records = json.loads(part.get_payload(decode=True))
                 if part.get_param("name", header="content-disposition") == "path":
                     folder = part.get_payload(decode=True).decode()
             path = folder + path
@@ -110,8 +113,20 @@ class Backend:
                     elif kind == "source" and endpoint.endswith("/files"):
                         file_id = max(self.inventory.values(), default=0) + 1
                         self.inventory[path] = file_id
+                        self.rows[file_id] = [
+                            dict(record, id=file_id * 100 + index, fileId=file_id)
+                            for index, record in enumerate(records)
+                        ]
                         row["created_id"] = file_id
                         value = {"file": {"id": file_id}}
+                    elif kind == "keys":
+                        items = json.loads(request.body)["items"]
+                        updates = {item["id"]: item for item in items}
+                        for entries in self.rows.values():
+                            for entry in entries:
+                                if entry["id"] in updates:
+                                    entry.update(updates[entry["id"]])
+                        value = [item["id"] for item in items]
                     else:
                         file_id = int(endpoint.split("/")[-2 if kind == "translation" else -1])
                         value = {"file": {"id": file_id}}

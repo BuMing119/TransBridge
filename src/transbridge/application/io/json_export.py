@@ -98,6 +98,7 @@ def preflight_json_export(draft: JsonExportDraft, projection_service) -> JsonExp
             source.variant_revision,
             source.context,
             source_snapshot=source.source_snapshot,
+            options=(("context_source_order", True),) if draft.format_id is FormatId.JSON_PARATRANZ else (),
         )
         requests.append(request)
         payload = b""
