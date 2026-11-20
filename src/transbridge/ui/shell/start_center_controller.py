@@ -6,12 +6,23 @@ from __future__ import annotations
 from dataclasses import replace
 import logging
 
-from PyQt6.QtWidgets import QFileDialog
+from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-from transbridge.ui.coordinators.guided_project_coordinator import GuidedDraftPhase, GuidedProjectCoordinator
+from transbridge.ui.coordinators.guided_project_coordinator import (
+    GuidedDraftPhase,
+    GuidedProjectCoordinator,
+    GuidedProjectDraftState,
+)
 from transbridge.ui.coordinators.project_creation_operation import ProjectCreationOperation
 from transbridge.ui.shell.action_catalog import IntentId
-from transbridge.ui.workbench.file_source_formats import FILE_FILTER_HINTS, FILE_SOURCE_FILTER, TRANSLATION_FILE_FILTER
+from transbridge.ui.workbench.file_source_formats import (
+    FILE_FILTER_HINTS,
+    INCOMPATIBLE_SOURCE_FILTER,
+    PLUGIN_SOURCE_FILTER,
+    TRANSLATION_FILE_FILTER,
+    is_incompatible_source,
+    is_plugin_source,
+)
 
 from .project_window_launcher import launch_project_in_new_window
 from .start_center import StartCenterViewState, StartCenterWidget, StartDestinationState
@@ -72,6 +83,7 @@ class StartCenterController:
         view.skip_empty_changed.connect(lambda value: self.guided_project.set_parse_option("skip_empty", value))
         view.choose_migration_requested.connect(self._choose_migrations)
         view.add_sources_requested.connect(self._add_sources)
+        view.add_incompatible_requested.connect(lambda: self._choose_source(incompatible=True, append=True))
         view.source_paths_changed.connect(self.guided_project.set_source_paths)
         view.source_format_changed.connect(self.guided_project.set_source_format)
         view.translation_options_changed.connect(lambda options: self.guided_project.set_translation_options(**options))
@@ -107,19 +119,21 @@ class StartCenterController:
         self._host.central_stack.setCurrentWidget(self._host.mode_tabs)
 
     def choose_source(self) -> None:
-        """Choose file sources inside the unified Project creation flow."""
+        """Choose plugin sources inside the unified Project creation flow."""
 
         self._choose_source()
 
     def choose_source_path(self, source_path: str) -> None:
         """Start the same guided draft with an already reviewed local path."""
 
-        self._begin_project(source_path)
+        state = self._source_selection_draft()
+        if state is not None:
+            self._accept_sources((source_path,), state, incompatible=not is_plugin_source(source_path))
 
     def create_empty(self) -> None:
         """Create an empty Project from the advanced choice on the creation page."""
 
-        self._begin_project(None)
+        self._begin_project(())
 
     def begin_creation(self) -> None:
         """Open the single public Project creation entry page."""
@@ -142,8 +156,9 @@ class StartCenterController:
         if self._intent_dispatch is not None:
             return self._intent_dispatch(intent_id, payload)
         if intent_id is IntentId.PROJECT_CREATE:
-            if payload and payload.get("mode") == "plugin":
-                return self._choose_source()
+            mode = None if payload is None else payload.get("mode")
+            if mode == "plugin":
+                return self.choose_source()
             return self.begin_creation()
         if intent_id is IntentId.PROJECT_OPEN:
             path = None if payload is None else payload.get("path")
@@ -174,41 +189,97 @@ class StartCenterController:
             disable_workbench=False,
         )
 
-    def _choose_source(self) -> None:
+    def _source_selection_draft(self) -> GuidedProjectDraftState | None:
+        if self.guided_project is None:
+            self._host.show_message("PROJECT_PROVISIONING_UNAVAILABLE: 建项服务不可用。")
+            return None
+        state = self.guided_project.state
+        return None if state.in_flight else state
+
+    def _choose_source(self, *, incompatible: bool = False, append: bool = False) -> None:
+        state = self._source_selection_draft()
+        if state is None:
+            return
+        title = "添加来源文件（可多选）" if append else "选择来源文件（可多选）"
+        if incompatible:
+            title = "不安全导入（可多选）"
         paths, selected_filter = QFileDialog.getOpenFileNames(
             self._host,
-            "选择来源文件（可多选）",
+            title,
             "",
-            FILE_SOURCE_FILTER,
+            INCOMPATIBLE_SOURCE_FILTER if incompatible else PLUGIN_SOURCE_FILTER,
         )
         if paths:
-            self._begin_project(tuple(paths))
-            if self.guided_project is not None:
-                self.guided_project.set_source_format(FILE_FILTER_HINTS.get(selected_filter))
+            self._accept_sources(
+                tuple(paths),
+                state,
+                incompatible=incompatible,
+                append=append,
+                format_hint=FILE_FILTER_HINTS.get(selected_filter) if incompatible else None,
+            )
 
     def _add_sources(self) -> None:
-        if self.guided_project is None or self.guided_project.state.in_flight:
-            return
-        paths, selected_filter = QFileDialog.getOpenFileNames(
-            self._host, "添加来源文件（可多选）", "", FILE_SOURCE_FILTER
-        )
-        if paths:
-            had_sources = bool(self.guided_project.state.source_paths)
-            self.guided_project.set_source_paths((*self.guided_project.state.source_paths, *paths))
-            # Appended files may use another format; a picker hint must not relabel
-            # the files already in the draft. Users can explicitly select a common
-            # format from the form after assembling their list.
-            self.guided_project.set_source_format(None if had_sources else FILE_FILTER_HINTS.get(selected_filter))
+        self._choose_source(append=True)
 
-    def _begin_project(self, source_path: str | tuple[str, ...] | None) -> None:
+    def _accept_sources(
+        self,
+        paths: tuple[str, ...],
+        state: GuidedProjectDraftState,
+        *,
+        incompatible: bool,
+        append: bool = False,
+        format_hint: str | None = None,
+    ) -> None:
+        guided = self.guided_project
+        if guided is None or guided.state is not state or getattr(self._host, "close_pending", False):
+            return
+        allowed = is_incompatible_source if incompatible else is_plugin_source
+        if not all(allowed(path) for path in paths):
+            self._host.show_message(
+                "不安全导入仅支持非插件来源文件，如 EET、SST、XML、JSON 或 Strings。"
+                if incompatible
+                else "常规来源仅支持 ESP、ESM、ESL 插件。其他受支持的格式请在创建工程表单中使用“不安全导入”。"
+            )
+            return
+        if incompatible and not self._confirm_incompatible_sources():
+            return
+        if guided.state is not state or getattr(self._host, "close_pending", False):
+            return
+        if append:
+            if not incompatible:
+                format_hint = state.source_format_hint
+            elif any(is_incompatible_source(path) for path in state.source_paths):
+                format_hint = None
+            guided.set_source_paths((*state.source_paths, *paths), source_format_hint=format_hint)
+        else:
+            self._begin_project(paths, source_format_hint=format_hint)
+
+    def _confirm_incompatible_sources(self) -> bool:
+        yes, no = QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No
+        dialog = QMessageBox(
+            QMessageBox.Icon.Warning,
+            "不安全导入",
+            "非插件文件缺少完整的插件结构。作为工程来源导入后，任务与对话树、直接写回插件等多项功能"
+            "对这些来源不可用，其他功能也可能受文件格式限制。建议优先使用 ESP、ESM、ESL。\n\n"
+            "如果只想导入已有译文，请使用建项表单中的“同时导入已有译文”。是否继续？",
+            yes | no,
+            self._view,
+        )
+        dialog.button(yes).setText("继续导入")
+        dialog.button(no).setText("取消")
+        dialog.setDefaultButton(no)
+        dialog.setEscapeButton(no)
+        try:
+            return dialog.exec() == yes
+        finally:
+            dialog.deleteLater()
+
+    def _begin_project(self, paths: tuple[str, ...], *, source_format_hint: str | None = None) -> None:
         if self.guided_project is None:
             self._host.show_message("PROJECT_PROVISIONING_UNAVAILABLE: 建项服务不可用。")
             return
         self._leave_landing()
-        if isinstance(source_path, tuple):
-            self.guided_project.begin_sources(source_path)
-        else:
-            self.guided_project.begin(source_path)
+        self.guided_project.begin_sources(paths, source_format_hint=source_format_hint)
         self._show_start_center_view()
 
     def _show_start_center_view(self) -> None:

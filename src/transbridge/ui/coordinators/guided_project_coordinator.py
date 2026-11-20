@@ -10,10 +10,14 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from transbridge.application.contracts import DiagnosticSeverity
+from transbridge.application.io.contracts import FormatId
 from transbridge.application.projects import (
     ProjectProvisioningRequest,
     ProjectSourceRequest,
 )
+from transbridge.ui.workbench.file_source_formats import is_plugin_source, project_source_hints
+
+_KEEP_SOURCE_FORMAT = object()
 
 
 class GuidedDraftPhase(StrEnum):
@@ -155,7 +159,9 @@ class GuidedProjectCoordinator:
     def begin(self, source_path: str | None) -> GuidedProjectDraftState:
         return self.begin_sources(() if source_path is None else (source_path,))
 
-    def begin_sources(self, source_paths: tuple[str, ...]) -> GuidedProjectDraftState:
+    def begin_sources(
+        self, source_paths: tuple[str, ...], *, source_format_hint: str | None = None
+    ) -> GuidedProjectDraftState:
         self._invalidate_operation()
         self._discard_preview()
         normalized = _normalized_paths(source_paths)
@@ -166,23 +172,30 @@ class GuidedProjectCoordinator:
             suggested,
             revision=self._state.revision + 1,
             additional_source_paths=normalized[1:],
+            source_format_hint=source_format_hint if source_format_hint in project_source_hints(normalized) else None,
         )
         self._publish()
         return self._state
 
-    def set_source_paths(self, source_paths: tuple[str, ...]) -> bool:
+    def set_source_paths(self, source_paths: tuple[str, ...], *, source_format_hint=_KEEP_SOURCE_FORMAT) -> bool:
         paths = _normalized_paths(source_paths)
+        if paths == self._state.source_paths:
+            return False
         # Follow the automatic suggestion only until the user gives the project a name.
         name = self._state.project_name
         if name == _suggested_name(self._state.source_paths):
             name = _suggested_name(paths)
+        hint = self._state.source_format_hint if source_format_hint is _KEEP_SOURCE_FORMAT else source_format_hint
         return self._edit(
             source_path=paths[0] if paths else None,
             additional_source_paths=paths[1:],
             project_name=name,
+            source_format_hint=hint if hint in project_source_hints(paths) else None,
         )
 
     def set_source_format(self, value: str | None) -> bool:
+        if value is not None and value not in project_source_hints(self._state.source_paths):
+            return False
         return self._edit(source_format_hint=value)
 
     def set_translation_options(
@@ -334,7 +347,11 @@ class GuidedProjectCoordinator:
                 "strings_lang": self._state.strings_lang,
             }
         sources = tuple(
-            ProjectSourceRequest(path, self._state.source_format_hint, options=tuple(options.items()))
+            ProjectSourceRequest(
+                path,
+                FormatId.PLUGIN_SSE if is_plugin_source(path) else self._state.source_format_hint,
+                options=tuple(options.items()),
+            )
             for path in self._state.source_paths
         )
         # Legacy programmatic migration_sources retain their registration semantics.

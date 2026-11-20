@@ -305,7 +305,7 @@ class StartCenterLanding(QWidget):
 
         self.choose_plugin_button = _task_button(
             "选择来源文件",
-            "可多选插件、EET、SST、XML 或 JSON，导入同一个工程",
+            "可多选 ESP、ESM、ESL 插件，导入同一个工程",
             "language",
             panel,
             primary=True,

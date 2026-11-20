@@ -6,10 +6,11 @@ from pathlib import Path
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QFileDialog
+from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox, QPushButton
 import pytest
 
 from tests.ui import test_start_center_multi_plugin as source_fixtures
+from transbridge.application.io.contracts import FormatId
 
 creation = source_fixtures.creation
 
@@ -21,7 +22,7 @@ def test_add_remove_sources_preserves_edited_project_fields_and_deduplicates(cre
     coordinator.set_variant_name("Chinese")
     coordinator.set_parse_option("skip_empty", True)
     form = creation.view._draft_page
-    monkeypatch.setattr(QFileDialog, "getOpenFileNames", lambda *_: (["D:/mods/Base.esp", "D:/mods/extra.eet"], ""))
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", lambda *_: (["D:/mods/Base.esp", "D:/mods/extra.esl"], ""))
     form.add_sources.click()
     assert len(coordinator.state.source_paths) == 2
     assert form.source_list.count() == 2
@@ -30,7 +31,7 @@ def test_add_remove_sources_preserves_edited_project_fields_and_deduplicates(cre
     assert dict(coordinator.state.parse_options)["skip_empty"]
     form.source_list.item(0).setSelected(True)
     form.remove_sources.click()
-    assert coordinator.state.source_paths == (str(Path("D:/mods/extra.eet")),)
+    assert coordinator.state.source_paths == (str(Path("D:/mods/extra.esl")),)
     assert coordinator.state.project_name == "My project"
 
 
@@ -56,12 +57,16 @@ def test_optional_translation_preserves_inputs_and_is_omitted_when_disabled(crea
 
 
 def test_file_filters_choose_json_and_return_to_auto_on_another_file(creation, monkeypatch):
+    coordinator = creation.controller.guided_project
+    coordinator.begin("D:/mods/Base.esp")
+    form = creation.view._draft_page
     choices = iter([(["D:/file.json"], "DSD JSON (*.json)"), (["D:/file.eet"], "支持的文件")])
     monkeypatch.setattr(QFileDialog, "getOpenFileNames", lambda *_: next(choices))
-    creation.controller.choose_source()
-    assert creation.controller.guided_project.state.source_format_hint == "json.dsd"
-    creation.controller.choose_source()
-    assert creation.controller.guided_project.state.source_format_hint is None
+    monkeypatch.setattr(QMessageBox, "exec", lambda _dialog: QMessageBox.StandardButton.Yes)
+    form.add_incompatible.click()
+    assert coordinator.state.source_format_hint == "json.dsd"
+    form.add_incompatible.click()
+    assert coordinator.state.source_format_hint is None
 
 
 def test_strings_directory_picker_and_cancel_preserve_selection(creation, monkeypatch):
@@ -138,9 +143,156 @@ def test_appending_a_different_file_does_not_force_picker_format_on_existing_sou
     monkeypatch.setattr(
         QFileDialog, "getOpenFileNames", lambda *_: (["D:/translations.json"], "ParaTranz JSON (*.json)")
     )
-    creation.view._draft_page.add_sources.click()
+    confirmed = []
+
+    def confirm(dialog):
+        confirmed.append((dialog.windowTitle(), dialog.text(), dialog.defaultButton().text()))
+        assert dialog.escapeButton() is dialog.defaultButton()
+        assert dialog.button(QMessageBox.StandardButton.Yes).text() == "继续导入"
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(QMessageBox, "exec", confirm)
+    form = creation.view._draft_page
+    assert form.add_incompatible.text() == "不安全导入"
+    form.add_incompatible.click()
     assert len(coordinator.state.source_paths) == 2
+    assert coordinator.state.source_format_hint == "json.paratranz"
+    assert form.source_format.findData("plugin.sse") == -1
+    assert form.source_format.currentData() == "json.paratranz"
+    assert form.skip_empty.isEnabled()
+    assert len(confirmed) == 1
+    [(title, message, default)] = confirmed
+    assert title == "不安全导入"
+    assert default == "取消"
+    assert "直接写回插件" in message and "同时导入已有译文" in message
+
+    assert coordinator.create()
+    operation, _callbacks = creation.pending.pop(0)
+    operation()
+    assert [source.format_hint for source in creation.commands.requests[-1].sources] == [
+        FormatId.PLUGIN_SSE,
+        FormatId.JSON_PARATRANZ,
+    ]
+
+
+@pytest.mark.parametrize("entry", ["landing", "form"])
+def test_ordinary_source_picker_rejects_non_plugin_without_changing_draft(creation, monkeypatch, entry):
+    coordinator = creation.controller.guided_project
+    coordinator.begin("D:/mods/Base.esp")
+    state = coordinator.state
+    captured = []
+
+    def choose(_host, _title, _directory, file_filter):
+        captured.append(file_filter)
+        return ["D:/mods/Valid.ESM", "D:/mods/extra.eet"], ""
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", choose)
+    monkeypatch.setattr(QMessageBox, "exec", lambda _dialog: pytest.fail("普通入口不可静默转为不安全导入"))
+    view = creation.view
+    (view.choose_plugin_button if entry == "landing" else view._draft_page.add_sources).click()
+    assert captured == ["Bethesda 插件 (*.esp *.esm *.esl)"]
+    assert coordinator.state is state
+    assert "创建工程表单中使用“不安全导入”" in creation.messages[-1]
+
+
+def test_source_format_choice_cannot_relabel_a_plugin(creation):
+    coordinator = creation.controller.guided_project
+    coordinator.begin("D:/mods/Base.ESP")
+    state = coordinator.state
+    form = creation.view._draft_page
+    assert form.source_format.count() == 1
+    assert form.source_format.currentData() == "plugin.sse"
+    assert not form.source_format.isEnabled()
+    assert not coordinator.set_source_format("json.dsd")
+    assert coordinator.state is state
+    assert coordinator.create()
+    operation, _callbacks = creation.pending.pop(0)
+    operation()
+    assert creation.commands.requests[-1].source.format_hint is FormatId.PLUGIN_SSE
+
+
+@pytest.mark.parametrize("entry", ["form", "direct"])
+def test_declining_incompatible_source_warning_keeps_the_draft(creation, monkeypatch, entry):
+    coordinator = creation.controller.guided_project
+    coordinator.begin("D:/mods/Base.esp")
+    state = coordinator.state
+    pickers = []
+    confirmed = []
+    path = "D:/files/Translation.JSON"
+
+    def choose(_host, title, _directory, file_filter):
+        pickers.append((title, file_filter))
+        return [path], "ParaTranz JSON (*.json)"
+
+    def decline(dialog):
+        confirmed.append(dialog.defaultButton().text())
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", choose)
+    monkeypatch.setattr(QMessageBox, "exec", decline)
+    if entry == "direct":
+        creation.controller.choose_source_path(path)
+    else:
+        creation.view._draft_page.add_incompatible.click()
+    assert confirmed == ["取消"]
+    if entry != "direct":
+        [(title, file_filter)] = pickers
+        assert title == "不安全导入（可多选）"
+        assert all(pattern in file_filter for pattern in ("*.xml", "*.sst", "*.eet", "*.json", "*.strings"))
+        assert "*.esp" not in file_filter and "所有文件" not in file_filter
+    else:
+        assert pickers == []
+    assert coordinator.state is state
+    assert creation.pending == []
+
+
+def test_non_plugin_intent_path_does_not_let_unsupported_files_into_draft(creation, monkeypatch):
+    coordinator = creation.controller.guided_project
+    state = coordinator.state
+    monkeypatch.setattr(QMessageBox, "exec", lambda _dialog: pytest.fail("未知格式不应提示确认"))
+    creation.controller.choose_source_path("D:/files/Unsupported.zip")
+    assert coordinator.state is state
+    assert creation.messages[-1].startswith("不安全导入仅支持非插件来源文件")
+
+
+def test_non_plugin_import_button_is_only_in_creation_form(creation):
+    view = creation.view
+    import_labels = {"不安全导入", "不兼容导入"}
+    assert not import_labels.intersection(button.text() for button in view._landing_page.findChildren(QPushButton))
+    draft_buttons = view._draft_page.findChildren(QPushButton)
+    assert [button.text() for button in draft_buttons if button.text() in import_labels] == ["不安全导入"]
+
+
+def test_source_selection_does_not_replace_a_draft_in_flight(creation, monkeypatch):
+    coordinator = creation.controller.guided_project
+    coordinator.begin("D:/files/Plugin.esp")
+    assert coordinator.create()
+    state = coordinator.state
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", lambda *_: pytest.fail("正在建项时不可打开来源选择"))
+    monkeypatch.setattr(QMessageBox, "exec", lambda _dialog: pytest.fail("正在建项时不可打开来源确认"))
+    creation.controller.choose_source()
+    assert not creation.view._draft_page.add_incompatible.isEnabled()
+    creation.view.add_incompatible_requested.emit()
+    creation.controller.choose_source_path("D:/files/Source.eet")
+    assert coordinator.state is state
+
+
+def test_incompatible_format_hint_does_not_label_different_existing_non_plugin_sources(creation, monkeypatch):
+    coordinator = creation.controller.guided_project
+    coordinator.begin("D:/files/Direct.xml")
+    coordinator.set_source_format("xml.eet")
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", lambda *_: (["D:/files/Third.json"], "DSD JSON (*.json)"))
+    monkeypatch.setattr(QMessageBox, "exec", lambda _dialog: QMessageBox.StandardButton.Yes)
+    form = creation.view._draft_page
+    form.add_incompatible.click()
     assert coordinator.state.source_format_hint is None
+    assert form.source_format.count() == 1
+    assert form.source_format.currentData() is None
+    assert not form.source_format.isEnabled()
+    assert coordinator.create()
+    operation, _callbacks = creation.pending.pop(0)
+    operation()
+    assert [source.format_hint for source in creation.commands.requests[-1].sources] == [None, None]
 
 
 def test_select_many_translation_files_cancel_clear_and_reenable(creation, monkeypatch):
@@ -156,6 +308,7 @@ def test_select_many_translation_files_cancel_clear_and_reenable(creation, monke
     paths = tuple(f"D:/translations/Plugin-{index}_english_chinese.sst" for index in range(80))
     choices = iter([(list(paths), "支持的文件"), ([], ""), ([paths[1]], "")])
     monkeypatch.setattr(QFileDialog, "getOpenFileNames", lambda *_: next(choices))
+    monkeypatch.setattr(QMessageBox, "exec", lambda _dialog: pytest.fail("已有译文不应触发不兼容来源确认"))
     form.with_translations.setChecked(True)
     form.translation_browse.click()
     assert form.translation_path.isReadOnly()

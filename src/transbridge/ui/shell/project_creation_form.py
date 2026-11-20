@@ -33,13 +33,19 @@ from transbridge.ui.foundation.components import (
 )
 from transbridge.ui.foundation.tabler_icons import tabler_icon
 from transbridge.ui.operations.export_format_combo import ExportFormatComboBox
-from transbridge.ui.workbench.file_source_formats import FILE_SOURCE_FORMATS, TRANSLATION_FILE_FORMATS
+from transbridge.ui.workbench.file_source_formats import (
+    FILE_SOURCE_FORMATS,
+    TRANSLATION_FILE_FORMATS,
+    is_plugin_source,
+    project_source_hints,
+)
 
 
 class ProjectCreationForm(QWidget):
     """Render draft fields; all filesystem and application work stays in the controller."""
 
     add_sources_requested = pyqtSignal()
+    add_incompatible_requested = pyqtSignal()
     sources_changed = pyqtSignal(object)
     source_format_changed = pyqtSignal(object)
     project_name_changed = pyqtSignal(str)
@@ -54,6 +60,7 @@ class ProjectCreationForm(QWidget):
         super().__init__(parent)
         self._paths = ()
         self._translation_paths = ()
+        self._source_format_options = ()
         self._rendering = False
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -98,11 +105,16 @@ class ProjectCreationForm(QWidget):
         self.source_label = QLabel()
         source_bar.addWidget(self.source_label)
         source_bar.addStretch()
-        self.add_sources = QPushButton("添加文件…")
+        self.add_sources = QPushButton("添加插件…")
+        self.add_sources.setToolTip("选择 ESP、ESM、ESL 插件作为工程来源")
         self.add_sources.clicked.connect(self.add_sources_requested)
+        self.add_incompatible = QPushButton("不安全导入")
+        self.add_incompatible.setToolTip("导入受支持的非插件来源，多项插件相关功能将不可用")
+        self.add_incompatible.clicked.connect(self.add_incompatible_requested)
         self.remove_sources = QPushButton("移除选中")
         self.remove_sources.clicked.connect(self._remove_selected)
         source_bar.addWidget(self.add_sources)
+        source_bar.addWidget(self.add_incompatible)
         source_bar.addWidget(self.remove_sources)
         fields.addLayout(source_bar)
         self.source_list = QListWidget()
@@ -113,7 +125,7 @@ class ProjectCreationForm(QWidget):
         fields.addWidget(self.source_list)
 
         form = QFormLayout()
-        self.source_format = self._format_choice("来源文件格式")
+        self.source_format = self._format_choice("来源文件格式", ())
         self.source_format.currentIndexChanged.connect(
             lambda: self.source_format_changed.emit(self.source_format.currentData()) if not self._rendering else None
         )
@@ -207,6 +219,7 @@ class ProjectCreationForm(QWidget):
         for button in (
             self.back,
             self.add_sources,
+            self.add_incompatible,
             self.remove_sources,
             self.translation_browse,
             self.translation_clear,
@@ -235,6 +248,21 @@ class ProjectCreationForm(QWidget):
 
     def _sync_remove(self):
         self.remove_sources.setEnabled(self.source_list.isEnabled() and bool(self.source_list.selectedItems()))
+
+    def _render_source_formats(self, hint) -> None:
+        available = project_source_hints(self._paths)
+        choices = tuple(
+            (label, value)
+            for label, value in FILE_SOURCE_FORMATS
+            if value in available or (value is None and "plugin.sse" not in available)
+        )
+        if choices != self._source_format_options:
+            self._source_format_options = choices
+            self.source_format.clear()
+            for label, value in choices:
+                self.source_format.addItem(label, value)
+        self.source_format.setCurrentIndex(max(0, self.source_format.findData(hint)))
+        self.source_format.setEnabled(len(choices) > 1)
 
     def translation_options(self):
         return dict(
@@ -286,7 +314,7 @@ class ProjectCreationForm(QWidget):
             self.translation_path.setToolTip("\n".join(self._translation_paths))
             self.translation_path.setAccessibleDescription("\n".join(self._translation_paths))
             self.translation_clear.setEnabled(bool(self._translation_paths))
-            self.source_format.setCurrentIndex(self.source_format.findData(state.source_format_hint))
+            self._render_source_formats(state.source_format_hint)
             self.translation_format.setCurrentIndex(self.translation_format.findData(state.translation_format_hint))
             self.with_translations.setChecked(state.import_translations)
             self.replace_existing.setChecked(state.replace_existing)
@@ -303,7 +331,7 @@ class ProjectCreationForm(QWidget):
             self.translation_path.setPlaceholderText("选择 Strings 目录…" if strings else "选择已有译文文件（可多选）…")
             self.strings_language.setEnabled(strings)
             self.strings_label.setEnabled(strings)
-            self.skip_empty.setEnabled(state.source_format_hint in {None, "plugin.sse"})
+            self.skip_empty.setEnabled(not self._paths or any(is_plugin_source(path) for path in self._paths))
             self._sync_remove()
             self.summary.set_full_text(state.summary)
             diagnostic = f"{state.diagnostic_code}: {state.diagnostic_message}" if state.diagnostic_code else ""

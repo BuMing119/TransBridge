@@ -4,7 +4,7 @@ import time
 from types import SimpleNamespace
 from uuid import uuid4
 
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
 import pytest
 
 from tests.contracts.io.test_open_translation_file import source_file
@@ -63,10 +63,15 @@ def creation(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("kind", ["plugin.sse", "binary.eet", "json.paratranz"])
-def test_form_creates_and_installs_real_source_once(creation, tmp_path, kind):
+def test_form_creates_and_installs_real_source_once(creation, tmp_path, monkeypatch, kind):
     services, host, view, controller = creation
     path = source_file(tmp_path, kind)
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda dialog: warnings.append(dialog.windowTitle()) or QMessageBox.StandardButton.Yes
+    )
     controller.choose_source_path(str(path))
+    assert warnings == ([] if kind == "plugin.sse" else ["不安全导入"])
     view._draft_primary.click()
     view._draft_primary.click()
     assert len(host.workers) == 1
@@ -82,3 +87,21 @@ def test_form_creates_and_installs_real_source_once(creation, tmp_path, kind):
     assert host.context.active_slot.format_id.value == kind
     assert not host.context.authoritative_projection_diverged()
     assert services.project_lifecycle.active is not None
+
+
+def test_plugin_named_xml_is_rejected_by_the_real_preparer(creation, tmp_path, monkeypatch):
+    services, host, view, controller = creation
+    source = source_file(tmp_path, "xml.eet")
+    path = source.with_suffix(".esp")
+    source.rename(path)
+    monkeypatch.setattr(QMessageBox, "exec", lambda _dialog: pytest.fail("插件入口不应转入不安全导入"))
+    controller.choose_source_path(str(path))
+    view._draft_primary.click()
+    deadline = time.monotonic() + 5
+    while controller.guided_project.state.in_flight and time.monotonic() < deadline:
+        _APP.processEvents()
+        time.sleep(0.005)
+    _APP.processEvents()
+    assert controller.guided_project.state.phase is GuidedDraftPhase.FAILED
+    assert len(host.workers) == 1
+    assert services.project_lifecycle.active is None
