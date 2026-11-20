@@ -1,5 +1,9 @@
 # 变更日志索引
 
+- 2026-11-20：[ParaTranz 四种上传模式的本地差异比较](paratranz-categorized-upload/story-32/2026-11-20-001-file-upload-differences.md) 支持跳过一致文件、合并纯改号请求，并在仅传译文时沿用云端实际 key。
+
+- 2026-11-20：[ParaTranz 本地导出的 TB2 排序码](paratranz-context-order/story-01-02/2026-11-20-002-local-tb2-export.md) 将普通及分类 JSON 的八位排序码移入传输 key，支持旧 context 序号回读。
+
 - 2026-11-20：[任务、话题和场景搜索](dialogue-context-editor/story-01-04-implementation/2026-11-20-001-dialogue-record-search.md) 可从「话题与对话」的任务下拉框按名称或 FormID 跳转，无匹配时列表留空。
 
 - 2026-11-20：[ESP 记录字段编辑](dialogue-context-editor/story-10-record-fields/2026-11-20-001-esp-record-editor.md) 支持重开工程后在同一张表里编辑书名和正文、效果名称和描述，以及任务日志和目标。
