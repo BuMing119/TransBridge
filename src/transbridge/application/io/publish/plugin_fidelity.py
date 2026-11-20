@@ -123,12 +123,16 @@ def _expected_texts(request: WriteRequest, source: tuple[TranslationEntry, ...])
                 raise ValueError("plugin writes disagree for a shared localized string ID")
             localized[identity] = decision.publish_text
     # Multiple physical references to one localized ID necessarily share text.
-    return tuple(
-        localized.get(localized_entry_identity(entry, variants), expected[position])
-        if entry.string_id is not None
-        else expected[position]
-        for position, entry in enumerate(source)
-    )
+    for position, entry in enumerate(source):
+        if position in used or entry.string_id is None:
+            continue
+        # An absent zero ID on an empty, unrequested field names no table row.
+        # Its physical position, ID and empty text are still checked on readback.
+        if entry.string_id == 0 and 0 not in variants and entry.original == "":
+            continue
+        identity = localized_entry_identity(entry, variants)
+        expected[position] = localized.get(identity, expected[position])
+    return tuple(expected)
 
 
 def _physical_summary(entries: tuple[TranslationEntry, ...], texts: tuple[str, ...]) -> tuple[tuple, ...]:

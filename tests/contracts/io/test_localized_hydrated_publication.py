@@ -107,6 +107,46 @@ def _run(checked, filesystem=None):
     return adapter.result(ref, owner)
 
 
+@pytest.mark.parametrize("description_id", [0, 99])
+def test_untranslated_description_without_a_table_row(localized, description_id):
+    # The project selected the weapon name. The physical description is still in the plugin.
+    weapon = _record(
+        "WEAP",
+        0x800,
+        _field("EDID", b"Weapon\0")
+        + _field("FULL", struct.pack("<I", 1))
+        + _field("DESC", struct.pack("<I", description_id)),
+    )
+    plugin = (
+        _record("TES4", 0, _field("HEDR", struct.pack("<fII", 1.7, 1, 0x801)), 0x80)
+        + struct.pack("<4sI4sIHHHH", b"GRUP", len(weapon) + 24, b"WEAP", 0, 0, 0, 0, 0)
+        + weapon
+    )
+    localized.source.write_bytes(plugin)
+    localized.parsed = TranslationIoUseCase().parse(
+        ParseRequest(SourceDescriptor(str(localized.source)), RequestContext("test"), FormatId.PLUGIN_SSE)
+    )
+    if description_id:
+        assert localized.parsed.outcome is OperationOutcome.FAILED
+        return
+    assert localized.parsed.outcome is OperationOutcome.COMPLETED
+    name = next(entry for entry in localized.parsed.entries if entry.string_id == 1)
+    localized.parsed = replace(localized.parsed, entries=(name,))
+    result = _run(_preflight(localized, translation="汉化名称"))
+    assert result.outcome is OperationOutcome.COMPLETED, result.diagnostics
+    assert localized.target.read_bytes() == plugin
+    reparsed = TranslationIoUseCase().parse(
+        ParseRequest(
+            SourceDescriptor(str(localized.target)),
+            RequestContext("verify"),
+            FormatId.PLUGIN_SSE,
+            options=(("skip_empty", False),),
+        )
+    )
+    assert reparsed.outcome is OperationOutcome.COMPLETED
+    assert {(e.string_id, e.original) for e in reparsed.entries} == {(1, "汉化名称"), (0, "")}
+
+
 @pytest.mark.parametrize("translation", ["Translated", ""])
 def test_localized_production_hydration_publishes_every_companion_with_final_name(localized, translation):
     checked = _preflight(localized, translation)
@@ -209,6 +249,23 @@ def test_successful_overwrite_keeps_verified_backups_for_all_members(localized):
     backups = result.value["backup_paths"]
     assert len(backups) == len(originals)
     assert {Path(path).read_bytes() for path in backups} == set(originals.values())
+
+
+def test_overwrite_retains_existing_lowercase_companion_names(localized):
+    tables = localized.output / "Strings"
+    tables.mkdir()
+    existing = {f"translated_english.{suffix}" for suffix in ("strings", "dlstrings", "ilstrings")}
+    for filename in existing:
+        (tables / filename).write_bytes(b"previous table")
+    if not (tables / "translated_English.strings").exists():
+        pytest.skip("Requires a case-insensitive output directory")
+
+    checked = _preflight(localized, overwrite=True)
+    assert checked.ready
+    result = _run(checked)
+    assert result.outcome is OperationOutcome.COMPLETED, result.diagnostics
+    assert {path.name for path in tables.iterdir() if path.suffix != ".bak"} == existing
+    assert all((tables / filename).read_bytes() != b"previous table" for filename in existing)
 
 
 def test_staging_failure_leaves_existing_outputs_unchanged(localized):

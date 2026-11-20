@@ -88,7 +88,9 @@ class PluginBundlePublisher:
                         "RENDER_FAILED",
                         "；".join(item.message for item in rendered.diagnostics) or "插件及 Strings 写入未完成。",
                     )
-                if {self._fs.canonicalize(path) for path in rendered.artifact_refs} != set(staged.values()):
+                # Existing Windows targets can give staging paths a different case from the renderer's filenames.
+                rendered_paths = {Path(self._fs.canonicalize(path)) for path in rendered.artifact_refs}
+                if rendered_paths != {Path(path) for path in staged.values()}:
                     raise _BundleFailure("WRITE_OUTPUT_SET_CHANGED", "格式写入器产生了预检之外的输出。")
                 self._validate(staged_request, staged)
                 rollback = self._copy_previous(stage_dir, expected)
