@@ -23,9 +23,9 @@
 
 ### FR33.2 按语言逐字段读取
 
-新解析采用 xTranslator 风格规则：选择 UTF-8 时，每个普通字段先尝试 UTF-8，失败后只使用该源语言备用码页；English 对应 Windows-1252、Polish 对应 Windows-1250、Russian 对应 Windows-1251 等。一个文件内合法 UTF-8 与备用码页字段可以共存。显式非 UTF-8 codec 直接读取，不先试 UTF-8，不遍历其他语言码页。
+新导入与明确更新来源默认采用 `xtranslator-v2`：每个普通字段先严格尝试 UTF-8，失败后使用源语言对应的 Windows 原生备用码页转换，复现 XT 的 Windows 字符转换语义；English 对应 Windows-1252、Polish 对应 Windows-1250、Russian 对应 Windows-1251 等。同名 Python codec 不能替代原生转换，例如 Windows-1252 的 `0x81` 应读取为 `U+0081`，不能因 Python 拒绝而先换到 Windows-1251。插件的 XT 路径仍无法读取（含原生 decoder 不可用或没有语言备用）时，再使用原库的 UTF-8、Windows-1250、Windows-1252、Windows-1251、replacement 降级结果，并记录可定位警告。一个文件内合法 UTF-8 与备用字段可以共存。显式非 UTF-8 codec 仍直接严格读取，不遍历其他码页；`strict-v1` 不降级。Strings 共享原生语言备用解码，不套用插件的旧库码页列表。
 
-验收：插件和 Strings 的混合字段正确读取；源语言变化影响非 UTF-8 字段解释；显式 Windows-1250 不被 UTF-8 优先规则覆盖。无法解释时给出文件、操作、编码及记录/字段或字节位置，不能静默切到不相关码页或掩盖失败。历史兼容规则只用于 FR33.5 的既有来源解释。
+验收：对照 Windows 原生 API 验证语言码页、未定义单字节与非法多字节序列，确保实际转换结果一致，而非只验证“能读取”。插件和三类 Strings、松散/BSA 来源沿用同一规则；UTF-8 有效文本不受备用转换影响。XT 失败后的旧库降级、建项、保存重开与 UTF-8 严格输出均可验证，来源字节保持不变。原生路径、旧库降级参与现有 fallback 诊断；写出必须重新严格编码全部字段，不能因编码名相同复用无法通过目标 codec 校验的原字节。显式 codec、严格策略或 Strings 无法解释时仍提供定位和原因。保存的 `xtranslator-v1` / `legacy-v1` / `strict-v1` 来源保留原解释，不能由新默认隐式升级。
 
 ### FR33.3 全部普通文本统一输出且严格无损
 
@@ -41,7 +41,7 @@
 
 ### FR33.5 历史来源保持读取事实
 
-导出、补充实际输入等还原既有来源的操作以来源登记时读取事实为准，当前项目设置不得覆盖历史事实。无策略记录的旧 vendor 插件沿用历史逐字段 UTF-8、Windows-1250、Windows-1252、Windows-1251、replacement 顺序；旧独立与关联 Strings 分别复现各自历史 decoder，不套用插件码页列表。还原结果与项目已存 baseline 逐项匹配。前次明确记录的严格来源继续严格读取。
+导出、补充实际输入等还原既有来源的操作以来源登记时读取事实为准，当前项目设置不得覆盖历史事实。明确登记 `xtranslator-v1` 的来源继续使用 Python 语言备用及当时的插件旧库补救，不改为 Windows 原生转换；`xtranslator-v2` 使用新规则。无策略记录的旧 vendor 插件沿用历史逐字段 UTF-8、Windows-1250、Windows-1252、Windows-1251、replacement 顺序；旧独立与关联 Strings 分别复现各自历史 decoder，不套用插件码页列表。还原结果与项目已存 baseline 逐项匹配。前次明确记录的严格来源继续严格读取。
 
 验收：修改项目源语言/输入编码后，未更新的来源仍按原事实导出；无法匹配 baseline 时阻止并给出行动建议。自动补写 UTF-8 的项目仍按来源事实判断。真实旧项目的 `Annaďg` 不得被新 English 规则静默变成 `Annaïg`。兼容历史 replacement 不代表允许输出新增替换字符。
 

@@ -10,7 +10,7 @@
 
 项目保存已解码原文、格式定位和可失效的来源路径，不保存插件本体。项目设置说明当前用户意图，来源读取选项记录原文形成时的事实，两者不能混为覆盖配置。真实旧项目已有 UTF-8/UTF-8 设置但缺来源编码事实，按历史 Windows-1250 解释与已存条目相符；Windows-1252 会使一条 `Annaďg` 变为 `Annaïg`。配置补缺不能证明历史解码规则，导出不能隐式迁移原文。
 
-xTranslator 在 UTF-8 模式下逐字段尝试语言备用码页，并对普通字段与 Strings 全量输出。TransBridge 采用该读取和全量输出语义，保留严格无损输出、定位身份、阶段策略、事务和原子发布；不照搬替换或截断。
+xTranslator 在 UTF-8 模式下逐字段尝试语言备用码页，并对普通字段与 Strings 全量输出。TransBridge 优先采用该读取规则，插件内嵌文本读取失败时保留历史兼容回退；普通字段与 Strings 全量输出，保留严格无损输出、定位身份、阶段策略、事务和原子发布，写出不使用字符替换或截断。
 
 修订开始时已有 `TextEncodings`、配置持久化、局部 codec、严格发布验证及独立 `ProjectTextEncodingService` 重读链。本轮扩展语言与读取策略，将原文迁移收敛到既有来源更新。本文是目标合同，实施完成状态以计划及实际 QA 为准。
 
@@ -30,11 +30,12 @@ xTranslator 在 UTF-8 模式下逐字段尝试语言备用码页，并对普通�
 
 读取策略合同：
 
-- `xtranslator-v1`：新来源与明确更新用当前项目规则。UTF-8 对每个普通字段先严格解码，失败只尝试源语言备用 codec；显式非 UTF-8 直接使用该 codec。不可解释时保留异常并提供定位。
+- `xtranslator-v2`：新来源与明确更新的默认规则。UTF-8 严格解码失败后，以源语言备用码页调用 Windows `MultiByteToWideChar`（flags=0），对齐 XT `SetCodePage` / `string(rbs)` 的原生字符转换路径。不能用 Python codec 或 `codecs.code_page_decode` 包装替代；前者拒绝部分 C1 字节，后者对部分希腊文/日文异常字节仍引入 Python 替换语义。Windows 边界独立于 Qt，复用标准库 ctypes，不手写码页表、不加依赖。插件 XT 路径失败后复用 vendor 已解码结果降级并告警；Windows decoder 不可用也可触发此降级。Strings 共享原生备用，失败时报告记录上下文，不使用插件码页列表。显式非 UTF-8 继续严格读取。
+- `xtranslator-v1`：保留已登记来源的原解释。UTF-8 失败后使用 Python 语言备用 codec；插件仍失败时复用此前加入的历史 UTF-8、cp1250、cp1252、cp1251、replacement 补救。Strings 保持此前 Python 语言备用。不能重定向到 v2，否则同一 `0x81` 可能从 `U+0403` 变成 `U+0081`，破坏已存 baseline 和译文身份。来源快照保留策略版本，新请求默认集中由 `DEFAULT_READ_POLICY` 提供。
 - `strict-v1`：保留前次明确严格来源的读取行为；暂存输出校验也须显式使用严格策略与输出 codec，不能以 fallback 验证错误输出为成功。
 - `legacy-v1`：无策略记录的旧 vendor 插件按历史逐字段 UTF-8、cp1250、cp1252、cp1251、replacement 顺序解释；旧独立/关联 Strings 保持各自历史 BOM、尾 NUL 和 fallback decoder 边界，不套用插件列表。仅用于还原既有来源并与已存 baseline 验证一致。项目补写 UTF-8 不能据此推断 `strict-v1` 或新规则。
 
-来源明确事实优先；缺事实按兼容规则判定，不能把当前设置填空后伪装为历史事实。新增/导入/明确更新用项目意图；历史导出、补充实际输入和保真源验证用来源事实。baseline 不匹配则阻止并引导“更新来源”，不能重建已存原文。项目设置保存不顺带登记虚构读取事实。
+来源明确事实优先；缺事实按兼容规则判定，不能把当前设置填空后伪装为历史事实。新增/导入/明确更新用项目意图与当前默认 v2；历史导出、补充实际输入和保真源验证用登记版本。baseline 不匹配则阻止并引导“更新来源”，不能重建已存原文。项目设置保存不顺带登记虚构读取事实。原生 decoder 的可用性属于运行环境；在不具备 Windows decoder 的环境使用降级结果可能与已有 v2 baseline 不一致，仍由来源匹配阻止发布，不静默替换已存原文。
 
 ### 3. 格式边界全量转码，输出严格验证
 
@@ -42,7 +43,7 @@ xTranslator 在 UTF-8 模式下逐字段尝试语言备用码页，并对普通�
 
 按读取事实取得全部普通文本，以 StagePolicy 叠加可用译文，再将全部受控文本编码为目标 codec。不能以 codec 名称相等或修改数为零跳过转码；UTF-8/UTF-8 也可能需要转换 fallback 字段。Strings 覆盖全部物理记录，保留 ID、顺序、未引用条目和结构。非文本及专用字段保留原规则。
 
-`parser/game_text.py` 保持严格编码和回读 Unicode 相等，不 replace/ignore、不截断。NUL 终止字段拒绝内嵌 NUL，长度前缀 DLSTRINGS/ILSTRINGS 保留合法内嵌 NUL。普通 inline 字段超过 65535 字节明确失败，不自动扩展结构；入站 `XXXX` 不透明载荷仍保留字节。
+`parser/game_text.py` 保持严格编码和回读 Unicode 相等，不 replace/ignore、不截断。inline 写出全部执行严格编码，移除“原文和编码名相同即可复用原字节”的快路径，因为 Windows 可读取的 `U+0081` 等字符仍可能无法按 Python 严格目标 codec 写出。NUL 终止字段拒绝内嵌 NUL，长度前缀 DLSTRINGS/ILSTRINGS 保留合法内嵌 NUL。普通 inline 字段超过 65535 字节明确失败，不自动扩展结构；入站 `XXXX` 不透明载荷仍保留字节。
 
 源验证用历史读取事实，输出用 `strict-v1` 和目标 codec 回读，直接比较预期文本、结构与关联，不新增哈希。不用输入 fallback 校验输出。沿用整组暂存、备份、取消及原子发布，验证失败不覆盖目标。
 

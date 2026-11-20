@@ -1,6 +1,6 @@
 # 词条弹窗与任务／话题关联编辑
 
-- 状态：Story 01–09 已完成；2026-10-28 补齐 S02／04 渐进任务上下文修复，133 项相关回归通过。2026-10-04 的应用重复处理优化与历史验证保留。
+- Story 01–10 已完成。S10 增加 [ESP 记录字段编辑](../../docs/changelogs/dialogue-context-editor/story-10-record-fields/2026-11-20-001-esp-record-editor.md)。S02／04 的[分页任务树与场景恢复](../../docs/changelogs/dialogue-context-editor/story-02-04-progressive-context/2026-11-20-002-paged-project-dialogue-catalog.md)覆盖工程重开和旧工程补录。
 - 对应请求：双击词条弹出独立编辑窗口，不在主导航常驻；左侧改为 XT 式记录标识及 SCEN 场景，EET 的任务关联区域置灰。
 - 约束：ADR-017；复用 dialogue-tree-order 的父 DIAL 与源顺序，不改变文件格式或条目身份。
 
@@ -8,7 +8,7 @@
 
 主导航仅保留开始、工作台、ParaTranz。双击工作台任意词条的数据列（复选框除外）打开非模态“词条编辑”窗口，原列表与当前位置保留。重复打开复用同一窗口并定位新词条，不新增常驻页面。
 
-插件的 QUST/DIAL/INFO 词条在弹窗左侧按当前任务平列话题／场景记录，右侧显示相关文本，底部展示完整原文与译文编辑区。普通词条同样可弹窗编辑，没有任务关联时收起上下文区域。纯 EET 可编辑译文，任务树禁用并收起；插件叠加 EET/XT 译文不影响任务树。F2 保留译文行内编辑。
+插件词条可在「ESP 记录」逐行编辑同一记录的全部可译字段。有任务关联时，「话题与对话」提供任务、场景及话题导航。两页共用底部原文与译文编辑区。纯 EET 使用正文编辑，插件叠加 EET/XT 译文保留插件导航。F2 保留译文行内编辑。
 
 无内容时不弹出空编辑窗口。左侧采用 XT 式记录标识，显示 QUST/DIAL/SCEN 的 EditorID、类别及 FormID，不把对白用作标题。缺失父话题/任务关系使用显式未知分组，不根据相邻顺序猜测。包含 SCEN 场景节点及其明确话题引用；场景阶段演出、条件跳转和音频不在范围内。
 
@@ -46,6 +46,8 @@
 - 覆盖完整 MainWindow、普通词条、EET、插件叠加 EET、空集合、缺关系、多响应、排序、草稿关闭、异步加载、冲突与权威保存。
 
 ## Story 04：XT 式记录导航
+
+- 任务选择器支持跨任务按 EditorID 或 FormID 查找任务、话题和场景。空查询列出任务，无匹配时列表留空，确认结果后定位相应记录。参见[导航搜索增量](../../docs/changelogs/dialogue-context-editor/story-01-04-implementation/2026-11-20-001-dialogue-record-search.md)。
 
 - 在 parser/plugin 的独立模块提取只读 QUST/DIAL/SCEN 目录及 SCEN 对话动作的话题引用；不制造翻译词条，不修改既有解析输出或持久化 schema。
 - 通过 application/dialogue 的后台加载器读取现有 plugin 或 SourceSnapshot.content；按来源对象缓存目录，译文刷新时不重新解析插件。EET 不加载场景。
@@ -96,6 +98,12 @@
 - 文件：application/projections/models.py、ui/entry_projection.py、ui/dialogue/editing.py、ui/context.py、独立标签读取模块及聚焦回归。超限 AppContext 仅替换已有读取逻辑，标签处理移出，避免新增职责。
 - 验证：相同 8,291 条合成数据，完整 apply 调用前后各十次；另一次独立 tracemalloc 测峰值 Python 分配。此场景使用真实 Variant 提交及界面刷新，内存测试工程，无真实磁盘自动保存或人工确认等待，不等同用户工程绝对耗时。
 - 阶段：基线、实现、QA 与增量记录均完成。156 项回归、全 src/tests Ruff 与 diff 检查通过；中位耗时 374.699 → 196.815 ms；峰值 Python 分配 26.343 → 14.294 MiB。证据及边界见 [S09 增量](../../docs/changelogs/dialogue-context-editor/story-09-apply-cost/2026-10-04-001-reduce-snapshot-copies.md)。
+
+## Story 10　ESP 记录字段编辑
+
+1. 根据来源、记录类型与 FormID 确定同一记录的字段，从完整来源按原有顺序读取。重复出现的同名字段使用各自的词条身份。
+2. 在编辑弹窗上方展示字段 ID、原文、译文。选中任一行后，下方编辑当前字段。任务记录和普通记录直接展示字段，关联对白保留话题导航。
+3. 在移除插件后重开工程，验证筛选仅命中一个字段时仍能编辑同组其他字段。覆盖书名和正文、魔法效果名称和描述、多条任务日志与目标，以及快速切换记录后的草稿归属。
 
 ## S02／04 后续修复验收（2026-10-28）
 
