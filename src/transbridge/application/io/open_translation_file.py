@@ -8,7 +8,7 @@ from pathlib import Path
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.projects.prepared_source_results import prepare_parsed_source
 from transbridge.application.projects.provisioning_models import PreparedProjectSource
-from transbridge.config.text_encoding import DEFAULT_SOURCE_LANGUAGE, DEFAULT_TEXT_ENCODING, XTRANSLATOR_READ_POLICY
+from transbridge.config.text_encoding import DEFAULT_READ_POLICY, DEFAULT_SOURCE_LANGUAGE, DEFAULT_TEXT_ENCODING
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 from .catalog import default_format_catalog
@@ -47,7 +47,7 @@ def prepare_open_file(
     apply_dictionary=None,
     input_encoding: str = DEFAULT_TEXT_ENCODING,
     source_language: str = DEFAULT_SOURCE_LANGUAGE,
-    text_read_policy: str = XTRANSLATOR_READ_POLICY,
+    text_read_policy: str = DEFAULT_READ_POLICY,
 ):
     """Capture native content once for publication; never reparse it during commit."""
     source_path = Path(path).resolve(strict=True)

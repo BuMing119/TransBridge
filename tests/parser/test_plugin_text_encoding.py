@@ -8,7 +8,7 @@ import zlib
 import pytest
 
 from tests.plugin_fixtures import _record
-from transbridge.config.text_encoding import LEGACY_READ_POLICY, STRICT_READ_POLICY
+from transbridge.config.text_encoding import LEGACY_READ_POLICY, STRICT_READ_POLICY, XTRANSLATOR_READ_POLICY
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.parser.plugin.text_subrecords import PluginTextEncodingError
 from transbridge.parser.plugin_parser import PluginParser
@@ -85,12 +85,80 @@ def test_default_plugin_policy_falls_back_once_per_field(tmp_path, language, enc
     assert [field.string.encoding for field in parser.get_plugin().inline_text_fields()] == [fallback, "utf-8"]
 
 
-def test_plugin_languages_without_fallback_fail_and_legacy_originals_are_reproduced(tmp_path):
+@pytest.mark.parametrize("language", ["english", "chinese"])
+@pytest.mark.parametrize(
+    ("payload", "expected", "encoding", "replaced"),
+    [
+        (b"Dialogue \x8d", "Dialogue Ť", "cp1250", False),
+        (b"Dialogue \x81", "Dialogue Ѓ", "cp1251", False),
+        (b"Dialogue \x81\x98", "Dialogue Ѓ\ufffd", "cp1251", True),
+    ],
+)
+def test_saved_v1_plugin_read_restores_historical_fallback_and_transcodes(
+    tmp_path, caplog, language, payload, expected, encoding, replaced
+):
+    source, target = tmp_path / "Source.esp", tmp_path / "Target.esp"
+    fields = _field(b"FULL", payload + b"\x00") + _field(b"DESC", "Café\x00".encode())
+    original = _header() + _group(_record(b"BOOK", 0x800, fields))
+    source.write_bytes(original)
+    parser = PluginParser()
+
+    entries = parser.parse_plugin(
+        source, source_language=language, text_read_policy=XTRANSLATOR_READ_POLICY, raise_on_error=True
+    )
+
+    assert [entry.original for entry in entries] == [expected, "Café"]
+    assert parser.fallback_count == 1
+    assert parser.get_plugin().dump() == original
+    field, _ = parser.get_plugin().inline_text_fields()
+    assert field.string.encoding == encoding
+    assert field._source_replaced is replaced
+    assert "Source.esp BOOK FULL (00000800, subrecord 0)" in caplog.text
+    assert "historical" in caplog.text
+    if replaced:
+        assert "replacement" in caplog.text
+
+    PluginWriter(parser.get_plugin()).write(target)
+
+    reread = PluginParser().parse_plugin(target, text_read_policy=STRICT_READ_POLICY)
+    assert [entry.original for entry in reread] == [expected, "Café"]
+    assert source.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    "options",
+    [{"input_encoding": "cp1252"}, {"text_read_policy": STRICT_READ_POLICY}],
+)
+def test_historical_fallback_does_not_override_explicit_or_strict_codec(tmp_path, options):
+    source = tmp_path / "Source.esp"
+    source.write_bytes(_header() + _group(_record(b"BOOK", 0x800, _field(b"FULL", b"\x81\x00"))))
+
+    with pytest.raises(PluginTextEncodingError, match="BOOK FULL") as error:
+        PluginParser().parse_plugin(source, **options)
+    assert isinstance(error.value.__cause__, UnicodeDecodeError)
+
+
+def test_replaced_historical_input_does_not_bypass_strict_output_validation(tmp_path):
+    source, target = tmp_path / "Source.esp", tmp_path / "Target.esp"
+    original = _header() + _group(_record(b"BOOK", 0x800, _field(b"FULL", b"\x81\x98\x00")))
+    source.write_bytes(original)
+    parser = PluginParser()
+    parser.parse_plugin(source, text_read_policy=XTRANSLATOR_READ_POLICY, raise_on_error=True)
+
+    with pytest.raises(PluginTextEncodingError, match=r"cp1251.*U\+FFFD"):
+        PluginWriter(parser.get_plugin(), output_encoding="cp1251").write(target)
+
+    assert not target.exists()
+    assert parser.get_plugin().dump() == original
+    assert source.read_bytes() == original
+
+
+def test_strict_plugin_read_fails_and_legacy_originals_are_reproduced(tmp_path):
     path = tmp_path / "Source.esp"
     source = _header() + _group(_record(b"BOOK", 0x800, _field(b"FULL", b"Anna\xefg\x00")))
     path.write_bytes(source)
     with pytest.raises(PluginTextEncodingError, match="BOOK FULL.*utf-8"):
-        PluginParser().parse_plugin(path, source_language="chinese")
+        PluginParser().parse_plugin(path, source_language="chinese", text_read_policy=STRICT_READ_POLICY)
 
     parser = PluginParser()
     (entry,) = parser.parse_plugin(path, text_read_policy=LEGACY_READ_POLICY, source_language="english")

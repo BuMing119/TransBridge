@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, DomainError, ErrorCategory
-from transbridge.config.text_encoding import DEFAULT_TEXT_ENCODING, XTRANSLATOR_READ_POLICY
+from transbridge.config.text_encoding import DEFAULT_READ_POLICY, DEFAULT_TEXT_ENCODING
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 from .contracts import FormatId
@@ -28,7 +28,7 @@ def apply_initial_translation(
     *,
     input_encoding: str = DEFAULT_TEXT_ENCODING,
     source_language: str | None = None,
-    text_read_policy: str = XTRANSLATOR_READ_POLICY,
+    text_read_policy: str = DEFAULT_READ_POLICY,
 ):
     """Combine independently matched donors; never resolve conflicts by file order."""
     locations = options.get("locations") if isinstance(options, dict) else None

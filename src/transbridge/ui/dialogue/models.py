@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 from PyQt6.QtCore import QAbstractItemModel, QAbstractTableModel, QModelIndex, Qt
 from PyQt6.QtGui import QFont
 
 from transbridge.application.dialogue.index import DialogueQuest, record_type
+from transbridge.application.dialogue.record_fields import record_field_id
 from transbridge.converter.translation_entry import STAGE_LABELS, TranslationEntry
 
 
@@ -88,4 +91,53 @@ class DialogueTableModel(QAbstractTableModel):
             if index.column() == 2:
                 return entry.translation
             return STAGE_LABELS.get(entry.stage, str(entry.stage))
+        return None
+
+
+class RecordFieldsModel(QAbstractTableModel):
+    """Keep every physical text occurrence as a separately selectable row."""
+
+    HEADERS = ("字段 ID", "原文", "译文")
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.entries: tuple[TranslationEntry, ...] = ()
+        self._field_ids: tuple[str, ...] = ()
+
+    def set_entries(self, entries: tuple[TranslationEntry, ...]) -> None:
+        if entries is self.entries:
+            return
+        self.beginResetModel()
+        self.entries = tuple(entries)
+        fields = tuple(record_field_id(entry) for entry in self.entries)
+        counts = Counter(fields)
+        occurrences = Counter()
+        labels = []
+        for field in fields:
+            occurrences[field] += 1
+            labels.append(f"{field} [{occurrences[field]}]" if counts[field] > 1 else field)
+        self._field_ids = tuple(labels)
+        self.endResetModel()
+
+    def rowCount(self, parent=QModelIndex()):  # noqa: N802
+        return 0 if parent.isValid() else len(self.entries)
+
+    def columnCount(self, parent=QModelIndex()):  # noqa: N802
+        return len(self.HEADERS)
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802
+        if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
+            return self.HEADERS[section] if 0 <= section < len(self.HEADERS) else None
+        return None
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid() or not 0 <= index.row() < len(self.entries):
+            return None
+        entry = self.entries[index.row()]
+        if role == Qt.ItemDataRole.UserRole:
+            return entry.identity
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return (entry.key, entry.original, entry.translation)[index.column()]
+        if role == Qt.ItemDataRole.DisplayRole:
+            return (self._field_ids[index.row()], entry.original, entry.translation)[index.column()]
         return None

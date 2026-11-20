@@ -20,9 +20,9 @@ import logging
 from pathlib import Path
 
 from transbridge.config.text_encoding import (
+    DEFAULT_READ_POLICY,
     DEFAULT_SOURCE_LANGUAGE,
     DEFAULT_TEXT_ENCODING,
-    XTRANSLATOR_READ_POLICY,
     TextReadOptions,
     language_from_suffix,
     normalize_text_encoding,
@@ -74,7 +74,7 @@ class SkyrimStringsFile:
         *,
         input_encoding: str = DEFAULT_TEXT_ENCODING,
         source_language: str = DEFAULT_SOURCE_LANGUAGE,
-        text_read_policy: str = XTRANSLATOR_READ_POLICY,
+        text_read_policy: str = DEFAULT_READ_POLICY,
     ) -> "SkyrimStringsFile":
         """
         Load a strings file from disk.
@@ -108,7 +108,7 @@ class SkyrimStringsFile:
         *,
         input_encoding: str = DEFAULT_TEXT_ENCODING,
         source_language: str = DEFAULT_SOURCE_LANGUAGE,
-        text_read_policy: str = XTRANSLATOR_READ_POLICY,
+        text_read_policy: str = DEFAULT_READ_POLICY,
         _legacy_linked: bool = False,
     ) -> "SkyrimStringsFile":
         """
@@ -194,7 +194,7 @@ class PluginStringsLookup:
         *,
         input_encoding: str = DEFAULT_TEXT_ENCODING,
         source_language: str | None = None,
-        text_read_policy: str = XTRANSLATOR_READ_POLICY,
+        text_read_policy: str = DEFAULT_READ_POLICY,
     ) -> "PluginStringsLookup | None":
         """
         从指定的 Strings 目录加载指定语言的 strings 文件，不依赖 plugin_path 推断目录。
@@ -223,7 +223,7 @@ class PluginStringsLookup:
         *,
         input_encoding: str = DEFAULT_TEXT_ENCODING,
         source_language: str | None = None,
-        text_read_policy: str = XTRANSLATOR_READ_POLICY,
+        text_read_policy: str = DEFAULT_READ_POLICY,
     ) -> "PluginStringsLookup | None":
         """
         Auto-discover and load all strings files for the given plugin.

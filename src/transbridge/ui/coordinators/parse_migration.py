@@ -10,6 +10,7 @@ from pathlib import Path
 from transbridge.application.contracts import RequestContext
 from transbridge.application.io.legacy_migration import prepare_legacy_migration
 from transbridge.application.io.migration_import import prepare_migration_import
+from transbridge.config.text_encoding import DEFAULT_READ_POLICY
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ def prepare_parse_migrations(
     context: RequestContext | None = None,
     input_encoding: str = "utf-8",
     source_language: str = "english",
-    text_read_policy: str = "xtranslator-v1",
+    text_read_policy: str = DEFAULT_READ_POLICY,
 ) -> ParseMigrationResult:
     """Keep successful sources while rejecting each failed source atomically.
 

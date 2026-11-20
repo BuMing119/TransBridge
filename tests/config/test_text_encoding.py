@@ -2,7 +2,7 @@ import pytest
 
 from transbridge.config.repository import ConfigRepository
 from transbridge.config.text_encoding import (
-    XTRANSLATOR_READ_POLICY,
+    DEFAULT_READ_POLICY,
     TextEncodingDefaults,
     TextEncodings,
     fallback_encoding,
@@ -39,7 +39,7 @@ def test_project_and_program_defaults_store_both_language_bindings(tmp_path):
     assert encodings.read_options() == {
         "input_encoding": "utf-8",
         "source_language": "russian",
-        "text_read_policy": XTRANSLATOR_READ_POLICY,
+        "text_read_policy": DEFAULT_READ_POLICY,
     }
     assert [fallback_encoding(language) for language in ("english", "russian", "polish", "chinese")] == [
         "cp1252",

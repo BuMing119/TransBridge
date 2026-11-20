@@ -128,7 +128,7 @@ def test_project_menu_exposes_source_update_with_its_own_intent():
     callbacks["update_source"] = lambda: calls.append("update")
     window = QMainWindow()
     MenuBuilder(window, MenuCallbacks(**callbacks)).build()
-    project_menu = next(action.menu() for action in window.menuBar().actions() if action.text() == "项目")
+    project_menu = next(action.menu() for action in window.menuBar().actions() if action.text() == "工程")
     update = next(action for action in project_menu.actions() if action.data() == IntentId.PROJECT_SOURCE_UPDATE.value)
     assert update.text() == "更新源文件…"
     update.trigger()

@@ -135,27 +135,38 @@ def test_agent_plugin_import_uses_active_project_input_encoding(project, encodin
     assert [item["format_options"].get("input_encoding") for item in project.ctx.project_sources] == [encoding]
 
 
-@pytest.mark.parametrize("language, succeeds", [("english", True), ("chinese", False)])
-def test_agent_plugin_import_uses_language_fallback_and_preserves_project_on_failure(project, language, succeeds):
+@pytest.mark.parametrize(
+    ("language", "input_encoding", "source_encoding", "original", "succeeds"),
+    [
+        ("english", "utf-8", "cp1252", "Café", True),
+        ("chinese", "utf-8", "cp1252", "Café", True),
+        ("english", "cp1252", "cp1251", "Ѓ", False),
+    ],
+)
+def test_agent_plugin_import_uses_language_fallback_and_preserves_project_on_failure(
+    project, language, input_encoding, source_encoding, original, succeeds
+):
     service = project.services.project_text_encodings
     preview = service.prepare(
-        service.active_project_path(project.request), TextEncodings(source_language=language), project.request
+        service.active_project_path(project.request),
+        TextEncodings(input_encoding=input_encoding, source_language=language),
+        project.request,
     )
     assert preview.is_success, preview.diagnostics
     assert service.commit(preview.value.token, project.request).is_success
-    source = write_plugin(project.root / "Invalid.esp", [(0x800, "Item", "Café")], encoding="cp1252")
+    source = write_plugin(project.root / "Source.esp", [(0x800, "Item", original)], encoding=source_encoding)
     before = project.services.project_lifecycle.active.variant.snapshot()
 
     result = _tool_parse_esp({"path": str(source)}, ExecutionContext(app_context=project.ctx))
 
     assert result.success is succeeds, result.message
     if succeeds:
-        assert [entry.original for entry in project.ctx.collection] == ["Café"]
+        assert [entry.original for entry in project.ctx.collection] == [original]
         metadata = dict(project.ctx.active_slot.source_snapshot.metadata)
         assert metadata["source_language"] == language
-        assert metadata["text_read_policy"] == "xtranslator-v1"
+        assert metadata["text_read_policy"] == "xtranslator-v2"
         return
-    assert "FULL" in result.message and "utf-8" in result.message
+    assert "FULL" in result.message and "charmap" in result.message
     assert not project.ctx.project_sources
     assert project.services.project_lifecycle.active.variant.snapshot() == before
 

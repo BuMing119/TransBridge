@@ -127,8 +127,9 @@ def test_dialogue_apply_preserves_paged_collection_and_publishes_once(qapp, tmp_
             editor.open_entry(key)
             drain(editor)
             assert editor.view.translation.toPlainText() == "待清空"
-            assert editor._context_reason == "当前插件没有可浏览的任务或对话词条。"
-            assert len(scan_threads) == 1 and scan_threads[0] != get_ident()
+            assert editor.view.browsing_mode == "record"
+            assert not editor.view.context_reason.isVisible()
+            assert not scan_threads
 
             def unexpected_scan(*_args, **_kw):
                 pytest.fail("Applying one paged dialogue entry must not read the entire project")

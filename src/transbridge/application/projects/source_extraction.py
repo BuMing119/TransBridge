@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import PureWindowsPath
 
 from transbridge.application.io.contracts import FormatId, SourceDescriptor, SourceSnapshot
+from transbridge.application.io.plugin_dialogue_catalog import METADATA_KEY as CATALOG_METADATA_KEY
 from transbridge.application.io.plugin_dialogue_order import METADATA_KEY
 from transbridge.application.io.sst_export import PLUGIN_SST_MASTERS, PLUGIN_SST_UNAVAILABLE
 from transbridge.converter.eet_entries import EET_CODEC_VERSION
@@ -41,6 +42,7 @@ def extract_source(prepared: PreparedProjectSource) -> ExtractedSource:
     if source.format_id is FormatId.PLUGIN_SSE:
         for name in (
             METADATA_KEY,
+            CATALOG_METADATA_KEY,
             "localized_language",
             "localized_lookup_detected",
             "stage_policy_version",
@@ -146,6 +148,7 @@ def reconstructed_source_snapshot(
             key: fields[key]
             for key in (
                 METADATA_KEY,
+                CATALOG_METADATA_KEY,
                 "localized_language",
                 "localized_lookup_detected",
                 PLUGIN_SST_MASTERS,

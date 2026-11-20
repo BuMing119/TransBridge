@@ -9,6 +9,8 @@ from threading import Event
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
+from transbridge.application.dialogue.index import CONTEXT_RECORD_TYPES, record_type
+from transbridge.application.io.contracts import FormatId
 from transbridge.converter.context_categories import context_category
 from transbridge.persistence.project_store.paged_reads import WORKBENCH_PAGE_SIZE
 from transbridge.ui.project_rows import ProjectRowsCollection
@@ -211,7 +213,18 @@ class WorkbenchProjectPaging(QObject):
         return self.host._entry_labels
 
     def open_entry(self, key):
-        if self.when_ready(lambda: self.open_entry(key)):
+        if self._closed.is_set():
+            return
+        collection = self.collection
+        entry = None if collection is None else collection.get(key)
+        task_entry = (
+            entry is not None
+            and collection.source.info.format_id is FormatId.PLUGIN_SSE
+            and record_type(entry) in CONTEXT_RECORD_TYPES
+        )
+        # A task row can navigate its cached relationships immediately. Ordinary
+        # rows still need the complete opening filter for previous/next editing.
+        if task_entry or self.when_ready(lambda: self.open_entry(key)):
             self.host.entry_edit_requested.emit(key)
 
     def locate(self, target, *, select=False):

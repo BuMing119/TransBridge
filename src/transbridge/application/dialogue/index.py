@@ -14,6 +14,7 @@ from transbridge.parser.plugin.dialogue_catalog import DialogueCatalog, Dialogue
 
 QuestId = tuple[str, str]
 TopicId = tuple[str, str, str]
+CONTEXT_RECORD_TYPES = frozenset({"QUST", "DIAL", "INFO"})
 
 
 @dataclass(frozen=True)
@@ -41,10 +42,10 @@ class DialogueIndex:
 def source_unavailable_reason(*, format_id: str | None, esp_path: str | None, eet_path: str | None) -> str | None:
     """A translation overlay never replaces an explicitly identified plugin source."""
     if format_id in {"xml.eet", "binary.eet"} or (not format_id and not esp_path and eet_path):
-        return "EET 解析不包含任务／话题关系，任务树不可用；右侧仍可编辑译文。"
+        return "EET 来源不包含任务／话题关系。"
     if format_id == "plugin.sse" or (not format_id and esp_path):
         return None
-    return "任务树需要 ESP/ESM/ESL 插件解析的任务上下文；右侧仍可编辑译文。"
+    return "任务树需要 ESP/ESM/ESL 插件来源。"
 
 
 def record_type(entry: TranslationEntry) -> str:
@@ -130,7 +131,7 @@ def build_dialogue_index(
     labels: dict[TopicId, str] = {}
     for entry in entries:
         kind = record_type(entry)
-        if kind not in {"QUST", "DIAL", "INFO"}:
+        if kind not in CONTEXT_RECORD_TYPES:
             continue
         namespace, topic_id = entry.identity.namespace.value, _topic_id(entry)
         if kind == "QUST":
@@ -197,8 +198,8 @@ def build_dialogue_index(
         for node_id in _ordered_nodes(nodes, definitions, topic_orders.get(quest_key, ())):
             record = definitions.get(node_id)
             kind = record.kind if record else ("QUST" if node_id == "journal" else "DIAL")
-            label = labels.get((*quest_key, node_id), _label("DIAL", node_id))
-            if record is not None:
+            label = labels.get((*quest_key, node_id), _label(kind, node_id))
+            if record is not None and (kind == "SCEN" or record.editor_id or record.category):
                 label = _label(kind, record.form_id, record.editor_id or record.category)
             elif node_id == "unknown":
                 label = "DIAL {未关联话题}"

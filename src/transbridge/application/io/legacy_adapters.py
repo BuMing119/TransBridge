@@ -45,6 +45,7 @@ from .contracts import (
     WriteRequest,
 )
 from .identity import EntryKey, SourceNamespace
+from .plugin_dialogue_catalog import capture_dialogue_catalog_metadata
 from .plugin_dialogue_order import capture_dialogue_order_metadata
 from .plugin_localized_sources import LocalizedSnapshotCancelled, validate_localized_snapshot
 from .plugin_write import _blocking_stage_diagnostics, _localized_source_snapshots, write_plugin
@@ -435,6 +436,9 @@ class SsePluginAdapter(_LegacyFormatAdapter):
             dialogue_metadata = capture_dialogue_order_metadata(
                 parser.get_plugin(), snapshot.sha256, cancellation=request.cancellation
             )
+            catalog_metadata = capture_dialogue_catalog_metadata(
+                parser.get_plugin(), snapshot.sha256, cancellation=request.cancellation
+            )
         except DialogueOrderCancelled:
             return self._cancelled_parse(request)
         snapshot = replace(
@@ -447,6 +451,7 @@ class SsePluginAdapter(_LegacyFormatAdapter):
                 ("localized_sources", localized_sources),
                 ("stage_policy_version", DEFAULT_STAGE_POLICY.version),
                 dialogue_metadata,
+                catalog_metadata,
                 *source_text_metadata(read_options),
             ),
         )

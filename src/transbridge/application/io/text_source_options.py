@@ -3,10 +3,10 @@
 
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity
 from transbridge.config.text_encoding import (
+    DEFAULT_READ_POLICY,
     DEFAULT_TEXT_ENCODING,
     LEGACY_READ_POLICY,
     STRICT_READ_POLICY,
-    XTRANSLATOR_READ_POLICY,
     TextReadOptions,
     language_from_suffix,
 )
@@ -17,7 +17,7 @@ def request_text_read_options(options) -> TextReadOptions:
     return TextReadOptions(
         options.get("input_encoding", DEFAULT_TEXT_ENCODING),
         options.get("source_language", language_from_suffix(options.get("language"))),
-        options.get("text_read_policy", XTRANSLATOR_READ_POLICY),
+        options.get("text_read_policy", DEFAULT_READ_POLICY),
     )
 
 

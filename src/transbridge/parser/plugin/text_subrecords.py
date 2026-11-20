@@ -1,13 +1,35 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Apply the selected codec to editable plugin fields at their byte boundary."""
 
+import logging
+
 from sse_plugin_interface.datatypes import RawString
 from sse_plugin_interface.record import Record
 from sse_plugin_interface.subrecord import StringSubrecord, Subrecord
 
-from transbridge.config.text_encoding import LEGACY_READ_POLICY, TextReadOptions, normalize_text_encoding
+from transbridge.config.text_encoding import (
+    DEFAULT_TEXT_ENCODING,
+    LEGACY_READ_POLICY,
+    XTRANSLATOR_READ_POLICY,
+    XTRANSLATOR_WINDOWS_READ_POLICY,
+    TextReadOptions,
+    normalize_text_encoding,
+)
 from transbridge.parser.game_text import describe_game_text_error, encode_game_text
 from transbridge.parser.text_reader import decode_game_text
+
+log = logging.getLogger(__name__)
+
+
+def _historical_text(string: RawString, payload: bytes) -> tuple[str, str, bool]:
+    text = str(string)
+    encoding = normalize_text_encoding(string.encoding)
+    replaced = encoding == "utf-8" and "\ufffd" in text and text.encode(encoding) != payload
+    if replaced:
+        # RawString labels replacement decoding as UTF-8, even though it used
+        # the final historical codec. Keep the real codec for strict writing.
+        encoding = normalize_text_encoding(RawString.SUPPORTED_ENCODINGS[-1])
+    return text, encoding, replaced
 
 
 class PluginTextEncodingError(ValueError):
@@ -15,7 +37,7 @@ class PluginTextEncodingError(ValueError):
 
 
 class EncodedStringSubrecord(StringSubrecord):
-    """Keep vendor field semantics, while bypassing RawString's fallback codecs."""
+    """Prefer the selected codec, retaining historical decoding as a final fallback."""
 
     @classmethod
     def from_parsed(cls, field: StringSubrecord, options: TextReadOptions, locator: str):
@@ -30,23 +52,43 @@ class EncodedStringSubrecord(StringSubrecord):
         result._source_replaced = False
         try:
             if options.text_read_policy == LEGACY_READ_POLICY:
-                text = str(field.string)
-                encoding = normalize_text_encoding(field.string.encoding)
-                if encoding == "utf-8" and "\ufffd" in text and text.encode(encoding) != payload:
-                    # RawString reports UTF-8 after its last codec uses replacement.
-                    encoding = normalize_text_encoding(RawString.SUPPORTED_ENCODINGS[-1])
-                    result._source_replaced = True
+                text, encoding, result._source_replaced = _historical_text(field.string, payload)
             else:
                 text, encoding = decode_game_text(payload, options)
-        except UnicodeDecodeError as exc:
-            raise PluginTextEncodingError(f"{locator}: cannot decode as {exc.encoding} at byte {exc.start}") from exc
+                # Retain native replacement information for diagnostics; output
+                # is always encoded strictly, including unchanged fields.
+                result._source_replaced = encoding != "utf-8" and "\ufffd" in text
+                if result._source_replaced:
+                    log.warning(
+                        "%s: Windows %s decoding used replacement characters; source bytes retained.", locator, encoding
+                    )
+        except (UnicodeDecodeError, LookupError, OSError) as exc:
+            failure = (
+                f"cannot decode as {exc.encoding} at byte {exc.start}"
+                if isinstance(exc, UnicodeDecodeError)
+                else str(exc)
+            )
+            if (
+                options.text_read_policy not in {XTRANSLATOR_READ_POLICY, XTRANSLATOR_WINDOWS_READ_POLICY}
+                or options.input_encoding != DEFAULT_TEXT_ENCODING
+            ):
+                raise PluginTextEncodingError(f"{locator}: {failure}") from exc
+            # The vendor has already decoded this field with the old plugin
+            # fallback sequence. Use it only after the current rules fail, so
+            # successfully decoded sources retain their saved interpretation.
+            text, encoding, result._source_replaced = _historical_text(field.string, payload)
+            log.warning(
+                "%s: %s; used historical %s decoding%s. Select an explicit input encoding if the text is incorrect.",
+                locator,
+                failure,
+                encoding,
+                " with replacement characters" if result._source_replaced else "",
+            )
         result.string = result._encoded = RawString.from_str(text, encoding)
         return result
 
     def encode_text(self, text: str, encoding: str) -> bytes:
         """Check encoding and inline field size before making any changes."""
-        if not self._source_replaced and text == self._encoded and encoding == self._encoded.encoding:
-            return self.data
         try:
             data = encode_game_text(text, encoding) + self._suffix
         except ValueError as exc:

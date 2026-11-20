@@ -10,9 +10,9 @@ from sse_plugin_interface.plugin_string import PluginString
 
 from transbridge.application.contracts import Diagnostic
 from transbridge.config.text_encoding import (
+    DEFAULT_READ_POLICY,
     DEFAULT_SOURCE_LANGUAGE,
     DEFAULT_TEXT_ENCODING,
-    XTRANSLATOR_READ_POLICY,
     TextReadOptions,
     language_from_suffix,
 )
@@ -51,7 +51,7 @@ class PluginParser:
         *,
         input_encoding: str = DEFAULT_TEXT_ENCODING,
         source_language: str | None = None,
-        text_read_policy: str = XTRANSLATOR_READ_POLICY,
+        text_read_policy: str = DEFAULT_READ_POLICY,
     ) -> list[TranslationEntry]:
         """
         Parse a plugin file and return all translatable strings as TranslationItem objects.

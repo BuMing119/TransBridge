@@ -8,6 +8,7 @@ import re
 import xml.etree.ElementTree as ET
 
 from transbridge.application.io.contracts import FormatId
+from transbridge.application.io.plugin_dialogue_catalog import METADATA_KEY as CATALOG_METADATA_KEY
 from transbridge.application.io.plugin_dialogue_order import METADATA_KEY
 from transbridge.application.io.sst_export import (
     PLUGIN_SST_BLOCKER_CODES,
@@ -25,6 +26,7 @@ from transbridge.config.text_encoding import TextReadOptions
 from transbridge.converter.eet_entries import EET_CODEC_VERSION
 from transbridge.converter.sst_entries import SST_CODEC_VERSION
 from transbridge.parser.eet_binary_codec import EetDocument
+from transbridge.parser.plugin.dialogue_catalog import CATALOG_VERSION, catalog_from_payload
 from transbridge.parser.plugin.dialogue_order_evidence import EXTRACTION_VERSION, evidence_from_payload
 from transbridge.parser.xt.sst_codec import SstDocument
 
@@ -35,6 +37,7 @@ _FORMAT_FIELDS = frozenset({
     "sst_header",
     "xml_header",
     METADATA_KEY,
+    CATALOG_METADATA_KEY,
     "localized_language",
     "localized_lookup_detected",
     "stage_policy_version",
@@ -174,6 +177,11 @@ def _validate_plugin_fields(fields, fingerprint):
         if type(version) is not int or version != EXTRACTION_VERSION or source_fingerprint != fingerprint:
             raise ValueError("plugin dialogue metadata belongs to another source revision")
         evidence_from_payload(payload)
+    if CATALOG_METADATA_KEY in fields:
+        version, source_fingerprint, payload = fields[CATALOG_METADATA_KEY]
+        if type(version) is not int or version != CATALOG_VERSION or source_fingerprint != fingerprint:
+            raise ValueError("plugin dialogue catalog belongs to another source revision")
+        catalog_from_payload(payload)
     if PLUGIN_SST_MASTERS in fields:
         if PLUGIN_SST_UNAVAILABLE in fields:
             raise ValueError("plugin SST metadata contains conflicting capabilities")

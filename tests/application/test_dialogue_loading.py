@@ -1,6 +1,7 @@
 from dataclasses import replace
 from pathlib import Path
 import struct
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -17,7 +18,9 @@ from tests.dialogue_support import dialogue_entries
 from transbridge.application.dialogue import loading
 from transbridge.application.io.contracts import FormatId, SourceDescriptor, SourceSnapshot
 from transbridge.application.io.dialogue_reading_view import ReadingEntry
+from transbridge.application.io.plugin_dialogue_order import capture_dialogue_order_metadata
 from transbridge.parser.plugin.dialogue_order_binary import DialogueOrderCancelled
+from transbridge.parser.plugin.text_subrecords import PluginTextEncodingError
 from transbridge.parser.plugin_parser import PluginParser
 
 
@@ -193,3 +196,149 @@ def test_tree_reuses_completed_workbench_reading_layout_for_same_frozen_source(m
     topics = tuple(topic.identity[2] for topic in index.quests[0].topics if topic.identity[2] != "journal")
     assert topics == view.topic_orders[entries[0].identity.namespace, "00000001"]
     assert set(index.locations) == {entry.identity for entry in entries}
+
+
+def encoded_snapshot(payload, *, encoding=None, metadata=()):
+    content = plugin_bytes({
+        "QUST": record("QUST", 1, field("EDID", b"Quest\0") + field("FULL", payload + b"\0")),
+        "DIAL": record("DIAL", 0x10, field("EDID", b"Topic10\0") + reference("QNAM", 1)),
+    })
+    return SourceSnapshot.from_bytes(
+        SourceDescriptor("nonexistent/encoded.esp"), FormatId.PLUGIN_SSE, content, encoding=encoding, metadata=metadata
+    )
+
+
+@pytest.fixture
+def catalog_texts(monkeypatch):
+    observed = []
+    read = loading.read_dialogue_catalog
+
+    def observe(plugin):
+        observed.append(tuple(str(item.string) for item in plugin.inline_text_fields()))
+        return read(plugin)
+
+    def forbid_open(*_args, **_kwargs):
+        pytest.fail("Directory reconstruction must only read captured bytes")
+
+    monkeypatch.setattr(loading, "read_dialogue_catalog", observe)
+    monkeypatch.setattr(Path, "open", forbid_open)
+    return observed
+
+
+@pytest.mark.parametrize(
+    ("payload", "encoding", "metadata", "expected"),
+    [
+        ("武器".encode("cp936"), "cp936", (("source_language", "chinese"), ("text_read_policy", "strict-v1")), "武器"),
+        (b"Anna\xefg", "utf-8", (("source_language", "russian"), ("text_read_policy", "xtranslator-v1")), "Annaпg"),
+        (b"Anna\xefg", None, (), "Annaďg"),
+        (b"Anna\xefg", "cp1252", (), "Annaïg"),
+    ],
+)
+def test_snapshot_catalog_replays_saved_text_facts(catalog_texts, payload, encoding, metadata, expected):
+    source = encoded_snapshot(payload, encoding=encoding, metadata=metadata)
+    before_source = (source.content, source.encoding, source.metadata)
+    entries = dialogue_entries()
+    before_entries = [entry.to_dict() for entry in entries]
+
+    index = loading.DialogueIndexLoader().build(entries, snapshot=source)
+
+    assert index.quests
+    assert catalog_texts == [(expected,)]
+    assert (source.content, source.encoding, source.metadata) == before_source
+    assert [entry.to_dict() for entry in entries] == before_entries
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows native v2 decoding")
+def test_same_bytes_with_changed_saved_policy_rebuild_catalog(catalog_texts):
+    source = encoded_snapshot(
+        b"\x81", encoding="utf-8", metadata=(("source_language", "english"), ("text_read_policy", "xtranslator-v1"))
+    )
+    changed = replace(source, metadata=(("source_language", "english"), ("text_read_policy", "xtranslator-v2")))
+    entries = dialogue_entries()
+    loader = loading.DialogueIndexLoader()
+    initial = loader.build(entries, snapshot=source)
+    translated = [replace(entry, translation="New translation", stage=3) for entry in entries]
+    assert loader.build(translated, snapshot=source) == initial
+    assert catalog_texts == [("Ѓ",)]
+
+    assert changed.content == source.content
+    assert loader.build(entries, snapshot=changed).quests
+
+    assert catalog_texts == [("Ѓ",), ("\x81",)]
+
+
+@pytest.mark.parametrize("metadata", [(), (("text_read_policy", "strict-v1"),)])
+def test_strict_snapshot_errors_do_not_install_cache_and_can_be_retried(catalog_texts, metadata):
+    loader = loading.DialogueIndexLoader()
+    entries = dialogue_entries()
+    valid = encoded_snapshot(b"Valid")
+    initial = loader.build(entries, snapshot=valid)
+    invalid = encoded_snapshot(b"\xe9", encoding="utf-8", metadata=metadata)
+
+    for _ in range(2):
+        with pytest.raises(PluginTextEncodingError, match=r"encoded\.esp QUST FULL") as error:
+            loader.build(entries, snapshot=invalid)
+        assert isinstance(error.value.__cause__, UnicodeDecodeError)
+    assert loader.build(entries, snapshot=valid) == initial
+    assert catalog_texts == [("Valid",)]
+
+    corrected = replace(invalid, encoding="cp1252")
+    assert loader.build(entries, snapshot=corrected).quests
+    assert catalog_texts == [("Valid",), ("é",)]
+
+
+@pytest.mark.parametrize(
+    ("encoding", "metadata"),
+    [
+        ("invalid-codec", ()),
+        ("utf-8", (("text_read_policy", "invalid-policy"),)),
+        ("utf-8", (("source_language", "invalid-language"),)),
+    ],
+)
+def test_invalid_snapshot_read_facts_are_reported_without_falling_back(catalog_texts, encoding, metadata):
+    source = encoded_snapshot(b"Valid", encoding=encoding, metadata=metadata)
+
+    with pytest.raises(ValueError):
+        loading.DialogueIndexLoader().build(dialogue_entries(), snapshot=source)
+
+    assert catalog_texts == []
+
+
+def test_snapshot_without_bytes_reuses_live_plugin_without_new_parse(monkeypatch, catalog_texts):
+    plugin = dialogue_plugin()
+    source = replace(snapshot(), content=None, encoding="invalid-codec", lease_id="metadata-only-test")
+
+    def forbid_parse(*_args, **_kwargs):
+        pytest.fail("An already parsed plugin must be reused")
+
+    monkeypatch.setattr(loading.SSEPluginWithContext, "from_stream", forbid_parse)
+
+    assert loading.DialogueIndexLoader().build(dialogue_entries(), plugin=plugin, snapshot=source).quests
+    assert len(catalog_texts) == 1
+
+
+def test_paged_legacy_snapshot_restores_stringless_topics_and_order_without_plugin(monkeypatch):
+    entries, captured, plugin = reading_source()
+    descriptor = replace(captured, content=None, lease_id="project-translation-content")
+    saved = replace(descriptor, metadata=(capture_dialogue_order_metadata(plugin, captured.sha256),))
+    reads = []
+
+    def load_fields():
+        reads.append(True)
+        return saved
+
+    def forbid_parse(*args, **kwargs):
+        pytest.fail("An offline legacy project must use its saved relationships")
+
+    monkeypatch.setattr(loading.SSEPluginWithContext, "from_stream", forbid_parse)
+    loader = loading.DialogueIndexLoader()
+    index = loader.build(entries, snapshot=descriptor, load_snapshot=load_fields)
+    assert [topic.identity[2] for topic in index.quests[0].topics] == ["journal", "00000030", "00000020", "00000010"]
+    assert index.quests[0].topics[2].entries == ()
+    assert loader.build(entries, snapshot=descriptor, load_snapshot=load_fields) == index
+    assert reads == [True]
+
+    # A different plugin with no evidence must not inherit the previous source's directory.
+    empty = replace(snapshot("Other"), content=None, lease_id="project-translation-content")
+    rebuilt = loader.build(entries, snapshot=empty, load_snapshot=lambda: empty)
+    assert all(topic.identity[2] != "00000020" for quest in rebuilt.quests for topic in quest.topics)

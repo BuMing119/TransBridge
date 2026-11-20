@@ -7,7 +7,6 @@ from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -15,6 +14,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSplitter,
     QTableView,
+    QTabWidget,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -23,6 +23,8 @@ from PyQt6.QtWidgets import (
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 
 from .models import DialogueTableModel, TopicTreeModel
+from .quest_picker import QuestPicker
+from .record_view import RecordFieldsView
 
 
 def _label(text: str, parent: QWidget) -> QLabel:
@@ -33,9 +35,11 @@ def _label(text: str, parent: QWidget) -> QLabel:
 
 
 class DialogueEditorView(QWidget):
-    quest_selected = pyqtSignal(int)
+    quest_selected = pyqtSignal(int, int)
     topic_selected = pyqtSignal(int)
     entry_selected = pyqtSignal(int)
+    record_entry_selected = pyqtSignal(int)
+    browse_mode_changed = pyqtSignal(str)
     draft_changed = pyqtSignal(str)
     apply_requested = pyqtSignal(bool)
     discard_requested = pyqtSignal()
@@ -64,7 +68,8 @@ class DialogueEditorView(QWidget):
         layout.addWidget(self.source_label)
         self.context_reason = _label("", self)
         layout.addWidget(self.context_reason)
-        self.message = _label("请选择包含任务上下文的插件内容。", self)
+        self.message = _label("", self)
+        self.message.hide()
         layout.addWidget(self.message)
         self.body = QWidget(self)
         body_layout = QVBoxLayout(self.body)
@@ -73,16 +78,18 @@ class DialogueEditorView(QWidget):
         context_layout = QVBoxLayout(self.context_panel)
         context_layout.setContentsMargins(0, 0, 8, 0)
         context_layout.addWidget(_label("任务记录 · DIAL / SCEN", self))
-        self.quest_combo = QComboBox(self)
-        self.quest_combo.setAccessibleName("选择任务")
+        self.quest_combo = QuestPicker(self)
+        self.quest_combo.setAccessibleName("查找任务、话题或场景")
         self.quest_combo.setMinimumContentsLength(20)
-        self.quest_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.quest_combo.setSizeAdjustPolicy(QuestPicker.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         context_layout.addWidget(self.quest_combo)
         vertical = QSplitter(Qt.Orientation.Vertical, self)
         horizontal = QSplitter(Qt.Orientation.Horizontal, self)
         self.context_splitter = horizontal
         self.vertical_splitter = vertical
         self._context_available = True
+        self._show_context_reason = False
+        self._record_available = False
         self._context_sizes = [270, 850]
         self._vertical_sizes = [480, 230]
         self.tree = QTreeView(self)
@@ -114,7 +121,17 @@ class DialogueEditorView(QWidget):
         horizontal.addWidget(self.table)
         horizontal.setStretchFactor(1, 1)
         horizontal.setSizes([270, 850])
-        vertical.addWidget(horizontal)
+        self.browse_tabs = QTabWidget(self)
+        self.browse_tabs.setAccessibleName("词条浏览方式")
+        self.record_page = RecordFieldsView(self.browse_tabs)
+        self.record_table = self.record_page.table
+        self.record_model = self.record_page.model
+        self.record_heading = self.record_page.heading
+        self.browse_tabs.addTab(self.record_page, "ESP 记录")
+        self.browse_tabs.addTab(horizontal, "话题与对话")
+        self.browse_tabs.setTabVisible(0, False)
+        self.browse_tabs.setCurrentIndex(1)
+        vertical.addWidget(self.browse_tabs)
         self.editor_panel = QWidget(self)
         editor_layout = QVBoxLayout(self.editor_panel)
         editor_layout.setContentsMargins(0, 4, 0, 0)
@@ -168,19 +185,16 @@ class DialogueEditorView(QWidget):
         horizontal.setChildrenCollapsible(False)
         body_layout.addWidget(vertical, 1)
         layout.addWidget(self.body, 1)
-        layout.addWidget(
-            _label(
-                "左侧按 FormID 浏览记录；SCEN 显示引用话题，不表示条件分支或实际演出顺序。Ctrl+Enter 应用并继续。", self
-            )
-        )
         ComponentStyle.apply_static(self.table, ComponentKind.TABLE)
         for field in (self.original, self.translation, self.quest_combo):
             ComponentStyle.apply_static(field, ComponentKind.INPUT)
-        self.quest_combo.currentIndexChanged.connect(self.quest_selected.emit)
+        self.quest_combo.record_chosen.connect(self.quest_selected.emit)
         self.tree.selectionModel().currentChanged.connect(self._tree_selected)
         self.table.selectionModel().currentRowChanged.connect(
             lambda current, _old: self.entry_selected.emit(current.row())
         )
+        self.record_page.entry_selected.connect(self.record_entry_selected.emit)
+        self.browse_tabs.currentChanged.connect(self._browse_changed)
         self.translation.textChanged.connect(lambda: self.draft_changed.emit(self.translation.toPlainText()))
         shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
         shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -199,32 +213,66 @@ class DialogueEditorView(QWidget):
             self.topic_selected.emit(current.row())
 
     def show_quests(self, index, selected: int) -> None:
-        with QSignalBlocker(self.quest_combo):
-            self.quest_combo.clear()
-            for quest in index.quests:
-                self.quest_combo.addItem(quest.label)
-            self.quest_combo.setCurrentIndex(selected)
+        self.quest_combo.set_dialogue_index(index, selected)
 
-    def set_context_available(self, available: bool, reason: str = "") -> None:
+    def show_message(self, message: str) -> None:
+        self.message.setText(message)
+        self.message.setVisible(bool(message))
+
+    def set_context_available(self, available: bool, reason: str = "", *, show_reason: bool = False) -> None:
+        restore_sizes = available and not self._context_available
         if self._context_available and not available and self.context_splitter.isVisible():
             self._context_sizes = self.context_splitter.sizes()
             self._vertical_sizes = self.vertical_splitter.sizes()
-        self.context_splitter.setVisible(available)
-        if available and not self._context_available:
-            if self._context_sizes and any(self._context_sizes):
-                self.context_splitter.setSizes(self._context_sizes)
-            if self._vertical_sizes and any(self._vertical_sizes):
-                self.vertical_splitter.setSizes(self._vertical_sizes)
+        with QSignalBlocker(self.browse_tabs):
+            self.browse_tabs.setTabVisible(1, available)
         self._context_available = available
+        self._show_context_reason = show_reason
         self.context_panel.setEnabled(available)
         self.context_panel.setToolTip(reason)
         self.context_panel.setAccessibleDescription(reason)
         self.context_reason.setText(reason)
-        self.context_reason.setVisible(bool(reason))
+        self._refresh_browse_visibility()
+        if restore_sizes:
+            if self._context_sizes and any(self._context_sizes):
+                self.context_splitter.setSizes(self._context_sizes)
+            if self._vertical_sizes and any(self._vertical_sizes):
+                self.vertical_splitter.setSizes(self._vertical_sizes)
         if not available:
-            with QSignalBlocker(self.quest_combo), QSignalBlocker(self.tree.selectionModel()):
-                self.quest_combo.clear()
+            self.quest_combo.set_dialogue_index(None)
+            with QSignalBlocker(self.tree.selectionModel()):
                 self.tree_model.set_quest(None)
+
+    @property
+    def browsing_mode(self) -> str:
+        return "record" if self.browse_tabs.currentIndex() == 0 else "dialogue"
+
+    def set_record_available(self, available: bool) -> None:
+        self._record_available = available
+        with QSignalBlocker(self.browse_tabs):
+            self.browse_tabs.setTabVisible(0, available)
+        self._refresh_browse_visibility()
+
+    def set_browse_mode(self, mode: str) -> None:
+        index = 0 if mode == "record" else 1
+        if self.browse_tabs.isTabVisible(index):
+            with QSignalBlocker(self.browse_tabs):
+                self.browse_tabs.setCurrentIndex(index)
+        self._refresh_browse_visibility()
+
+    def _refresh_browse_visibility(self) -> None:
+        self.browse_tabs.setVisible(self._context_available or self._record_available)
+        dialogue = self.browsing_mode == "dialogue" and self._context_available
+        self.context_reason.setVisible(
+            bool(self.context_reason.text()) and (self._show_context_reason or not self._record_available or dialogue)
+        )
+
+    def _browse_changed(self, _index: int) -> None:
+        self._refresh_browse_visibility()
+        self.browse_mode_changed.emit(self.browsing_mode)
+
+    def show_record(self, entries, row: int, *, record_type="", editor_id="", form_id="") -> None:
+        self.record_page.show_record(entries, row, record_type=record_type, editor_id=editor_id, form_id=form_id)
 
     def show_quest(self, quest, topic_row: int) -> None:
         with QSignalBlocker(self.tree.selectionModel()):
@@ -256,8 +304,8 @@ class DialogueEditorView(QWidget):
         self.apply_button.setEnabled(changed)
         self.discard_button.setEnabled(changed)
 
-    def show_navigation(self, position: int, count: int, has_context: bool) -> None:
-        scope = "任务／场景" if has_context else "打开时列表"
+    def show_navigation(self, position: int, count: int, has_context: bool, *, scope: str | None = None) -> None:
+        scope = scope or ("任务／场景" if has_context else "打开时列表")
         self.navigation_label.setText(f"{scope} · {position + 1} / {count}")
         last = position + 1 == count
         text = "应用并返回" if last else "应用并下一条"

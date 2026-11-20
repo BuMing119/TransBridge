@@ -70,6 +70,7 @@ _FORMAT_FIELDS = frozenset({
     "sst_header",
     "xml_header",
     "plugin_dialogue_order",
+    "plugin_dialogue_catalog",
     "localized_language",
     "localized_lookup_detected",
     "stage_policy_version",
@@ -119,7 +120,10 @@ def _fields(values: Iterable[tuple[str, Any]], allowed: frozenset[str], label: s
         result[key] = (
             _extension_fields(value)
             if key == "transbridge.io.paratranz.extensions"
-            else _value(value, text_fields=key in {"eet.native", "sst.native", "xml_header", "eet_header"})
+            else _value(
+                value,
+                text_fields=key in {"eet.native", "sst.native", "xml_header", "eet_header", "plugin_dialogue_catalog"},
+            )
         )
     return result
 

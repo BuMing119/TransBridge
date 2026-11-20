@@ -8,8 +8,15 @@ import logging
 from PyQt6.QtCore import QEvent, QObject
 from PyQt6.QtWidgets import QMessageBox
 
-from transbridge.application.dialogue.index import DialogueIndex, source_unavailable_reason
+from transbridge.application.dialogue.index import (
+    CONTEXT_RECORD_TYPES,
+    DialogueIndex,
+    build_dialogue_index,
+    record_type,
+    source_unavailable_reason,
+)
 from transbridge.application.dialogue.loading import DialogueIndexLoader
+from transbridge.application.dialogue.record_fields import record_identity
 from transbridge.ui.project_rows import ProjectRowsCollection
 from transbridge.ui.windowing import show_and_activate
 
@@ -18,6 +25,7 @@ from .dialog import EntryEditorDialog
 from .editing import EntryDraft, content_scope
 from .index_delivery import IndexDelivery
 from .index_state import IndexStructure
+from .record_browser import RecordBrowser
 
 
 def unavailable_reason(context) -> str | None:
@@ -56,6 +64,9 @@ class DialogueEditorController(QObject):
         self._context_reason = ""
         self.dialog = EntryEditorDialog(parent, can_close=self.can_close)
         self.view = self.dialog.view
+        self._records = RecordBrowser(self.view, workers)
+        self._records.entry_requested.connect(self._display_entry)
+        self._records.changed.connect(self._redisplay)
         self.view.quest_selected.connect(self.select_quest)
         self.view.topic_selected.connect(self.select_topic)
         self.view.entry_selected.connect(self.select_entry)
@@ -86,15 +97,16 @@ class DialogueEditorController(QObject):
         self._clear_selection("版本已切换，等待加载翻译内容。")
 
     def _clear_selection(self, message: str) -> None:
+        self._records.reset()
         self._current = self._selected_key = None
         self._node_identity = None
         self._navigation_keys = ()
         self._session_keys = ()
-        self.view.set_context_available(False, message)
+        self.view.set_context_available(False)
         self.view.show_entries((), -1)
         self.view.show_entry(None, "")
         self.view.body.setEnabled(False)
-        self.view.message.setText(message)
+        self.view.show_message(message)
 
     def refresh(self, _collection=None) -> None:
         if self._closed:
@@ -127,6 +139,13 @@ class DialogueEditorController(QObject):
         collection = self.context.collection
         paged = isinstance(collection, ProjectRowsCollection)
         reason = unavailable_reason(self.context)
+        selected = None if collection is None or self._selected_key is None else collection.get(self._selected_key)
+        task_entry = selected is not None and record_type(selected) in CONTEXT_RECORD_TYPES and not reason
+        if selected is not None and not reason and not task_entry and record_identity(selected) is not None:
+            # Record fields can be read independently of the quest/scene directory.
+            self._session_keys = self._records.refresh_opening_keys(collection, self._session_keys, self.preview)
+            self._display_entry(selected.identity)
+            return
         rebuild = collection is not None and self._index_structure.changed(collection)
         if rebuild:
             self._cancel_index()
@@ -137,12 +156,24 @@ class DialogueEditorController(QObject):
             if paged:
                 removed = self._index_structure.removed_keys
                 if removed is None:
-                    self._session_keys = self.preview.editor_navigation_keys()
+                    self._session_keys = () if task_entry else self.preview.editor_navigation_keys()
                 elif removed:
                     self._session_keys = tuple(key for key in self._session_keys if key not in removed)
             else:
                 self._session_keys = tuple(key for key in self._session_keys if key in collection)
-        if collection is not None and self._selected_key is not None and collection.get(self._selected_key) is not None:
+        if (
+            paged
+            and task_entry
+            and (rebuild or self._delivery is not None)
+            and selected.identity not in self._index.locations
+        ):
+            # Only cached pages and the clicked row participate in this first frame.
+            # The revision-bound full-source iterator remains owned by the worker.
+            available = {entry.identity: entry for entry in collection.visible_rows()}
+            available[selected.identity] = selected
+            self._index = build_dialogue_index(available.values())
+            self._context_reason = "正在补全话题与场景记录…"
+        if selected is not None:
             self._display_entry(self._selected_key)
         elif collection and self._node_identity is not None:
             location = self._selected_location()
@@ -168,6 +199,7 @@ class DialogueEditorController(QObject):
             plugin=slot.plugin,
             snapshot=slot.source_snapshot,
             reading_entries=getattr(slot, "reading_source_entries", None),
+            load_snapshot=collection.freeze_native_template() if paged else None,
         )
 
     def _cancel_index(self):
@@ -182,13 +214,7 @@ class DialogueEditorController(QObject):
             # A metadata preview cannot replace a selected scene from the full catalog.
             return
         self._index = index
-        self._context_reason = (
-            "正在补全话题与场景记录，可先浏览已有任务并编辑译文。"
-            if not complete
-            else ""
-            if index.quests
-            else "当前插件没有可浏览的任务或对话词条。"
-        )
+        self._context_reason = "" if complete else "正在补全话题与场景记录…"
         if self._selected_key is not None:
             self._display_entry(self._selected_key)
         elif (location := self._selected_location()) is not None:
@@ -212,14 +238,28 @@ class DialogueEditorController(QObject):
         if self._closed or not self.preview.isEnabled() or self._scope != content_scope(self.context):
             return
         collection = self.context.collection
-        if collection is None or collection.get(key) is None:
+        entry = None if collection is None else collection.get(key)
+        if entry is None:
             return
+        self._records.reset()
+        self._records.bind_collection(collection)
+        if record_type(entry) == "QUST":
+            self._records.preferred = "record"
         self._node_identity = None
         self._selected_key = key
-        self._session_keys = self.preview.editor_navigation_keys()
+        task_entry = (
+            isinstance(collection, ProjectRowsCollection)
+            and unavailable_reason(self.context) is None
+            and record_type(entry) in CONTEXT_RECORD_TYPES
+        )
+        self._session_keys = () if task_entry else self.preview.editor_navigation_keys()
         self._prepare_context()
         show_and_activate(self.dialog)
         self.view.translation.setFocus()
+
+    def _redisplay(self) -> None:
+        if not self._closed and self.dialog.isVisible() and self._selected_key is not None:
+            self._display_entry(self._selected_key)
 
     def _display_entry(self, key) -> None:
         collection = self.context.collection
@@ -228,16 +268,32 @@ class DialogueEditorController(QObject):
             self._clear_selection("词条已被移除，请重新选择。")
             return
         self.view.body.setEnabled(True)
-        self.view.message.setText("应用译文后返回工作台；应用并下一条可继续编辑。未应用草稿在窗口打开期间保留。")
+        self.view.show_message("")
         location = self._selected_location(key) or self._index.locations.get(key)
-        if location is not None and unavailable_reason(self.context) is None:
+        plugin = unavailable_reason(self.context) is None
+        record = record_identity(entry) if plugin else None
+        self.view.set_record_available(record is not None)
+        if record is not None and (self._records.preferred == "record" or location is None):
+            task_record = record.signature in CONTEXT_RECORD_TYPES
+            self.view.set_context_available(
+                location is not None,
+                self._context_reason if task_record else "",
+                show_reason=task_record and location is None,
+            )
+            keys = self._records.present(collection, entry, record, self._scope)
+            self._navigation_keys = keys if len(keys) > 1 or key not in self._session_keys else self._session_keys
+            self._edit_entry(entry, record_scope=len(keys) > 1)
+            if self._records.pending:
+                self.view.previous_button.setEnabled(False)
+                self.view.next_button.setEnabled(False)
+                self.view.apply_next_button.setEnabled(False)
+        elif location is not None and plugin:
             self._show_context(location)
         else:
             self._navigation_keys = self._session_keys or self._entry_keys
             if key not in self._navigation_keys:
                 self._navigation_keys = (key,)
-            reason = self._context_reason or "当前词条没有任务关联，可在右侧编辑译文。"
-            self.view.set_context_available(False, reason)
+            self.view.set_context_available(False, self._context_reason)
             self.view.show_entries((entry,), 0)
             self.select_entry(0)
 
@@ -254,6 +310,7 @@ class DialogueEditorController(QObject):
         quest, topic, row = location
         self.view.body.setEnabled(True)
         self.view.set_context_available(True, self._context_reason)
+        self.view.set_browse_mode("dialogue")
         self.view.show_quests(self._index, quest)
         self.select_quest(quest, topic, row)
 
@@ -283,13 +340,14 @@ class DialogueEditorController(QObject):
         entries = tuple(entry for key in selected.entries if (entry := collection.get(key)) is not None)
         self.view.show_entries(entries, row)
         if entries:
-            self.view.message.setText(f"{selected.label} · {len(entries)} 条关联词条；修改后应用译文。")
+            self.view.show_message(f"{selected.label} · {len(entries)} 条关联词条")
             self.select_entry(row)
         else:
             self._current = self._selected_key = None
+            self.view.set_record_available(False)
             self.view.show_entry(None, "")
             self._show_draft_state()
-            self.view.message.setText(f"{selected.label} 没有关联的可翻译词条，可继续选择其他记录。")
+            self.view.show_message(f"{selected.label} 没有关联的可翻译词条。")
 
     def select_entry(self, row: int) -> None:
         entries = self.view.table_model.entries
@@ -297,6 +355,10 @@ class DialogueEditorController(QObject):
             return
         self._row = row
         entry = entries[row]
+        self.view.set_record_available(unavailable_reason(self.context) is None and record_identity(entry) is not None)
+        self._edit_entry(entry)
+
+    def _edit_entry(self, entry, *, record_scope=False) -> None:
         self._selected_key = entry.identity
         self._current = self._drafts.get((self._scope, entry.identity)) or EntryDraft.capture(self.context, entry)
         self.view.show_entry(entry, self._current.text)
@@ -304,7 +366,13 @@ class DialogueEditorController(QObject):
         position = self._navigation_keys.index(entry.identity)
         self.view.previous_button.setEnabled(position > 0)
         self.view.next_button.setEnabled(position < len(self._navigation_keys) - 1)
-        self.view.show_navigation(position, len(self._navigation_keys), self.view.context_panel.isEnabled())
+        self.view.apply_next_button.setEnabled(True)
+        self.view.show_navigation(
+            position,
+            len(self._navigation_keys),
+            self.view.browsing_mode == "dialogue" and self.view.context_panel.isEnabled(),
+            scope="当前记录" if record_scope else None,
+        )
 
     def edit_text(self, text: str) -> None:
         if self._current is None:
@@ -343,7 +411,7 @@ class DialogueEditorController(QObject):
             logging.getLogger(__name__).exception("Entry draft commit failed")
             error = f"应用译文失败：{exc}。草稿已保留。"
         if error:
-            self.view.message.setText(error)
+            self.view.show_message(error)
             return
         self._drafts.pop((draft.scope, draft.before.entry_key), None)
         if content_scope(self.context) != draft.scope:
@@ -363,7 +431,7 @@ class DialogueEditorController(QObject):
                 logging.getLogger(__name__).exception("Translation synchronization failed")
                 error = f"当前译文已应用，但同步失败：{exc}。请核对后重试。"
             if error:
-                self.view.message.setText(error)
+                self.view.show_message(error)
                 self.view.translation.setFocus()
                 return
         if content_scope(self.context) != draft.scope:
@@ -407,6 +475,7 @@ class DialogueEditorController(QObject):
             return
         self._cancel_index()
         self._closed = True
+        self._records.reset()
         self._generation += 1
         self.dialog.hide()
         self.context.collection_changed.disconnect(self.refresh)

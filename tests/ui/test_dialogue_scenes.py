@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 import pytest
@@ -102,6 +104,23 @@ def test_scene_survives_project_snapshot_hydration_without_a_live_plugin(editor)
     select_record(editor, 3)
     assert editor._node_identity[-1] == "SCEN:00000012"
     assert editor.view.table_model.rowCount() == 5
+
+
+def test_legacy_project_shows_available_topic_without_catalog_instructions(editor):
+    snapshot = SourceSnapshot.from_bytes(
+        SourceDescriptor("absent/fixture.esp"), FormatId.PLUGIN_SSE, dialogue_plugin_bytes()
+    )
+    slot = editor.context.active_slot
+    slot.plugin = None
+    slot.source_snapshot = replace(snapshot, content=None, lease_id="project-translation-content")
+    slot.format_id = FormatId.PLUGIN_SSE
+    editor.refresh()
+    editor.open_entry(dialogue_entries()[2].identity)
+    drain(editor)
+    assert editor.view.context_panel.isVisible()
+    assert editor.view.context_reason.isHidden()
+    assert editor.view.context_reason.text() == ""
+    assert editor.view.message.text().endswith("3 条关联词条")
 
 
 def test_eet_never_reads_scene_catalog_even_if_a_stale_plugin_is_present(scene_editor, monkeypatch):

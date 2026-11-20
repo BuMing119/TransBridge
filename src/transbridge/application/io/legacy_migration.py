@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from transbridge.application.contracts import OperationOutcome, RequestContext
-from transbridge.config.text_encoding import DEFAULT_TEXT_ENCODING, XTRANSLATOR_READ_POLICY, language_from_suffix
+from transbridge.config.text_encoding import DEFAULT_READ_POLICY, DEFAULT_TEXT_ENCODING, language_from_suffix
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.parser.strings_file import PluginStringsLookup
 from transbridge.parser.xt import XT_XmlParser
@@ -39,7 +39,7 @@ def prepare_legacy_migration(
     overwrite_strings: bool = False,
     input_encoding: str = DEFAULT_TEXT_ENCODING,
     source_language: str | None = None,
-    text_read_policy: str = XTRANSLATOR_READ_POLICY,
+    text_read_policy: str = DEFAULT_READ_POLICY,
 ) -> LegacyMigrationDraft:
     """Preserve EET → XT → Strings matching/overwrite order without publishing.
 

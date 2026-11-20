@@ -37,6 +37,7 @@ from .writes import insert_project
 class ProjectStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
+        self._record_key_cache = {}
 
     def create(
         self,
@@ -172,6 +173,14 @@ class ProjectStore:
             if token is not None and token != _read_token(connection, variant_id):
                 raise ProjectStorageConflict("project or Variant changed while reading its entries")
             return reads.read_entries(connection, variant_id, keys)
+
+    def read_record_entries(self, token: ProjectReadToken, identity):
+        from .record_reads import read_record_entries
+
+        with project_connection(self.path) as connection:
+            if token != _read_token(connection, token.variant_id):
+                raise ProjectStorageConflict("project or Variant changed while reading its record fields")
+            return read_record_entries(connection, token, identity, self._record_key_cache)
 
     def commit(self, batch: SaveBatch) -> SaveReceipt:
         if not batch.changes and batch.operation_id is None:

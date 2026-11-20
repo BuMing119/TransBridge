@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from sse_plugin_interface.group import Group
 from sse_plugin_interface.record import Record
 
+from .dialogue_order_binary import check_cancelled
 from .plugin_with_context import SSEPluginWithContext
 
 
@@ -27,12 +29,15 @@ class DialogueCatalog:
 
 
 _CATEGORIES = ("Player", "Favor", "Scene", "Combat", "Favors", "Detection", "Service", "Miscellaneous")
+CATALOG_VERSION = 1
+_FORM_ID = re.compile(r"[0-9A-F]{8}")
 
 
-def _records(groups):
+def _records(groups, cancelled=None):
     for item in groups:
+        check_cancelled(cancelled)
         if isinstance(item, Group):
-            yield from _records(item.children)
+            yield from _records(item.children, cancelled)
         elif isinstance(item, Record) and item.type in {"QUST", "DIAL", "SCEN", "DLBR"}:
             yield item
 
@@ -66,9 +71,10 @@ def _scene_links(record: Record) -> tuple[str, tuple[str, ...]]:
     return quest_id, tuple(topics)
 
 
-def read_dialogue_catalog(plugin: SSEPluginWithContext) -> DialogueCatalog:
+def read_dialogue_catalog(plugin: SSEPluginWithContext, *, cancellation=None) -> DialogueCatalog:
     """Use explicit binary references only; record order never implies a link."""
-    records = tuple(_records(plugin.groups))
+    cancelled = (lambda: cancellation.is_cancelled) if cancellation is not None else None
+    records = tuple(_records(plugin.groups, cancelled))
     branches = {record.formid: _field_reference(record, "QNAM") for record in records if record.type == "DLBR"}
     starts = {
         _field_reference(record, "SNAM"): _field_reference(record, "QNAM")
@@ -77,6 +83,7 @@ def read_dialogue_catalog(plugin: SSEPluginWithContext) -> DialogueCatalog:
     }
     result = []
     for record in records:
+        check_cancelled(cancelled)
         if record.type == "DLBR":
             continue
         edid = plugin.get_record_edid(record)
@@ -95,3 +102,40 @@ def read_dialogue_catalog(plugin: SSEPluginWithContext) -> DialogueCatalog:
             quest_id, topics = _scene_links(record)
         result.append(DialogueRecord(record.type, record.formid.upper(), editor_id, quest_id, category, topics))
     return DialogueCatalog(tuple(result))
+
+
+def catalog_payload(catalog: DialogueCatalog) -> tuple:
+    """Store navigational facts only, with no parser objects or plugin payload."""
+    return tuple(
+        (item.kind, item.form_id, item.editor_id, item.quest_id, item.category, item.topic_ids)
+        for item in catalog.records
+    )
+
+
+def catalog_from_payload(payload) -> DialogueCatalog:
+    """Validate the closed, versioned catalog schema at the persistence boundary."""
+    if not isinstance(payload, (tuple, list)):
+        raise ValueError("Dialogue catalog records must be a sequence")
+    records = []
+    for row in payload:
+        if not isinstance(row, (tuple, list)) or len(row) != 6:
+            raise ValueError("Invalid dialogue catalog record")
+        kind, form_id, editor_id, quest_id, category, topic_ids = row
+        if any(type(value) is not str for value in (kind, form_id, editor_id, quest_id, category)):
+            raise ValueError("Dialogue catalog record fields must be text")
+        if kind not in {"QUST", "DIAL", "SCEN"} or not _FORM_ID.fullmatch(form_id):
+            raise ValueError("Invalid dialogue catalog record identity")
+        if quest_id and not _FORM_ID.fullmatch(quest_id):
+            raise ValueError("Invalid dialogue catalog quest reference")
+        if category and (kind != "DIAL" or category not in _CATEGORIES):
+            raise ValueError("Invalid dialogue catalog category")
+        if not isinstance(topic_ids, (tuple, list)) or any(
+            type(topic) is not str or not _FORM_ID.fullmatch(topic) for topic in topic_ids
+        ):
+            raise ValueError("Invalid dialogue catalog topic references")
+        if len(set(topic_ids)) != len(topic_ids) or (kind != "SCEN" and topic_ids):
+            raise ValueError("Invalid dialogue catalog topic membership")
+        if kind == "QUST" and quest_id:
+            raise ValueError("Quest catalog records cannot reference another quest")
+        records.append(DialogueRecord(kind, form_id, editor_id, quest_id, category, tuple(topic_ids)))
+    return DialogueCatalog(tuple(records))

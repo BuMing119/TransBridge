@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 
 from transbridge.application.contracts import OperationOutcome, RequestContext
-from transbridge.config.text_encoding import DEFAULT_SOURCE_LANGUAGE, DEFAULT_TEXT_ENCODING, XTRANSLATOR_READ_POLICY
+from transbridge.config.text_encoding import DEFAULT_READ_POLICY, DEFAULT_SOURCE_LANGUAGE, DEFAULT_TEXT_ENCODING
 from transbridge.converter.eet_matching import known_editor_id
 from transbridge.converter.sst_matching import target_locator
 from transbridge.converter.translation_entry import TranslationEntry
@@ -82,7 +82,7 @@ def prepare_migration_import(
     require_original_match: bool = False,
     input_encoding: str = DEFAULT_TEXT_ENCODING,
     source_language: str | None = None,
-    text_read_policy: str = XTRANSLATOR_READ_POLICY,
+    text_read_policy: str = DEFAULT_READ_POLICY,
 ) -> MigrationImportDraft:
     """Parse and map one source without changing ``target``.
 

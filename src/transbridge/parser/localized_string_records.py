@@ -71,8 +71,13 @@ def parse_records(
                     raw_payload, read_options, legacy_linked=legacy_linked, length_prefixed=length_prefixed
                 )
             )
-        except UnicodeDecodeError as exc:
-            raise ValueError(f"String ID {string_id} cannot be decoded as {exc.encoding} at byte {exc.start}") from exc
+        except (UnicodeDecodeError, LookupError, OSError) as exc:
+            reason = (
+                f"cannot be decoded as {exc.encoding} at byte {exc.start}"
+                if isinstance(exc, UnicodeDecodeError)
+                else str(exc)
+            )
+            raise ValueError(f"String ID {string_id} {reason}") from exc
         records.append(LocalizedStringRecord(index, string_id, offset, raw_payload, raw_chunk, text, encoding))
     return tuple(records)
 

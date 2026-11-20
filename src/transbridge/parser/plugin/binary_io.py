@@ -13,9 +13,9 @@ from sse_plugin_interface.subrecord import XXXX, StringSubrecord, Subrecord
 from sse_plugin_interface.utilities import Stream
 
 from transbridge.config.text_encoding import (
+    DEFAULT_READ_POLICY,
     DEFAULT_SOURCE_LANGUAGE,
     DEFAULT_TEXT_ENCODING,
-    XTRANSLATOR_READ_POLICY,
     TextReadOptions,
 )
 
@@ -32,7 +32,7 @@ class PluginBinaryIO(SSEPlugin):
         *,
         input_encoding: str = DEFAULT_TEXT_ENCODING,
         source_language: str = DEFAULT_SOURCE_LANGUAGE,
-        text_read_policy: str = XTRANSLATOR_READ_POLICY,
+        text_read_policy: str = DEFAULT_READ_POLICY,
     ) -> Self:
         with path.open("rb") as stream:
             return cls.from_stream(
@@ -51,7 +51,7 @@ class PluginBinaryIO(SSEPlugin):
         *,
         input_encoding: str = DEFAULT_TEXT_ENCODING,
         source_language: str = DEFAULT_SOURCE_LANGUAGE,
-        text_read_policy: str = XTRANSLATOR_READ_POLICY,
+        text_read_policy: str = DEFAULT_READ_POLICY,
     ) -> Self:
         options = TextReadOptions(input_encoding, source_language, text_read_policy)
         plugin = super().from_stream(stream, name)

@@ -37,6 +37,7 @@ class IndexDelivery(QObject):
         *,
         plugin=None,
         snapshot=None,
+        load_snapshot=None,
         reading_entries=None,
     ):
         super().__init__()
@@ -52,9 +53,10 @@ class IndexDelivery(QObject):
             entries,
             plugin=plugin,
             snapshot=snapshot,
+            load_snapshot=load_snapshot,
             reading_entries=reading_entries,
             cancellation=self._cancellation,
-            on_preview=self.preview_ready.emit,
+            on_preview=self.preview_ready.emit if load_snapshot is None else None,
         )
         self._worker = worker
         self.setParent(worker)

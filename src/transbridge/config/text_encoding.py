@@ -19,9 +19,16 @@ TEXT_OUTPUT_ENCODING = "text_output_encoding"
 TEXT_SOURCE_LANGUAGE = "text_source_language"
 TEXT_TARGET_LANGUAGE = "text_target_language"
 XTRANSLATOR_READ_POLICY = "xtranslator-v1"
+XTRANSLATOR_WINDOWS_READ_POLICY = "xtranslator-v2"
+DEFAULT_READ_POLICY = XTRANSLATOR_WINDOWS_READ_POLICY
 LEGACY_READ_POLICY = "legacy-v1"
 STRICT_READ_POLICY = "strict-v1"
-_READ_POLICIES = frozenset({XTRANSLATOR_READ_POLICY, LEGACY_READ_POLICY, STRICT_READ_POLICY})
+_READ_POLICIES = frozenset({
+    XTRANSLATOR_READ_POLICY,
+    XTRANSLATOR_WINDOWS_READ_POLICY,
+    LEGACY_READ_POLICY,
+    STRICT_READ_POLICY,
+})
 
 # xTranslator Data/SkyrimSE/codepage.txt specifies UTF-8 for all rows,
 # with at most one language-specific fallback.
@@ -115,7 +122,7 @@ def language_from_suffix(suffix: str | None) -> str:
 class TextReadOptions:
     input_encoding: str = DEFAULT_TEXT_ENCODING
     source_language: str = DEFAULT_SOURCE_LANGUAGE
-    text_read_policy: str = XTRANSLATOR_READ_POLICY
+    text_read_policy: str = DEFAULT_READ_POLICY
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "input_encoding", normalize_text_encoding(self.input_encoding))

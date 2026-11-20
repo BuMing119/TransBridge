@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import replace
 
+from transbridge.application.dialogue.record_fields import record_identity
 from transbridge.application.io.contracts import FormatId
 from transbridge.application.io.identity import EntryKey, EntryRevision
 from transbridge.application.projections.models import DeferredProjectRows, copy_projection_value
@@ -85,6 +86,17 @@ class ProjectRowsCollection:
 
         return read
 
+    def record_entries(self, selected_entry):
+        """Read one complete plugin record, including fields outside loaded pages."""
+        token, authority, states = self.token, self._authority, self._states
+        identity = record_identity(selected_entry)
+        if identity is None or identity.namespace != self.source.info.namespace:
+            return ()
+        rows = self.reader.store.read_record_entries(token, identity)
+        return tuple(
+            entry for entry in _translation_entries(rows, authority, states) if record_identity(entry) == identity
+        )
+
     def get_by_id(self, entry_id):
         return TranslationEntryCollection(self).get_by_id(entry_id)
 
@@ -107,6 +119,11 @@ class ProjectRowsCollection:
 
     def native_template(self):
         return self.reader.template(self.source, self.token)
+
+    def freeze_native_template(self):
+        """Defer the format fields read while binding it to the same revision as the rows."""
+        reader, source, token = self.reader, self.source, self.token
+        return lambda: reader.template(source, token)
 
     def statistics(self):
         authority = self._authority

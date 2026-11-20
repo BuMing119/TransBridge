@@ -5,9 +5,11 @@ from transbridge.config.text_encoding import (
     DEFAULT_TEXT_ENCODING,
     LEGACY_READ_POLICY,
     XTRANSLATOR_READ_POLICY,
+    XTRANSLATOR_WINDOWS_READ_POLICY,
     TextReadOptions,
     fallback_encoding,
 )
+from transbridge.parser.windows_codepage import decode_windows_codepage
 
 
 def decode_game_text(payload: bytes, options: TextReadOptions) -> tuple[str, str]:
@@ -17,11 +19,14 @@ def decode_game_text(payload: bytes, options: TextReadOptions) -> tuple[str, str
     except UnicodeDecodeError:
         fallback = (
             fallback_encoding(options.source_language)
-            if primary == DEFAULT_TEXT_ENCODING and options.text_read_policy == XTRANSLATOR_READ_POLICY
+            if primary == DEFAULT_TEXT_ENCODING
+            and options.text_read_policy in {XTRANSLATOR_READ_POLICY, XTRANSLATOR_WINDOWS_READ_POLICY}
             else None
         )
         if fallback is None:
             raise
+    if options.text_read_policy == XTRANSLATOR_WINDOWS_READ_POLICY:
+        return decode_windows_codepage(payload, fallback), fallback
     return payload.decode(fallback), fallback
 
 
