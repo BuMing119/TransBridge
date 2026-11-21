@@ -11,6 +11,10 @@ from tests.persistence.project_store.test_source_extraction import _create_proje
 from transbridge.application.contracts import RequestContext
 from transbridge.application.io import FormatId
 from transbridge.application.io.plugin_dialogue_catalog import METADATA_KEY, dialogue_catalog_from_snapshot
+from transbridge.application.io.plugin_dialogue_order import (
+    METADATA_KEY as ORDER_METADATA_KEY,
+    dialogue_order_from_snapshot,
+)
 from transbridge.application.projects.source_extraction import reconstructed_source_snapshot
 from transbridge.parser.plugin.dialogue_catalog import CATALOG_VERSION, DialogueCatalog, DialogueRecord
 from transbridge.parser.plugin.dialogue_order_binary import DialogueOrderCancelled
@@ -92,6 +96,10 @@ def test_project_and_portable_import_keep_scenes_and_stringless_topics_without_p
         DialogueRecord("SCEN", "00000012", "TestScene", "00000001", topic_ids=("00000010",)),
     ))
     assert dialogue_catalog_from_snapshot(source) == expected
+    scenes = dialogue_order_from_snapshot(source).scenes
+    assert [(item.form_id, item.quest_id, item.topic_ids) for item in scenes] == [
+        ("00000012", "00000001", ("00000010",))
+    ]
     rows = ProjectStore(database).read_page(variant)
     assert [row.snapshot.original for row in rows] == ["Journal"]
     package = _package(tmp_path, database)
@@ -105,7 +113,34 @@ def test_project_and_portable_import_keep_scenes_and_stringless_topics_without_p
     assert packages.inspect_import(str(package), RequestContext("catalog-test")).project_id
     imported = packages.import_project(str(package), RequestContext("catalog-test"))
     assert dialogue_catalog_from_snapshot(_snapshot(imported)) == expected
+    assert dialogue_order_from_snapshot(_snapshot(imported)).scenes == scenes
     assert dialogue_catalog_from_snapshot(source) == expected
+
+
+@pytest.mark.parametrize("with_catalog", [False, True])
+@pytest.mark.parametrize("version", [1, 2])
+def test_legacy_scene_evidence_metadata_remains_portable_without_source_bytes(
+    tmp_path, monkeypatch, with_catalog, version
+):
+    database, _variant = _project(tmp_path)
+    with project_connection(database, write=True) as connection:
+        (raw,) = connection.execute("SELECT format_fields FROM source").fetchone()
+        fields = json.loads(raw)
+        _version, fingerprint, payload = fields[ORDER_METADATA_KEY]
+        fields[ORDER_METADATA_KEY] = [version, fingerprint, payload[:7] if version == 1 else payload]
+        if not with_catalog:
+            fields.pop(METADATA_KEY)
+        else:
+            fields[METADATA_KEY][0] = 1
+        connection.execute("UPDATE source SET format_fields = ?", (json.dumps(fields),))
+    package = _package(tmp_path, database)
+    monkeypatch.setattr(Path, "read_bytes", lambda *_: pytest.fail("Historical plugin input must not be opened"))
+    imported = _packages(tmp_path).import_project(str(package), RequestContext("catalog-test"))
+    evidence = dialogue_order_from_snapshot(_snapshot(imported))
+    assert evidence.complete
+    assert evidence.extraction_version == version
+    assert any(item.kind == "DIAL" and item.form_id == "00000010" for item in evidence.records)
+    assert [item.topic_ids for item in evidence.scenes] == ([("00000010",)] if with_catalog or version == 2 else [])
 
 
 def test_old_project_without_catalog_metadata_stays_readable_without_source_input(tmp_path):

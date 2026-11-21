@@ -158,7 +158,7 @@ entries = tuple(
     )
     for e in hydration.entries
 )
-reading = tuple(ReadingEntry(e.identity, e.context, e.metadata) for e in entries)
+reading = tuple(ReadingEntry(e.identity, e.context, e.metadata, bool(e.original.strip())) for e in entries)
 results.update(entries=len(entries), source_sha256=snapshot.sha256, source_bytes=len(snapshot.content))
 initial_digest = digest([e.to_dict() for e in entries])
 print("loaded", mode, len(entries), "seconds", time.perf_counter() - started, flush=True)

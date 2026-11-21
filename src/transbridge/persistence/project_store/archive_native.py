@@ -26,8 +26,8 @@ from transbridge.config.text_encoding import TextReadOptions
 from transbridge.converter.eet_entries import EET_CODEC_VERSION
 from transbridge.converter.sst_entries import SST_CODEC_VERSION
 from transbridge.parser.eet_binary_codec import EetDocument
-from transbridge.parser.plugin.dialogue_catalog import CATALOG_VERSION, catalog_from_payload
-from transbridge.parser.plugin.dialogue_order_evidence import EXTRACTION_VERSION, evidence_from_payload
+from transbridge.parser.plugin.dialogue_catalog import SUPPORTED_CATALOG_VERSIONS, catalog_from_payload
+from transbridge.parser.plugin.dialogue_order_evidence import SUPPORTED_EXTRACTION_VERSIONS, evidence_from_payload
 from transbridge.parser.xt.sst_codec import SstDocument
 
 from .entry_codec import immutable_json
@@ -174,12 +174,18 @@ def _validate_plugin_fields(fields, fingerprint):
         raise ValueError("plugin localization indicator must be boolean")
     if METADATA_KEY in fields:
         version, source_fingerprint, payload = fields[METADATA_KEY]
-        if type(version) is not int or version != EXTRACTION_VERSION or source_fingerprint != fingerprint:
+        if (
+            type(version) is not int
+            or version not in SUPPORTED_EXTRACTION_VERSIONS
+            or source_fingerprint != fingerprint
+        ):
             raise ValueError("plugin dialogue metadata belongs to another source revision")
+        if not isinstance(payload, tuple) or len(payload) != (7 if version == 1 else 8):
+            raise ValueError("plugin dialogue metadata payload differs from its extraction version")
         evidence_from_payload(payload)
     if CATALOG_METADATA_KEY in fields:
         version, source_fingerprint, payload = fields[CATALOG_METADATA_KEY]
-        if type(version) is not int or version != CATALOG_VERSION or source_fingerprint != fingerprint:
+        if type(version) is not int or version not in SUPPORTED_CATALOG_VERSIONS or source_fingerprint != fingerprint:
             raise ValueError("plugin dialogue catalog belongs to another source revision")
         catalog_from_payload(payload)
     if PLUGIN_SST_MASTERS in fields:

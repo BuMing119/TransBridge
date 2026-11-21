@@ -18,8 +18,10 @@ from .dialogue_order_binary import (
     parsed_records,
     remember_identity,
 )
+from .scene_links import scene_links
 
-EXTRACTION_VERSION = 1
+EXTRACTION_VERSION = 3
+SUPPORTED_EXTRACTION_VERSIONS = frozenset({1, 2, EXTRACTION_VERSION})
 _FORM_ID = re.compile(r"[0-9A-F]{8}\Z")
 _MISSING_IDENTITY = object()
 
@@ -48,6 +50,14 @@ class DialogueOrderLink:
 
 
 @dataclass(frozen=True, slots=True)
+class DialogueOrderScene:
+    form_id: str
+    record_ordinal: int
+    quest_id: str = ""
+    topic_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class DialogueOrderEvidence:
     records: tuple[DialogueOrderRecord, ...] = ()
     links: tuple[DialogueOrderLink, ...] = ()
@@ -56,6 +66,8 @@ class DialogueOrderEvidence:
     invalid_topics: tuple[str, ...] = ()
     invalid_branch_quests: tuple[str, ...] = ()
     complete: bool = True
+    scenes: tuple[DialogueOrderScene, ...] = ()
+    extraction_version: int = EXTRACTION_VERSION
 
 
 def _cancelled(cancellation):
@@ -81,6 +93,7 @@ def _derive(raw_records, cancelled=None, *, identities: RecordIdentities | None 
     if identities is None:
         identities = {}
     relevant = []
+    raw_scenes = []
     diagnostics = []
     invalid_quests, invalid_topics, invalid_branch_quests = set(), set(), set()
 
@@ -97,7 +110,9 @@ def _derive(raw_records, cancelled=None, *, identities: RecordIdentities | None 
     for raw in raw_records:
         if index_records:
             remember_identity(identities, raw.form_id, raw.kind, raw.deleted)
-        if raw.kind in RELEVANT:
+        if raw.kind == "SCEN":
+            raw_scenes.append(raw)
+        elif raw.kind in RELEVANT:
             relevant.append(raw)
     values: dict[tuple[str, str], str] = {}
     malformed: set[str] = set()
@@ -280,6 +295,13 @@ def _derive(raw_records, cancelled=None, *, identities: RecordIdentities | None 
                 if raw.parent:
                     invalid_topics.add(raw.parent)
             links.append(DialogueOrderLink(raw.form_id, raw.parent, target_id, index, raw.ordinal, bool(edge_valid)))
+    scenes = []
+    for raw in raw_scenes:
+        check_cancelled(cancelled)
+        if raw.deleted or identities[raw.form_id] is None:
+            continue
+        quest_id, topic_ids = scene_links((name, data) for _, name, data in raw.fields)
+        scenes.append(DialogueOrderScene(raw.form_id, raw.ordinal, quest_id, topic_ids))
     return DialogueOrderEvidence(
         tuple(sorted(records.values(), key=lambda item: item.record_ordinal)),
         tuple(links),
@@ -287,6 +309,7 @@ def _derive(raw_records, cancelled=None, *, identities: RecordIdentities | None 
         tuple(sorted(invalid_quests)),
         tuple(sorted(invalid_topics)),
         tuple(sorted(invalid_branch_quests)),
+        scenes=tuple(scenes),
     )
 
 
@@ -300,13 +323,17 @@ def evidence_payload(evidence: DialogueOrderEvidence) -> tuple:
         evidence.invalid_topics,
         evidence.invalid_branch_quests,
         evidence.complete,
+        tuple(tuple(getattr(scene, name) for name in scene.__dataclass_fields__) for scene in evidence.scenes),
     )
 
 
-def evidence_from_payload(payload: Any) -> DialogueOrderEvidence:
-    if not isinstance(payload, tuple) or len(payload) != 7:
+def evidence_from_payload(payload: Any, *, extraction_version: int = EXTRACTION_VERSION) -> DialogueOrderEvidence:
+    if type(extraction_version) is not int or extraction_version not in SUPPORTED_EXTRACTION_VERSIONS:
+        raise ValueError("Unsupported dialogue evidence extraction version")
+    if not isinstance(payload, tuple) or len(payload) not in {7, 8}:
         raise ValueError("Invalid dialogue evidence metadata payload")
-    records, links, diagnostics, quests, topics, branch_quests, complete = payload
+    records, links, diagnostics, quests, topics, branch_quests, complete = payload[:7]
+    scenes = payload[7] if len(payload) == 8 else ()
     result = DialogueOrderEvidence(
         tuple(DialogueOrderRecord(*record) for record in records),
         tuple(DialogueOrderLink(*link) for link in links),
@@ -318,11 +345,31 @@ def evidence_from_payload(payload: Any) -> DialogueOrderEvidence:
         tuple(topics),
         tuple(branch_quests),
         complete,
+        tuple(DialogueOrderScene(*scene) for scene in scenes),
+        extraction_version,
     )
     # Strict structural checks keep corrupted/stale metadata from silently
     # asserting relations; the caller can derive it again from captured bytes.
     if type(complete) is not bool or any(type(value) is not str for value in (*quests, *topics, *branch_quests)):
         raise ValueError("Invalid dialogue evidence metadata scope")
+    scene_ids = set()
+    previous_ordinal = -1
+    for scene in result.scenes:
+        if (
+            type(scene.form_id) is not str
+            or not _FORM_ID.fullmatch(scene.form_id)
+            or scene.form_id in scene_ids
+            or type(scene.quest_id) is not str
+            or (scene.quest_id and not _FORM_ID.fullmatch(scene.quest_id))
+            or type(scene.record_ordinal) is not int
+            or scene.record_ordinal <= previous_ordinal
+            or not isinstance(scene.topic_ids, tuple)
+            or any(type(topic) is not str or not _FORM_ID.fullmatch(topic) for topic in scene.topic_ids)
+            or len(set(scene.topic_ids)) != len(scene.topic_ids)
+        ):
+            raise ValueError("Invalid dialogue evidence scene references or physical order")
+        scene_ids.add(scene.form_id)
+        previous_ordinal = scene.record_ordinal
     for record in result.records:
         if any(
             type(getattr(record, name)) is not str

@@ -194,7 +194,9 @@ class DialogueReadingOrderCoordinator(QObject):
         try:
             while self._offset < len(self._entries) and count < self._batch_size:
                 entry = self._entries[self._offset]
-                captured = ReadingEntry(entry.identity, entry.context, tuple(entry.metadata))
+                captured = ReadingEntry(
+                    entry.identity, entry.context, tuple(entry.metadata), bool(entry.original.strip())
+                )
                 if self._same_structure and captured != self._completed_entries[self._offset]:
                     self._same_structure = False
                 self._captured.append(captured)

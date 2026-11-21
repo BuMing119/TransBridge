@@ -34,10 +34,16 @@ def remember_reading_view(entries, evidence, view):
     def immutable(value):
         return type(value) in _IMMUTABLE_SCALARS or (type(value) is tuple and all(immutable(item) for item in value))
 
-    weight = len(entries) + len(evidence.records) + len(evidence.links)
+    weight = (
+        len(entries) + len(evidence.records) + len(evidence.links) + sum(1 + len(s.topic_ids) for s in evidence.scenes)
+    )
     if (
         weight > _MAX_ITEMS
-        or any(type(value) is not tuple for value in (evidence.records, evidence.links, evidence.diagnostics))
+        or any(
+            type(value) is not tuple
+            for value in (evidence.records, evidence.links, evidence.diagnostics, evidence.scenes)
+        )
+        or any(not immutable(scene.topic_ids) for scene in evidence.scenes)
         or not immutable((evidence.invalid_quests, evidence.invalid_topics, evidence.invalid_branch_quests))
         or not all(immutable(item.details) for item in evidence.diagnostics)
         or not all(immutable(entry.metadata) for entry in entries)

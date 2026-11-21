@@ -7,6 +7,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from transbridge.application.io.dialogue_question_order import order_topic_questions
 from transbridge.application.io.identity import EntryKey
 from transbridge.converter.plugin_entry_metadata import PLUGIN_PARENT_DIAL_FORMID, restore_plugin_source_order
 from transbridge.converter.translation_entry import TranslationEntry
@@ -89,8 +90,10 @@ def _record_order(identity: str) -> tuple[int, int, str]:
 
 
 def _ordered_nodes(nodes, definitions, topic_order):
-    """Replace DIAL positions only; journals/scenes retain their navigation slots."""
+    """Keep navigation slots, with scene headings in captured plugin order."""
     result = sorted(nodes, key=_record_order)
+    scenes = iter(node for node, record in definitions.items() if record.kind == "SCEN")
+    result = [next(scenes) if node.startswith("SCEN:") else node for node in result]
     if not topic_order:
         return result
     dial_nodes = {
@@ -110,9 +113,11 @@ def build_dialogue_index(
     *,
     catalog: DialogueCatalog = DialogueCatalog(),
     topic_orders: Mapping[QuestId, tuple[str, ...]] | None = None,
+    entry_order: Iterable[EntryKey] | None = None,
 ) -> DialogueIndex:
     entries = tuple(entries)
     topic_orders = topic_orders or {}
+    entry_ranks = None if entry_order is None else {key: rank for rank, key in enumerate(entry_order)}
     namespaces = {entry.identity.namespace.value for entry in entries}
     # Raw FormIDs belong to one source. A mixed collection cannot safely attach
     # the same catalog to every namespace, so keep only its per-entry metadata.
@@ -169,11 +174,22 @@ def build_dialogue_index(
     topic_entries: dict[tuple[str, str], list[EntryKey]] = defaultdict(list)
     for quest_key, items in by_quest.items():
         nodes: dict[str, list[EntryKey]] = defaultdict(list)
+        entry_nodes: dict[str, list[TranslationEntry]] = defaultdict(list)
         for entry in restore_plugin_source_order(items):
-            topic_id = _topic_id(entry)
-            nodes[topic_id].append(entry.identity)
+            entry_nodes[_topic_id(entry)].append(entry)
+        for topic_id, members in entry_nodes.items():
+            if topic_id in {"journal", "unknown"}:
+                ordered = members
+            elif entry_ranks is not None:
+                # Complete-source ranks retain omitted FULL/RNAM semantics for
+                # filtered collections and project rows hidden by tombstones.
+                ordered = sorted(members, key=lambda entry: entry_ranks.get(entry.identity, len(entry_ranks)))
+            else:
+                ordered = order_topic_questions(members)
+            keys = [entry.identity for entry in ordered]
+            nodes[topic_id] = keys
             if topic_id not in {"journal", "unknown"}:
-                topic_entries[(quest_key[0], topic_id)].append(entry.identity)
+                topic_entries[(quest_key[0], topic_id)].extend(keys)
         grouped[quest_key] = nodes
 
     quests = []

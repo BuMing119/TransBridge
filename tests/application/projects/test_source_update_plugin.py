@@ -1,19 +1,24 @@
 from copy import deepcopy
 from dataclasses import replace
 from itertools import count
+import json
 import struct
 from zipfile import ZipFile
 
 import pytest
 
+from tests.parser.test_scene_order_legacy import PHASE, PHYSICAL, phase_plugin_bytes
 from tests.plugin_fixtures import write_plugin
 from transbridge.application.contracts import RequestContext
 from transbridge.application.io import FormatId, Stage
+from transbridge.application.io.plugin_dialogue_order import dialogue_order_from_snapshot
 from transbridge.application.projects import ProjectProvisioningRequest, ProjectSourceRequest
 from transbridge.application.projects.source_content import source_content_identity
+from transbridge.application.projects.source_extraction import reconstructed_source_snapshot
 from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.config.repository import ConfigRepository
 from transbridge.config.text_encoding import TextEncodingDefaults, TextEncodings
+from transbridge.persistence.project_store.connection import project_connection
 from transbridge.persistence.project_store.history import ProjectHistory
 from transbridge.persistence.project_store.repository import ProjectStore
 from transbridge.persistence.v2.ids import VariantId, VariantRef
@@ -85,6 +90,55 @@ def _preview(services, path, replacement, context):
     result = services.project_source_updates.prepare(path, targets.value[0].source_id, str(replacement), context)
     assert result.is_success, result.diagnostics
     return result.value
+
+
+def test_explicit_same_content_source_update_refreshes_legacy_scene_metadata_and_ranks(services, tmp_path):
+    source = tmp_path / "scene.esp"
+    source.write_bytes(phase_plugin_bytes())
+    context, path = _create(services, source)
+    active = services.project_lifecycle.active
+    variant_id = active.formal_variant_ref.identity
+    for item in active.variant.snapshot().entries:
+        assert services.gui_project_commands.update_entry(
+            item.entry_key, context, translation=f"Translated {item.entry_key.local_key}", stage=5
+        ).is_success
+    assert services.gui_project_commands.save(context).is_success
+    before_entries = services.project_lifecycle.active.variant.snapshot().entries
+    with project_connection(path, write=True) as connection:
+        (raw,) = connection.execute("SELECT format_fields FROM source").fetchone()
+        fields = json.loads(raw)
+        fields["plugin_dialogue_order"][0] = 2
+        fields["plugin_dialogue_order"][2][7][0][3] = list(PHYSICAL)
+        fields["plugin_dialogue_catalog"][0] = 1
+        for row in fields["plugin_dialogue_catalog"][2]:
+            if row[0] == "SCEN":
+                row[5] = list(PHYSICAL)
+        connection.execute("UPDATE source SET format_fields = ?", (json.dumps(fields),))
+        connection.execute("UPDATE source_entry SET reading_ordinal = NULL")
+        connection.execute("UPDATE source_entry SET reading_ordinal = ordinal")
+    store = ProjectStore(path)
+    (before_source,) = store.sources()
+    assert [row.snapshot.original for row in store.read_page(variant_id, reading_order=True)] == ["Second", "First"]
+    assert dialogue_order_from_snapshot(reconstructed_source_snapshot(before_source, ())).extraction_version == 2
+
+    preview = _preview(services, path, source, context)
+    assert preview.unchanged == 2 and not (preview.added or preview.removed or preview.changed)
+    committed = services.project_source_updates.commit(preview.token, context)
+    assert committed.is_success, committed.diagnostics
+    (after_source,) = store.sources()
+    assert after_source.fingerprint == before_source.fingerprint
+    metadata = dict(after_source.format_fields)
+    assert metadata["plugin_dialogue_order"][0] == 3
+    assert metadata["plugin_dialogue_catalog"][0] == 2
+    evidence = dialogue_order_from_snapshot(reconstructed_source_snapshot(after_source, ()))
+    assert evidence.extraction_version == 3 and evidence.scenes[0].topic_ids == PHASE
+    assert [row.snapshot.original for row in store.read_page(variant_id, reading_order=True)] == ["First", "Second"]
+    # Source updates increment entry revisions and may change tuple display order;
+    # the saved business state must remain identical for every stable identity.
+    after_entries = {item.entry_key: item for item in services.project_lifecycle.active.variant.snapshot().entries}
+    assert set(after_entries) == {item.entry_key for item in before_entries}
+    for before in before_entries:
+        assert after_entries[before.entry_key] == replace(before, revision=before.revision.next())
 
 
 def test_original_qualified_source_update_preserves_exact_text_only(services, tmp_path):

@@ -364,7 +364,10 @@ class ProjectCoordinator:
                 PathLib(esp_path), **context_text_encodings(self._host.context).read_options()
             )
             collection = TranslationEntryCollection(parsed_entries)
-            reading_entries = tuple(ReadingEntry(entry.identity, entry.context, entry.metadata) for entry in collection)
+            reading_entries = tuple(
+                ReadingEntry(entry.identity, entry.context, entry.metadata, bool(entry.original.strip()))
+                for entry in collection
+            )
             if self._host.context.uses_authoritative_projection:
                 projection = self._host.app_runtime.use_cases.resolve("project_projection").snapshot()
                 states = () if projection is None else projection.to_dict()["values"].get("entries", ())

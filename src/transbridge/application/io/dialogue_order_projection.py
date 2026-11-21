@@ -9,6 +9,7 @@ from transbridge.application.dialogue_order import Branch, FieldOrder, Item, Lin
 from transbridge.converter.plugin_entry_metadata import PLUGIN_PARENT_DIAL_FORMID, restore_plugin_source_order
 from transbridge.parser.plugin.dialogue_order_binary import check_cancelled
 
+from .dialogue_question_order import order_topic_questions
 from .paratranz_context_order import parse_ordered_context
 
 _logger = logging.getLogger(__name__)
@@ -32,11 +33,10 @@ def restore_dialogue_source_order(entries):
 
 
 def project_dialogue_order(entries, evidence, *, reports=None, include_empty_topics=False, cancellation=None):
-    """Keep each quest's original slots and all objects; move only whole DIALs.
+    """Project verified scene, topic and INFO groups into their quest's original slots.
 
-    Evidence belongs to this one complete source. Missing or invalid evidence
-    retains the baseline with an explicit diagnostic. Reports are optional local
-    validation output and are never used as ranking inputs.
+    Evidence belongs to one complete source. Scene references and questions
+    can still be ordered when the topic link graph is invalid but membership is known.
     """
     check_cancelled(cancellation)
     if evidence is None:
@@ -64,6 +64,20 @@ def project_dialogue_order(entries, evidence, *, reports=None, include_empty_top
         parent = records.get(edge.source_topic_id)
         if parent is not None:
             edges[parent.quest_id].append(edge)
+    scene_topics = defaultdict(dict)
+    for scene in evidence.scenes:
+        if not scene.quest_id:
+            continue
+        for topic_id in scene.topic_ids:
+            topic = records.get(topic_id)
+            if (
+                topic
+                and topic.valid
+                and not topic.deleted
+                and topic.kind == "DIAL"
+                and topic.quest_id == scene.quest_id
+            ):
+                scene_topics[scene.quest_id].setdefault(topic_id, None)
     slots = defaultdict(list)
     for index, entry in enumerate(entries):
         base, _ = parse_ordered_context(entry.context)
@@ -77,92 +91,111 @@ def project_dialogue_order(entries, evidence, *, reports=None, include_empty_top
             slots.setdefault(quest, [])
     for quest, members in slots.items():
         check_cancelled(cancellation)
-        if not quest or quest in evidence.invalid_quests or not topics[quest]:
-            _fallback(quest, "missing or invalid quest relations", reports)
-            continue
-        items = _items(members, records, source_id, quest)
-        if items is None or any(not record.valid for record in topics[quest]):
-            _fallback(quest, "entries cannot be uniquely located in the captured DIAL/INFO records", reports)
-            continue
+        known = []
+        for member in members:
+            item = _item(member[1], records, source_id, quest)
+            if item is not None:
+                known.append((member, item))
+        items = [item for _, item in known]
         live_edges = [edge for edge in edges[quest] if not records[edge.source_info_id].deleted]
-        if any(not edge.valid for edge in live_edges):
-            _fallback(quest, "a live INFO has an invalid TCLT target", reports)
-            continue
-        invalid_preferences = quest in evidence.invalid_branch_quests or any(
-            topic.branch_id and (topic.branch_id not in records or not records[topic.branch_id].valid)
-            for topic in topics[quest]
-        )
-        result = plugin_only_layout(
-            [Topic(topic.form_id, source_id, quest, topic.record_ordinal) for topic in topics[quest]],
-            items,
-            [
-                Link(edge.source_topic_id, edge.target_topic_id, source_id, quest, edge.source_info_id)
-                for edge in live_edges
-            ],
-            source_id=source_id,
-            quest_id=quest,
-            branches=[
-                Branch(
-                    branch.form_id,
-                    source_id,
-                    quest,
-                    branch.start_topic_id,
-                    tuple(topic.form_id for topic in topics[quest] if topic.branch_id == branch.form_id),
-                )
-                for branch in branches[quest]
-                if branch.valid
-            ],
-            field_orders=[
-                FieldOrder(
-                    edge.source_topic_id,
-                    edge.source_info_id,
-                    edge.target_topic_id,
-                    edge.info_record_ordinal,
-                    edge.field_index,
-                )
-                for edge in live_edges
-            ],
-            invalid_preferences=invalid_preferences,
-        )
+        if (
+            not quest
+            or not topics[quest]
+            or quest in evidence.invalid_quests
+            or any(not edge.valid for edge in live_edges)
+        ):
+            _fallback(quest, "missing or invalid quest relations", reports)
+            graph_order = None
+        elif len(known) != len(members) or any(not record.valid for record in topics[quest]):
+            _fallback(quest, "entries cannot be uniquely located in the captured DIAL/INFO records", reports)
+            graph_order = None
+        else:
+            result = _topic_layout(
+                source_id, quest, topics[quest], branches[quest], live_edges, items, records, evidence
+            )
+            if reports is not None:
+                reports[quest] = result
+            if result["diagnostics"]:
+                _logger.warning("DIALOGUE_ORDER_LAYOUT %s: %s", quest, result["diagnostics"])
+            graph_order = result["ordered_topic_ids"] if result["status"] == "laid_out" else None
+        # The graph ranks unclaimed topics. Explicit scene/action membership takes precedence.
+        preferred = scene_topics.get(quest, {})
+        blocks = defaultdict(list)
+        for (_, entry), item in known:
+            blocks[item.topic_id].append(entry)
+        topic_order = tuple(dict.fromkeys((*preferred, *(graph_order if graph_order is not None else blocks))))
         if reports is not None:
-            reports[quest] = result
-        if result["diagnostics"]:
-            _logger.warning("DIALOGUE_ORDER_LAYOUT %s: %s", quest, result["diagnostics"])
-        if result["status"] == "fallback":
-            continue
-        by_identity = {entry.identity: entry for _, entry in members}
-        keys = result["ordered_keys"]
-        if len(by_identity) != len(members) or Counter(keys) != Counter(by_identity.keys()):
-            raise ValueError(f"Dialogue ordering changed entry identity membership for quest {quest}")
-        for (index, _), identity in zip(members, keys, strict=True):
-            ordered[index] = by_identity[identity]
-        projected = True
+            reports[quest]["reading_topic_ids"] = topic_order
+        question_blocks = {topic: order_topic_questions(rows) for topic, rows in blocks.items()}
+        if graph_order is None:
+            # Unreliable links cannot justify regrouping orphan topics. Keep their source slots.
+            queues = {topic: iter(rows) for topic, rows in question_blocks.items()}
+            rows = [row for topic in preferred for row in question_blocks.get(topic, ())]
+            rows.extend(next(queues[item.topic_id]) for item in items if item.topic_id not in preferred)
+        else:
+            rows = [row for topic in topic_order for row in question_blocks.get(topic, ())]
+        for ((index, previous), _), entry in zip(known, rows, strict=True):
+            ordered[index] = entry
+            projected |= entry is not previous
+        projected |= graph_order is not None
     check_cancelled(cancellation)
     return tuple(ordered), projected
 
 
-def _items(members, records, source_id, quest):
-    items = []
-    for _, entry in members:
-        match = _KEY_ID.fullmatch(entry.identity.local_key)
-        if match is None:
-            return None
-        record = records.get(match[1].upper())
-        context, _ = parse_ordered_context(entry.context)
-        kind = (context or "").partition(":")[0]
-        if record is None or record.kind != kind or not record.valid or record.quest_id != quest:
-            return None
-        topic = record.form_id if kind == "DIAL" else record.parent_topic_id
-        # Parent metadata is an additional ownership check, never a substitute
-        # for the captured binary INFO group. Old entries can omit this hint.
-        hinted = dict(entry.metadata).get(PLUGIN_PARENT_DIAL_FORMID)
-        if hinted and (not isinstance(hinted, str) or hinted.partition("|")[0].upper() != topic):
-            return None
-        items.append(Item(entry.identity, topic, source_id, quest, record.form_id if kind == "INFO" else ""))
-    return items
+def _topic_layout(source_id, quest, topics, branches, live_edges, items, records, evidence):
+    invalid_preferences = quest in evidence.invalid_branch_quests or any(
+        topic.branch_id and (topic.branch_id not in records or not records[topic.branch_id].valid) for topic in topics
+    )
+    return plugin_only_layout(
+        [Topic(topic.form_id, source_id, quest, topic.record_ordinal) for topic in topics],
+        items,
+        [
+            Link(edge.source_topic_id, edge.target_topic_id, source_id, quest, edge.source_info_id)
+            for edge in live_edges
+        ],
+        source_id=source_id,
+        quest_id=quest,
+        branches=[
+            Branch(
+                branch.form_id,
+                source_id,
+                quest,
+                branch.start_topic_id,
+                tuple(topic.form_id for topic in topics if topic.branch_id == branch.form_id),
+            )
+            for branch in branches
+            if branch.valid
+        ],
+        field_orders=[
+            FieldOrder(
+                edge.source_topic_id,
+                edge.source_info_id,
+                edge.target_topic_id,
+                edge.info_record_ordinal,
+                edge.field_index,
+            )
+            for edge in live_edges
+        ],
+        invalid_preferences=invalid_preferences,
+    )
+
+
+def _item(entry, records, source_id, quest):
+    match = _KEY_ID.fullmatch(entry.identity.local_key)
+    record = records.get(match[1].upper()) if match else None
+    context, _ = parse_ordered_context(entry.context)
+    kind = (context or "").partition(":")[0]
+    if record is None or record.kind != kind or not record.valid or record.quest_id != quest:
+        return None
+    topic = record.form_id if kind == "DIAL" else record.parent_topic_id
+    # A legacy entry can omit the hint, but cannot contradict the physical parent.
+    hinted = dict(entry.metadata).get(PLUGIN_PARENT_DIAL_FORMID)
+    if hinted and (not isinstance(hinted, str) or hinted.partition("|")[0].upper() != topic):
+        return None
+    return Item(entry.identity, topic, source_id, quest, record.form_id if kind == "INFO" else "")
 
 
 def _fallback(quest, reason, reports):
-    _logger.warning("DIALOGUE_ORDER_FALLBACK %s: %s; keeping source order", quest or "unassociated", reason)
+    _logger.warning("DIALOGUE_ORDER_FALLBACK %s: %s; skipping topic link layout", quest or "unassociated", reason)
     if reports is not None:
         reports[quest] = {"status": "fallback", "reason": reason}

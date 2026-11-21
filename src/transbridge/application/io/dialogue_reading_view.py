@@ -22,6 +22,7 @@ class ReadingEntry:
     identity: EntryKey
     context: str | None
     metadata: tuple[tuple[str, Any], ...]
+    has_original: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +84,7 @@ def _build_reading_view(entries, evidence, *, cancellation=None):
     for quest, baseline_topics in topics.items():
         check_cancelled(cancellation)
         result = reports.get(quest, {})
-        order = result["ordered_topic_ids"] if result.get("status") == "laid_out" else baseline_topics
-        topic_orders[namespace, quest] = tuple(order)
+        # Include stringless topics even when the graph had to fall back to the source sequence.
+        topic_orders[namespace, quest] = tuple(dict.fromkeys((*result.get("reading_topic_ids", ()), *baseline_topics)))
     check_cancelled(cancellation)
     return DialogueReadingView(tuple(entry.identity for entry in ordered), MappingProxyType(topic_orders))

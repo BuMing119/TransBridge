@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from dataclasses import replace
 from threading import RLock
 
@@ -11,7 +11,9 @@ from transbridge.application.contracts import Diagnostic, DiagnosticSeverity
 from transbridge.parser.plugin.dialogue_order_binary import check_cancelled
 from transbridge.parser.plugin.dialogue_order_evidence import (
     EXTRACTION_VERSION,
+    SUPPORTED_EXTRACTION_VERSIONS,
     DialogueOrderEvidence,
+    DialogueOrderScene,
     evidence_from_payload,
     evidence_payload,
     read_dialogue_order_bytes,
@@ -19,6 +21,7 @@ from transbridge.parser.plugin.dialogue_order_evidence import (
 )
 
 from .contracts import FormatId, SourceSnapshot
+from .plugin_dialogue_catalog import dialogue_catalog_from_snapshot
 
 METADATA_KEY = "plugin_dialogue_order"
 _CACHE_LIMIT = 4
@@ -58,19 +61,40 @@ def dialogue_order_from_snapshot(snapshot: SourceSnapshot, *, cancellation=None)
             if not isinstance(value, tuple) or len(value) != 3:
                 raise ValueError("Invalid dialogue metadata envelope")
             version, digest, payload = value
-            if type(version) is not int or version != EXTRACTION_VERSION or digest != snapshot.sha256:
+            if type(version) is not int or version not in SUPPORTED_EXTRACTION_VERSIONS or digest != snapshot.sha256:
                 raise ValueError("Dialogue metadata version or source digest differs")
-            metadata_key = digest, version, id(payload)
-            with _cache_lock:
-                cached = _metadata_cache.get(metadata_key)
-                if cached is not None and cached[0] is payload:
-                    _metadata_cache.move_to_end(metadata_key)
-                    check_cancelled(cancelled)
-                    return cached[1]
-            evidence = evidence_from_payload(payload)
-            check_cancelled(cancelled)
-            _remember_metadata(metadata_key, payload, evidence)
-            return evidence
+            if not isinstance(payload, tuple) or len(payload) != (7 if version == 1 else 8):
+                raise ValueError("Dialogue metadata payload differs from its extraction version")
+            # Old SCEN topics describe physical action order, not phase order.
+            # Prefer captured bytes for both legacy versions, even with saved scenes.
+            if version == 1 and snapshot.content is None:
+                evidence = evidence_from_payload(payload, extraction_version=version)
+                try:
+                    return replace(evidence, scenes=_saved_catalog_scenes(snapshot, cancellation))
+                except (ValueError, TypeError) as exc:
+                    return replace(
+                        evidence,
+                        diagnostics=(
+                            *evidence.diagnostics,
+                            Diagnostic(
+                                "DIALOGUE_ORDER_SCENE_CATALOG_INVALID",
+                                f"Saved scene catalog was rejected; dialogue relations were retained: {exc}.",
+                                DiagnosticSeverity.WARNING,
+                            ),
+                        ),
+                    )
+            elif version == EXTRACTION_VERSION or snapshot.content is None:
+                metadata_key = digest, version, id(payload)
+                with _cache_lock:
+                    cached = _metadata_cache.get(metadata_key)
+                    if cached is not None and cached[0] is payload:
+                        _metadata_cache.move_to_end(metadata_key)
+                        check_cancelled(cancelled)
+                        return cached[1]
+                evidence = evidence_from_payload(payload, extraction_version=version)
+                check_cancelled(cancelled)
+                _remember_metadata(metadata_key, payload, evidence)
+                return evidence
         except (ValueError, TypeError) as exc:
             metadata_diagnostic = Diagnostic(
                 "DIALOGUE_ORDER_METADATA_INVALID",
@@ -106,6 +130,20 @@ def dialogue_order_from_snapshot(snapshot: SourceSnapshot, *, cancellation=None)
     if metadata_diagnostic is not None:
         evidence = replace(evidence, diagnostics=(*evidence.diagnostics, metadata_diagnostic))
     return evidence
+
+
+def _saved_catalog_scenes(snapshot, cancellation):
+    catalog = dialogue_catalog_from_snapshot(snapshot, cancellation=cancellation)
+    if catalog is None:
+        return ()
+    identities = Counter(item.form_id for item in catalog.records)
+    cancelled = (lambda: cancellation.is_cancelled) if cancellation is not None else None
+    scenes = []
+    for index, item in enumerate(catalog.records):
+        check_cancelled(cancelled)
+        if item.kind == "SCEN" and identities[item.form_id] == 1:
+            scenes.append(DialogueOrderScene(item.form_id, index, item.quest_id, item.topic_ids))
+    return tuple(scenes)
 
 
 def _remember(key: tuple[str, int], evidence: DialogueOrderEvidence) -> None:

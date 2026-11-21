@@ -11,6 +11,7 @@ from sse_plugin_interface.record import Record
 
 from .dialogue_order_binary import check_cancelled
 from .plugin_with_context import SSEPluginWithContext
+from .scene_links import scene_links
 
 
 @dataclass(frozen=True)
@@ -29,7 +30,8 @@ class DialogueCatalog:
 
 
 _CATEGORIES = ("Player", "Favor", "Scene", "Combat", "Favors", "Detection", "Service", "Miscellaneous")
-CATALOG_VERSION = 1
+CATALOG_VERSION = 2
+SUPPORTED_CATALOG_VERSIONS = frozenset({1, CATALOG_VERSION})
 _FORM_ID = re.compile(r"[0-9A-F]{8}")
 
 
@@ -52,23 +54,7 @@ def _field_reference(record: Record, name: str) -> str:
 
 
 def _scene_links(record: Record) -> tuple[str, tuple[str, ...]]:
-    quest_id = ""
-    topics: dict[str, None] = {}
-    in_action = False
-    action_type = None
-    for field in record.subrecords:
-        if field.type == "ANAM":
-            # A uint16 starts an action; an empty ANAM closes it. PNAM inside
-            # a package action points to PACK, whereas outside it points to QUST.
-            in_action = bool(field.data)
-            action_type = int.from_bytes(field.data, "little") if len(field.data) == 2 else None
-        elif field.type == "PNAM" and not in_action:
-            quest_id = _reference(field.data)
-        elif field.type == "DATA" and in_action and action_type == 0:
-            topic_id = _reference(field.data)
-            if topic_id:
-                topics[topic_id] = None
-    return quest_id, tuple(topics)
+    return scene_links((field.type, field.data) for field in record.subrecords)
 
 
 def read_dialogue_catalog(plugin: SSEPluginWithContext, *, cancellation=None) -> DialogueCatalog:

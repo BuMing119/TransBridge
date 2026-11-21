@@ -140,8 +140,8 @@ def test_reopened_paratranz_export_preserves_qualified_empty_key_extensions_and_
     assert [item.snapshot.context for item in entries] == [None, ""]
     target = tmp_path / "exported.json"
     expected = [
-        {**records[0], "translation": "", "stage": 3},
-        {**records[1], "translation": "Empty source translation", "stage": 5},
+        {**records[0], "key": "00000000|TB2|shared", "translation": "", "stage": 3},
+        {**records[1], "key": f"00000001|TB2|{qualified}", "translation": "Empty source translation", "stage": 5},
     ]
     assert _json_export(snapshot, entries, target) == expected
 

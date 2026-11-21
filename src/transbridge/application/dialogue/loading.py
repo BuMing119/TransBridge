@@ -91,7 +91,10 @@ class DialogueIndexLoader:
             catalog, evidence = self._catalog, self._evidence
         view = build_dialogue_reading_view(
             (
-                tuple(ReadingEntry(entry.identity, entry.context, entry.metadata) for entry in entries)
+                tuple(
+                    ReadingEntry(entry.identity, entry.context, entry.metadata, bool(entry.original.strip()))
+                    for entry in entries
+                )
                 if reading_entries is None
                 else tuple(reading_entries)
             ),
@@ -100,4 +103,9 @@ class DialogueIndexLoader:
         )
         check_cancelled(cancelled)
         topic_orders = {(namespace.value, quest): order for (namespace, quest), order in view.topic_orders.items()}
-        return build_dialogue_index(entries, catalog=catalog, topic_orders=topic_orders)
+        return build_dialogue_index(
+            entries,
+            catalog=catalog,
+            topic_orders=topic_orders,
+            entry_order=view.ordered_keys if evidence is not None and evidence.complete else None,
+        )

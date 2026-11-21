@@ -10,6 +10,7 @@ from tests.dialogue_catalog_support import field, plugin_bytes, record, referenc
 from transbridge.application.io import FormatId, SourceDescriptor, SourceSnapshot, plugin_dialogue_order as snapshots
 from transbridge.parser.plugin.dialogue_order_binary import DialogueOrderCancelled, binary_records, parsed_records
 from transbridge.parser.plugin.dialogue_order_evidence import (
+    EXTRACTION_VERSION,
     evidence_from_payload,
     evidence_payload,
     read_dialogue_order_bytes,
@@ -369,7 +370,7 @@ def test_cache_is_bounded_and_different_captured_bytes_never_share_relations(mon
 @pytest.mark.parametrize("invalid_payload", [(), (1,), ((), (), (), (), (), (), "complete")])
 def test_corrupt_current_metadata_structure_is_rederived_with_a_diagnostic(invalid_payload):
     source = snapshot()
-    source = replace(source, metadata=((snapshots.METADATA_KEY, (1, source.sha256, invalid_payload)),))
+    source = replace(source, metadata=((snapshots.METADATA_KEY, (EXTRACTION_VERSION, source.sha256, invalid_payload)),))
     evidence = snapshots.dialogue_order_from_snapshot(source)
     assert evidence.complete and evidence.links[0].valid
     assert "DIALOGUE_ORDER_METADATA_INVALID" in codes(evidence)
@@ -391,7 +392,7 @@ def test_contradictory_metadata_is_rejected_before_projection(corruption):
         original = records[index]
         records[index] = (*original[:3], "00000020", *original[4:])
     payload[0] = tuple(records)
-    source = replace(source, metadata=((snapshots.METADATA_KEY, (1, source.sha256, tuple(payload))),))
+    source = replace(source, metadata=((snapshots.METADATA_KEY, (EXTRACTION_VERSION, source.sha256, tuple(payload))),))
     evidence = snapshots.dialogue_order_from_snapshot(source)
     assert evidence.complete and evidence.links[0].valid
     assert "DIALOGUE_ORDER_METADATA_INVALID" in codes(evidence)

@@ -100,6 +100,15 @@ class ProjectPagedRead:
 def read_workbench_candidate(projects, target) -> CandidateRecords:
     ref = target.variant_ref
     store = projects.store_for(ref.project_id)
+    # Validate the requested project/Variant before refreshing any derived data.
+    # Only the first preview source needs ranks now; later sources refresh on
+    # their first reading-order page request in the existing page worker.
+    with project_connection(store.path) as connection:
+        read_project(connection, target.project_ref)
+        require_variant(connection, ref.identity)
+        initial = read_sources(connection, native_fields=False)
+    if initial and initial[0].format_id is FormatId.PLUGIN_SSE:
+        store.ensure_reading_order(initial[0].namespace)
     with project_connection(store.path) as connection:
         project = read_project(connection, target.project_ref)
         variant = require_variant(connection, ref.identity)

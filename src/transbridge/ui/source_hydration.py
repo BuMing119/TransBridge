@@ -69,7 +69,10 @@ def reading_entries_from_hydration(source):
     """
     if source is None or source.format_id is not FormatId.PLUGIN_SSE:
         return None
-    return tuple(ReadingEntry(item.entry_key, item.context, item.metadata) for item in source.entries)
+    return tuple(
+        ReadingEntry(item.entry_key, item.context, item.metadata, bool(item.original.strip()))
+        for item in source.entries
+    )
 
 
 def prepare_project_slots(hydrations, snapshot, *, existing_slots=()) -> tuple[tuple[str, CollectionSlot], ...]:

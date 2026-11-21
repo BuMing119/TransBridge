@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import sqlite3
 from tempfile import NamedTemporaryFile
+from threading import RLock
 
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.projects.storage_contracts import (
@@ -38,6 +39,8 @@ class ProjectStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self._record_key_cache = {}
+        self._reading_order_sources = set()
+        self._reading_order_lock = RLock()
 
     def create(
         self,
@@ -74,6 +77,8 @@ class ProjectStore:
     ) -> tuple[StoredEntry, ...]:
         if type(offset) is not int or type(limit) is not int or offset < 0 or not 1 <= limit <= 1000:
             raise ValueError("project pages require a non-negative offset and 1–1000 entries")
+        if reading_order:
+            self.ensure_reading_order(namespace)
         with project_connection(self.path) as connection:
             if token is not None and token != _read_token(connection, variant_id):
                 raise ProjectStorageConflict("project or Variant changed while reading its entry range")
@@ -91,6 +96,12 @@ class ProjectStore:
         with project_connection(self.path) as connection:
             return _read_token(connection, variant_id)
 
+    def ensure_reading_order(self, namespace: SourceNamespace | None = None) -> None:
+        from .reading_order_refresh import refresh_saved_reading_order
+
+        with self._reading_order_lock:
+            refresh_saved_reading_order(self.path, self._reading_order_sources, namespace=namespace)
+
     def iter_entries(
         self,
         variant_id: VariantId,
@@ -100,6 +111,8 @@ class ProjectStore:
         include_removed: bool = False,
         reading_order: bool = False,
     ):
+        if reading_order:
+            self.ensure_reading_order(namespace)
         token = token or self.read_token(variant_id)
         with project_connection(self.path) as connection:
             if token != _read_token(connection, variant_id):

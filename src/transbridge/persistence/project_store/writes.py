@@ -104,7 +104,10 @@ def _source_reading_ranks(source: ExtractedSource):
     if evidence is None or not evidence.complete:
         return {}
     entries = (
-        ReadingEntry(row.snapshot.entry_key, row.snapshot.context, row.snapshot.metadata) for row in source.entries
+        ReadingEntry(
+            row.snapshot.entry_key, row.snapshot.context, row.snapshot.metadata, bool(row.snapshot.original.strip())
+        )
+        for row in source.entries
     )
     view = build_dialogue_reading_view(entries, evidence)
     if len(view.ordered_keys) != len(source.entries):

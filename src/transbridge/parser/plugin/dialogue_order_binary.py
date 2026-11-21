@@ -26,8 +26,9 @@ class EvidenceRecord:
     fields: tuple[tuple[int, str, bytes], ...] = ()
 
 
-RELEVANT = frozenset({"QUST", "DIAL", "INFO", "DLBR"})
+RELEVANT = frozenset({"QUST", "DIAL", "INFO", "DLBR", "SCEN"})
 REFERENCE_FIELDS = frozenset({"QNAM", "BNAM", "SNAM", "TCLT"})
+SCENE_FIELDS = frozenset({"ANAM", "PNAM", "HNAM", "SNAM", "ENAM", "DATA"})
 # A live kind, an empty string for deleted records, or None for duplicates.
 # Unrelated records need no ordinal, parent, payload, or per-record container.
 RecordIdentities = dict[str, str | None]
@@ -42,7 +43,7 @@ def check_cancelled(cancelled: Callable[[], bool] | None) -> None:
         raise DialogueOrderCancelled("Dialogue relation extraction was cancelled")
 
 
-def reference_fields(payload: bytes) -> tuple[tuple[int, str, bytes], ...]:
+def reference_fields(payload: bytes, *, kind: str = "") -> tuple[tuple[int, str, bytes], ...]:
     """Retain physical subrecord indices, including XXXX headers in the count."""
     position, index, extended = 0, 0, None
     result = []
@@ -60,7 +61,7 @@ def reference_fields(payload: bytes) -> tuple[tuple[int, str, bytes], ...]:
             size, extended = extended, None
         if position + size > len(payload):
             raise ValueError(f"Dialogue subrecord {name} exceeds its record")
-        if name in REFERENCE_FIELDS:
+        if name in (SCENE_FIELDS if kind == "SCEN" else REFERENCE_FIELDS):
             result.append((index, name, payload[position : position + size]))
         position += size
         index += 1
@@ -97,7 +98,7 @@ def parsed_records(
                     ordinal,
                     deleted,
                     parent if kind == "INFO" else "",
-                    reference_fields(item.data) if kind in RELEVANT else (),
+                    reference_fields(item.data, kind=kind) if kind in RELEVANT else (),
                 )
 
     yield from visit(groups)
@@ -111,7 +112,7 @@ def binary_records(
 ) -> Iterator[EvidenceRecord]:
     """Skip unrelated payloads without decoding strings or constructing a plugin.
 
-    When identities is supplied, index every identity and only yield the four
+    When identities is supplied, index every identity and only yield the
     relevant record kinds, avoiding temporary objects for all other records.
     """
     if content[:4] != b"TES4":
@@ -165,7 +166,7 @@ def binary_records(
                     raise ValueError(f"Invalid compressed dialogue record {form_id:08X}") from exc
                 if len(payload) != expected:
                     raise ValueError(f"Incorrect decoded dialogue record size for {form_id:08X}")
-            fields = reference_fields(payload)
+            fields = reference_fields(payload, kind=kind)
         yield EvidenceRecord(
             kind,
             form_id_text,
