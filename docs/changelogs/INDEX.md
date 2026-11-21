@@ -1,5 +1,9 @@
 # 变更日志索引
 
+- 2026-11-21：[场景内的对话按开始阶段阅读](paratranz-categorized-upload/story-28/2026-11-21-005-scene-phase-order.md) 覆盖工作台、分类导出和 TB2 编号，已用 Skyrim.esm 重验 191 个场景。
+
+- 2026-11-21：[任务对话按场景与问答排列](paratranz-categorized-upload/story-28/2026-11-21-004-scene-question-order.md) 记录场景共用话题、默认回复、RNAM 选项及旧工程分页顺序的处理。
+
 - 2026-11-20：[ParaTranz 四种上传模式的本地差异比较](paratranz-categorized-upload/story-32/2026-11-20-001-file-upload-differences.md) 支持跳过一致文件、合并纯改号请求，并在仅传译文时沿用云端实际 key。
 
 - 2026-11-20：[ParaTranz 本地导出的 TB2 排序码](paratranz-context-order/story-01-02/2026-11-20-002-local-tb2-export.md) 将普通及分类 JSON 的八位排序码移入传输 key，支持旧 context 序号回读。
