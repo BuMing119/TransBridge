@@ -1,5 +1,11 @@
 # 变更日志索引
 
+- 2026-11-22：[启动时按本地日期提醒可用更新](app-update/story-02/2026-11-22-001-daily-update-reminder.md)。
+
+- 2026-11-22：[项目术语页按需检查来源并释放窗口](project-terminology-build-versioning-reporting/story-16/2026-11-22-004-defer-source-capture.md)。
+
+- 2026-11-22：[AI 翻译任务的来源选择与术语摘要读取](unified-ai-task/story-01-mode-switch-stability/2026-11-22-002-source-selection-refresh.md)。
+
 - 2026-11-22：[DSD 导出保留记录索引、条件与空替换](file-io-dialogs/story-01-to-03/2026-11-22-003-dsd-export-fidelity.md)。官方样例 34 条记录通过直接导出与工程重开导出的逐字段比较。
 
 - 2026-11-22：[63 个注册工具与参数的最终验收](assistant-shared-business-tools/story-05/2026-11-22-005-final-registry-acceptance.md)。
