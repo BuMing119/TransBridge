@@ -7,6 +7,8 @@ from collections.abc import Iterable
 import re
 from typing import Any
 
+from transbridge.converter.dsd_metadata import DSD_RECORD_METADATA
+
 _ENTRY_FIELDS = frozenset({
     "io.format",
     "io.locator",
@@ -45,6 +47,7 @@ _ENTRY_FIELDS = frozenset({
     "transbridge.io.paratranz.extensions",
     "transbridge.io.paratranz.context_order",
     "transbridge.io.dsd.locator",
+    *DSD_RECORD_METADATA,
 })
 _OPTION_FIELDS = frozenset({
     "language",

@@ -1,11 +1,5 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""Validated, read-only preparation of plugin, JSON and SST translation migrations.
-
-This module deliberately stops before mutating a Project or collection.  It
-turns one inspected source into exact ``EntryKey`` state proposals so the UI
-boundary can commit the complete draft through the authoritative Variant
-command once.
-"""
+"""Prepare translation migrations as exact EntryKey proposals without mutating their target."""
 
 from __future__ import annotations
 
@@ -14,9 +8,12 @@ from dataclasses import dataclass
 import json
 import logging
 from pathlib import Path
+import re
+from typing import NamedTuple
 
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.config.text_encoding import DEFAULT_READ_POLICY, DEFAULT_SOURCE_LANGUAGE, DEFAULT_TEXT_ENCODING
+from transbridge.converter.dsd_metadata import dsd_conditions, dsd_native_fields, dsd_quest_index, dsd_region_index
 from transbridge.converter.eet_matching import known_editor_id
 from transbridge.converter.sst_matching import target_locator
 from transbridge.converter.translation_entry import TranslationEntry
@@ -34,6 +31,7 @@ _JSON_FORMATS = frozenset({
     FormatId.JSON_TRANSBRIDGE,
 })
 _SST_FORMATS = frozenset({FormatId.SST_SSU8, FormatId.SST_SSU9})
+_DSD_EXPLICIT_INDEX_FIELDS = frozenset({"QUST CNAM", "REGN RDMP"})
 logger = logging.getLogger(__name__)
 
 
@@ -58,6 +56,13 @@ class MigrationImportDraft:
         return dict(self.states)
 
 
+class _DsdKey(NamedTuple):
+    form: str
+    field: str
+    index: int | None
+    conditions: tuple[str, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class _ImportedEntry:
     identity: EntryKey | None
@@ -69,7 +74,7 @@ class _ImportedEntry:
     sst_key: tuple[int, str] | None = None
     original: str | None = None
     requires_original_match: bool = False
-    dsd_key: tuple[str, str, int | None] | None = None
+    dsd_key: _DsdKey | None = None
     editor_id: str | None = None
 
 
@@ -151,6 +156,13 @@ def prepare_migration_import(
     )
     skipped_conflicts += unproved
     if not states and not skipped_conflicts:
+        if translated and (dsd_key := translated[0].dsd_key) is not None:
+            owner = dsd_key.form.partition("|")[2]
+            raise MigrationImportError(
+                "MIGRATION_NO_PROVABLE_MATCHES",
+                f"DSD 中 {unmatched} 条译文均未匹配。请确认当前原文来源包含对应记录"
+                f"（首条所属插件为 {owner}），并核对 FormID、字段和索引。",
+            )
         raise MigrationImportError("MIGRATION_NO_PROVABLE_MATCHES", "没有译文能唯一映射到当前版本词条。")
     if format_id is FormatId.PLUGIN_SSE:
         originals = {entry.identity: entry.original for entry in target}
@@ -269,7 +281,7 @@ def _parse_json(
                 entry.key,
                 entry.translation,
                 entry.stage,
-                original=entry.original,
+                original=entry.original if "original" in (dsd_native_fields(entry) or ()) else None,
                 requires_original_match=entry.requires_original_match or entry.dsd_type == "QUST CNAM",
                 dsd_key=_dsd_record_key(entry),
             )
@@ -363,14 +375,19 @@ def _map_to_target(
     *,
     require_original_match: bool = False,
 ) -> tuple[dict[EntryKey, tuple[str, int]], int, int]:
-    target_entries = tuple(target)
-    by_identity = {entry.identity: entry.identity for entry in target_entries}
-    by_key = {entry.identity: entry for entry in target_entries}
+    by_key = {entry.identity: entry for entry in target}
     by_legacy: dict[str, set[EntryKey]] = {}
     by_external: dict[tuple[str, str, str, object], set[EntryKey]] = {}
     by_sst: dict[tuple[int, str], set[EntryKey]] = {}
-    by_dsd: dict[tuple[str, str, int | None], set[EntryKey]] = {}
-    for entry in target_entries:
+    by_dsd: dict[_DsdKey, set[EntryKey]] = {}
+    match_dsd = bool(imported and imported[0].dsd_key is not None)
+    for entry in by_key.values():
+        if match_dsd:
+            if (dsd_key := _dsd_record_key(entry)) is not None:
+                by_dsd.setdefault(dsd_key, set()).add(entry.identity)
+                if dsd_key.field in _DSD_EXPLICIT_INDEX_FIELDS and dsd_key.index is not None:
+                    by_dsd.setdefault(dsd_key._replace(index=None), set()).add(entry.identity)
+            continue
         for legacy in {entry.id, entry.key, entry.identity.local_key}:
             by_legacy.setdefault(legacy, set()).add(entry.identity)
         for reference in entry.external_refs:
@@ -378,29 +395,30 @@ def _map_to_target(
         sst_key = target_locator(entry)
         if sst_key is not None:
             by_sst.setdefault(sst_key, set()).add(entry.identity)
-        dsd_key = _dsd_record_key(entry)
-        if dsd_key is not None:
-            by_dsd.setdefault(dsd_key, set()).add(entry.identity)
 
     proposals: dict[EntryKey, tuple[str, int]] = {}
     unmatched = 0
     unproved = 0
+    unproved_locator = 0
     for source in imported:
-        candidates: set[EntryKey] = set()
-        if source.identity in by_identity:
-            candidates.add(source.identity)
-        for legacy in {source.legacy_id, source.legacy_key, source.identity.local_key if source.identity else ""}:
-            if legacy:
-                candidates.update(by_legacy.get(legacy, ()))
-        for reference in source.external_refs:
-            candidates.update(by_external.get(reference.index_key, ()))
-        if source.sst_key is not None:
-            candidates.update(by_sst.get(source.sst_key, ()))
-        if source.dsd_key is not None:
-            # DSD does not require EditorID. Use its native plugin-qualified
-            # FormID + field/index, never an unqualified cross-plugin match.
-            # QUST CNAM omits the index and still requires exact original text.
-            candidates = set(by_dsd.get(source.dsd_key, ()))
+        proven_dsd_index = False
+        if (dsd_key := source.dsd_key) is not None:
+            candidates = set(by_dsd.get(dsd_key, ()))
+            proven_dsd_index = dsd_key.field in _DSD_EXPLICIT_INDEX_FIELDS and dsd_key.index is not None
+            if (proven_dsd_index or dsd_key.field == "REGN RDMP") and len(candidates) != 1:
+                unproved_locator += 1
+                continue
+        else:
+            candidates = set()
+            if source.identity is not None and source.identity in by_key:
+                candidates.add(source.identity)
+            for legacy in {source.legacy_id, source.legacy_key, source.identity.local_key if source.identity else ""}:
+                if legacy:
+                    candidates.update(by_legacy.get(legacy, ()))
+            for reference in source.external_refs:
+                candidates.update(by_external.get(reference.index_key, ()))
+            if source.sst_key is not None:
+                candidates.update(by_sst.get(source.sst_key, ()))
 
         if source.editor_id:
             candidates = {
@@ -409,13 +427,21 @@ def _map_to_target(
                 if not known_editor_id(by_key[key]) or known_editor_id(by_key[key]) == source.editor_id.casefold()
             }
 
-        original_required = (
-            require_original_match
-            or source.requires_original_match
-            or any(by_key[key].requires_original_match for key in candidates)
+        original_required = require_original_match or (
+            source.original is not None
+            if proven_dsd_index
+            else source.requires_original_match or any(by_key[key].requires_original_match for key in candidates)
         )
         if original_required:
             candidates = {key for key in candidates if by_key[key].original == source.original}
+            if len(candidates) > 1 and dsd_key is not None and dsd_key.field == "QUST CNAM" and dsd_key.index is None:
+                # A native indexless row proves the same selector as the legacy source.
+                native = {
+                    key
+                    for key in candidates
+                    if "original" in (dsd_native_fields(by_key[key]) or ()) and dsd_quest_index(by_key[key]) is None
+                }
+                candidates = native or candidates
             if len(candidates) != 1:
                 unproved += 1
                 continue
@@ -438,18 +464,33 @@ def _map_to_target(
         proposals[target_key] = state
     if unproved:
         logger.warning("SOURCE_ORIGINAL_MATCH_REQUIRED: %d 条冲突词条无法通过 key 和原文唯一匹配，已跳过。", unproved)
-    return proposals, unmatched, unproved
+    if unproved_locator:
+        logger.warning("SOURCE_LOCATOR_CONFLICT: 跳过 %d 条无法唯一匹配定位和条件的 DSD 词条。", unproved_locator)
+    return proposals, unmatched, unproved + unproved_locator
 
 
-def _dsd_record_key(entry: TranslationEntry) -> tuple[str, str, int | None] | None:
-    if not entry.dsd_type or not entry.form_id_with_plugin or "|" not in entry.form_id_with_plugin:
+def _dsd_record_key(entry: TranslationEntry) -> _DsdKey | None:
+    if not entry.dsd_type or not entry.form_id_with_plugin:
         return None
-    if not all(entry.form_id_with_plugin.split("|", 1)):
+    form_id, _, owner = entry.form_id_with_plugin.partition("|")
+    digits = form_id.casefold().removeprefix("0x")
+    if not owner or "|" in owner or not re.fullmatch("[0-9a-f]{1,8}", digits):
         return None
-    return (
-        entry.form_id_with_plugin.casefold(),
+    # Once qualified by the defining plugin, only the local object ID
+    # identifies the record (12 bits for a packed FE light ID, otherwise 24).
+    value = int(digits, 16)
+    local_id = value & (0xFFF if value >> 24 == 0xFE else 0xFFFFFF)
+    index = entry.dsd_index
+    if entry.dsd_type == "QUST CNAM":
+        index = dsd_quest_index(entry)
+    elif entry.dsd_type == "REGN RDMP":
+        region_index = dsd_region_index(entry)
+        index = index if region_index is None and index != 1 else region_index
+    return _DsdKey(
+        f"{local_id:x}|{owner.casefold()}",
         entry.dsd_type,
-        None if entry.dsd_type == "QUST CNAM" else entry.dsd_index,
+        index,
+        dsd_conditions(entry) or (),
     )
 
 

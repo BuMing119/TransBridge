@@ -1,5 +1,5 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sse_plugin_interface.plugin_string import PluginString
 
@@ -17,6 +17,9 @@ class PluginStringWithContext(PluginString):
 
     string_id: int | None = None
     """The integer string ID for localised plugins, or None for non-localised."""
+
+    dsd_index: int | None = field(default=None, compare=False)
+    """The DSD index when derived separately from the native index."""
 
     def __hash__(self) -> int:
         return hash((

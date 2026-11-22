@@ -16,9 +16,10 @@ from transbridge.application.contracts import (
     OperationOutcome,
     OperationResult,
 )
+from transbridge.converter.dsd_metadata import DSD_NATIVE_FIELDS, dsd_has_replacement
 
 from .contracts import FormatId, SourceDescriptor, WriteRequest
-from .dsd_projection import restore_extracted_dsd_locator, restore_plugin_dsd_locators
+from .dsd_projection import restore_json_dsd_locators, restore_plugin_dsd_locators
 from .operation_write import HydratedWriteDraft, WritePreflightCheck, _operation_result, _translation_entries
 from .paratranz import ParatranzJsonAdapter
 from .publish import ConflictPolicy, FileFingerprint, OsPublishFilesystem, PublishCoordinator, PublishTarget
@@ -108,6 +109,19 @@ def preflight_json_export(draft: JsonExportDraft, projection_service) -> JsonExp
         else:
             try:
                 payload = _dsd_payload(source, entries)
+                if (
+                    source.source_snapshot.format_id is FormatId.JSON_DSD
+                    and source.source_snapshot.content is None
+                    and any(entry.stage != -1 and DSD_NATIVE_FIELDS not in dict(entry.metadata) for entry in entries)
+                ):
+                    checks.append(
+                        WritePreflightCheck(
+                            "DSD_LEGACY_SOURCE_FIELDS",
+                            False,
+                            "旧工程未完整保存 DSD 来源信息。若含生效条件或显式空替换，请重新打开原 JSON 后导出。",
+                            warning=True,
+                        )
+                    )
             except (OSError, ValueError, TypeError, KeyError) as exc:
                 checks.append(WritePreflightCheck("DSD_LOCATOR_REQUIRED", False, str(exc)))
         payloads.append(payload)
@@ -116,34 +130,24 @@ def preflight_json_export(draft: JsonExportDraft, projection_service) -> JsonExp
 
 def _dsd_payload(source, entries):
     """DSD needs plugin-qualified locators; never invent them from an EET filename."""
-    known = {}
     if source.source_snapshot.format_id not in {FormatId.PLUGIN_SSE, FormatId.JSON_DSD}:
         raise ValueError("该来源没有 DSD 所需的插件归属信息；请从原插件导出 DSD JSON。")
+    entries = tuple(entry for entry in entries if entry.stage != -1)
     if source.source_snapshot.format_id is FormatId.PLUGIN_SSE:
         entries = restore_plugin_dsd_locators(entries, source.source_snapshot)
     elif source.source_snapshot.format_id is FormatId.JSON_DSD:
-        from .json_source import parse_json_source
-
-        content = source.source_snapshot.content
-        if content is None:
-            entries = tuple(restore_extracted_dsd_locator(entry) for entry in entries)
-        else:
-            parsed = parse_json_source(source.source_snapshot.source.uri, {"format": "dsd"}, content=content)
-            known = {(entry.key, entry.original): entry for entry in parsed.collection}
+        entries = restore_json_dsd_locators(entries, source.source_snapshot)
     result = []
     for entry in entries:
-        if not entry.translation or entry.stage == -1:
+        if not dsd_has_replacement(entry):
             continue
-        original = known.get((entry.key, entry.original)) if known else entry
-        if original is None:
-            raise ValueError("当前词条与 DSD 来源快照不一致，请重新打开工程。")
-        if not original.form_id_with_plugin or not original.dsd_type:
+        if not entry.form_id_with_plugin or not entry.dsd_type:
             raise ValueError("该来源缺少 DSD 所需的插件名、FormID 或字段信息；请从原插件导出 DSD JSON。")
-        if original.dsd_type == "GMST DATA" and not original.editor_id:
+        if entry.dsd_type == "GMST DATA" and not entry.editor_id:
             raise ValueError("GMST DATA 缺少 EditorID，无法导出 DSD JSON。")
         if entry.stage not in {-1, 0, 1, 2, 3, 5, 9}:
             raise ValueError("条目翻译阶段无效，无法导出 DSD JSON。")
-        result.append(replace(original, translation=entry.translation).to_dsd_dict())
+        result.append(entry.to_dsd_dict())
     return json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8")
 
 

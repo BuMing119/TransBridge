@@ -673,14 +673,13 @@ class TranslationEntryCollection:
         """
         导出为 DSD 格式的条目列表，用于外部工具兼容。
         格式：[{"form_id": "...", "type": "...", "string": "..."}, ...]
-        只包含有译文的条目。
+        包含有译文的条目和来源明确指定的空字符串替换。
         """
         result = []
         for e in self._entries.values():
-            if e.translation:
-                dsd_dict = e.to_dsd_dict()
-                if dsd_dict:
-                    result.append(dsd_dict)
+            dsd_dict = e.to_dsd_dict()
+            if dsd_dict:
+                result.append(dsd_dict)
         return result
 
     def to_json(
@@ -770,7 +769,7 @@ class TranslationEntryCollection:
         ensure_ascii: bool = False,
         indent: int = 2,
     ) -> str:
-        """导出为 DSD 格式的 JSON 字符串。只包含有译文的条目。"""
+        """导出为 DSD 格式的 JSON 字符串。"""
         return json.dumps(
             self.to_export_dict(),
             ensure_ascii=ensure_ascii,

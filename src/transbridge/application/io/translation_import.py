@@ -16,7 +16,7 @@ from transbridge.converter.translation_entry_collection import TranslationEntryC
 from . import legacy_migration, migration_import
 from .catalog import FormatCatalog
 from .contracts import FormatId, ProbeRequest, ProbeStatus, SourceDescriptor, SourceSnapshot
-from .dsd_projection import restore_plugin_dsd_locators
+from .dsd_projection import restore_json_dsd_locators, restore_plugin_dsd_locators
 from .legacy_migration import LegacyMigrationDraft
 from .migration_import import MigrationImportError
 from .xml_translation_import import xml_translation_proposals
@@ -71,12 +71,11 @@ def prepare_translation_import(
             proposals = xml_translation_proposals(content, format_id, target)
         else:
             matching_target = target
-            if (
-                format_id is FormatId.JSON_DSD
-                and target_snapshot is not None
-                and target_snapshot.format_id is FormatId.PLUGIN_SSE
-            ):
-                matching_target = restore_plugin_dsd_locators(target, target_snapshot)
+            if format_id is FormatId.JSON_DSD and target_snapshot is not None:
+                if target_snapshot.format_id is FormatId.PLUGIN_SSE:
+                    matching_target = restore_plugin_dsd_locators(target, target_snapshot)
+                elif target_snapshot.format_id is FormatId.JSON_DSD:
+                    matching_target = restore_json_dsd_locators(target, target_snapshot)
             draft = migration_import.prepare_migration_import(
                 path,
                 matching_target,

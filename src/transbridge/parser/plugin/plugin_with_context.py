@@ -18,6 +18,7 @@ from transbridge.parser.strings_file import PluginStringsLookup
 from transbridge.parser.utils.fromid_trans import formid_bytes_to_complete, formid_bytes_to_hex
 
 from .binary_io import PluginBinaryIO
+from .dsd_subrecords import iter_dsd_subrecords
 from .item import (
     BaseContext,
     DialContext,
@@ -434,7 +435,7 @@ class SSEPluginWithContext(PluginBinaryIO):
             elif record.type == "DIAL":
                 context_data = self._extract_dial_context(record, dlbr_map)
 
-            for subrecord in record.subrecords:
+            for subrecord, dsd_index in iter_dsd_subrecords(record):
                 if isinstance(subrecord, StringSubrecord):
                     string: RawString | int = subrecord.string
 
@@ -475,6 +476,7 @@ class SSEPluginWithContext(PluginBinaryIO):
                         string=string_text,
                         context=context_data,
                         string_id=raw_string_id,  # 传递 string_id
+                        dsd_index=dsd_index,
                     )
 
                     strings.append((string_data, subrecord))

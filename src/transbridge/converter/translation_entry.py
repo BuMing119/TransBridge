@@ -1,4 +1,5 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 import warnings
@@ -12,6 +13,7 @@ from transbridge.application.io.identity import (
 )
 from transbridge.application.io.mutation import EntrySnapshot
 from transbridge.converter.collection_changes import assign_entry_field
+from transbridge.converter.dsd_metadata import DSD_QUEST_INDEX, DSD_REGION_INDEX
 from transbridge.converter.plugin_entry_metadata import build_plugin_metadata
 from transbridge.parser import EET_Entry
 from transbridge.parser.plugin.plugin_string_with_context import PluginStringWithContext
@@ -236,7 +238,8 @@ class TranslationEntry:
         :return: TranslationEntry 实例
         """
         # "INFO NAM1" -> "INFO:NAM1"
-        original_key = ps.type.replace(" ", ":") if getattr(ps, "type", None) else "UNKNOWN"
+        dsd_type = getattr(ps, "type", "") or ""
+        original_key = dsd_type.replace(" ", ":") if dsd_type else "UNKNOWN"
 
         # 参考 PluginParser._create_item：使用 editor_id + form_id 组成唯一 id
         editor_id = getattr(ps, "editor_id", "")
@@ -251,10 +254,16 @@ class TranslationEntry:
         else:
             form_id = form_id_raw
 
-        if ps.index is None:
-            ps.index = 1
+        native_index = 1 if ps.index is None else ps.index
+        dsd_index = getattr(ps, "dsd_index", None)
+        metadata = build_plugin_metadata(getattr(ps, "context", None), source_order)
+        if dsd_index is not None:
+            if dsd_type == "QUST CNAM":
+                metadata += ((DSD_QUEST_INDEX, dsd_index),)
+            elif dsd_type == "REGN RDMP":
+                metadata += ((DSD_REGION_INDEX, dsd_index),)
 
-        id_value = f"{editor_id}:{form_id}|{ps.index}~{original_key}"
+        id_value = f"{editor_id}:{form_id}|{native_index}~{original_key}"
         if original_key.split(":")[0] == "INFO" or original_key.split(":")[0] == "DIAL":
             quest_formid_ori = getattr(ps.context, "quest", None) or ""
             quest_formid = quest_formid_ori.split("|")[0]
@@ -272,10 +281,10 @@ class TranslationEntry:
             string_id=getattr(ps, "string_id", None),  # 传递 string_id
             form_id_with_plugin=full_form_id,  # 保存完整的 form_id
             # DSD 兼容字段
-            dsd_type=getattr(ps, "type", "") or "",  # "NPC_ FULL" 格式
-            dsd_index=getattr(ps, "index", 1) or 1,  # 原始索引，默认为 1
+            dsd_type=dsd_type,
+            dsd_index=native_index if dsd_index is None else dsd_index,
             editor_id=getattr(ps, "editor_id", "") or "",  # 原始 editor_id
-            metadata=build_plugin_metadata(getattr(ps, "context", None), source_order),
+            metadata=metadata,
         )
 
     @classmethod
@@ -411,77 +420,18 @@ class TranslationEntry:
 
     # ==================== DSD 格式转换 ====================
 
-    # DSD 索引类型集合（需要 index 字段的类型）
+    # Generated entries always include an index for these types.
     DSD_INDEX_TYPES = frozenset({"INFO NAM1", "QUST NNAM", "MESG ITXT", "PERK EPF2", "PERK EPFD"})
 
     def to_dsd_dict(self) -> dict[str, Any]:
-        """
-        导出为 DSD 格式字典。
+        """Export a native DSD record or generate one from a translation entry."""
+        from transbridge.converter.dsd_entries import encode_dsd_entry
 
-        DSD 格式有三种变体：
-        1. 基础格式：form_id, type, string（大多数类型）
-        2. QUST CNAM：form_id, type, original, string
-        3. 索引格式：form_id, type, index, string（INFO NAM1 等）
-        4. GMST DATA：form_id, editor_id, type, string
-        """
-        form_id = self.form_id_with_plugin or ""
-        type_str = self.dsd_type  # 已是 "NPC_ FULL" 格式
-
-        # 没有译文时不导出
-        if not self.translation:
-            return {}
-
-        base = {"form_id": form_id, "type": type_str}
-
-        # GMST DATA: 需要 editor_id
-        if type_str == "GMST DATA":
-            return {**base, "editor_id": self.editor_id, "string": self.translation}
-
-        # QUST CNAM: 需要 original 字段
-        if type_str == "QUST CNAM":
-            return {**base, "original": self.original, "string": self.translation}
-
-        # 索引类型: INFO NAM1, QUST NNAM, MESG ITXT, PERK EPF2, PERK EPFD
-        if type_str in self.DSD_INDEX_TYPES:
-            return {**base, "index": self.dsd_index, "string": self.translation}
-
-        # 基础类型
-        return {**base, "string": self.translation}
+        return encode_dsd_entry(self)
 
     @classmethod
-    def from_dsd_dict(cls, data: dict[str, Any]) -> "TranslationEntry":
-        """
-        从 DSD 格式字典创建 TranslationEntry。
+    def from_dsd_dict(cls, data: Mapping[str, Any]) -> "TranslationEntry":
+        """Create an entry from one native DSD record."""
+        from transbridge.converter.dsd_entries import decode_dsd_entry
 
-        :param data: DSD 格式字典，包含 form_id, type, string 等字段
-        :return: TranslationEntry 实例
-        """
-        form_id = data["form_id"]
-        type_str = data["type"]
-        string = data.get("string", "")
-
-        # 提取 form_id 部分（去掉 |Plugin 后缀）
-        form_id_hex = form_id.split("|")[0]
-
-        # 获取可选字段
-        editor_id = data.get("editor_id", "")
-        index = data.get("index", 1)
-
-        # 构建 context（冒号格式："NPC_:FULL"）
-        type_colon = type_str.replace(" ", ":")
-
-        # 构建 id
-        id_value = f"{editor_id}:{form_id_hex}|{index}~{type_colon}"
-
-        return cls(
-            id=id_value,
-            key=id_value,
-            original=data.get("original", ""),  # QUST CNAM 可能有
-            translation=string,
-            stage=STAGE_TRANSLATED if string else STAGE_UNTRANSLATED,
-            context=type_colon,
-            form_id_with_plugin=form_id,
-            dsd_type=type_str,
-            dsd_index=index,
-            editor_id=editor_id,
-        )
+        return decode_dsd_entry(cls, data)

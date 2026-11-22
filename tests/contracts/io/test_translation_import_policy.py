@@ -6,7 +6,8 @@ import struct
 
 import pytest
 
-from tests.plugin_fixtures import write_plugin
+from tests.contracts.io.test_sst_export import _plugin
+from tests.plugin_fixtures import _field, _record, write_plugin
 from tests.source_format_fixtures import write_translation_source
 from transbridge.application.io.migration_import import MigrationImportError
 from transbridge.application.io.translation_import import prepare_translation_import
@@ -133,8 +134,24 @@ def test_duplicate_xml_source_is_not_chosen_arbitrarily(tmp_path, kind):
 def test_dsd_plugin_name_mismatch_never_matches(tmp_path):
     target, source = target_and_source(tmp_path, "json.dsd")
     source.write_text(source.read_text().replace("Test.esp", "Other.esp"))
-    with pytest.raises(MigrationImportError, match="MIGRATION_NO_PROVABLE_MATCHES"):
+    with pytest.raises(MigrationImportError, match="MIGRATION_NO_PROVABLE_MATCHES.*other.esp"):
         prepare_translation_import(str(source), target, replace_existing=True)
+
+
+@pytest.mark.parametrize("form_id", ["800", "0X000800", "05000800", "FE123800"])
+def test_dsd_import_matches_plugin_local_form_id(tmp_path, form_id):
+    records = b"".join(
+        _record(b"NPC_", number, _field(b"FULL", text))
+        for number, text in ((0x01000800, "Hello"), (0x01001800, "Other"), (0x00000800, "Master record"))
+    )
+    plugin = _plugin(tmp_path / "Test.esp", [(b"NPC_", records)], masters=("Skyrim.esm",))
+    target = TranslationEntryCollection(PluginParser().parse_plugin(plugin))
+    source = tmp_path / "translated.json"
+    source.write_text(json.dumps([{"form_id": f"{form_id}|test.ESP", "type": "NPC_ FULL", "string": "你好"}]))
+
+    draft = prepare_translation_import(str(source), target)
+
+    assert [entry.translation for entry in draft.collection] == ["你好", "", ""]
 
 
 @pytest.mark.parametrize("kind", ["xml.eet", "xml.xt"])

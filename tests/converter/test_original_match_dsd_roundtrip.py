@@ -1,17 +1,17 @@
 from dataclasses import replace
 import json
 
+from transbridge.application.io.json_source import parse_json_source
 from transbridge.converter.dsd_entries import parse_dsd_entries
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from transbridge.smart_assistant.tools._json_import import parse_json_source
 
 
 def record(original, translation="Translated", *, form_id="00000800|quest.esp"):
     return {"form_id": form_id, "type": "QUST CNAM", "original": original, "string": translation}
 
 
-def test_dsd_file_and_assistant_roundtrip_preserve_colliding_originals(tmp_path):
+def test_dsd_file_and_adapter_roundtrip_preserve_colliding_originals(tmp_path):
     entries = [
         TranslationEntry(
             "Quest:00000800|101~QUST:CNAM",
@@ -30,8 +30,8 @@ def test_dsd_file_and_assistant_roundtrip_preserve_colliding_originals(tmp_path)
     path = tmp_path / "export.json"
     source.to_dsd_json_file(path)
     public = TranslationEntryCollection.from_dsd_json_file(path)
-    assistant, _, _, _ = parse_json_source(str(path), {"format": "dsd"})
-    for loaded in (public, assistant):
+    adapter, _, _, _ = parse_json_source(str(path), {"format": "dsd"})
+    for loaded in (public, adapter):
         assert len(loaded) == 2
         assert [(entry.original, entry.translation) for entry in loaded] == [("A", "First"), ("B", "Second")]
         assert all(entry.requires_original_match for entry in loaded)

@@ -14,8 +14,10 @@ from transbridge.application.io.json_export import JsonExportDraft, JsonExportWo
 from transbridge.application.io.operation_write import HydratedWriteDraft, HydratedWritePreflightService
 from transbridge.application.io.paratranz_keys import encode_key
 from transbridge.application.io.publish import ImmediateCommitGuard
+from transbridge.application.io.translation_import import prepare_translation_import
 from transbridge.application.projects import TransitionTarget
 from transbridge.application.projects.working_copy import ProjectWorkingCopy
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence.project_store.records import WorkspaceProjects
 from transbridge.persistence.project_store.repository import ProjectStore
 from transbridge.persistence.v2.ids import ProjectRef, VariantRef
@@ -50,11 +52,13 @@ def _parse(path, format_id):
     return result
 
 
-def _json_export(snapshot, entries, target):
+def _json_export(snapshot, entries, target, *, format_id=None):
     source = HydratedWriteDraft(
         snapshot, snapshot.format_id, tuple(entry.snapshot for entry in entries), str(target), 1, _CONTEXT
     )
-    checked = preflight_json_export(JsonExportDraft((source,), snapshot.format_id), HydratedWritePreflightService())
+    checked = preflight_json_export(
+        JsonExportDraft((source,), format_id or snapshot.format_id), HydratedWritePreflightService()
+    )
     assert checked.ready, checked.checks
     result = JsonExportWorkload(checked)(
         SimpleNamespace(
@@ -163,6 +167,51 @@ def test_reopened_dsd_export_preserves_duplicate_locators_with_distinct_original
         records[0],
         {**records[1], "string": "Edited"},
     ]
+
+
+def test_import_into_reopened_dsd_source_uses_saved_record_locator(tmp_path):
+    from transbridge.application.io.operation_write import _translation_entries
+
+    source = tmp_path / "source.json"
+    record = {"form_id": "00000800|Test.esp", "type": "NPC_ FULL", "string": "Before"}
+    source.write_text(json.dumps([record]))
+    _, rows, snapshot = _reopen_after_edits(tmp_path, source, FormatId.JSON_DSD, ())
+    target = TranslationEntryCollection(_translation_entries(tuple(row.snapshot for row in rows)))
+    donor = tmp_path / "translated.json"
+    donor.write_text(json.dumps([{**record, "string": "After"}]))
+
+    draft = prepare_translation_import(str(donor), target, replace_existing=True, target_snapshot=snapshot)
+
+    assert draft.collection.get(rows[0].state.entry_key).translation == "After"
+
+
+def test_reopened_dsd_preserves_condition_variants_and_native_quest_index(tmp_path):
+    base = {"form_id": "0x000800|Example.esp", "type": "INFO NAM1", "index": 2}
+    records = [
+        {**base, "conditions": ["Self IsOverEncumbered NONE NONE == 1"], "string": "A"},
+        {**base, "conditions": ["Self IsInInterior NONE NONE == 1"], "string": "B"},
+        {**base, "string": "Default"},
+        {"form_id": "00000900|Example.esp", "type": "QUST CNAM", "index": 0, "string": "Journal"},
+        {"form_id": "0xA00|Example.esp", "type": "FLOR RNAM", "string": ""},
+    ]
+    source = tmp_path / "source.json"
+    source.write_text(json.dumps(records), encoding="utf-8")
+    _, rows, snapshot = _reopen_after_edits(tmp_path, source, FormatId.JSON_DSD, ((1, "Edited", Stage.REVIEWED),))
+    assert _json_export(snapshot, rows, tmp_path / "exported.json") == [
+        records[0],
+        {**records[1], "string": "Edited"},
+        *records[2:],
+    ]
+
+
+def test_reopened_plugin_keeps_official_quest_log_indices_without_source_file(tmp_path):
+    from tests.parser.test_original_match_plugin import quest_plugin
+
+    plugin = quest_plugin(tmp_path / "Quest.esp", ["First", "Second"])
+    _, rows, snapshot = _reopen_after_edits(tmp_path, plugin, FormatId.PLUGIN_SSE, ((1, "Edited", Stage.REVIEWED),))
+    output = _json_export(snapshot, rows, tmp_path / "exported.json", format_id=FormatId.JSON_DSD)
+    assert [(row["index"], row["string"]) for row in output] == [(10, "First"), (11, "Edited")]
+    assert all(row["type"] == "QUST CNAM" for row in output)
 
 
 @pytest.mark.parametrize("format_id", [FormatId.STRINGS, FormatId.DLSTRINGS, FormatId.ILSTRINGS])
