@@ -45,7 +45,7 @@ class WorkbenchAssetPresentation:
         if context.project_id is None or context.variant_id is None:
             return
         if view.build_view.extraction_options.restore_from_build(assets.build):
-            view.run_preflight(repair=False, refresh_assets=False)
+            view.extraction_options_changed()
         view.bind_page("history", (context.project_id, context.variant_id))
         if assets.build_ref is not None:
             view._conflict_review.bind_assets(assets)

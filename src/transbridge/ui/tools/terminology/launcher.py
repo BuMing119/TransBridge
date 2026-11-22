@@ -55,7 +55,7 @@ class TerminologyLauncher:
         )
         identity = id(window)
         window.destroyed.connect(lambda _obj=None: self._clear(identity))
-        window.closed.connect(lambda: self._retired_closed(identity))
+        window.closed.connect(lambda: self._window_closed(identity))
         self._window = window
         show_and_activate(window)
         return window
@@ -63,12 +63,13 @@ class TerminologyLauncher:
     def close(self) -> None:
         for window in tuple(self._retiring.values()):
             window.close()
-        if self._window is not None and self._window.close():
-            self._window.deleteLater()
-            self._window = None
+        if self._window is not None:
+            self._window.close()
 
-    def _retired_closed(self, identity: int) -> None:
+    def _window_closed(self, identity: int) -> None:
         window = self._retiring.pop(identity, None)
+        if self._window is not None and id(self._window) == identity:
+            window, self._window = self._window, None
         if window is not None:
             window.deleteLater()
 

@@ -114,6 +114,44 @@ def test_cancelled_close_notifies_update_handoff(host) -> None:
     host.close_cancelled.emit.assert_called_once_with()
 
 
+def test_browsing_terminology_then_quitting_skips_build_input_capture(host, monkeypatch):
+    from PyQt6 import sip
+
+    from transbridge.application.contracts import RequestContext
+    from transbridge.ui.tools.terminology.launcher import TerminologyLauncher
+    from transbridge.ui.tools.terminology.presenter import TerminologyUiServices
+
+    capture = Mock(side_effect=AssertionError("Browsing must not read the project sources"))
+    build = SimpleNamespace(
+        completeness="full", freshness="current", llm_status="skipped", diagnostics=("LLM_DISABLED",)
+    )
+    services = TerminologyUiServices(
+        build_inputs=SimpleNamespace(capture_build_input=capture),
+        commands=SimpleNamespace(latest_build_result=lambda *_: build),
+    )
+    monkeypatch.setattr(TerminologyUiServices, "from_runtime", lambda *_: services)
+    host.app_runtime = SimpleNamespace()
+    host.runtime_context = RequestContext("operator")
+    host.context.active_version_identity = ("project", "variant")
+    launcher = TerminologyLauncher(host)
+    for _ in range(5):
+        window = launcher.open()
+        _wait(lambda: window._workflow.state is not None)
+        assert not window.build_view.extraction_options.configuration()["llm_enabled"]
+        assert window.build_view.preflight_button.isVisible()
+        assert window.build_view.build_button.isEnabled()
+        window.build_view.extraction_options.mode.setCurrentIndex(0)
+        assert window.presenter._build_config["llm_enabled"]
+        assert window.close()
+        assert launcher.window is None
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert sip.isdeleted(window)
+    host.close()
+    _wait(lambda: host.close_ready)
+    assert host.order == ["save", "disposed", "closed"]
+    capture.assert_not_called()
+
+
 @pytest.mark.parametrize("owner", ["host", "child"])
 def test_close_waits_for_generic_and_child_workers_before_final_save(host, owner):
     release = threading.Event()

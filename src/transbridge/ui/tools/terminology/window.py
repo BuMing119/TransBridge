@@ -72,6 +72,7 @@ class TerminologyWindow(QWidget):
         self.setAccessibleName("项目术语工作台")
         self._actions = AsyncActionRunner(self, on_error=self._show_command_error)
         self._preflight_started = False
+        self._initial_assets_requested = False
         self._task_refs: dict[str, JobRef] = {}
         self._displayed_run_id: str | None = None
         self._finished_runs: set[str] = set()
@@ -166,7 +167,7 @@ class TerminologyWindow(QWidget):
 
         self.build_view = BuildView(self)
         self.build_view.preflight_requested.connect(self.run_preflight)
-        self.build_view.extraction_options.changed.connect(lambda: self.run_preflight(repair=False))
+        self.build_view.extraction_options.changed.connect(self.extraction_options_changed)
         self.build_view.build_requested.connect(self._start_build)
         self.build_view.cancel_requested.connect(self._cancel_displayed)
         self.build_view.terms_requested.connect(lambda: self.terms_view._set_page(0))
@@ -222,6 +223,13 @@ class TerminologyWindow(QWidget):
         self.workspace.add_area(TerminologyArea.VERSIONS, self.versions_view)
         self.workspace.add_area(TerminologyArea.REPORTS, self.reports_view)
 
+    def extraction_options_changed(self) -> None:
+        if self.context_is_current:
+            if self._preflight_started:
+                self.run_preflight(repair=False, refresh_assets=False)
+            else:
+                self.presenter.configure_build(self.build_view.extraction_options.configuration())
+
     def run_preflight(self, *, repair=True, refresh_assets=True) -> None:
         if not self.context_is_current:
             return
@@ -269,8 +277,22 @@ class TerminologyWindow(QWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().showEvent(event)
-        if self.presenter.snapshot is None and not self._preflight_started:
+        if self._initial_assets_requested or self._preflight_started or not self.context_is_current:
+            return
+        self._initial_assets_requested = True
+        context = self.presenter.context
+        if not context.project_id or not context.variant_id or self.presenter.services.build_inputs is None:
             self.run_preflight(repair=False)
+            return
+        metadata = dict(context.metadata)
+        self.workspace.set_context(metadata.get("project_name", ""), metadata.get("variant_name", ""), None)
+        self.extraction_options_changed()
+        self.build_view.preflight_button.setText("检查来源")
+        self.build_view.preflight_button.show()
+        self.build_view.build_button.setText("提取术语")
+        self.build_view.build_button.setEnabled(True)
+        self.build_view.show()
+        self._bind_existing_assets()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
         if not self._closed and not self._save_close.allow_close():

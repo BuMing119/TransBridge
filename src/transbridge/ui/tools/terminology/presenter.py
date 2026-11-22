@@ -365,7 +365,9 @@ class TerminologyPresenter:
     def close(self) -> None:
         if self._closed:
             return
-        self._closed = True
+        with self._build_config_lock:
+            self._closed = True
+            self._snapshot = None
         if self._task_adapter is not None:
             self._task_adapter.close()
             self._task_adapter = None

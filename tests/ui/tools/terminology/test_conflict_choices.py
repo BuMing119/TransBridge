@@ -93,3 +93,4 @@ def test_recheck_keeps_all_enabled_project_plugins_when_only_one_is_loaded():
     finally:
         window.close()
         window._actions._pool.waitForDone(3000)
+    assert presenter.snapshot is None
