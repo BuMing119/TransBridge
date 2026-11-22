@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
+from datetime import date
 import logging
 import os
 from pathlib import Path
 import sys
 from threading import Event
 
-from PyQt6.QtCore import QObject, QTimer
+from PyQt6.QtCore import QLockFile, QObject, QSettings, QTimer
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from transbridge import __version__
@@ -111,11 +112,43 @@ class UpdateController(QObject):
         if self._navigation is not None:
             self._navigation.set_update_checking(False)
             self._navigation.set_update_available(release is not None, None if release is None else release.version)
-        if manual and not self._host.close_pending:
-            if release is None:
+        if release is None:
+            if manual and not self._host.close_pending:
                 self._show_info("当前已是最新版本，或尚无可用的正式安装包。")
-            else:
-                QTimer.singleShot(0, lambda: self._offer_release(release))
+        elif manual:
+            QTimer.singleShot(0, lambda: self._offer_release(release))
+        elif self._host.isVisible():
+            QTimer.singleShot(0, lambda: self._offer_daily_reminder(release))
+
+    def _offer_daily_reminder(self, release: ReleaseInfo) -> None:
+        if self._host.close_pending or not self._host.isVisible() or self._release != release:
+            return
+        directory = self._update_directory()
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            logger.exception("Could not create the update reminder directory: %s", directory)
+            return
+        # Two application instances can receive the same release at the same time.
+        lock = QLockFile(str(directory / "reminder.lock"))
+        if not lock.tryLock(0):
+            if lock.error() != QLockFile.LockError.LockFailedError:
+                logger.warning("Could not lock update reminder settings: %s", lock.error())
+            return
+        try:
+            settings = QSettings(str(directory / "reminder.ini"), QSettings.Format.IniFormat)
+            key = f"versions/{release.version}"
+            today = date.today().isoformat()
+            if settings.value(key) == today:
+                return
+            self._offer_release(release)
+            if self._dialog is not None and self._dialog.isVisible():
+                settings.setValue(key, today)
+                settings.sync()
+                if settings.status() != QSettings.Status.NoError:
+                    logger.warning("Could not save the update reminder date: %s", settings.status())
+        finally:
+            lock.unlock()
 
     def _on_check_error(self, message: str, *, manual: bool) -> None:
         logger.warning("Update check failed: %s", message)

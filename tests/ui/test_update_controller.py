@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import date
 from hashlib import sha256
 import os
 from pathlib import Path
@@ -18,6 +20,11 @@ from transbridge.ui.shell.navigation_rail import NavigationRail
 from transbridge.ui.shell.update_controller import UpdateController
 
 _APP = QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def isolate_reminders(monkeypatch, tmp_path):
+    monkeypatch.setattr(UpdateController, "_update_directory", staticmethod(lambda: tmp_path))
 
 
 class NavigationStub:
@@ -57,6 +64,47 @@ def test_new_release_updates_navigation_without_installing() -> None:
     assert controller._release is release
     assert controller._pending_installer is None
     host.close()
+
+
+def test_daily_reminder_across_launches(monkeypatch) -> None:
+    class LocalDate(date):
+        current = date(2026, 11, 22)
+
+        @classmethod
+        def today(cls):
+            return cls.current
+
+    monkeypatch.setattr("transbridge.ui.shell.update_controller.date", LocalDate)
+    release = _release(b"installer")
+
+    def launch(candidate, *, expect_prompt, closing=False, check_manually=False):
+        host = QMainWindow()
+        host.close_pending = False
+        host.show()
+        controller = UpdateController(host)
+        navigation = NavigationStub()
+        controller.bind_navigation(navigation)
+        try:
+            controller._on_check_result(candidate, manual=False)
+            host.close_pending = closing
+            _APP.processEvents()
+            assert navigation.state == (True, candidate.version)
+            assert (controller._dialog is not None and controller._dialog.isVisible()) == expect_prompt
+            if check_manually:
+                controller.check_manually()
+                assert controller._dialog.isVisible()
+            if controller._dialog is not None:
+                controller._dialog.secondary_button.click()
+                assert not controller._dialog.isVisible()
+        finally:
+            host.close()
+
+    launch(release, expect_prompt=False, closing=True)
+    launch(release, expect_prompt=True)
+    launch(release, expect_prompt=False, check_manually=True)
+    launch(replace(release, version="0.2.1.11"), expect_prompt=True)
+    LocalDate.current = date(2026, 11, 23)
+    launch(release, expect_prompt=True)
 
 
 @pytest.mark.parametrize("manual", [False, True])
