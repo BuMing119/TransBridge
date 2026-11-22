@@ -66,6 +66,7 @@ class ProjectTerminologyController(QObject):
         self._timer.timeout.connect(self._start)
         panel.refresh_button.clicked.connect(self.refresh)
         parent.installEventFilter(self)
+        panel.installEventFilter(self)
         for name in ("project_changed", "variant_changed"):
             signal = getattr(context, name, None)
             if signal is not None:
@@ -89,10 +90,11 @@ class ProjectTerminologyController(QObject):
             self._panel.render("当前工程未接入项目术语服务；任务使用下方术语来源。")
         else:
             self._panel.render("正在读取当前项目术语库…")
-        self._timer.start(0)
+        if self._panel.isVisible():
+            self._timer.start(0)
 
     def _start(self) -> None:
-        if self._closed or self._reading:
+        if self._closed or self._reading or not self._panel.isVisible():
             return
         identity = getattr(self._context, "active_version_identity", None)
         factory = getattr(self._context, "effective_terminology_factory", None)
@@ -113,7 +115,9 @@ class ProjectTerminologyController(QObject):
         self._panel.render(status, version)
 
     def eventFilter(self, watched, event):  # noqa: N802 - Qt API
-        if event.type() in (QEvent.Type.WindowActivate, QEvent.Type.Show):
+        if (watched is self._panel and event.type() == QEvent.Type.Show) or (
+            watched is self.parent() and event.type() == QEvent.Type.WindowActivate and self._panel.isVisible()
+        ):
             self.refresh()
         return super().eventFilter(watched, event)
 

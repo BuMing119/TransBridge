@@ -99,6 +99,7 @@ class AITranslatorWindow(QWidget):
             self,
         )
         self._task_refresh_timer = QTimer(self)
+        self._source_tags_dirty = False
         self._task_refresh_timer.setSingleShot(True)
         self._task_refresh_timer.timeout.connect(self.update_estimate)
         from transbridge.ui.paratranz.target_context import bound_paratranz_project
@@ -233,25 +234,21 @@ class AITranslatorWindow(QWidget):
         self._scope_presenter.select_preset(preset)
         self._rebuild_scope_tags()
         self.update_estimate()
-        self.update_quick_run()
 
     def on_scope_stage_clicked(self, stage: int | None):
         self._scope_presenter.toggle_stage(stage)
         self._rebuild_scope_tags()
         self.update_estimate()
-        self.update_quick_run()
 
     def on_scope_label_clicked(self, mark: str | None):
         self._scope_presenter.toggle_label(mark)
         self._rebuild_scope_tags()
         self.update_estimate()
-        self.update_quick_run()
 
     def on_scope_category_clicked(self, category: str | None):
         self._scope_presenter.toggle_category(category)
         self._rebuild_scope_tags()
         self.update_estimate()
-        self.update_quick_run()
 
     def _rebuild_scope_tags(self):
         from .scope_view import render_scope_tags
@@ -260,7 +257,7 @@ class AITranslatorWindow(QWidget):
         render_scope_tags(
             self._view,
             self,
-            entries=list(collection) if collection else [],
+            entries=collection,
             state=self._scope_presenter.state,
             label_library=self._ctx.label_library,
             entry_labels=self._ctx.entry_labels,
@@ -287,9 +284,13 @@ class AITranslatorWindow(QWidget):
         if getattr(self, "_task_launch", None) is not None:
             self.request_task_refresh()
             return
+        if self._source_tags_dirty:
+            self._rebuild_scope_tags()
+            self._source_tags_dirty = False
         config = self._config_presenter.build()
         try:
-            all_tasks = self._task_sources(config=config, all_sources=True)
+            missing = None if getattr(self, "_recovery_selection", None) is not None else set()
+            all_tasks = self._task_sources(config=config, all_sources=True, missing_originals=missing)
             by_key = {task.key: task for task in all_tasks}
             by_slot = {id(slot): str(key) for key, slot in self._ctx.slots.items()}
             selected = self._view.sources_panel.selected_slots()
@@ -303,7 +304,7 @@ class AITranslatorWindow(QWidget):
             self._view.controls.start_btn.setEnabled(False)
             self._view.controls.preflight_label.set_full_text(text)
         else:
-            update_window_quick_run(self, config=config, tasks=tasks)
+            update_window_quick_run(self, config=config, tasks=tasks, missing_originals=missing)
         self._view.controls.estimate_lbl.setText(text)
         self._view.controls.mixed_estimate_lbl.setText(text)
         self._view.sources_panel.set_counts(counts)
@@ -376,7 +377,7 @@ class AITranslatorWindow(QWidget):
     def _on_polish_start(self):
         self.on_start()
 
-    def _task_sources(self, *, config=None, all_sources=False):
+    def _task_sources(self, *, config=None, all_sources=False, missing_originals=None):
         config = config or self._config_presenter.build()
         if getattr(self, "_recovery_selection", None) is not None:
             from .task_recovery_binding import recovery_sources
@@ -389,13 +390,13 @@ class AITranslatorWindow(QWidget):
             mode=self._view_port.mode,
             config=config,
             overwrite=self._view_port.overwrite,
+            missing_originals=missing_originals,
         )
 
     def on_sources_changed(self):
         if hasattr(self, "_custom_profiles"):
-            self._rebuild_scope_tags()
-            self.update_estimate()
-            self.update_quick_run()
+            self._source_tags_dirty = True
+            self.request_task_refresh()
 
     def on_save_task_preset(self):
         from PyQt6.QtWidgets import QInputDialog

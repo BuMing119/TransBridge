@@ -76,11 +76,13 @@ def ui():
     app = QApplication.instance() or QApplication([])
     windows = []
 
-    def create(context, *, can_open=True):
+    def create(context, *, can_open=True, panel_visible=True):
         window = QWidget()
         panel = ProjectTerminologyPanel(window)
         QVBoxLayout(window).addWidget(panel)
         controller = ProjectTerminologyController(window, context, panel, can_open=can_open, profile_controller=context)
+        panel.setVisible(panel_visible)
+        window.show()
         windows.append((window, controller))
         return window, panel, controller
 
@@ -92,6 +94,23 @@ def ui():
         window.close()
         window.deleteLater()
     app.processEvents()
+
+
+def test_hidden_panel_defers_reads_until_shown_and_drops_pending_refresh_on_close(ui):
+    factory = _Factory(_snapshot())
+    context = _Context(factory)
+    window, panel, controller = ui(context, panel_visible=False)
+    context.project_changed.emit()
+    QTest.qWait(30)
+    assert not factory.threads
+    panel.show()
+    _wait(lambda: "published-1" in panel.version_label.full_text)
+    assert len(factory.threads) == 1
+    panel.refresh_button.click()
+    controller.close()
+    window.close()
+    QTest.qWait(30)
+    assert len(factory.threads) == 1
 
 
 def test_published_summary_uses_run_snapshot_counts_and_does_not_read_on_ui_thread(ui):

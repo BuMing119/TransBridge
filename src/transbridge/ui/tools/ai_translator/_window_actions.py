@@ -74,14 +74,18 @@ def open_settings_from_window(window: object) -> None:
     window.update_quick_run()
 
 
-def update_window_quick_run(window: object, *, config=None, tasks=None) -> None:
+def update_window_quick_run(window: object, *, config=None, tasks=None, missing_originals=None) -> None:
     if getattr(window, "_task_launch", None) is not None:
         window._view.controls.start_btn.setEnabled(False)
         window._view.controls.preflight_label.set_full_text("正在准备 AI 任务…")
         return
     if not hasattr(window, "_custom_profiles") or window._custom_profiles.block_unavailable_start():
         return
-    if missing_original_source_keys(window):
+    if (
+        missing_original_source_keys(window)
+        if missing_originals is None
+        else any(t.key in missing_originals for t in tasks)
+    ):
         controls = window._view.controls
         controls.start_btn.setText("补充原文…")
         _render_quick_run(window, "所选保存译文缺少原文。选择输入文件并对应词条后，可继续准备 AI 任务。", ready=True)
@@ -96,7 +100,7 @@ def update_window_quick_run(window: object, *, config=None, tasks=None) -> None:
     except ValueError as exc:
         _render_quick_run(window, str(exc), ready=False)
         return
-    entries = [entry for task in tasks for entry in task.entries]
+    entry_count = sum(len(task.entries) for task in tasks)
     checks = [
         preflight_ai_run(
             mode,
@@ -109,7 +113,7 @@ def update_window_quick_run(window: object, *, config=None, tasks=None) -> None:
         if task.entries
     ]
     reason = next((check.blocking_reason for check in checks if check.blocking_issues), None)
-    if not entries:
+    if not entry_count:
         reason = "所选来源没有符合范围的可处理词条"
     if window._run_controller.is_running:
         reason = "已有 AI 任务正在启动"
@@ -123,7 +127,7 @@ def update_window_quick_run(window: object, *, config=None, tasks=None) -> None:
     naming_schemes = getattr(window, "_naming_schemes", None)
     naming_scheme = getattr(naming_schemes, "summary_label", "保持当前译名")
     text = reason or (
-        f"已选 {len(tasks)} 个插件，本次处理 {len(entries)} 条；译名方案：{naming_scheme}；流程：{profile.summary}"
+        f"已选 {len(tasks)} 个插件，本次处理 {entry_count} 条；译名方案：{naming_scheme}；流程：{profile.summary}"
     )
     _render_quick_run(window, text, ready=reason is None)
 

@@ -113,6 +113,29 @@ def test_rapid_switches_only_evaluate_final_mode_and_close_discards_pending_refr
     assert calls == []
 
 
+def test_source_selection_coalesces_candidate_reads_and_close_discards_pending_work(task_window, monkeypatch):
+    app, window = task_window
+    calls = []
+    candidates = window._task_scope.candidates
+
+    def tracked(slot, state):
+        calls.append(slot.label)
+        return candidates(slot, state)
+
+    monkeypatch.setattr(window._task_scope, "candidates", tracked)
+    panel = window._view.sources_panel
+    panel.clear_button.click()
+    panel.select_all_button.click()
+    assert calls == []
+    app.processEvents()
+    assert calls == ["Demo"]
+    assert "本次任务 11" in window._view.controls.estimate_lbl.text()
+    panel.clear_button.click()
+    window.close()
+    app.processEvents()
+    assert calls == ["Demo"]
+
+
 def test_programmatic_config_hydration_emits_no_user_change_signals(task_window):
     _app, window = task_window
     changes = []

@@ -6,6 +6,7 @@ from __future__ import annotations
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
 from transbridge.application.translation.task_scope import SourceTask, task_entry_groups
 from transbridge.application.workbench_filters import FilterState, filtered_rows
+from transbridge.ui.source_input_state import original_known
 
 from .scope_presenter import ScopePresenter
 
@@ -34,13 +35,17 @@ class TaskScope:
         self._active = getattr(ctx, "active_slot", None)
         self._table = SourceWorkbenchScope(workbench.filtered_entries(), workbench.selected_entry_ids())
 
-    def build(self, slots, state, *, mode: str, config, overwrite: bool) -> tuple[SourceTask, ...]:
+    def build(
+        self, slots, state, *, mode: str, config, overwrite: bool, missing_originals=None
+    ) -> tuple[SourceTask, ...]:
         by_object = {id(slot): str(key) for key, slot in self._ctx.slots.items()}
         tasks = []
         for slot in slots:
             if id(slot) not in by_object:
                 raise ValueError("处理来源已变化，请重新打开 AI 翻译任务。")
             candidates = self.candidates(slot, state)
+            if missing_originals is not None and any(not original_known(entry) for entry in candidates):
+                missing_originals.add(by_object[id(slot)])
             memberships = None
             if mode == "mixed" and any(rule.label_filter for rule in config.action_rules):
                 rows = filtered_rows(slot.collection, FilterState(), self._ctx.entry_labels)
