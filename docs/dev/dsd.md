@@ -1,160 +1,26 @@
-# Automation
-- [SSE Auto Translator﻿﻿](https://www.nexusmods.com/skyrimspecialedition/mods/111491):
-    - Complete automation for every step
+# Dynamic String Distributor JSON
 
-- Export plugins xEdit script from DSD modpage:
-    - Can export plugins or records from xEdit automatically into the correct JSON format
-    - QUST CNAM original strings have to be adjusted manually
+TransBridge 将已翻译的插件词条或 DSD 来源导出为 JSON 数组。每条记录的 `form_id` 包含十六进制 FormID 和定义该记录的插件名，`type` 标明字段，`string` 是替换文本。DSD 接受完整 FormID、插件内本地 ID 和带 `0x` 的写法。原生 DSD 来源重导出时保留原来的写法。[上游格式说明](https://github.com/SkyHorizon3/SSE-Dynamic-String-Distributor/blob/main/docs/modules/ROOT/pages/index.adoc)
 
-# JSON format details
+## 字段定位
 
-I strongly recommend using [xTranslator](https://www.nexusmods.com/starfield/mods/313) and [SSEEdit](https://www.nexusmods.com/skyrimspecialedition/mods/164) to get all the information below.
+- 名称和描述等普通字段使用插件、FormID 和字段类型定位。游戏设置 `GMST DATA` 还需要 `editor_id`。
+- 对话 `INFO NAM1` 使用回应编号，任务目标 `QUST NNAM` 使用 QOBJ 编号。消息框按钮 `MESG ITXT` 按列表顺序从 0 编号。
+- 技能 `PERK EPF2` 使用 EPF3 的片段编号。`PERK EPFD` 的文本在对应列表中从 0 编号。
+- 区域地图名称 `REGN RDMP` 可以省略索引。插件中有对应区域数据项时，TransBridge 按官方 xEdit 脚本写出该项从 0 开始的位置。
+- 任务日志 `QUST CNAM` 的 `index` 等于 INDX 阶段编号加上日志在该阶段内从 0 开始的序号。例如阶段 10 中的前两条日志使用 10 和 11。旧版 DSD 可以用 `original` 匹配原文；上游自 1.4.0 起弃用这种写法。已有工程只保存了原文定位时仍可按旧格式导出。[官方 xEdit 导出脚本](https://github.com/SkyHorizon3/SSE-Dynamic-String-Distributor/blob/main/xEdit/DSD%20-%20Export%20plugins.pas) · [上游测试样例](https://github.com/SkyHorizon3/SSE-Dynamic-String-Distributor/blob/main/tests/generalTestAll.json)
 
-Note: The replacement string needs to follow the json format. The best way to do this is to write the text as it should look and convert it with [freeformatter](https://www.freeformatter.com/json-escape.html#before-output).
+## 条件译文
 
-## Replace XXXX FULL, XXXX DESC, NPC_ SHRT, WOOP TNAM, INFO RNAM, BOOK CNAM, MGEF DNAM, REGN RDMP, ACTI RNAM, FLOR RNAM
-
-Use this scheme for any full name, any DESC, NPC_ SHRT, WOOP TNAM, INFO RNAM, BOOK CNAM, MGEF DNAM, REGN RDMP, ACTI RNAM, FLOR RNAM.
+DSD 自 1.5.0 起支持在指定字段的译文上设置 `conditions`。例如同一条对话可以附上玩家负重条件。编辑已有 DSD JSON 时，导出保留每条规则的条件和顺序。原文件中显式的 `"string": ""` 表示用空字符串替换，也会随来源保留。
 
 ```json
 [
-    {
-        "form_id": "FormID|BaseRecordPlugin",
-        "type": "Record type",
-        "string": "replacement/translation string"
-    }
+  {"form_id": "0x800|Example.esp", "type": "QUST CNAM", "index": 10, "string": "我已抵达。"},
+  {"form_id": "0x900|Example.esp", "type": "MESG ITXT", "index": 0, "string": "接受"},
+  {"form_id": "0xA00|Example.esp", "type": "INFO NAM1", "index": 2, "conditions": ["Self IsOverEncumbered NONE NONE == 1"], "string": "你带得太多了。"}
 ]
 ```
 
-Example:
-```json
-[
-    {
-        "form_id": "000133C6|Skyrim.esm",
-        "type": "CELL FULL",
-        "string": "New full name"
-    },
-    {
-        "form_id": "000ACC37|Skyrim.esm",
-        "type": "WEAP FULL",
-        "string": "New full name"
-    },
-    {
-        "form_id": "0004D0F4|Skyrim.esm",
-        "type": "REFR FULL",
-        "string": "New full name"
-    },
-    {
-        "form_id": "0003FA35|Skyrim.esm",
-        "type": "DIAL FULL",
-        "string": "New sentence"
-    },
-    {
-        "form_id": "0001AD07|Skyrim.esm",
-        "type": "BOOK DESC",
-        "string": "<font face='$HandwrittenFont'>\r\nDelvin,\r\nhier ist die Rezeptur für die Verbesserte Knochenrüstung, die ich in meinem letzten Brief erwähnt habe. Behaltet das Gold, das Ihr durch den Verkauf einnehmt, und stellt sicher, dass es unserer kleinen Schwester an nichts mangelt.\r\n\r\nZutaten:\r\n- 4 Tassen Knochenstaub\r\n- 1 Tasse Salz\r\n- 1 Flasche Netchgelee\r\n- 1 Tasse gemahlenen Mammutstoßzahn\r\n- 1 Eimer frisches Wasser\r\n\r\nGebt den Knochenstaub und das Salz ins Wasser und lasst sie dort mindestens einen Tag lang einweichen. Dann gebt das Netchgelee und den Mammutstoßzahn hinzu. Rührt alles über einer heißen Flamme um, bis die Mischung sich langsam erhärtet. Gießt sie anschließend in die gewünschte Form und platziert die Form in der Mitte Eurer Schmiede. Erhitzt die Mischung mindestens einen halben Tag lang, dann lasst sie auskühlen und entfernt sie aus der Form.\r\n\r\n- Glover Mallory"
-    },
-    {
-        "form_id": "000E40D3|Skyrim.esm",
-        "type": "MGEF DNAM",
-        "string": "<mag>-prozentige Krankheitsresistenz."
-    },
-    {
-        "form_id": "000A2C46|Skyrim.esm",
-        "type": "ACTI RNAM",
-        "string": "Hallo!"
-    },
-	{
-        "form_id": "000176CD|Skyrim.esm",
-        "type": "FLOR RNAM",
-        "string": "Hallo2!"
-    }
-]
-```
-
-## Replace QUST CNAM
-Use this scheme for QUST CNAM replacements.
-
-
-```json
-[
-    {
-        "form_id": "FormID|BaseRecordPlugin",
-        "type": "Record type",
-        "original": "original string",
-        "string": "replacement/translation string"
-    }
-]
-```
-
-## Replace QUST NNAM, INFO NAM1, MESG ITXT, PERK EPF2, PERK EPFD
-Use this scheme for QUST NNAM, INFO NAM1, MESG ITXT, PERK EPF2, PERK EPFD replacements.
-
-
-```json
-[
-    {
-        "form_id": "FormID|BaseRecordPlugin",
-        "type": "Record type",
-        "index": Number,
-        "string": "replacement/translation string"
-    }
-]
-```
-
-For INFO NAM1 the index is the reponse number of the response.\
-For QUST NNAM the index is the objective index (QOBJ) of the objective.\
-For MESG ITXT the index is the order in which you can see them in SSEEdit. Starting with 0.\
-For PERK EPF2 the index is the Fragment Index in EPF3.\
-For PERK EPFD the index is the order in which you can see them in SSEEdit. Starting with 0 and only PERK EPFD strings count to this order.
-
-Example:
-```json
-[
-    {
-        "form_id": "000E6C43|Skyrim.esm",
-        "type": "INFO NAM1",
-        "index": 2,
-        "string": "new sentence"
-    },
-    {
-        "form_id": "0004B2A1|Skyrim.esm",
-        "type": "QUST NNAM",
-        "index": 60,
-        "string": "new objective sentence"
-    },
-    {
-        "form_id": "00016837|Skyrim.esm",
-        "type": "MESG ITXT",
-        "index": 0,
-        "string": "Replaces Accept Sign"
-    }
-]
-```
-
-## Replace GMST DATA
-Use this scheme for GMST DATA. Due to how gamesettings work the editorID is always required.
-
-```json
-[
-    {
-        "form_id": "FormID|BaseRecordPlugin",
-        "editor_id": "EditorID",
-        "type": "Record type",
-        "string": "replacement/translation string"
-    }
-]
-```
-
-Example:
-```json
-[
- 	{
-        "form_id": "000D48B7|Skyrim.esm",
-        "editor_id": "sCurrentLocation",
-        "type": "GMST DATA",
-        "string": "New string"
-    }
-]
-```
+已按新版导入的 DSD 来源会将可选字段和条件随工程保存。若旧工程导入时已经丢失条件，需从原始 DSD JSON 重新载入，才能还原完整规则。
 

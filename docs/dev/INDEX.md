@@ -215,14 +215,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 ### DSD JSON 格式
 
-DSD (Dynamic String Dumper) 是 Skyrim Mod 翻译的外部格式，用于 xEdit 脚本等工具。
-
-| 变体 | 字段 | 适用类型 |
-|------|------|----------|
-| 基础格式 | `form_id`, `type`, `string` | FULL/DESC/SHRT/TNAM/RNAM/DNAM/RDMP 等 |
-| QUST CNAM | `form_id`, `type`, `original`, `string` | QUST CNAM |
-| 索引格式 | `form_id`, `type`, `index`, `string` | INFO NAM1, QUST NNAM, MESG ITXT, PERK EPF2/EPFD |
-| GMST DATA | `form_id`, `editor_id`, `type`, `string` | GMST DATA |
+Dynamic String Distributor 使用带插件归属的 FormID。任务日志、消息框按钮等字段有各自的索引规则，对话等字段可附带条件。[DSD 格式与兼容性](dsd.md)
 
 示例：
 ```json

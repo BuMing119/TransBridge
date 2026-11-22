@@ -300,10 +300,8 @@ tools/
 ├── tool_translator.py       # TranslationController 类 (~350行)
 │                            #   构造函数注入 AppContext + TaskManager
 │                            #   每个工具作为一个实例方法
-├── tool_proofreader.py      # ProofreaderController 类 (~280行)
-├── tool_editor.py           # EditorController 类 (~350行)
-└── _common.py               # NEW: 共享工具函数 (~80行)
-                             #   _load_llm_config(), _build_postprocessor()
+├── tool_proofreader.py      # 校对报告查询
+└── tool_editor.py           # EditorController 类 (~350行)
 ```
 
 **变更前**:
@@ -322,7 +320,7 @@ class TranslationController:
         self._task_mgr = task_manager
 
     def start_translation(self, args: dict, ctx: ExecutionContext) -> ToolResult:
-        config = load_llm_config()  # 来自 _common.py
+        # 读取本次任务的桌面模式配置，交给统一任务执行器
         ...
 ```
 
@@ -330,13 +328,9 @@ class TranslationController:
 
 **理由**: 模块级函数通过闭包引用外部状态（AppContext 全局单例、TaskManager 全局单例），导致函数间隐式耦合、测试困难、可读性差。封装为 Controller 类后：依赖显式注入（构造器）、方法间通过 self 共享状态、mock 测试更简单。
 
-#### D4: _common.py 消除 LLM 配置加载重复
+#### D4　任务配置与校对执行
 
-`tool_translator.py` 和 `tool_proofreader.py` 中存在 `_load_llm_config()` 重复逻辑——从 `LLMConfig.load_from_file()` 加载，两文件各自实现了相同的 10 行代码。
-
-提取到 `tools/_common.py`（仅 `load_llm_config()` 函数，~30行），两个 Controller 统一 import。未来新增工具模块复用同一入口。
-
-`_build_postprocessor()` **不提取**：两处签名差异较大（参数数量不同、阶段配置不同），强行统一会引入回归风险，各自保留在对应 Controller 中。
+助手从桌面保存的配置准备翻译或润色任务。质量处理阶段由桌面任务执行器组装，助手报告查询只读取已经保存的结果。见[桌面来源执行器](../../src/transbridge/ui/tools/ai_translator/source_execution.py)及[助手翻译入口](../../src/transbridge/smart_assistant/tools/tool_translator.py)。
 
 #### D5: MemoryWriterThread 外提（已废除，历史决策）
 

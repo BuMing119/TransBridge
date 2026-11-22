@@ -110,7 +110,7 @@ workbench/
   source_input_view.py / parse_presenter.py
   filters_view.py / filters_presenter.py
   translation_table.py / table_presenter.py
-  labels_view.py / labels_presenter.py
+  labels_view.py          # 标签操作共用 application/workbench_labels.py
   entry_menu.py
   progress_view.py
   cards/...               # 各 operation 的 form/view + presenter

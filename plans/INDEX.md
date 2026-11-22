@@ -2,6 +2,8 @@
 
 ## 新增规划（草稿）
 
+- [助手工具复用桌面功能](assistant-shared-business-tools/plan.md) S1 至 S5 已验收。任务控制与成果、配置与术语、文件登记、译文导入和正式写回均已对照桌面入口。[最终记录](../docs/changelogs/assistant-shared-business-tools/story-05/2026-11-22-005-final-registry-acceptance.md)列出 63 个工具及其参数。
+
 - [paratranz-openapi-070](paratranz-openapi-070/plan.md)：ParaTranz 0.7.0 接口、导出状态、HTTP 错误与分页。实现与复验证据见[增量记录](../docs/changelogs/paratranz-openapi-070/story-01-to-03/2026-11-16-001-openapi-070.md)。
 
 - [assistant-durable-memory](assistant-durable-memory/plan.md)：助手项目作用域长期记忆；[FR31](../docs/requirements.md#fr31-assistant-memory) 为草稿，10 个 Story，0/10 实现；[ADR-042](../docs/adr/042-assistant-durable-memory.md) 为提议。2026-09-13 规划：首个用户版本包含自动提取、校验、保存、更新与纠错/遗忘，无需逐条确认；不恢复旧记忆系统。

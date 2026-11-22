@@ -1,5 +1,39 @@
 # 变更日志索引
 
+- 2026-11-22：[DSD 导出保留记录索引、条件与空替换](file-io-dialogs/story-01-to-03/2026-11-22-003-dsd-export-fidelity.md)。官方样例 34 条记录通过直接导出与工程重开导出的逐字段比较。
+
+- 2026-11-22：[63 个注册工具与参数的最终验收](assistant-shared-business-tools/story-05/2026-11-22-005-final-registry-acceptance.md)。
+
+- 2026-11-22：[登记来源的提交线程、取消与回执](assistant-shared-business-tools/story-05/2026-11-22-004-source-publication-thread.md)。
+
+- 2026-11-22：[归档回读和 ParaTranz 项目、修订分页](assistant-shared-business-tools/story-05/2026-11-22-003-catalog-remote-archive.md)。
+
+- 2026-11-22：[单来源与批量写回、FOMOD 预览](assistant-shared-business-tools/story-05/2026-11-22-002-file-writeback.md)。
+
+- 2026-11-22：[从桌面登记来源和向当前来源导入译文](assistant-shared-business-tools/story-05/2026-11-22-001-file-import.md)。
+
+- 2026-11-22：[共享翻译配置、动态术语库与入站草稿确认](assistant-shared-business-tools/story-04/2026-11-22-006-translation-terminology-config.md)。
+
+- 2026-11-22：[任务中心的停止、成果查询与合入](assistant-shared-business-tools/story-04/2026-11-22-005-task-center-control-results.md)。
+
+- 2026-11-22：[助手与桌面共用词典匹配、冲突仲裁和写回](assistant-shared-business-tools/story-04/2026-11-22-004-workbench-dictionary-apply.md)。记录同一来源下的填充、冲突选择、目标版本校验与本轮撤销。
+
+- 2026-11-22：[助手与桌面共用历史 Excel 报告列表](assistant-shared-business-tools/story-04/2026-11-22-003-exported-report-history.md)。覆盖跨插件排序、带时间的文件名、文件修改时间和助手返回上限。
+
+- 2026-11-22：[助手撤下独立后处理任务](assistant-shared-business-tools/story-04/2026-11-22-002-retire-standalone-postprocess.md)。校对与严格质量处理使用桌面翻译或润色任务。
+
+- 2026-11-22：[助手翻译与润色接入桌面任务执行器](assistant-shared-business-tools/story-04/2026-11-22-001-desktop-translation-execution.md)，涵盖桌面预设、混合模式、停止及成果合入的离线对照。
+
+- 2026-11-22：[助手复用工作台工程绑定、项目详情与导出](assistant-shared-business-tools/story-03/2026-11-22-001-paratranz-binding-export.md) 记录离线绑定查询、成员资格核验、项目成员数及下载已有 ZIP 的请求对照。
+
+- 2026-11-22：[助手复用工作台统计、标签目录和应用状态](assistant-shared-business-tools/story-02/2026-11-22-003-workbench-read-tools.md) 记录阶段统计、分页与跨来源标签计数、当前窗口的来源及配置状态。
+
+- 2026-11-22：[助手复用工作台译文编辑、阶段变更与翻译范围](assistant-shared-business-tools/story-02/2026-11-22-002-workbench-entry-edits.md) 覆盖首次填写译文、确认前并发修改和翻译任务的实际目标。
+
+- 2026-11-22：[助手复用工作台筛选、选区与批量标签](assistant-shared-business-tools/story-02/2026-11-22-001-workbench-filters-selection-labels.md) 涵盖跨页选中、同一请求连续筛选和空范围零写入。
+
+- 2026-11-22：[助手工具删减与文件上传切换](assistant-shared-business-tools/story-01/2026-11-22-001-retire-assistant-tools.md) 记录三个下线入口、文件上传与预览、翻译范围及失效预设清理。
+
 - 2026-11-21：[场景内的对话按开始阶段阅读](paratranz-categorized-upload/story-28/2026-11-21-005-scene-phase-order.md) 覆盖工作台、分类导出和 TB2 编号，已用 Skyrim.esm 重验 191 个场景。
 
 - 2026-11-21：[任务对话按场景与问答排列](paratranz-categorized-upload/story-28/2026-11-21-004-scene-question-order.md) 记录场景共用话题、默认回复、RNAM 选项及旧工程分页顺序的处理。

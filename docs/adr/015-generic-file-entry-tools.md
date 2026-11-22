@@ -46,15 +46,14 @@ src/transbridge/migrator/        # 词条键对齐迁移（FR16.4）
 
 ### 3. Agent 工具 namespace 划分
 
-5 个工具注册到 Agent（ToolRegistry）时的 namespace：
+向助手注册的文件和词典工具分属以下 namespace。
 
 | 工具 | namespace | 理由 |
 |------|-----------|------|
 | extract_archive / pack_archive / diff_directories / filter_files | 新建 archive | 文件操作，与现有 7 个翻译工作流 namespace 语义不同 |
-| migrate_entries | editor | 条目操作的编辑类 |
 | apply_dictionary / save_dictionary | translator | 翻译复用类，补齐词典套用/存词典的 Agent 工具缺口 |
 
-新建 archive namespace 承载 4 个文件操作工具；词条对齐与词典工具按语义归入现有 editor/translator namespace，不新建。
+archive 承载 4 个文件操作工具。词典工具使用 translator，键对齐由工程更新和 FOMOD 流水线调用。
 
 ### 4. 归档实现：py7zr + zipfile + rarfile（复用 ADR-014 决策 4）
 
@@ -76,7 +75,7 @@ src/transbridge/migrator/        # 词条键对齐迁移（FR16.4）
 - 接口变更:
   - 新增 fileops/archive.py 的统一 extract()/pack() 接口
   - 新增 KeyMigrator.migrate(old_collection, new_collection) -> MigrationResult
-  - 新增 Agent 工具: extract_archive / pack_archive / diff_directories / filter_files（archive namespace）、migrate_entries（editor namespace）、apply_dictionary / save_dictionary（translator namespace）
+  - 新增 Agent 工具: extract_archive / pack_archive / diff_directories / filter_files（archive namespace）、apply_dictionary / save_dictionary（translator namespace）
   - 复用 TranslationMemoryManager.apply_to_collection()/save_from_collection()（不改动）
 - 正面: 通用能力独立可复用；Agent 工具补齐文件操作与词典套用缺口；FOMOD 流水线变薄
 - 负面: 新增 2 个包；fileops/ 与 infra/ 的边界需在后续开发中持续澄清

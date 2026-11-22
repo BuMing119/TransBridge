@@ -277,17 +277,11 @@ class ToolSpec:
 
 | 级别 | 行为 | 示例工具 |
 |------|------|---------|
-| `read` | 直接放行，无需确认 | lookup_terms, get_collection_summary, check_quality |
-| `write` | 放行；若 `require_confirmation=True` 则弹出确认 | translate_entries, export_json |
-| `admin` | 始终要求确认，UI 端弹出授权对话框 | write_back, 未来可能的 delete_collection 等 |
+| `read` | 直接放行，无需确认 | get_statistics, get_quality_report |
+| `write` | 放行；若 `require_confirmation=True` 则弹出确认 | start_translation, upload_entries |
+| `admin` | 始终要求确认，UI 端弹出授权对话框 | write_back |
 
-**现有工具分级映射**（Phase 2 实现时更新 `_register_v1_tools`）:
-- `lookup_terms` → `read`
-- `get_collection_summary` → `read`
-- `check_quality` → `read`
-- `translate_entries` → `write`, `require_confirmation=False`（翻译是核心功能，高频操作）
-- `export_json` → `write`, `require_confirmation=True`（文件写入需确认）
-- `write_back` → `admin`（修改 ESP/EET/XT 文件，最高风险）
+工具声明的 `permission` 和 `require_confirmation` 决定具体操作的权限和确认要求。翻译任务与文件上传都需要确认。
 
 ### 2. 可观测性：pyqtSignal 遥测管道
 

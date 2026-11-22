@@ -121,16 +121,7 @@ TranslationEntry.from_dict(data: dict) -> TranslationEntry
 
 ### DSD 格式转换
 
-DSD (Dynamic String Dumper) 是 Skyrim Mod 翻译的外部格式，用于 xEdit 脚本等工具。
-
-#### DSD 格式变体
-
-| 变体 | 字段 | 适用类型 |
-|------|------|----------|
-| 基础格式 | `form_id`, `type`, `string` | FULL/DESC/SHRT/TNAM/RNAM/DNAM/RDMP 等 |
-| QUST CNAM | `form_id`, `type`, `original`, `string` | QUST CNAM（需要原文匹配） |
-| 索引格式 | `form_id`, `type`, `index`, `string` | INFO NAM1, QUST NNAM, MESG ITXT, PERK EPF2/EPFD |
-| GMST DATA | `form_id`, `editor_id`, `type`, `string` | GMST DATA |
+Dynamic String Distributor 使用插件归属、字段和原生索引定位记录。词条元数据保存来源 DSD 的可选字段和条件，使 JSON 在工程重新打开后仍可按原有规则导出。[DSD 字段说明](dsd.md)
 
 #### 方法
 

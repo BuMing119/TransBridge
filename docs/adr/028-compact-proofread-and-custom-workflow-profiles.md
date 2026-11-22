@@ -21,7 +21,7 @@
 - `proofread`：默认策略，仅执行一个 Proofread 校对业务阶段。
 - `strict`：兼容策略，按用户开关执行独立检测、修复、润色和裁决。
 
-新建的翻译、润色和混合内置预设默认使用 `proofread`。旧 `combined` 值只在配置、具名 profile、Smart Assistant 参数和 Python 导入的兼容边界被接受，读取后立即归一为 `proofread`，新写入与对外展示不再产生 `combined`。已有明确保存且没有策略字段的旧预设仍按 `strict` 解释，避免把用户既有阶段选择静默改义。策略进入执行档案摘要和 digest，checkpoint 不得跨策略复用。
+新建的翻译、润色和混合内置预设默认使用 `proofread`。读取旧配置、具名 profile 和 Python 导入接口时，既有的 `combined` 值归一为 `proofread`。助手的润色任务接受 `proofread` 和 `strict`。已有明确保存且没有策略字段的旧预设仍按 `strict` 解释。策略进入执行档案摘要和 digest，checkpoint 不得跨策略复用。
 
 ### 2. Proofread 校对的职责与返回合同
 

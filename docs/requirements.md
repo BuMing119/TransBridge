@@ -91,7 +91,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 
 **FR3.4.3 分类上传响应性与本地状态** — *2026-10-25 | 状态: 已确认*: 上传 SHALL 在后台以文件为执行和进度单位，支持取消、有界详情和合并进度。上传不保存 file_id/entry_id 关联，不修改本地版本、修订、来源身份，也不隐式保存未保存工作；历史关联不作为前置条件。上传开始时 SHALL 固定选定输入、工程/版本、远端目标、账号及实际配置；捕获完成后的本地编辑和长期配置修改不使任务失效，也不改变后续上传内容。归属和取消保护继续有效，不得改投新工程或新账号。部分原文成功、译文失败 SHALL 明确显示阶段事实。
 
-**FR3.4.4 当前文件定位与下载范围** — *2026-11-09 修订成果生命周期 | 状态: 已确认，任务独立存储待实现*: 上传每轮读取当前云端文件列表，按完整路径解析 file_id。GUI“从paratranz上同步”和 AI 助手 download_entries SHALL 共用 application/sync/project_download.py 的用例，只定位到所选插件层级，读取普通根文件、确定性数字分片及插件目录下全部 JSON 文件，再按本地已有词条匹配。下载 SHALL 先统计本轮实际所选云端文件并去重（含分类与数字分片）；少于 50 个逐文件下载，达到 50 个先触发新的项目压缩包、等待生成完成，再下载、按完整路径解压所选 raw JSON 并匹配，不复用旧包、不混入其他插件或 utf8 副本。生成/下载/解压失败或权限不足 SHALL 明确报错，不静默降级；下载前不重算分类、不按本地任务标题或分类文件名过滤，任务标题命名保留。同步整来源优先带插件后缀的新布局，缺失时才用旧无后缀布局；不混合代际，读中 404 仅同代重定位，空文件或读取失败不降级。既有大小写消歧、全部启用来源共同决定旧名归属、插件隔离、取消与原子保存保持；不跨插件、不用全项目 strings、不新增目录索引或额外逐词条云端回读。ZIP、解压文件和云端列表等临时材料在本轮结束后清理；未合并下载成果及其必要匹配输入按 FR32 存入独立任务中心，关闭、失败或取消不抹除已可靠保存的成果。新的下载任务重新读取云端，历史成果不得冒充最新云端状态。仅更新已有译文及对应状态，不新增或删除源词条，保持原文、上下文、顺序；不迁移、改名或删除云端文件。
+**FR3.4.4 当前文件定位与下载范围** — *2026-11-09 修订成果生命周期 | 状态: 已实现*: 上传每轮读取当前云端文件列表，按完整路径解析 file_id。GUI“从paratranz上同步”和 AI 助手 download_entries SHALL 共用 application/sync/project_download.py 的用例，只定位到所选插件层级，读取普通根文件、确定性数字分片及插件目录下全部 JSON 文件，再按本地已有词条匹配。下载 SHALL 先统计本轮实际所选云端文件并去重（含分类与数字分片）；少于 50 个逐文件下载，达到 50 个先触发新的项目压缩包、等待生成完成，再下载、按完整路径解压所选 raw JSON 并匹配，不复用旧包、不混入其他插件或 utf8 副本。生成/下载/解压失败或权限不足 SHALL 明确报错，不静默降级；下载前不重算分类、不按本地任务标题或分类文件名过滤，任务标题命名保留。同步整来源优先带插件后缀的新布局，缺失时才用旧无后缀布局；不混合代际，读中 404 仅同代重定位，空文件或读取失败不降级。既有大小写消歧、全部启用来源共同决定旧名归属、插件隔离、取消与原子保存保持；不跨插件、不用全项目 strings、不新增目录索引或额外逐词条云端回读。ZIP、解压文件和云端列表等临时材料在本轮结束后清理；未合并下载成果及其必要匹配输入按 FR32 存入独立任务中心，关闭、失败或取消不抹除已可靠保存的成果。新的下载任务重新读取云端，历史成果不得冒充最新云端状态。仅更新已有译文及对应状态，不新增或删除源词条，保持原文、上下文、顺序；不迁移、改名或删除云端文件。
 
 **FR3.4.5 文件请求调度与局部隔离** — *2026-10-25 | 修订: 2026-10-31 | 状态: 已确认*: 正常上传 SHALL 不读取整个项目词条、不逐条核验文件路径或回读词条，复用服务端文件增量、哈希去重及安全导入规则。四种模式均复用下载的文件数门槛。需比较的已有文件少于 50 个时逐文件读取，达到 50 个时生成一次新项目 ZIP。强制导入先排除全空白译文文件。缺少决策字段的归档仅补读该文件；仍无法核实时停止其写入。普通/分类上传与文件下载 SHALL 在同服务/账号的文件网关间共享最多 5 个在途请求及 0.5 秒最小发起间隔；每个文件流水线使用独立 HTTP session，同文件创建先于译文导入，关联分片按输入顺序处理。任务与结果前瞻 SHALL 有界，进度及上下文检查仍由原 worker 执行。明确 429 按 Retry-After 有界等待，所有请求遵守共享冷却；取消或任务停止不解除其他窗口的截止。401/403/未恢复429停止后续发起，已发出请求按既有超时收尾且保留已确认写入事实，未知 POST 不自动重试。413 保留确定性原文文件拆分，译文过大仅在同文件内分批；下载完整来源、404重定位、本轮缓存、失败隔离及上限合同保持。423 显示文件忙。客户端不宣称提供平台未承诺的原子并发保护。
 
@@ -403,7 +403,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR6.10.4 报告生成后端**: 应用层 SHALL 提供 translation completion 与 standalone polish 的 canonical snapshot 构建器，以及只接收 `ReportSnapshot` 的 renderer bundle。renderer 失败 SHALL 形成结构化诊断，不得回滚已提交的翻译或润色结果；生产入口 SHALL NOT 构造 `TranslationResult`/`PostProcessResult` 假对象或调用 legacy `ReportGenerator` 投影。
   - **FR6.10.5 批量模式报告**: 批量翻译/润色完成后 SHALL 为每个插件独立生成报告（每个插件一份 Excel）。应用内 SHALL 先展示跨插件汇总弹窗（列出每个插件的完成状态和关键统计），点击单个插件可打开该插件的详细报告对话框。
   - **FR6.10.6 润色报告独立于预览**: 润色预览对话框（`_PolishPreviewDialog`）SHALL 保留不变，用于逐条接受/拒绝决策。润色报告在预览确认后生成，展示最终结果汇总（接受数/拒绝数/失败数/变更统计），不与预览合并。
-  - **FR6.10.7 历史报告查看**: 系统 SHALL 在 AI 翻译窗口或工具面板中提供「历史报告」入口，列出过往生成的报告文件（按时间排序），双击使用系统默认程序打开 Excel 文件。
+  - **FR6.10.7 历史报告查看**。AI 翻译窗口底部的“任务记录”按钮打开“历史报告”，按报告时间从新到旧列出各插件的 Excel 报告，双击可用系统默认程序打开文件。
   - **FR6.10.8 异常处理**: 后处理未启用时仍 SHALL 生成翻译完成快照，阶段列表可为空。完全失败、部分成功和取消 SHALL 使用 FAILED、PARTIAL、CANCELLED 明确表达。任一格式写入失败时 SHALL 记录 `REPORT_RENDER_FAILED` 并继续展示快照及其他成功产物。批量中某插件完全失败时标记状态但不影响其他插件；条目在报告生成后已被删除时跳转提示"条目不存在"。
 
 **FR6.9 独立校对入口** — *2026-08-27 | 状态: 已实现 | 优先级: P0*: 系统 SHALL 在 AI 翻译窗口中提供「润色」预设，对已翻译条目默认以一次 LLM「校对（Proofread）」同时完成对照原文纠错、术语语境处理和表达优化；不得默认把检测、修复、润色和裁决拆成多次重复扫描。旧的独立多阶段链 SHALL 作为严格或自定义策略保留。
@@ -416,7 +416,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR6.9.6 预览确认**: 启用预览时 SHALL 逐条展示原文、当前译文和最终校对候选并允许接受或拒绝；严格策略可额外展示检测、修复与裁决详情。正式 collection 只能在确认后一次提交。
   - **FR6.9.7 进度与异常**: 标准策略 SHALL 以一个「校对」阶段展示连续批次进度并支持暂停/停止；严格策略按实际启用阶段展示。选中范围为空或均无译文时 SHALL 给出原因，任一失败候选不得覆盖原译文。
   - **FR6.9.8 可追踪报告**: GUI、历史、Excel、CSV 与 JSON SHALL 保留实际阶段、校对前后译文、检测疑点、AI 处理状态和理由。待复核项 SHALL 可筛选并有文字和颜色标注；复核状态与执行失败状态分开。缺失判断证据不得伪称已评估，不自动覆盖项目词库。
-  - **FR6.9.9 Smart Assistant 后处理预设对齐** — *2026-08-27 | 状态: 已实现*: `run_postprocess` 无参数调用 SHALL 默认使用内置润色预设的 `proofread` 校对，而非隐式执行全部严格阶段。工具 SHALL 支持选择内置 translate/polish/mixed 预设或具名自定义工作流，并允许显式覆盖作用域、润色强度、策略、严格阶段及共享并发/Token 额度；服务商、模型、端点、凭据和术语路径仍继承全局配置。显式传入旧 `phases` 且未指定策略时 SHALL 兼容解释为 `strict`；`phases` 与 `proofread` 同时出现 SHALL 拒绝并说明冲突。旧 `combined` 只作为输入兼容别名，读取后 SHALL 归一为 `proofread`，不得再次持久化或对外展示。工具报告、任务元数据和日志 SHALL 记录最终生效的配置来源、策略、阶段、作用域和运行额度。
+  - **FR6.9.9 助手复用桌面质量处理**（2026-11-22 已实现）。对已有译文执行校对使用 FR9.3.6 的 `start_polish`。翻译或混合任务中的质量处理跟随 FR9.3.5 的 `start_translation`。两者由桌面执行器按本次任务的预设和作用域运行。润色的初始策略为 `proofread`，选择 `strict` 时按预设中启用的阶段运行。
 
 **FR7.1 三步工作台**: 系统 SHALL 提供三步工作流界面：Step1 源文件解析 → Step2 词条预览与选择 → Step3 操作执行。
 
@@ -424,7 +424,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 
 **FR7.3 ParaTranz 管理面板**: 系统 SHALL 提供多标签页的项目管理界面（概览/文件/词条/术语/成员/历史/贡献/导出/讨论）。
 
-**FR7.4 AI 翻译浮动窗口**: 系统 SHALL 提供 AI 翻译配置窗口，三标签页布局（LLM 与模型 / 术语库 / 后处理）。
+**FR7.4 AI 翻译浮动窗口**。任务配置包括“基础配置”“术语库”“质量处理”和“运行参数”。“质量处理”页用于选择本次任务的校对策略和阶段，开始按钮启动所选模式。
 
 **FR7.5 API 状态指示器**: 系统 SHALL 在状态栏显示 API 请求状态指示器（绿点/转圈/红点）。
 
@@ -737,13 +737,13 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 
 **架构决策**（评审委员会共识 + 用户裁决）:
 - **代码组织**: 50+ 工具 SHALL 拆分为 `smart_assistant/tools/` 子包，按 namespace 分文件（`tool_parser.py` / `tool_editor.py` / `tool_translator.py` / `tool_proofreader.py` / `tool_paratranz.py` / `tool_writer.py` / `tool_default.py`），`tool_registry.py` 仅保留 ToolSpec 数据类 + ToolRegistry 类 + 各模块注册入口
-- **UI 交互契约**（架构师路线）: 工具 SHALL 为纯数据操作——操作 `AppContext.collection` 中的 `TranslationEntry` 对象数据（stage/label/translation 字段），UI 通过订阅 `AppContext` 信号（`collection_changed` / `filter_changed` 等）自动刷新。工具 SHALL NOT 直接引用或操作 QWidget。`AppContext` 需扩展为 ViewModel（新增 `filter_state`、`search_query` 等属性与对应 pyqtSignal）
+- **业务调用边界**：助手使用桌面正在调用的业务接口。实际修改通过工程命令、文件服务或任务执行器提交，工作台读取同一权威状态。助手负责参数适配、用户确认、授权和执行回执。
 - **执行上下文**: 工具函数签名为 `Callable[[dict, ExecutionContext], ToolResult]`，ExecutionContext 包含 `app_context` + `task_manager` + 工具元数据，不含 UI 组件引用
 - **ToolResult 类型**: 所有工具 SHALL 返回 `ToolResult` 数据类——`success: Literal[True, False, "partial"]` + `message: str` + `data: dict | None` + `failed_items: list | None` + `truncated: bool`，替代当前 `{"success": bool, "message": str}` 的自由字典格式
 - **TaskManager**: 系统 SHALL 新增 `TaskManager` 单例组件，管理 long_running 工具的任务生命周期（register/cancel/get_status），解决 threading.Event 在函数返回后销毁的问题
 - **工具前置检查**: 系统 SHALL 提供 `@require_collection` 装饰器，自动注入并校验集合有效性，25+ 工具复用
 - **参数校验**: 系统 SHALL 提供 `@validate_params` 装饰器，统一类型检查 + 异常捕获 + 格式化 ToolResult 错误响应
-- **权限审查**: `run_llm_arbitration` 权限从 `read` 改为 `write`（产生 LLM API 费用）；所有产生 API 费用或修改数据的工具 SHALL 至少为 `write` 级
+- **权限审查**：产生模型费用或修改数据的工具至少使用写权限。
 - **Orchestrator 可见性**: Orchestrator 不直接暴露全部 50+ 工具 schema，SHALL 通过 7 个功能域"元工具"描述或子 Agent 间接调度
 - **已裁剪工具**: `navigate_to`（Agent 替用户导航是反模式）、`get_write_status`（信息 UI 已可见）、`get_parse_config` / `set_parse_config`（一次性配置，Agent 介入价值极低）从本需求中移除
 
@@ -753,88 +753,63 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 
 在扩展工具之前，需对现有基础设施做以下变更：
 
-- **FR9.0.1 代码拆分**: 将当前 `tool_registry.py` 中的 6 个 v1 工具实现函数迁移至 `smart_assistant/tools/tool_v1.py`。创建 `smart_assistant/tools/` 子包（含 `__init__.py`），`tool_registry.py` 仅保留 `ToolSpec` 数据类 + `ToolRegistry` 类 + v1 工具注册调用。新增各功能域工具模块文件。
-- **FR9.0.2 ToolResult 数据类**: 在 `smart_assistant/tools/base.py` 中定义 `ToolResult` 数据类，字段：`success: Literal[True, False, "partial"]`、`message: str`、`data: dict | None = None`、`failed_items: list | None = None`、`truncated: bool = False`。所有工具（含 6 个 v1 工具）SHALL 返回此类型。
+- **FR9.0.1 代码组织**：按业务域在 `smart_assistant/tools/` 声明和注册工具。`tool_registry.py` 维护规范定义、目录和帮助。
+- **FR9.0.2 工具结果**：业务工具返回 `ToolResult`，分开报告成功、部分完成、失败项、诊断和实际影响。
 - **FR9.0.3 TaskManager**: 在 `smart_assistant/tools/task_manager.py` 中实现 `TaskManager` 单例类，提供 `register(task_id: str, stop_event: threading.Event, metadata: dict) -> str`、`cancel(task_id: str) -> bool`、`get_status(task_id: str) -> dict`、`list_active() -> list[str]`、`cleanup(task_id: str)` 接口。`TaskManager` 内部维护 `_tasks: dict[str, TaskHandle]`，TaskHandle 包含 stop_event、created_at、status、metadata。
 - **FR9.0.4 @require_collection 装饰器**: 在 `smart_assistant/tools/base.py` 中实现，自动从 ctx 提取 collection 并检查非空，失败时返回 `ToolResult(success=False, message="当前没有加载翻译集合")`。装饰后的函数签名为 `(args: dict, ctx: ExecutionContext, collection: TranslationEntryCollection) -> ToolResult`。
 - **FR9.0.5 @validate_params 装饰器**: 在 `smart_assistant/tools/base.py` 中实现，接收参数 schema（与 ToolSpec.parameters 格式一致），执行前做类型检查+转换，失败时返回 `ToolResult(success=False, message="参数校验失败: ...")`。内部捕获所有异常并转为 ToolResult，不抛出原生 Python 异常。
 
 ---
 
-#### FR9.1 文件解析工具 (namespace: `parser`, **P2 批次**)
+#### FR9.1 文件解析与译文导入工具（namespace `parser`）
 
-Agent SHALL 可触发所有 Step1 文件解析操作，解析结果自动加载到 AppContext。
+助手在当前工程登记来源或按既有词条身份导入译文，参数及返回值见 FR9.12。调用时须提供已授权的文件路径。
 
-- **FR9.1.1 parse_esp** (`write`): 解析 ESP/ESM/ESL 插件。参数：`file_paths: list[str]`（支持多选）、`extract_strings: bool`（是否提取 strings 文件）、`language: str`（strings 语言，默认 "english"）。返回：解析结果摘要（插件名/条目数/上下文分类统计）。
-- **FR9.1.2 parse_eet** (`write`): 按内容识别 ESP-ESM Translator XML（`.xml`）或实验性 ESP-ESM Translator EET（`.eet`，v3 Classique/BDD）两种独立格式；历史工具名不合并其来源身份。参数：`path: str`、`action: create_slot|append`（默认 create_slot；append 将译文作为迁移源追加）。返回：任务结果与解析摘要。
-- **FR9.1.3 parse_xt** (`write`): 解析 xTranslator XML 文件。参数：`file_path: str`、`as_migration_source: bool`。返回：解析结果摘要。
-- **FR9.1.4 parse_sst** (`write`): 严格解析 XT SST（SSU8/SSU9）。参数：`path: str`、`action: create_slot|append`（默认 create_slot）。create_slot 保存完整来源并返回集合/条目数；append 按 FormID、字段类型、原文唯一匹配到现有目标身份，通过权威任务成果提交译文，未匹配项保留以供检查。不得把文件内哈希表示为可还原的 EDID 列表。
-- **FR9.1.5 import_json** (`write`): 从 JSON 文件导入翻译条目。参数：`file_path: str`。返回：导入条目数。
-- **FR9.1.6 import_strings** (`write`): 从 .strings 文件导入翻译条目。参数：`directory: str`、`language: str`。返回：导入条目数/匹配率。
-
-**关联 Agent**: `parser` Agent（新增）— 拥有以上 6 个工具，负责所有文件解析操作。
-
-**注意**: `get_parse_config` / `set_parse_config` 已裁剪（一次性配置，Agent 介入价值极低）。`path` 参数可选——不传时通过 HITL 机制请求用户选择文件。
-
-**异常场景**:
-- 文件不存在 → 返回错误信息，不崩溃
-- 解析失败（格式损坏）→ 跳过异常条目，返回部分结果 + 警告信息
-- 多文件解析中断 → 已完成的部分正常加载，报告失败文件列表
+- **FR9.1.1 parse_esp** 读取 ESP、ESM、ESL 插件。
+- **FR9.1.2 parse_eet** 按内容识别 ESP-ESM Translator XML 及实验性的 EET v3 Classique/BDD，保留各自格式身份。
+- **FR9.1.3 parse_xt** 读取 xTranslator XML。
+- **FR9.1.4 parse_sst** 严格读取 SSU8/SSU9。导入按桌面 SST 迁移规则匹配目标，跳过歧义项。
+- **FR9.1.5 import_json** 为当前工程登记 DSD 或 ParaTranz JSON，或向当前来源导入匹配的译文。TransBridge JSON 用于向已有来源导入译文。格式歧义须指定 `format`。
 
 ---
 
-#### FR9.2 表格交互与标签管理工具 (namespace: `editor`)
+#### FR9.2 表格交互与标签管理工具（namespace `editor`）
 
-Agent SHALL 可操控 Step2 词条预览表格的筛选、搜索、排序、选择、编辑操作，以及标签库管理。
+助手按工作台当前工程、来源和词条身份执行筛选、选择及编辑。
 
-**表格操作**:
-
-- **FR9.2.1 filter_by_stage** (`read`): 按翻译阶段筛选表格。参数：`stages: list[int]`（ParaTranz 7 级 stage 值）。返回：筛选后条目数。
-- **FR9.2.2 filter_by_category** (`read`): 按分类筛选表格。参数：`categories: list[str]`（如 ["NPC_", "INFO", "BOOK"]，为空表示全部）。返回：筛选后条目数。
-- **FR9.2.3 filter_by_label** (`read`): 按标签筛选表格。参数：`label_names: list[str]`。返回：筛选后条目数。
-- **FR9.2.4 search_entries** (`read`): 全文搜索表格。参数：`query: str`、`field: str`（"key"/"original"/"translation"/"all"，默认"all"）。返回：匹配条目数。
-- **FR9.2.5 clear_all_filters** (`write`): 清除所有筛选条件，恢复全部条目显示。返回：总条目数。
-- **FR9.2.6 select_entries** (`write`): 选中/取消条目（通过标签系统）。参数：`entry_ids: list[str]`、`action: str`（"select"/"deselect"）。返回：操作后选中数。
-- **FR9.2.7 edit_translation** (`write`): 修改指定条目的译文。参数：`entry_id: str`、`new_translation: str`。返回：确认信息。
-- **FR9.2.8 get_visible_entries** (`read`): 获取当前筛选条件下可见的条目摘要列表。参数：`limit: int`（默认 50，最大 200）、`offset: int`（默认 0）。返回：条目列表（id/key/original/translation/stage/labels）。
-
-**标签管理**:
-
-- **FR9.2.9 list_labels** (`read`): 列出所有已创建的标签。返回：标签列表（name/color/count）。
-- **FR9.2.10 create_label** (`write`): 创建新标签。参数：`name: str`、`color: str`（如 "#FF5722"）。返回：新标签信息。
-- **FR9.2.11 assign_label** (`write`): 为条目分配标签。参数：`entry_ids: list[str]`、`label_name: str`。返回：操作后该标签的条目数。
-- **FR9.2.12 remove_label** (`write`): 移除条目的标签。参数：`entry_ids: list[str]`、`label_name: str`。返回：操作后该标签的条目数。
-- **FR9.2.13 batch_assign_label** (`write`): 批量为当前筛选范围内所有条目分配标签。参数：`label_name: str`。返回：分配的条目数。**需确认**（操作影响范围可能很大）。
-
-**关联 Agent**: `editor` Agent（新增）— 拥有以上全部 13 个工具，负责表格操控和标签管理。
+- **FR9.2.1–5 set_filters**（`read`）：组合设置阶段、分类、标签及文本搜索条件。省略的维度保持当前值，空列表清除该维度；`clear=true` 先清空筛选再应用指定条件。
+- **FR9.2.6 select_entries**（`write`）：按词条操作标识选择、取消或清空当前工作台表格的行选区，返回实际选中数和选中标识。选区包含视口外已选择的行，独立于标签。来源已切换、行身份有歧义或完整选区仍在载入时，提示重新核对。
+- **FR9.2.7 edit_translation / set_stage**（`write`）：编辑指定词条时沿用工作台表格的文本和阶段规则。去除译文首尾空白，表格占位文字“（无译文）”按空译文处理。阶段 0 的词条填入非空译文后默认转到阶段 1，显式指定的 `new_stage` 优先。批量 `set_stage` 沿用工作台的阶段变更命令，保留译文并返回实际更新数。确认预览后若目标词条发生冲突，提示重新核对并保留已有修改。成功提交的变更归属本轮操作。
+- **FR9.2.8 get_visible_entries**（`read`）：按当前筛选分页返回词条操作标识 `key`、辅助 ID、原文和译文摘要、阶段、筛选总数与截断标记。默认 `offset=0`、`limit=50`，上限 200 条，空结果正常返回。
+- **FR9.2.9 list_labels**（`read`）：从工作台标签库列出 ID、名称和颜色，使用当前来源的工作台计数。数量包含分页视口外的词条；请求已限定到部分词条时，只计获准范围。已定义但未使用的标签显示 0，空标签库返回空列表。
+- **FR9.2.10–13 manage_entry_labels**（`write`，需确认）：按名称创建标签（可指定颜色），为指定词条分配或移除标签，或按当前筛选范围批量分配。操作参数分别为 `create`、`assign`、`unassign`、`batch_assign`。批量分配须返回筛选总数与实际分配数，范围为空则写入零条。
 
 **异常场景**:
 - entry_id 不存在 → 返回错误，不影响其他有效 ID
 - 筛选后 0 结果 → 正常返回 0，不报错
-- 批量操作影响大（> 500 条）→ write 级工具在护栏层记录日志，不强制确认
+- 批量操作执行已注册的权限与确认规则；用户拒绝确认后，不写入标签。
 
 ---
 
 #### FR9.3 AI 翻译配置与执行控制工具 (namespace: `translator`)
 
-扩展现有 translator namespace，新增翻译配置和进度控制工具（保留现有 lookup_terms / translate_entries）。
+翻译 Agent 使用正式翻译任务、翻译配置和范围选择。术语注入由翻译流程和项目术语配置负责。
 
 **配置工具**:
 
-- **FR9.3.1 get_translation_config** (`read`): 获取当前 AI 翻译配置。返回：LLM 模型/provider/参数、术语库设置、后处理阶段开关、作用域选择。
-- **FR9.3.2 set_translation_config** (`write`): 设置 AI 翻译配置。参数：`config: dict`（可设置项：model/ provider/ temperature/ max_tokens/ term_db/ post_process_stages/ scope）。返回：确认信息。
-- **FR9.3.3 set_scope** (`write`): 设置翻译作用域。参数：`stages: list[int]`、`labels: list[str]`（可选）、`categories: list[str]`（可选）、`action: str`（"translate"/"polish"/"skip"，混合模式用）。返回：匹配条目数/预估批次数。
-- **FR9.3.4 get_scope_preview** (`read`): 预览当前作用域下将影响的条目统计。返回：按动作分组的条目数。
+- **FR9.3.1 get_translation_config**（`read`）：读取模型、提供方、生成参数、术语设置、后处理开关及凭据是否已配置。当前翻译范围由 FR9.3.4 查询。
+- **FR9.3.2 set_translation_config**（`write`）：更新提供方、端点和模型时，须在同次调用完整提供 `provider`、`base_url`、`model`。生成参数和目标语言按设置中心的规则独立更新。`set_term_config` 可调整五个术语来源的顺序及本地词表路径。
+- **FR9.3.3 set_scope**：按阶段、标签、分类设置包含范围。同一请求后续的预览和启动沿用本次设置。过期请求中的排除操作在启动前返回不支持的参数诊断。
+- **FR9.3.4 get_scope_preview**：按翻译、润色或混合模式返回当前范围、实际可执行的匹配数和总数。显式指定词条时，预览使用与启动相同的身份和选区。混合模式遵循当前动作规则。
 
 **执行控制工具**:
 
-- **FR9.3.5 start_translation** (`write`, `is_long_running`): 启动 AI 翻译（翻译/润色/混合模式）。参数：`mode: str`（"translate"/"polish"/"mixed"）、`entry_ids: list[str]`（可选，不传则使用作用域）。返回：task_id。执行过程中通过 progress 信号推送进度。
-- **FR9.3.6 start_polish** (`write`, `is_long_running`): 启动独立润色。参数：`entry_ids: list[str]`、`intensity: str`（"light"/"moderate"/"aggressive"）。返回：task_id。
-- **FR9.3.7 pause_task** (`write`): 暂停当前翻译/润色任务。参数：`task_id: str`（可选，不传则暂停全部）。返回：确认信息。
-- **FR9.3.8 stop_task** (`write`): 控制当前会话内的翻译、润色或计划任务。参数：`task_id: str`（可选）、`action: stop|pause|resume`（默认 stop）、`all_tasks: bool`（默认 false）。省略 ID 仅选择唯一活跃顶层任务，多任务时要求明确目标；全部操作须显式指定 all_tasks 并确认。明确单任务停止不重复确认，返回实际状态，区分取消中和已取消；不得操作其他会话任务。
+- **FR9.3.5 start_translation**（`write`、长任务）按 `mode`（`translate`、`polish`、`mixed`）启动桌面翻译任务执行器。默认使用该模式保存的预设，可用 `profile` 选择相同基础模式的桌面具名配置。可用 `entry_ids` 指定词条，省略时使用当前作用域。返回任务和成果标识，执行期间可查询进度。
+- **FR9.3.6 start_polish**（`write`、长任务）按当前范围或显式 `entry_ids` 启动桌面任务执行器的润色模式。`profile` 可指定基础模式为 `polish` 的桌面具名配置。省略强度和策略时沿用所选预设，初始配置为 `medium` 和 `proofread`。可为本次任务指定 `light`、`medium`、`heavy`，以及 `proofread` 或 `strict`。按阶段选词使用现行阶段筛选。旧请求用 `passed` 或 `has_issues` 指定启动范围时应提示重新选择。返回任务和成果标识。
+- **FR9.3.8 stop_task** (`write`): 控制当前助手会话及工程版本内的任务，包括翻译、润色、计划和术语同步任务。参数：`task_id: str`（可选）、`action: stop|pause|resume`（默认 stop）、`all_tasks: bool`（默认 false）。省略 ID 仅选择唯一活跃顶层任务，多任务时要求明确目标；全部操作须显式指定 all_tasks 并确认。原生同步任务可用返回的 job_id 指定目标。明确单任务停止不重复确认，返回实际状态，区分取消中和已取消；不得操作其他会话任务。
 - **FR9.3.9 get_task_status** (`read`): 获取任务进度。参数：`task_id: str`（可选）。返回：当前进度（完成数/总数/成功/失败/跳过/耗时/状态）。
 
-**关联 Agent**: `translator` Agent（扩展现有）— 原有 3 个工具 + 新增 9 个工具 = 共 12 个。
+**关联 Agent**：翻译 Agent 通过当前工具目录使用翻译配置、范围和任务控制。
 
 **异常场景**:
 - 翻译启动时无集合加载 → 返回错误提示
@@ -844,28 +819,11 @@ Agent SHALL 可操控 Step2 词条预览表格的筛选、搜索、排序、选�
 
 ---
 
-#### FR9.4 后处理独立操作工具 (namespace: `proofreader`)
+#### FR9.4 校对与报告查询
 
-扩展现有 proofreader namespace，新增独立的后处理操作（保留现有 check_quality）。
-
-- **FR9.4.1 run_consistency_check** (`read`): 对当前集合执行术语一致性检查。参数：`entry_ids: list[str]`（可选）。返回：检查结果摘要（检查数/问题数/详情列表）。
-- **FR9.4.2 run_format_validation** (`read`): 对当前集合执行格式校验。参数：`entry_ids: list[str]`（可选）。返回：校验结果（通过数/失败数/失败详情）。
-- **FR9.4.3 run_llm_refinement** (`write`, `is_long_running`): 对指定条目执行 LLM 修复。参数：`entry_ids: list[str]`、`issue_types: list[str]`（可选，按问题类型过滤）。返回：task_id。
-- **FR9.4.4 run_llm_polish** (`write`, `is_long_running`): 对指定条目执行 LLM 润色。参数：`entry_ids: list[str]`、`intensity: str`（"light"/"moderate"/"aggressive"）、`scope: str`（"all"/"passed"/"issues"）。返回：task_id。
-- **FR9.4.5 run_llm_arbitration** (`write`, `is_long_running`): 执行 LLM 裁决。参数：`entry_ids: list[str]`、`strict_mode: bool`（默认 false）。返回：task_id 和裁决结果摘要（pass/reject/pending 计数）。**权限修正**: 因产生 LLM API 费用，从 read 改为 write。
-- **FR9.4.6 get_quality_report** (`read`): 获取最近一次质量检查/后处理的报告摘要。参数：`task_id: str`（可选）。返回：报告结构（含问题分布/统计）。
-
-- **FR9.4.7 run_postprocess 断点续传** — *2026-05-21 | 状态: 已实现 | 优先级: P2*: `run_postprocess` 工具 SHALL 支持断点续传。每个阶段完成后自动保存 `PostProcessCheckpoint` 到文件（路径: `data/ai_translator/{esp_stem}/{esp_stem}_post_process.json`）。任务再次启动时 SHALL 检测已有 checkpoint 并跳过已完成的阶段。后处理正常完成（或用户主动停止）后 SHALL 自动删除 checkpoint 文件。
-- **FR9.4.8 run_postprocess 暂停/恢复** — *2026-05-21 | 状态: 已实现 | 优先级: P2*: `run_postprocess` 工具 SHALL 支持暂停和恢复。`TaskManager` SHALL 管理 `pause_event`（`threading.Event`），`stop_task` 工具 SHALL 扩展 `action` 参数（`"pause"` / `"resume"` / `"stop"`）。暂停时等待当前批次完成后挂起，恢复后从下一批次继续。`get_task_status` 返回的任务状态 SHALL 包含 `paused` 状态。
-
-**关联 Agent**: `proofreader` Agent（扩展现有）— 原有 2 个工具 + 新增 6 个工具 = 共 8 个。
-
-**异常场景**:
-- 未启用后处理阶段直接调用 → 提示后处理未配置
-- LLM 调用失败 → 受 Reflexion 保护，最多重试 3 次
-- Checkpoint 文件损坏 → 跳过恢复，从头开始，记录警告
-- 暂停后长时间未恢复（> 1 小时）→ 保持 paused 状态，不自动超时
-- 暂停时 LLM 调用正在进行中 → 等待当前批次完成后挂起
+- **FR9.4.1 校对启动**。校对 Agent 使用 FR6.9.9 的正式任务入口。旧计划引用已撤下的独立后处理工具时，按无效步骤中止。
+- **FR9.4.6 质量报告查询**。`get_quality_report` 读取当前会话、当前工程版本最近一项已结束的助手翻译、润色或混合任务报告，已有的独立后处理成果也可读取。`list_quality_reports` 与 AI 翻译窗口的“历史报告”共用导出文件列表，跨插件按报告时间从新到旧返回文件名、类型、插件名、时间和字节数，默认最多 50 份。
+- **FR9.4.8 任务控制**：暂停、恢复和停止通过 `stop_task` 对已授权的任务执行，状态通过 `get_task_status` 查询。恢复与成果查询沿用软件当前任务生命周期。
 
 ---
 
@@ -873,24 +831,24 @@ Agent SHALL 可操控 Step2 词条预览表格的筛选、搜索、排序、选�
 
 Agent SHALL 可操作 ParaTranz 平台的完整工作流。
 
-- **FR9.5.1 list_projects** (`read`): 列出 ParaTranz 项目列表。参数：`filter: str`（"all"/"mine"，默认"mine"）。返回：项目列表（id/name/成员数/文件数）。
-- **FR9.5.2 get_project_info** (`read`): 获取项目详细信息。参数：`project_id: int`（可选，不传则用当前配置的项目）。返回：项目详情（名称/描述/成员/文件列表/术语数）。
-- **FR9.5.3 upload_entries** (`write`, `is_long_running`): 上传条目到 ParaTranz。参数：`project_id: int`（可选）、`mode: str`（"update_original"/"import_safe"/"force_overwrite"）、`categories: list[str]`（可选，按分类筛选上传）。返回：task_id 和上传结果摘要（成功/跳过/冲突数）。
-- **FR9.5.4 download_entries** (`write`, `is_long_running`): 从 ParaTranz 下载条目。参数：`project_id: int`（可选）。在下载前 SHALL 返回对比摘要（本地条目数 vs 远程条目数、有差异的条目数），由 LLM 决定是否继续或由用户确认（`require_confirmation: true`）。返回：task_id 和合并结果（新增/更新/未变更数）。
-- **FR9.5.5 compare_with_remote** (`read`): 对比本地集合与 ParaTranz 远程条目的差异。参数：`project_id: int`（可选）。返回：对比摘要（本地总数/远程总数/新增数/修改数/冲突数）+ 前 20 条差异详情（entry_key / 本地译文 / 远程译文 / 冲突类型）。供 download_entries 前做 informed decision。
-- **FR9.5.6 export_artifact** (`write`, `is_long_running`): 触发 ParaTranz 导出并下载。参数：`project_id: int`（可选）。返回：task_id 和下载的 zip 路径。
-- **FR9.5.7 get_upload_history** (`read`): 获取上传历史记录。参数：`project_id: int`（可选）、`limit: int`（默认 20）。返回：历史记录列表。
+- **FR9.5.1 list_projects**（`read`）与桌面项目面板提供相同的两种查询。`uid="my"` 为默认值，按当前账号已核验的用户 ID 查询参与项目；显式空串查询全部项目。结果包含各页的项目 ID、名称和可见性。
+- **FR9.5.2 get_project_info**（`read`）：查询指定远端项目，省略 `project_id` 时使用当前工程绑定。与桌面项目概览共用项目详情接口及字段解释。返回 ID、名称、可见性和成员数，远端未提供的可选字段返回 `null`。成员数为 0 时返回 0。
+- **FR9.5.3 upload_entries**：在已授权范围内，复用工作台普通或分类文件上传。FR3.4 定义文件路径、差异比较、四种上传模式与部分失败补传。工具须能精确表示所选来源和操作范围，否则在发送前返回诊断。
+- **FR9.5.4 download_entries**：复用工作台项目下载用例，读取选中来源的译文，并按下载策略合入与保存。返回本次更新、未变、待处理和可重试状态。
+- **FR9.5.5 compare_with_remote**：复用文件上传使用的目标路径、传输身份与比较规则，仅返回差异。
+- **FR9.5.6 export_artifact**：默认 `action="trigger"` 提交一次新的远端导出，跟踪该作业并返回新工件元数据或待处理状态。`action="download"` 直接下载已有 ZIP。桌面用户在保存窗口选择目标文件，覆盖已有文件时确认具体路径；无界面调用须提供授权目录内的 `output_path`。两种动作均需要写入许可和确认。下载完成并通过校验后才替换目标文件。
+- **FR9.5.7 get_upload_history**（`read`）读取桌面文件修订历史。可指定 `project_id` 和 `page`，页码范围为 1 至 9999，默认第 1 页，每页 50 项。
 
-**关联 Agent**: `paratranz` Agent（新增）— 拥有以上 7 个工具。
+**关联 Agent**：ParaTranz 工具由获准访问该命名空间的 Agent 调用。
 
 **安全设计**:
-- `download_entries` SHALL 设置 `require_confirmation: true`，下载前展示对比摘要，避免意外覆盖本地译文
-- `upload_entries` 的 force_overwrite 模式 SHALL 设置 `require_confirmation: true`
+- 下载、上传和触发工件导出均为需要确认的长任务。比较文件为只读。用户拒绝确认或在发布前取消时，不得开始对应的远端写入。
+- 文件上传遇到结果不确定的远端写入时须核实，之后按文件执行器给出的范围补传。
 
 **异常场景**:
 - API 401/403 → 返回认证失败错误（复用 FR7.6 全局错误处理）
-- 网络超时 → 重试 1 次，仍失败则返回错误
-- 下载时本地有未保存修改 → 提示先保存
+- 网络超时按对应文件或平台操作的重试策略处理。
+- 下载保留用户现有编辑，待处理差异由本轮合入规则判定。
 
 ---
 
@@ -901,7 +859,7 @@ Agent SHALL 可操作 ParaTranz 平台的完整工作流。
 - **FR9.6.1 插件写回**：`write_back(target="esp")` SHALL 使用保存的插件及本地化资源快照，按来源实际结构生成产物，不提供助手 `mode` 参数。`pack_bsa` 默认为 false；仅本地化插件可显式选择打包 STRINGS。
 - **FR9.6.2 ESP-ESM Translator 两种独立格式的写回**：历史兼容值 `write_back(target="eet")` SHALL 按快照分别路由 ESP-ESM Translator XML（`xml.eet`）或 ESP-ESM Translator EET（`binary.eet`），不得把 EET 交给 XML builder。EET v3 Classique/BDD 保持实验性，只允许可信快照上的原格式写回及译文数字缓存同步。不暴露 `write_to_eet`、`output_path` 或 `create_new` 参数；底层 XML builder 的新建能力不是助手公开新建 API。
 - **FR9.6.3 xTranslator 两种独立格式的写回**：`write_back(target="xt")` SHALL 写回 xTranslator XML（`xml.xt`）；`write_back(target="sst")` SHALL 保留来源 SST 的 SSU8/SSU9 版本。唯一已提供的跨格式导出是保存插件→实验性 SSU9，须明确新的 `.sst` 输出位置或目录；不把 SST 与 xTranslator XML 互转，也不提供助手 `create_new` 参数。
-- **FR9.6.4 本地化资源与共同参数**：`write_back(target="strings")` SHALL 要求 `output_dir`，发布插件与关联本地化资源。所有 target 共用 `path`、`output_dir`、`source_keys`、`overwrite`、`pack_bsa`；`target="auto"` 配合 `source_keys` 按各来源快照保留格式。单文件 `path` 优先于目录（strings 除外）；多个来源不得共用单个 path。缺少可用参考位置时 SHALL 明确提供 path 或 output_dir。从错误 `.xml` 文件名识别到 EET 内容后，目录输出 SHALL 派生 `.eet`。
+- **FR9.6.4 写回目标**：普通插件另存时选择 `output_dir` 并保留原名。写回原插件须明确选择 `destination_mode="original"` 并确认覆盖。`target="strings"` 在所选目录发布插件与关联资源。单个独立翻译文件可指定 `path`；批量另存使用 `output_dir`，配合 `source_keys` 和 `target="auto"` 按各来源快照选择格式。目录输出以实际格式派生文件名。
 
 **结果与发布合同**：返回 task_id 与单个 path 或批量 paths/source_keys；调用方 SHALL 等待任务终态，依据逐来源 outcomes、实际 artifacts 和 diagnostics 判断结果，不把“任务已启动”称为文件已写出。批量独立成员可分别成功或失败。
 
@@ -909,46 +867,36 @@ Agent SHALL 可操作 ParaTranz 平台的完整工作流。
 
 ---
 
-#### FR9.7 UI 导航与全局状态工具 (namespace: `default`)
+#### FR9.7 工作台状态与来源选择（namespace `default`）
 
-Agent SHALL 可查询软件全局状态和执行 UI 导航。
+助手可查询工作台状态，并在已加载的来源之间切换。
 
-- **FR9.7.1 get_app_state** (`read`): 获取全局应用状态摘要。返回：当前 step、已加载集合列表（名称/条目数/翻译率）、活跃项目/版本、当前筛选条件、当前标签库、API 连接状态。
-- **FR9.7.2 list_collections** (`read`): 列出所有已加载的翻译集合。返回：集合摘要列表（名称/来源类型/条目数/翻译率/槽位索引）。
-- **FR9.7.3 switch_collection** (`write`): 切换当前活跃集合。参数：`collection_name: str` 或 `slot_index: int`。返回：确认信息。
+- **FR9.7.1 get_app_state**（`read`）：读取工作台的活跃工程、版本、已加载来源、ESP/EET/XT 文件名、已加载集合数和当前集合是否可用。已受理的请求使用其捕获的筛选或本请求后续设置的筛选。ParaTranz 凭据状态取自当前窗口配置，只返回是否已配置。
+- **FR9.7.2 list_collections**（`read`）按工作台顺序列出已加载来源的键、显示名称、插件文件名、条数和当前选中状态。
+- **FR9.7.3 switch_collection**（`write`）按从零起的 `slot_index` 或 `collection_name` 切换当前来源，返回切换后的显示名称。名称可为来源键或唯一的显示名称；同名时须用键或索引区分。
 - **FR9.7.4 get_current_filters** (`read`): 获取当前 Step2 的筛选状态。返回：活跃的 stage/label/category 筛选、搜索关键词。
-- **FR9.7.5 get_statistics** (`read`): 获取当前集合的详细统计。返回：条目总数/翻译率/stage分布/分类分布/标签分布。
+- **FR9.7.5 get_statistics**（`read`）：按工作台阶段返回当前来源的全部、未译、待复核、已译及隐藏数，以及已译占总数的百分比。阶段 1、3、5、9 计入已译，阶段 2 计入待复核，阶段 -1 计入隐藏。返回工作台阶段名、分类名和标签 ID 的分布。表格筛选不改变来源总数，已限定到部分词条的请求只统计获准范围。
 
 **关联 Agent**: 并入 `orchestrator` Agent（扩展现有）— 新增 5 个工具。
 
-**注意**: `navigate_to` 已裁剪（Agent 替用户导航 UI 是反模式）。
+#### FR9.8 本地工程查询（namespace `default`）
 
-#### FR9.8 项目管理查询工具 (namespace: `default`, **P2 批次**)
-
-补充 FR9 范围决策中被排除的项目管理查询能力（评审委员会共识：至少提供 read 级查询，避免 Agent 回答"我无法操作"）。
-
-- **FR9.8.1 list_local_projects** (`read`): 列出本地所有项目。返回：项目列表（名称/路径/版本数/最后打开时间）。
-- **FR9.8.2 get_current_project** (`read`): 获取当前活跃项目的详细信息。返回：项目名称/路径/活跃版本/版本列表/源文件列表/集合摘要。
-
-**关联 Agent**: 并入 `orchestrator` Agent — 新增 2 个工具。
-
-**异常场景**:
-- 集合不存在 → 返回错误提示
-- navigate_to 不存在的 step → 返回错误
+- **FR9.8.1 list_local_projects**（`read`）按桌面开始页使用的本地工程目录列出项目名称。
+- **FR9.8.2 get_current_project**（`read`）读取工作台当前工程名、活动版本和已选来源的显示名称。尚未打开工程时返回空活动项目。
 
 ---
 
 #### FR9.9 Agent 扩展与权限体系
 
-**FR9.9.1 新增 Agent**: 系统 SHALL 新增 4 个专业 Agent（`parser`/`editor`/`paratranz`/`writer`），扩展现有 3 个 Agent（`translator` 增 9 工具、`proofreader` 增 6 工具、`orchestrator` 增 5+2=7 工具）。
+**FR9.9.1 助手分工**：各专业 Agent 通过注册的命名空间获得当前业务操作。
 
-**FR9.9.2 命名空间隔离**: 各 Agent 的工具集 SHALL 通过 namespace 机制隔离——parser(6工具)、editor(13工具)、translator(12工具)、proofreader(8工具)、paratranz(8工具)、writer(4工具)、orchestrator(可访问全部工具但通过元工具描述摘要而非完整 schema)。
+**FR9.9.2 命名空间隔离**：工具目录、帮助、原生调用、计划分派及内置预设 SHALL 以实际注册和角色授权为准。
 
-**FR9.9.3 权限分级**: 所有新工具 SHALL 声明 permission 级别——只读查询类 → `read`（约 18 个）、数据修改类 → `write`（约 22 个）、破坏性操作类 → `admin`（约 8 个）。产生 LLM API 费用的工具 SHALL 至少为 `write`。权限分级复用现有 FR7.13.8 安全护栏机制。
+**FR9.9.3 权限分级**：读操作使用 read；写入和产生模型费用的操作至少使用 write；文件发布遵循 FR9.6 的授权规则。
 
-**FR9.9.4 工具 schema 格式**: 所有新工具 SHALL 使用现有 `ToolSpec` 数据类定义，通过 `ToolRegistry.register()` 注册到对应 namespace。参数定义 SHALL 使用 `{"name": {"type": "str", "description": "..."}}` 格式。工具执行函数 SHALL 返回 `ToolResult` 数据类。
+**FR9.9.4 工具参数合同**。工具通过 `ToolSpec` 注册到对应命名空间，执行函数返回 `ToolResult`。注册表将既有逐参数定义或显式 JSON Schema 规范化，向模型提供与调用校验一致的参数定义。顶层对象只接受已登记的字段。
 
-**FR9.9.5 向后兼容**: 现有 6 个 v1 工具 SHALL 保留不变（迁移至 `tool_v1.py` 模块，返回格式升级为 ToolResult，行为不变）。`writer.write_back` 为当前共享写回入口，不标记 deprecated；公开参数及格式边界遵循 FR9.6。现有 Skill（translate_with_terms）和 MCP 适配器不受影响。V1 兼容性 SHALL 通过 snapshot 测试验证。
+**FR9.9.5 旧计划处理**：遇到已移除工具或超出当前作用域的操作时，须明确中止。内置预设仅引用当前角色可调用的工具。
 
 **FR9.9.6 工具描述规范**: 每个工具的 description SHALL 清晰描述功能、参数含义和返回值结构，供 LLM 在 function calling 时准确匹配意图。涉及副作用（修改数据/文件/产生费用）的工具 SHALL 在 description 中明确标注。
 
@@ -963,7 +911,7 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 - get_visible_entries 单次返回上限 200 条，防止撑爆 LLM 上下文窗口
 - 搜索/筛选结果上限 200 条，超出时提示"结果过多，请缩小范围"
 - 工具输出内容上限 100KB（复用护栏输出校验）
-- 项目管理和集合创建操作暂不纳入工具范围（用户通过 UI 手动操作）
+- 用户通过桌面管理工程。助手可按 FR9.12 在当前工程登记来源或导入译文。
 
 **关联需求**:
 - FR7.13（Agent 框架）— 本需求基于 FR7.13 的 Agent 框架（ToolRegistry/AgentRegistry/Skill/MCP）
@@ -975,72 +923,23 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 
 对 FR9.2 和 FR9.5 已编码工具的缺陷补完与能力追加。
 
-**FR9.11.1 search_entries 搜索维度扩展** (`read`): `search_entries` 工具的 `field` 参数 SHALL 从当前 4 个值（`id`/`key`/`text`/`all`）扩展为 6 个值——`id`、`key`、`original`（原文）、`translation`（译文）、`context`（上下文）、`all`（全部）。`text` 字段 SHALL 废弃（但保留向后兼容，映射到 `original`）。
+**FR9.11.1 查询条件**：`set_filters` 使用工作台的阶段、分类、标签及搜索框。`search_field` 接受 `key`、`original`、`translation` 或 `all`，默认按原文搜索。各搜索框可组合使用。工作台与助手对相同来源和条件返回相同词条，助手按 FR9.2.8 分页。请求内显式设置的筛选用于后续查询、批量标签预览和执行。无匹配项时返回空结果，旧请求使用不支持的独立搜索字段时返回诊断。
 
-- `id`: 在 entry.id 中搜索
-- `key`: 在 entry.key 中搜索
-- `original`: 在 entry.original（原文）中搜索
-- `translation`: 在 entry.translation（译文）中搜索
-- `context`: 在 entry.context（上下文，如 "NPC_:FULL"）中搜索
-- `all`: 同时在 key + original + translation + context 四个字段中 OR 匹配搜索
+**FR9.11.2 ParaTranz 项目查询与切换**：助手与工作台遵循 FR22.6–FR22.8 的工程绑定与目标解析契约，执行许可遵循 FR7.13.8。具体见 [ADR-023](adr/023-local-project-paratranz-binding.md)。
 
-底层 `filter_entries()` SHALL 补全以下搜索分支：
-- `translation`: 匹配 `e.translation`
-- `context`: 匹配 `e.context`
-- `all`: 对 key/original/translation/context 四个字段执行 OR 匹配（任一匹配即命中）
-- `text`: 保留兼容，等同于 `original`
-- `id`、`key`、`original`: 保持现有行为不变
+- `get_paratranz_project`（`read`）离线读取当前工程绑定，返回保存的项目 ID、名称以及工作台解析出的状态和原因。未绑定时成功返回 `selected_project: null`。账号或端点不匹配时仍可查询原绑定及诊断。实时远端详情由 `get_project_info` 提供。
+- `switch_paratranz_project`（`write`）要求本地工程已打开，且 `project_id` 为正整数。通过桌面使用的“我的项目”目录重新核验成员资格，经工程绑定命令提交并返回 ID、名称和可见性。查询期间切换工程、账号、端点或发生冲突时停止提交。取消、校验或提交失败时保留原绑定。成功绑定须在重开工程后恢复。
+- 远端工具允许显式 `project_id` 时，该 ID 只覆盖本次操作，省略时解析当前本地工程的持久绑定。显式 ID 无效或不可访问应直接报错。浏览云端项目、切换翻译版本以及带临时目标的同步均不改写默认绑定。
 
-工具参数校验 SHALL 更新为接受新的 6 个字段名（`text` 保留兼容但不在 description 中推荐），传入无效 field 值时返回 `ToolResult.fail`。
+#### FR9.12 在当前工程登记来源或导入译文
 
-**FR9.11.2 ParaTranz 项目查询与切换** (`read` / `write`, namespace: `paratranz`): 系统 SHALL 新增两个工具——
+**FR9.12.1 操作范围**：FR9.1 的文件工具接受 `path` 及可选的 `action`。默认 `create_slot` 在当前工程登记来源；`append` 向当前来源已有词条导入匹配译文。
 
-`get_paratranz_project` (`read`):
-- 返回当前选中的 ParaTranz 项目信息（id/name/visibility）
-- 若尚未选择任何项目，返回 `ToolResult.ok` 提示"未选择 ParaTranz 项目"
-- 数据来源为 AppContext 的 `paratranz_project_id` 属性
+**FR9.12.2 登记来源**：支持格式遵循 FR1.10。登记绑定当前工程与版本、保留来源快照并校验重复来源。登记插件可用 `skip_empty` 选择是否跳过空原文。工具返回 `label`、`entry_count` 和 `activated`，并在工程已提交而视图同步失败时提示刷新。
 
-`switch_paratranz_project` (`write`):
-- 参数：`project_id: int`（必填，目标项目 ID）
-- 将 `project_id` 存入 AppContext 的 `paratranz_project_id` 属性
-- 若传入的 project_id 无效（API 查询失败），返回错误提示
-- 切换成功后，其他 ParaTranz 工具（如 `get_project_info`、`upload_entries`、`download_entries` 等）的 `project_id` 参数 SHALL 自动使用当前选中的项目（若未显式传入）
+**FR9.12.3 导入译文**：按桌面的格式迁移或匹配规则向既有来源导入译文。默认保留已有译文，可用 `replace_existing=true` 明确选择替换。只提交有变化的目标，返回 `added_count` 与输入目标的 `total_count`。来源切换或修订变化须中止提交。
 
-**边界与约束**:
-- 项目选中状态仅会话内有效（存入 AppContext，不持久化到 INI），关闭程序后重置
-- 不新建 plan 文件，追加到已有 `plans/agent-tool-expansion/plan.md`
-- `filter_entries()` 的 `all` 搜索逻辑仅为内存过滤，不引入全文搜索引擎
-- `text` 字段保留 30 天过渡期，之后移除
-
-**异常场景**:
-- 未连接 Paratranz 配置时调用 `get_paratranz_project` → 返回"未选择 PT 项目"
-- `switch_paratranz_project` 传入无效 `project_id` → API 查询失败，返回错误提示
-- `search_entries` 传入无效 `field` 值 → 返回参数校验失败，并列出有效字段
-- `filter_entries` 中 `all` 搜索匹配大量条目（> 200）→ 按 limit 截断，与 `get_visible_entries` 行为一致
-
-**关联需求**: FR9.2.4（search_entries 原始定义）、FR9.5.2（get_project_info 的 project_id 可选语义）
-
-#### FR9.12 解析工具副作用补全 — 解析结果落地为 Slot 或追加条目 — *2026-05-18 | 状态: 已实现 | 优先级: P1*
-
-对 FR9.1 中已编码的 6 个 Parser/Import 工具的副作用补全。当前这些工具仅解析文件并返回 `entry_count`，解析结果直接丢弃，不产生任何副作用。
-
-**FR9.12.1 action 参数** (`write`): 6 个工具（`parse_esp`、`parse_eet`、`parse_xt`、`parse_sst`、`import_json`、`import_strings`）SHALL 新增 `action` 参数，可选值为 `create_slot`（创建新的翻译集合槽位）和 `append`（将解析结果追加到当前活跃集合）。默认行为为 `create_slot`。
-
-**FR9.12.2 create_slot 副作用**: 当 `action=create_slot` 时，工具 SHALL 在解析成功后创建新的 `CollectionSlot`，调用 `ctx.add_slot()` 注册到全局槽位，并激活为新活跃集合。slot 名称默认使用文件名（不含扩展名）。若同名 slot 已存在，SHALL 触发 HITL 确认覆盖或取消。
-
-**FR9.12.3 append 副作用**: 当 `action=append` 时，工具 SHALL 将解析出的条目合并到当前活跃集合中（通过 `collection.update_from_*()` 或等价迁移逻辑）。若无活跃集合（`ctx.active_slot` 为空），SHALL 返回错误，提示 LLM 先创建或切换 slot，不自动降级。
-
-**FR9.12.4 权限与确认**: 两种 action 均涉及写操作（修改全局状态），SHALL 声明 `permission: "write"`。副作用执行前 SHALL 通过 HITL 弹框请求用户确认，显示操作摘要（工具名、action 类型、文件名、预计条目数）。用户拒绝时返回取消状态，不做任何修改。
-
-**FR9.12.5 范围扩容**: 原 agent-tool-expansion plan 中"范围外"的「集合管理 CRUD（创建/移除/迁移源追加）」SHALL 部分移入范围——仅新增 create_slot（创建槽位）和 append（追加条目），移除 slot、重命名、迁移源手动追加等其他 CRUD 操作仍保持范围外。
-
-**异常场景**:
-- `action=append` 且无活跃集合 → 返回错误，引导 LLM 先创建/切换 slot
-- `action=create_slot` 且同名 slot 已存在 → HITL 确认覆盖或取消
-- 解析失败 → 不执行副作用（现有逻辑不变）
-- 用户拒绝 HITL 确认 → 返回取消状态，解析结果丢弃
-
-**关联需求**: FR9.1（Parser 工具原始定义）、FR9.9.6（工具描述中标注副作用）、ADR-002（Collection 数据中枢设计）
+**FR9.12.4 执行许可**：两种操作均使用写权限，执行时校验授权路径及当前任务目标。适用 FR7.13.8.2 的人工确认时须展示文件与操作范围，拒绝或提交前取消均不得写入工程。解析失败须报告原因，已登记来源不得因文件同名被覆盖。工程创建沿用 FR26.3 的入口。
 
 ---
 
@@ -1057,15 +956,14 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 **FR10.2 base.py 类型与逻辑分离**: `tools/base.py`（605行）混合了数据类定义与执行逻辑。SHALL 拆分为 2 个模块——
 
 - `types.py`（新增，~340行）：`ToolResult`/`ExecutionContext`/`HITLType`/`HITLRequest`/`HITLResponse` 数据类。
-- `base.py`（保留，~280行）：`_build_guard_chain`/`_apply_after_guards`/`execute_with_guardrails`/`filter_entries`/`resolve_scope_to_entry_ids`/`require_collection`/`validate_params`。
+- `base.py` 负责工具调用前后的检查、运行上下文与词条集合校验和参数校验。词条筛选使用工作台的 `application.workbench_filters`，翻译与润色目标由 `tools/translation_scope.py` 调用桌面任务范围规则确定。
 - 原 `from tools.base import ToolResult, ExecutionContext` 路径 SHALL 通过 `base.py` 顶部重导出保持兼容。
 
-**FR10.3 工具模块函数反模式消除**: `tool_translator.py`（660行，15 模块级函数）、`tool_proofreader.py`（430行，11 模块级函数）、`tool_editor.py`（406行，9 模块级函数）SHALL 各自封装为 Controller 类——
+**FR10.3 工具控制器职责**。翻译任务、报告查询和词条编辑分别由对应控制器接入桌面业务。
 
 - `TranslationController`（~350行）：封装 LLM 配置加载、翻译/润色启动、任务控制、状态查询、配置管理、作用域、术语配置。所有模块级函数转为实例方法，`AppContext` 和 `TaskManager` 通过构造函数注入。
-- `ProofreaderController`（~280行）：封装 PostProcessor 构建、后处理执行、报告生成、质量查询。共享的 LLM 配置加载和 PostProcessor 构建逻辑提取到 `_common.py`。
+- 校对工具模块负责查询任务报告和已导出的报告文件。新任务的校对流程由翻译和润色工具调用桌面执行器。
 - `EditorController`（~350行）：封装筛选、条目查询、选择、编辑、stage 设置、标签管理。
-- `tools/_common.py`（新增，~80行）：提取 `tool_translator` 与 `tool_proofreader` 之间重复的 `_load_llm_config()` 和 `_build_postprocessor()` 逻辑为共享函数。
 
 **FR10.4 ConversationOrchestrator 精简**: `conversation_orchestrator.py`（433行，21方法）SHALL——
 
@@ -1396,14 +1294,14 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 - **FR16.1.1 分层提取**: 解包 SHALL 支持按文件列表选择性提取（如仅提取插件与 fomod 目录），避免解压 GB 级资源文件
 - **FR16.1.2 进度回调**: 解包/打包 SHALL 支持进度回调（复用 ApiWorker 模式），避免 UI 阻塞
-- **FR16.1.3 Agent 工具**: 注册为 Agent 工具（`extract_archive` / `pack_archive`），供 AI 助手解包/打包 mod 文件
+- **FR16.1.3 Agent 工具**。`extract_archive` 沿用桌面 FOMOD 的整包解压操作。`pack_archive` 从指定目录生成 ZIP 或 7z，默认 ZIP。两端产生的归档都能由正式读取流程重新打开。
 
 #### FR16.2 目录与文件差异分析
 
 系统 SHALL 提供通用的目录/文件 diff 能力，对比两个目录清单（按相对路径），识别新增（new）/删除（removed）/内容变化（changed，按内容哈希）/不变四种状态。
 
 - **FR16.2.1 路径归一化**: 新旧目录根层级不一致时 SHALL 按相对路径对齐（消除包裹层级差异）
-- **FR16.2.2 哈希策略**: 内容变化按文件 SHA-256 哈希判断；支持跳过特定扩展名的哈希（如 BSA 等大文件仅比较存在性）
+- **FR16.2.2 哈希策略**。同路径文件按内容摘要判断是否变化。`skip_hash_exts` 默认取桌面资源过滤规则中的扩展名。这些资源的两端摘要和策略版本都与已有证据相符时才记为复用，否则记为重新校验。
 - **FR16.2.3 Agent 工具**: 注册为 Agent 工具（`diff_directories`），供 AI 助手对比新旧版本
 
 #### FR16.3 资源过滤规则引擎
@@ -1411,7 +1309,7 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 系统 SHALL 提供可配置的扩展名保留/剔除过滤规则，按扩展名分类文件为「保留」「剔除」两类，规则集中在配置清单中（如 `[keep]`/`[strip]` 列表），不同 mod 可复用不同规则。
 
 - **FR16.3.1 目录级规则**: 同一扩展名在不同目录下可有不同处理（如 fomod 界面图片保留 vs textures 贴图剔除）
-- **FR16.3.2 Agent 工具**: 注册为 Agent 工具（`filter_files`），供 AI 助手按规则过滤文件
+- **FR16.3.2 Agent 工具**：`filter_files` 按规则筛选相对路径。预览 FOMOD 打包时提供已授权的 `fomod_dir`，按正式 XML 资源引用保留所需文件。
 
 #### FR16.4 词条键对齐迁移
 
@@ -1420,20 +1318,18 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 - **FR16.4.1 键匹配继承**: 键命中且原文未变 → 直接继承译文（stage=已翻译）
 - **FR16.4.2 原文变化检测**: 键命中但原文变化 → 标记「需复核」，不直接套用
 - **FR16.4.3 键未命中**: 键未命中的新条目保留待翻译（stage=未翻译），不在此工具内做文本兜底（文本兜底是词典套用的职责，见 FR16.5）
-- **FR16.4.4 Agent 工具**: 注册为 Agent 工具（`migrate_entries`），供 AI 助手按键对齐迁移译文
-
-**注意**: 词条键对齐迁移（本工具）与词典套用（FR16.5）是**两个独立工具**——前者是「旧版集合 → 新版集合」的键对齐，后者是「词典 → 集合」的译文套用。二者不混淆。
+- **FR16.4.4 调用边界**：FOMOD 工作流通过正式迁移计划按完整来源身份生成候选。工程更新来源和导入译文各自使用对应的项目命令。助手仅公布已经接通的业务操作。
 
 #### FR16.5 词典套用与存词典（Agent 工具注册补全）
 
-`translation_memory` 的 `apply_to_collection()`（词典套用）与 `save_from_collection()`（存词典）能力已实现，但 Agent 工具层未注册，AI 助手无法调用。本工具 SHALL 补全 Agent 工具注册。
+助手通过已注册的 `apply_dictionary` 与 `save_dictionary` 使用翻译记忆。
 
-- **FR16.5.1 词典套用 Agent 工具**: 注册 `apply_dictionary` 工具，调用 `TranslationMemoryManager.apply_to_collection()`
-- **FR16.5.2 存词典 Agent 工具**: 注册 `save_dictionary` 工具，调用 `TranslationMemoryManager.save_from_collection()`
+- **FR16.5.1 词典套用 Agent 工具**：`apply_dictionary` SHALL 复用桌面“套用词典”的操作。双方通过 `TranslationMemoryManager.apply_to_collection()` 为当前来源补空译文，按同一规则展示和处理候选冲突，再通过同一工程命令提交到原目标版本。工具返回本轮命中、填充和复核统计。
+- **FR16.5.2 存词典**。`save_dictionary` 和工作台「存为词典」共用保存命令。默认词典名取当前来源文件名的主干，可指定词典名、项目或全局范围、仅选中条目及标签。保存时合并目标词典的最新内容，只发布本次选定的词典。提交前取消保留原文件。
 - **FR16.5.3 纯 Python 能力无新增**: 复用已有 `translation_memory/manager.py`，不重复实现
 
 **关联需求**: FR15（FOMOD 翻译流水线的前置通用能力）、FR7.13（Agent 框架的 ToolRegistry）、FR9（Agent 工具扩展的注册规范）、FR15.1（translation_memory 已有能力）
-**对应方案**: `plans/agent-infra-tools/plan.md`（待创建）
+**对应方案**：[工具注册](../plans/agent-infra-tools/plan.md)、[桌面操作复用](../plans/assistant-shared-business-tools/plan.md)
 
 ---
 
@@ -1561,7 +1457,7 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 实现与验证：[计划](../plans/task-result-lifecycle/plan.md) → [ADR-049](adr/049-task-result-lifecycle.md) → [首轮 QA](test-reports/task-result-lifecycle-qa-2026-10-26.md) / [第二轮独立审查 QA](test-reports/task-result-lifecycle-audit2-2026-10-26.md) / [统一流程 QA](test-reports/task-result-lifecycle-unification-2026-10-26.md)。各轮验证范围及限制分别保留，不把本地完成等同于用户桌面或真实云端验收。
 
-  - **FR19.15.9 助手长任务统一**：助手翻译、润色和上传 SHALL 遵循相同固定输入、独立成果及局部合入规则。GUI 与助手 SHALL 共用应用层成果与合入核心，不保留助手整表发布/旧快照回滚链。成果查询与再次合入 SHALL 不依赖原运行仍驻留内存；合入失败不得要求重算成功成果。上传 SHALL 分开记录远端确认与本地关联状态，关联合入不得覆盖任务开始后修改的译文、阶段或其他引用；远端结果不确定时不得盲目重发。请求所有权、取消及真实写入许可仍须保护实际提交。
+  - **FR19.15.9 助手长任务统一**：助手翻译、润色与 GUI SHALL 共用固定输入、独立成果及局部合入核心。成果查询与再次合入须校验项目、版本和成果归属，可在原任务退出后执行。助手文件上传 SHALL 遵循 FR3.4 的目标路径、差异计算、文件执行及补传规则；远端结果未知时须先核实。上传回执和失败范围使用工作台既有文件任务设施。
 
 **FR19.15 验收场景**：
 

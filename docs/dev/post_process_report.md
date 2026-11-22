@@ -2,7 +2,7 @@
 
 ## 目标
 
-AI 翻译、后处理、智能助手校对和独立润色都以应用层 `ReportSnapshot` 作为唯一报告事实来源。Qt 对话框、JSON、CSV、Excel 和历史报告只是该快照的投影，不得从 `TranslationResult`、legacy `PostProcessResult` 或 `PolishResult` 临时重新统计。
+桌面翻译和润色任务以应用层 `ReportSnapshot` 生成质量报告。Qt 报告对话框、JSON、CSV 和 Excel 从同一快照读取计数、候选和诊断。助手查询已保存的任务成果时，使用任务中心的报告读取流程。
 
 这项约束保证同一次运行的 `run_id`、终态、计数、词条候选、诊断和阶段信息在所有展示方式中一致。报告渲染失败不会回滚已经提交的翻译或润色结果。
 
@@ -35,11 +35,11 @@ AI 翻译、后处理、智能助手校对和独立润色都以应用层 `Report
 
 未启用后处理时仍生成报告；此时 stage outcomes 可以为空。批量运行按真实 ESP stem 为每个插件生成独立快照和产物。
 
-### 智能助手后处理
+### 从智能助手启动校对
 
-`run_postprocess` 默认读取内置 `polish` 预设并以 `proofread` 执行一次校对；显式选择 `strict` 或沿用旧 `phases` 参数时才组装独立多阶段链。旧 `combined` 仅在兼容输入边界接受并立即归一为 `proofread`，新配置和报告不再写出该值。工具也可按名称/UUID读取具名自定义工作流，并允许覆盖作用域、润色强度及共享并发/Token 额度，但 Provider、模型、端点、凭据和本地术语路径仍只来自全局配置。
+`start_polish` 对已有译文运行桌面润色任务。翻译与混合任务通过 `start_translation` 启动，在任务内使用相应模式保存的质量处理配置，也可用 `profile` 指定同一基础模式下的工作流名称或 ID。用户在桌面“质量处理”页选择校对或严格策略，严格策略按已启用的阶段执行。[桌面配置页](../../src/transbridge/ui/tools/ai_translator/single_task_view.py) · [共享来源执行器](../../src/transbridge/ui/tools/ai_translator/source_execution.py)
 
-两种策略都使用 `PostProcessExecutionService` 返回的 canonical snapshot，并调用相同的 bundle renderer。`run_spec_summary`、最近报告和任务元数据记录最终生效的 profile、strategy、stages、scope、limits 与 LLM log 目录；`report_file` 优先指向 Excel。不得再通过 `SimpleNamespace` 伪造翻译结果或调用 legacy 报告生成器。
+`get_quality_report` 在当前会话及工程版本中选择最近一项已结束的助手 AI 任务，并按桌面任务中心的报告读取流程返回各来源摘要。未产生快照的候选记录使用任务中心已有的候选投影。查询指定成果和合入状态使用 `get_task_result`。[任务中心报告读取](../../src/transbridge/application/tasks/history_service.py)
 
 ### 独立校对
 
@@ -78,7 +78,7 @@ postprocess-report-{sha256前16位}.{json|csv|xlsx}
 
 `_TranslationReportDialog` 只接收 `ReportSnapshot`，根据 snapshot schema/source 显示翻译或润色字段。汇总、条目筛选、诊断筛选、双击定位和打开 Excel 均不重新计算业务结果。
 
-历史窗口扫描配置数据目录下各插件的 `reports` 目录。新报告使用摘要文件名；旧 `{esp}_{mode}_report_{timestamp}.xlsx` 文件仍可被识别和打开。历史兼容只负责读取既有文件，不允许新生产入口继续生成 legacy 格式。
+AI 翻译窗口底部的“任务记录”打开“历史报告”。窗口与助手 `list_quality_reports` 均调用 [list_exported_reports](../../src/transbridge/ai_translator/report_history.py)，读取配置数据目录下 `ai_translator/*/reports/*.xlsx`。桌面支持打开和删除，助手只列出元数据。带时间的 `{esp}_{mode}_report_{timestamp}.xlsx` 按文件名时间排序，摘要文件名和其他无法解析时间的文件按修改时间排序。新报告继续使用摘要文件名。
 
 ## 失败语义
 
