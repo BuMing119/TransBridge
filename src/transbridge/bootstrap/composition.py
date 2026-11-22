@@ -38,7 +38,7 @@ from transbridge.application.terminology.runtime import (
 )
 from transbridge.application.use_cases import ValidateContextUseCase
 from transbridge.config import ConfigRepository, UiPreferenceRepository, default_config_repository
-from transbridge.config.paths import get_data_dir
+from transbridge.config.paths import get_data_dir, translation_progress_root
 from transbridge.config.task_results import TaskResultPreferenceRepository
 from transbridge.config.text_encoding import TextEncodingDefaults
 from transbridge.persistence.task_store import TaskStore
@@ -123,7 +123,8 @@ def build_runtime(
     if "task_store" in runtime_use_cases.names():
         task_store = runtime_use_cases.resolve("task_store")
     else:
-        task_store = TaskStore(Path(persistence_root) / "task-store-v1")
+        artifacts_root = translation_progress_root() if runtime_settings.get("persistence_v2_root") is None else None
+        task_store = TaskStore(Path(persistence_root) / "task-store-v1", artifacts_root=artifacts_root)
         runtime_use_cases.register("task_store", task_store)
     task_data_root = task_store.root
     task_history = (

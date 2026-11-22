@@ -24,7 +24,7 @@ _INITIAL_INPUT = frozenset({"sources", "execution_config", "reference_snapshot",
 
 class RecoveryView:
     def __init__(self, store, scope):
-        self.root = store.root / "artifacts"
+        self.root = store.artifacts_root
         self.run_directory = store.run_directory
         self._db = store.path
         self._scope = scope

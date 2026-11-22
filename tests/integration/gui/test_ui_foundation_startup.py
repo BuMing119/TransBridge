@@ -8,6 +8,7 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
+import pytest
 
 from transbridge.config.paratranz_credentials import UnavailableCredentialStore
 from transbridge.config.repository import ConfigRepository
@@ -82,16 +83,43 @@ class _Runtime:
         self._events.append("runtime.close")
 
 
+@pytest.mark.parametrize(
+    "request_move,close_ready,closed",
+    [(False, True, True), (True, True, True), (True, False, True), (True, True, False)],
+)
 def test_gui_entrypoint_creates_foundation_before_window_and_closes_it_before_runtime(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, request_move, close_ready, closed
 ) -> None:
     application = QApplication.instance() or QApplication([])
     events: list[str] = []
     runtime = _Runtime(_preferences(tmp_path), events)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    if request_move:
+
+        def close_runtime():
+            events.append("runtime.close")
+            return SimpleNamespace(is_success=closed)
+
+        monkeypatch.setattr(runtime, "close", close_runtime)
+    from transbridge.ui.settings import storage_restart
+
+    def migrate(destination):
+        assert events[-1] == "runtime.close"
+        assert destination == tmp_path / "TransBridge"
+        from transbridge.config.storage_access import storage_access
+
+        with storage_access(exclusive=True):
+            events.append("migrate")
+        return 0
+
+    monkeypatch.setattr(storage_restart, "migrate_and_restart", migrate)
+    monkeypatch.setattr(app_module.QMessageBox, "warning", lambda *_: events.append("warning"))
     captured: dict[str, object] = {}
 
     class Window:
         def __init__(self, **kwargs) -> None:
+            self.close_ready = close_ready
+            self.storage_migration_destination = tmp_path / "TransBridge" if request_move else None
             foundation = kwargs["ui_foundation"]
             assert foundation.initial_theme_result.snapshot is not None
             captured.update(kwargs)
@@ -122,10 +150,13 @@ def test_gui_entrypoint_creates_foundation_before_window_and_closes_it_before_ru
     monkeypatch.setattr(tools, "register_all", lambda: None)
     monkeypatch.setattr(TaskManager, "bind_runtime", lambda _self, _runtime, *, projection: None)
 
-    assert app_module.main(runtime) == 0
+    assert app_module.main(runtime) == int(not closed)
     assert captured["runtime"] is runtime
     assert captured["ui_foundation"] is application._transbridge_ui_foundation
-    assert events == ["window.create", "window.show", "foundation.close", "runtime.close"]
+    expected = ["window.create", "window.show", "foundation.close", "runtime.close"]
+    if request_move and close_ready:
+        expected.append("migrate" if closed else "warning")
+    assert events == expected
     assert list((tmp_path / "log" / "ui-hangs").glob("ui-hang-*.log"))
 
 

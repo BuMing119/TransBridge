@@ -8,8 +8,8 @@ from transbridge.application.io.dialogue_reading_view import ReadingEntry
 from transbridge.application.projects.source_registry import plugin_source_location, select_workbench_source
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence import (
-    PERSISTENCE_ROOT,
     WorkspaceState,
+    projects_path,
     workspace_path,
 )
 
@@ -101,7 +101,7 @@ class ProjectCoordinator:
     def open_project(self):
         """弹出打开项目对话框。"""
         initial_directory = (
-            str(PERSISTENCE_ROOT)
+            str(projects_path())
             if self._host.current_project_opener is None
             else self._host.current_project_opener.directory
         )

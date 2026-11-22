@@ -131,6 +131,8 @@ class MainWindow(QMainWindow):
         self._save_callbacks: list = []
         self._close_pending = False
         self._close_ready = False
+        self.storage_migration_destination = None
+        self.close_cancelled.connect(lambda: setattr(self, "storage_migration_destination", None))
         from .shell.tool_windows import ToolWindows
 
         self._tool_windows = ToolWindows(self)
@@ -215,6 +217,7 @@ class MainWindow(QMainWindow):
         self.update_controller.prepare_for_close()
         if not self._close_pending and not self._dialogue_editor.can_close():
             event.ignore()
+            self.storage_migration_destination = None
             self.update_controller.cancel_installation()
             return
         if self._window_lifecycle.close_event(event):

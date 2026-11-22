@@ -213,6 +213,11 @@ class WindowLifecycle:
                 ai_tasks.dispose()
             self._host.context.close_projection()
             self._host.status_presenter.close()
+        except Exception:
+            if getattr(self._host, "storage_migration_destination", None) is not None:
+                self._host.storage_migration_destination = None
+                self._host.show_message("保存工作区时出错，数据迁移已取消。")
+            raise
         finally:
             self._host.workbench.hide_step2_progress()
             self._close_ready = True

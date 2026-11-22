@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 from transbridge.application.io.identity import EntryKey
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
+from transbridge.config.paths import task_run_directory, translation_progress_root
 from transbridge.infra.llm_request_config import resolve_output_tokens
 from transbridge.infra.llm_structured_outputs import LlmStructuredOutputTruncatedError
 
@@ -911,9 +912,7 @@ class AutoTranslator:
                                 )
                             )
                             stage_names.append(phase_name)
-                checkpoint_root = (
-                    self._postprocess_root or Path(self._cfg.esp_path).parent / ".transbridge" / "checkpoints"
-                )
+                checkpoint_root = self._postprocess_root or task_run_directory(translation_progress_root(), run_id)
                 required_phases = tuple(stage_names)
                 post_run_id = run_id
                 inputs = tuple(

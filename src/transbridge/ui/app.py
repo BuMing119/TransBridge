@@ -6,11 +6,13 @@ import sys
 import traceback
 
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from transbridge import __version__
 from transbridge.application.security.diagnostic_logging import DiagnosticLogFormatter
 from transbridge.bootstrap import AppRuntime, bind_runtime, build_runtime
+from transbridge.config.storage_access import storage_access
+from transbridge.config.storage_location import StorageLocationError
 from transbridge.paratranz.config_manager import ParatranzConfig
 
 from .context import AppContext
@@ -114,6 +116,22 @@ def main(
 ) -> int:
     """Run the GUI adapter against one explicitly owned application runtime."""
 
+    app = QApplication.instance() or QApplication(sys.argv)
+    try:
+        with storage_access():
+            code, destination = _run_window(app, runtime, initial_project_path, initial_import_path)
+    except StorageLocationError as exc:
+        QMessageBox.critical(None, "无法打开数据文件夹", str(exc))
+        return 1
+    if destination is not None:
+        from .settings.storage_restart import migrate_and_restart
+
+        return migrate_and_restart(destination)
+    return code
+
+
+def _run_window(app, runtime, initial_project_path, initial_import_path):
+    global _file_log_handler
     _setup_logging()
     sys.excepthook = _global_exception_hook
     app_runtime = runtime or build_runtime({"entrypoint": "gui"})
@@ -126,7 +144,6 @@ def main(
     ui_foundation: GuiFoundation | None = None
     hang_watchdog: UiHangWatchdog | None = None
     try:
-        app = QApplication.instance() or QApplication(sys.argv)
         app.setApplicationName("TransBridge")
         app.setOrganizationName("TransBridge")
         _apply_application_icon(app)
@@ -160,13 +177,24 @@ def main(
         hang_watchdog = UiHangWatchdog(Path(ParatranzConfig.get_data_dir()) / "log" / "ui-hangs", app)
         app.aboutToQuit.connect(hang_watchdog.close)
         hang_watchdog.start()
-        return int(app.exec())
+        code = int(app.exec())
+        destination = (
+            getattr(window, "storage_migration_destination", None) if getattr(window, "close_ready", False) else None
+        )
     finally:
         if hang_watchdog is not None:
             hang_watchdog.close()
         if ui_foundation is not None:
             ui_foundation.close()
-        app_runtime.close()
+        closed = app_runtime.close()
+        if _file_log_handler is not None:
+            logging.getLogger().removeHandler(_file_log_handler)
+            _file_log_handler.close()
+            _file_log_handler = None
+    if destination is not None and not closed.is_success:
+        QMessageBox.warning(None, "未迁移数据", "后台任务未能正常关闭。数据仍在原位置，请重新打开软件后再试。")
+        return 1, None
+    return code, destination
 
 
 if __name__ == "__main__":

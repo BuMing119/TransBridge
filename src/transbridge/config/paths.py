@@ -1,30 +1,36 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """配置与数据目录路径工具。"""
 
+from base64 import urlsafe_b64encode
 import os
+from pathlib import Path
 import sys
+
+from transbridge.filesystem_paths import extended_path
+
+from .storage_location import active_storage_root, default_data_path, default_progress_path
+
+
+def translation_progress_root() -> Path:
+    root = active_storage_root()
+    return extended_path(root / "翻译进度") if root is not None else default_progress_path()
+
+
+def task_run_directory(root: Path, run_id: str) -> Path:
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise ValueError("Task run ID must be a non-empty string")
+    segment = urlsafe_b64encode(run_id.encode()).decode("ascii").rstrip("=")
+    return root / f"run-{segment}"
 
 
 def get_data_dir() -> str:
-    """获取数据目录路径（用户可写目录）。
-
-    打包环境：使用 %APPDATA%/TransBridge/data
-    开发环境：使用项目根目录下的 data
-    """
-    if getattr(sys, "frozen", False):
-        appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
-        data_dir = os.path.join(appdata, "TransBridge", "data")
-    else:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        base_dir = current_dir
-        while not os.path.exists(os.path.join(base_dir, "src")) and base_dir != os.path.dirname(base_dir):
-            base_dir = os.path.dirname(base_dir)
-        data_dir = os.path.join(base_dir, "data")
-
-    if not os.path.exists(data_dir):
-        os.makedirs(data_dir, exist_ok=True)
-
-    return data_dir
+    """Return the current user data directory, creating only the default on first use."""
+    root = active_storage_root()
+    if root is not None:
+        return str(extended_path(root / "data"))
+    data_dir = default_data_path()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return str(data_dir)
 
 
 def get_data_resource_dir(name: str) -> str:

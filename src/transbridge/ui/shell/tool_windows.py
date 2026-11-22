@@ -103,10 +103,35 @@ class ToolWindows:
             on_paratranz_saved=paratranz_saved,
             task_result_preferences=task_result_preferences,
             text_encoding_defaults=text_encoding_defaults,
+            storage_blocker=self._storage_migration_blocker,
         )
         dialog.exec()
+        if (destination := getattr(dialog, "storage_destination", None)) is not None:
+            reason = self._storage_migration_blocker()
+            if reason:
+                self._host.show_message(reason)
+                return
+            self._host.storage_migration_destination = destination
+            self._host.close()
+            return
         if context is not None and context.config.token and not context.current_user:
             self.load_current_user()
+
+    def _storage_migration_blocker(self) -> str:
+        from transbridge.application.tasks import TASKS_MANAGE_PERMISSION, OwnerRef
+        from transbridge.ui.worker_registry import get_api_worker_registry
+
+        if self._host.context.dirty:
+            return "项目有尚未保存的修改。请先保存项目，再开始迁移。"
+        actor = OwnerRef("gui:storage", "gui", permissions=frozenset({TASKS_MANAGE_PERMISSION}))
+        jobs = self._host.app_runtime.tasks.list(actor)
+        if (
+            any(not job.is_terminal for job in jobs)
+            or get_api_worker_registry().busy
+            or self._host.workbench.ai_tasks.busy
+        ):
+            return "还有任务正在运行。请等任务结束后再开始迁移。"
+        return ""
 
     def show_user(self) -> None:
         if not self._host.context.current_user:

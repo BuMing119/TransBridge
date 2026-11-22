@@ -8,6 +8,7 @@ from typing import Any
 
 from transbridge.application.contracts import OperationResult
 from transbridge.bootstrap.entrypoints import EntrypointBinding, EntrypointOperations
+from transbridge.config.storage_access import storage_access
 
 from .headless import build_headless_binding
 
@@ -23,6 +24,7 @@ def invoke_operation(binding: EntrypointBinding, command: str) -> OperationResul
     raise ValueError(f"Unsupported CLI operation: {command}")
 
 
+@storage_access()
 def run_operation(
     command: str,
     *,

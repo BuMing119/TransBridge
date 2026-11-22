@@ -15,7 +15,14 @@ def _data_dir() -> Path:
     return Path(ParatranzConfig.get_data_dir())
 
 
-PERSISTENCE_ROOT = _data_dir() / "projects"
+def projects_path() -> Path:
+    return _data_dir() / "projects"
+
+
+def __getattr__(name: str) -> Path:
+    if name == "PERSISTENCE_ROOT":
+        return projects_path()
+    raise AttributeError(name)
 
 
 def workspace_path() -> Path:

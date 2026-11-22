@@ -1,11 +1,11 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Independent task database and its scoped views."""
 
-from base64 import urlsafe_b64encode
 import json
 from pathlib import Path
 
 from transbridge.application.tasks.history import TASKS_MANAGE_PERMISSION, TaskHistoryError, TaskHistoryRecord
+from transbridge.config.paths import task_run_directory
 
 from .connection import TaskStoreError, encode, transaction
 from .decisions import ApplicationDecisions
@@ -19,18 +19,16 @@ __all__ = ["TaskStore", "TaskStoreError"]
 class TaskStore:
     """The desktop manager gets a trusted view; caller scopes are enforced in SQL."""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, artifacts_root: Path | None = None):
         self.root = Path(root)
+        self.artifacts_root = artifacts_root if artifacts_root is not None else self.root / "artifacts"
         self.path = self.root / "tasks.sqlite3"
 
     def recovery(self, *, owner_id=None, session_id=None, entrypoint=None):
         return RecoveryView(self, TaskScope(owner_id, session_id, entrypoint))
 
     def run_directory(self, run_id):
-        if not isinstance(run_id, str) or not run_id.strip():
-            raise ValueError("Task run ID must be a non-empty string")
-        segment = urlsafe_b64encode(run_id.encode()).decode("ascii").rstrip("=")
-        return self.root / "artifacts" / f"run-{segment}"
+        return task_run_directory(self.artifacts_root, run_id)
 
     def history(self, *, owner_id=None, session_id=None, entrypoint=None):
         return ReportsView(self, TaskScope(owner_id, session_id, entrypoint))

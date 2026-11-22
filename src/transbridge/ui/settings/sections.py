@@ -16,6 +16,7 @@ class SettingsSection(StrEnum):
     TASK_RESULTS = "task_results"
     TEXT_ENCODING = "text_encoding"
     ADVANCED = "advanced"
+    STORAGE = "storage"
 
     @classmethod
     def parse(cls, value: object) -> SettingsSection:
@@ -54,6 +55,7 @@ SECTION_LABELS: tuple[tuple[SettingsSection, str], ...] = (
     (SettingsSection.TASK_RESULTS, "结果与冲突"),
     (SettingsSection.TEXT_ENCODING, "文本编码"),
     (SettingsSection.ADVANCED, "高级与安全"),
+    (SettingsSection.STORAGE, "数据存放位置"),
 )
 
 

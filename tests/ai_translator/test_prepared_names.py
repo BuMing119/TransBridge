@@ -89,6 +89,7 @@ class _Provider:
 @pytest.fixture
 def make_translator(tmp_path, monkeypatch):
     terms = _Terms()
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     monkeypatch.setattr("transbridge.ai_translator.term_database.TermDatabaseManager", lambda **_kwargs: terms)
     monkeypatch.setattr("transbridge.infra.llm_reasoning.with_reasoning_intent", lambda client, *_: client)
 
@@ -209,10 +210,16 @@ def test_prepared_names_are_bound_to_complete_source_identity(make_translator):
     assert result.entry_outcomes[current.identity].status == "succeeded"
 
 
-def test_successful_prepared_name_uses_real_candidate_commit_and_configured_postprocess(make_translator):
+@pytest.mark.parametrize("plugin_path", ["mods/plugin.esp", "plugin.esp", ""])
+def test_successful_prepared_name_uses_real_candidate_commit_and_configured_postprocess(
+    make_translator, tmp_path, monkeypatch, plugin_path
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "mods").mkdir()
     entry = _entry()
     mapping = {entry.identity: PreparedName(entry.original, entry.context, "雪漫城")}
     translator, provider, _ = make_translator(prepared=mapping, postprocess=True)
+    translator._cfg.esp_path = plugin_path
     mapping.clear()  # The consumer keeps its captured bootstrap result.
 
     result, collection = _translate(translator, [entry])
@@ -224,6 +231,8 @@ def test_successful_prepared_name_uses_real_candidate_commit_and_configured_post
     assert result.entry_outcomes[entry.identity].text == "雪漫城（校对）"
     assert result.success_count == 1
     assert any(stage.phase == "proofread" for stage in result.post_process_result.stage_outcomes)
+    assert list((tmp_path / "local" / "TransBridge" / "翻译进度").glob("run-*/postprocess/*.json"))
+    assert not list(tmp_path.rglob(".transbridge"))
 
 
 def test_prepared_name_never_republishes_generated_terms_or_populates_name_cache(make_translator, monkeypatch):

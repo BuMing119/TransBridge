@@ -264,9 +264,17 @@ def test_default_runtime_uses_unversioned_data_root(tmp_path: Path, monkeypatch)
     import transbridge.bootstrap.composition as composition
 
     monkeypatch.setattr(composition, "get_data_dir", lambda: tmp_path)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     runtime = build_runtime()
     services = runtime.use_cases.resolve("persistence_v2")
 
+    store = runtime.use_cases.resolve("task_store")
+    progress = tmp_path / "local" / "TransBridge" / "翻译进度"
+    first = store.run_directory("first")
+    assert first.parent == store.run_directory("second").parent == progress
+    assert first != store.run_directory("second")
+    assert store.recovery().run_directory("first") == first
+    assert store.recovery().root == progress
     assert services.root == str(tmp_path.resolve())
     assert runtime.use_cases.resolve("current_project_opener") is services.current_project_opener
     runtime.close()

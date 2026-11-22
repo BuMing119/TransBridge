@@ -10,7 +10,7 @@ from PyQt6.QtCore import QProcess
 
 
 def project_window_command(
-    project_path: str,
+    project_path: str | None = None,
     *,
     executable: str | None = None,
     frozen: bool | None = None,
@@ -19,9 +19,10 @@ def project_window_command(
 
     program = executable or sys.executable
     is_frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
-    if is_frozen:
-        return program, ("gui", "--open-project", project_path)
-    return program, ("-m", "transbridge.cli", "gui", "--open-project", project_path)
+    arguments = ("gui",) if is_frozen else ("-m", "transbridge.cli", "gui")
+    if project_path is not None:
+        arguments += ("--open-project", project_path)
+    return program, arguments
 
 
 def launch_project_in_new_window(project_path: str) -> bool:

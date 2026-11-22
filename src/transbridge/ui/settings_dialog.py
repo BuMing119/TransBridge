@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -84,6 +85,7 @@ class SettingsDialog(QDialog):
         on_paratranz_saved: Callable[[object], None] | None = None,
         task_result_preferences=None,
         text_encoding_defaults: TextEncodingDefaults | None = None,
+        storage_blocker: Callable[[], str] | None = None,
     ) -> None:
         super().__init__(parent)
         configure_dialog(self)
@@ -97,6 +99,8 @@ class SettingsDialog(QDialog):
         self._paratranz_config = paratranz_config
         self._task_result_preferences = task_result_preferences
         self._text_encoding_defaults = text_encoding_defaults or TextEncodingDefaults()
+        self._storage_blocker = storage_blocker
+        self.storage_destination: Path | None = None
         self._config_draft = SettingsConfigDraft(
             llm_config,
             paratranz_config,
@@ -241,6 +245,10 @@ class SettingsDialog(QDialog):
 
     def reject(self) -> None:
         self.done(QDialog.DialogCode.Rejected)
+
+    def _accept_storage_change(self, destination: Path) -> None:
+        self.storage_destination = destination
+        self.accept()
 
     def done(self, result: int) -> None:
         self._dispose()

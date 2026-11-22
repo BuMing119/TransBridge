@@ -38,6 +38,7 @@ from .embedding_page import EmbeddingSettingsPage
 from .page_common import unavailable_page
 from .paratranz_page import ParaTranzSettingsPage
 from .sections import SECTION_LABELS, SettingsSection
+from .storage_page import StorageSettingsPage
 from .task_results_page import TaskResultsSettingsPage
 from .terminology_page import TerminologySettingsPage
 from .text_encoding_page import TextEncodingSettingsPage
@@ -161,6 +162,9 @@ def build_settings_center(dialog: object, initial_section: SettingsSection) -> N
     encoding_page = TextEncodingSettingsPage(dialog._text_encoding_defaults, dialog)
     _insert_page(dialog, SettingsSection.TEXT_ENCODING, encoding_page)
     encoding_page.changed.connect(dialog._sync_controls)
+    storage = StorageSettingsPage(dialog._storage_blocker, dialog)
+    storage.confirmed.connect(dialog._accept_storage_change)
+    _insert_page(dialog, SettingsSection.STORAGE, storage)
 
     body.addWidget(dialog._section_list)
     body.addWidget(dialog._stack, 1)

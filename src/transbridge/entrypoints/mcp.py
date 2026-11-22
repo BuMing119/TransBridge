@@ -56,20 +56,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     configure_logging(args.log_level)
 
+    from transbridge.config.storage_access import storage_access
     from transbridge.entrypoints.headless import build_headless_binding
     from transbridge.smart_assistant.mcp import MCPAdapter, MCPServer
 
     roots: tuple[str, ...] | None = None
     if args.authorized_root is not None:
         roots = tuple(str(value) for value in args.authorized_root)
-    binding = build_headless_binding(
-        "mcp",
-        project_id=args.project_id,
-        authorized_roots=roots,
-    )
-    adapter = MCPAdapter(binding=binding)
-    server = MCPServer(adapter=adapter, on_close=binding.runtime.close)
-    server.run_stdio()
+    with storage_access():
+        binding = build_headless_binding(
+            "mcp",
+            project_id=args.project_id,
+            authorized_roots=roots,
+        )
+        adapter = MCPAdapter(binding=binding)
+        server = MCPServer(adapter=adapter, on_close=binding.runtime.close)
+        server.run_stdio()
     return 0
 
 
