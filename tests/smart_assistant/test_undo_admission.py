@@ -18,7 +18,15 @@ def _write(adapter, context, path, mutation):
         return capture_binding_command(context, mutation)
     if adapter == "file":
         return capture_file_command(context, [path], mutation)
-    return save_config(context, SimpleNamespace(save_to_file=mutation), ["temperature"])
+
+    def update_sections(*_args, **_kwargs):
+        mutation()
+        return SimpleNamespace(revision=1)
+
+    repository = SimpleNamespace(update_sections=update_sections)
+    return save_config(
+        context, SimpleNamespace(_repository=repository, temperature=0.5, config_revision=0), ["temperature"]
+    )
 
 
 @pytest.mark.parametrize("adapter", ["variant", "binding", "file", "config"])

@@ -1,8 +1,9 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Prepare one editable source and its optional translations without publishing it."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
+import logging
 from pathlib import Path
 
 from transbridge.application.contracts import OperationOutcome, RequestContext
@@ -10,6 +11,7 @@ from transbridge.application.projects.prepared_source_results import prepare_par
 from transbridge.application.projects.provisioning_models import PreparedProjectSource
 from transbridge.config.text_encoding import DEFAULT_READ_POLICY, DEFAULT_SOURCE_LANGUAGE, DEFAULT_TEXT_ENCODING
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
 from .catalog import default_format_catalog
 from .contracts import FormatId, ParseRequest, ProbeRequest, ProbeStatus, SourceDescriptor
@@ -39,12 +41,27 @@ class OpenedTranslationFile:
     note: str = ""
 
 
+def apply_open_file_dictionary(collection):
+    """Opening a plugin optionally fills empty translations from the desktop dictionary."""
+    from transbridge.translation_memory.manager import QueryContext, TranslationMemoryManager
+
+    try:
+        manager = TranslationMemoryManager()
+        manager.load()
+        return manager.apply_to_collection(collection, context=QueryContext(mod_file_id="")).applied
+    except Exception:
+        logging.getLogger(__name__).warning("Could not apply optional dictionary while opening plugin", exc_info=True)
+        return 0
+
+
 def prepare_open_file(
     path: str,
     options: OpenFileOptions,
     context: RequestContext,
     *,
     apply_dictionary=None,
+    allowed_formats: frozenset[FormatId] = OPEN_FILE_FORMATS,
+    cancellation=None,
     input_encoding: str = DEFAULT_TEXT_ENCODING,
     source_language: str = DEFAULT_SOURCE_LANGUAGE,
     text_read_policy: str = DEFAULT_READ_POLICY,
@@ -61,7 +78,7 @@ def prepare_open_file(
     if probe.status is not ProbeStatus.EXACT:
         raise ValueError("文件内容与所选格式不符或无法识别，请检查文件并选择正确格式。")
     format_id = probe.candidates[0]
-    if format_id not in OPEN_FILE_FORMATS:
+    if format_id not in OPEN_FILE_FORMATS or format_id not in allowed_formats:
         raise ValueError("此入口不支持该来源格式。")
     read_options = {
         "input_encoding": input_encoding,
@@ -75,7 +92,14 @@ def prepare_open_file(
         if format_id in {FormatId.STRINGS, FormatId.DLSTRINGS, FormatId.ILSTRINGS}
         else ()
     )
-    parsed = TranslationIoUseCase(catalog).parse(ParseRequest(descriptor, context, format_id, options=parse_options))
+    request_options = (
+        (*parse_options, ("capture_sst_export_facts", True)) if format_id is FormatId.PLUGIN_SSE else parse_options
+    )
+    parsed = TranslationIoUseCase(catalog).parse(
+        ParseRequest(descriptor, context, format_id, options=request_options, cancellation=cancellation)
+    )
+    if parsed.outcome is OperationOutcome.CANCELLED:
+        raise ValueError("已取消打开翻译文件。")
     if parsed.outcome is not OperationOutcome.COMPLETED or parsed.source_snapshot is None:
         detail = "\n".join(f"{item.code}: {item.message}" for item in parsed.diagnostics)
         raise ValueError(detail or "文件未完整解析，未添加到工程。")
@@ -114,3 +138,24 @@ def prepare_open_file(
         diagnostics=parsed.diagnostics,
     )
     return OpenedTranslationFile(prepared, strings_lookup, note)
+
+
+def register_opened_source(commands, opened, context, authority):
+    """Register the prepared bytes at the captured workbench revision."""
+    (project_id, variant_id), project_revision, variant_revision = authority
+    added = commands.add_prepared_source(
+        opened.source,
+        context,
+        expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+        expected_project_revision=project_revision,
+        expected_variant_revision=variant_revision,
+    )
+    if not added.is_success or added.value is None:
+        raise ValueError("\n".join(f"{d.code}: {d.message}" for d in added.diagnostics))
+    value = added.value
+    hydration = replace(
+        value.hydration,
+        source_id=value.source_id,
+        reference_location=value.location or value.hydration.reference_location,
+    )
+    return hydration, ((project_id, variant_id), value.project_revision, value.variant_revision)

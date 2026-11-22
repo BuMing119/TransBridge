@@ -8,11 +8,12 @@ from .tool_registry import ToolRegistry
 
 def undo_notices(steps):
     notices = []
-    for name in dict.fromkeys(step.get("tool", "") for step in steps):
+    for step in steps:
+        name = step.get("tool", "")
         spec = ToolRegistry.get(name)
         if spec is None or spec.permission == "read":
             continue
-        limitation = undo_limitation(name)
+        limitation = undo_limitation(name, step.get("args") or {})
         if limitation:
             notices.append(f"{spec.display_name}：{limitation}")
-    return notices
+    return list(dict.fromkeys(notices))

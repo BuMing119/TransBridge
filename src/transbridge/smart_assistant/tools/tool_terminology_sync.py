@@ -3,19 +3,17 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, fields, replace
+from datetime import datetime
 from typing import Any
 
 from transbridge.application.contracts import JobRef, RequestContext
 from transbridge.application.security.hitl import ConfirmationToken
 from transbridge.application.tasks import OwnerRef
-from transbridge.application.terminology.drafts import DraftLineState, DraftWriteExpectation
 from transbridge.application.terminology.ports import PageRequest, SnapshotCursor
-from transbridge.application.terminology_sync.draft_import_models import DraftImportChoice, DraftImportSelection
-from transbridge.application.terminology_sync.execution_models import TerminologySyncRetryToken
-from transbridge.application.terminology_sync.inbound import InboundReviewDecision
+from transbridge.application.terminology_sync.draft_import_models import DraftImportChoice
+from transbridge.application.terminology_sync.inbound import InboundReviewDecision, InboundReviewPage
 from transbridge.application.terminology_sync.models import TerminologySyncMode
-from transbridge.application.terminology_sync.plan_models import TerminologyContentSummary
 from transbridge.application.terminology_sync.service import (
     TerminologySyncApplicationService,
     TerminologySyncPlanRef,
@@ -23,24 +21,16 @@ from transbridge.application.terminology_sync.service import (
 )
 
 from .base import ToolResult
+from .terminology_approval import require_review
 
 
 def _service(ctx) -> TerminologySyncApplicationService:
+    factory = getattr(ctx, "terminology_sync_service_factory", None)
+    if factory is not None:
+        return factory.sync_service_for(_context(ctx))
     direct = getattr(ctx, "terminology_sync_service", None)
-    if isinstance(direct, TerminologySyncApplicationService) or direct is not None:
+    if direct is not None:
         return direct
-    app = getattr(ctx, "app_context", None)
-    runtime = getattr(app, "app_runtime", None) or getattr(app, "runtime", None)
-    use_cases = getattr(runtime, "use_cases", None)
-    if use_cases is not None:
-        names = use_cases.names()
-        if "terminology_sync_service" in names:
-            return use_cases.resolve("terminology_sync_service")
-        if "terminology_sync_service_factory" in names:
-            factory = use_cases.resolve("terminology_sync_service_factory")
-            create = getattr(factory, "sync_service_for", None)
-            if callable(create):
-                return create(_context(ctx))
     raise RuntimeError("terminology synchronization is not configured")
 
 
@@ -78,7 +68,7 @@ def _tool_plan(args: dict, ctx) -> ToolResult:
     try:
         service = _service(ctx)
         summary = service.create_plan(_context(ctx), TerminologySyncMode(args["mode"]))
-        page = service.page_plan(summary.ref, PageRequest(limit=int(args.get("limit", 100))))
+        page = service.page_plan(summary.ref, PageRequest())
         data = _json_value(summary)
         data["items"] = [_json_value(item) for item in page.items]
         data["next_cursor"] = None if page.next_cursor is None else page.next_cursor.encode()
@@ -100,6 +90,7 @@ def _tool_activate_mapping(args: dict, ctx) -> ToolResult:
 
 def _tool_confirm_mapping_replacement(args: dict, ctx) -> ToolResult:
     try:
+        require_review(ctx, "terminology_sync_mapping_confirmation", args)
         token = _service(ctx).issue_mapping_replacement_confirmation(
             _context(ctx),
             TerminologySyncMode(args["mode"]),
@@ -115,7 +106,6 @@ def _tool_plan_page(args: dict, ctx) -> ToolResult:
         page = _service(ctx).page_plan(
             _plan_ref(args),
             PageRequest(
-                limit=int(args.get("limit", 100)),
                 cursor=None if not cursor else SnapshotCursor.decode(str(cursor)),
             ),
         )
@@ -134,6 +124,7 @@ def _tool_plan_page(args: dict, ctx) -> ToolResult:
 
 def _tool_authorize(args: dict, ctx) -> ToolResult:
     try:
+        require_review(ctx, "terminology_sync_authorize", args)
         context = _context(ctx)
         token = _service(ctx).issue_confirmation(_plan_ref(args), _owner(context))
         return ToolResult.ok("已签发一次性术语同步确认", data=_json_value(token))
@@ -153,15 +144,25 @@ def _tool_execute(args: dict, ctx) -> ToolResult:
 
 
 def _tool_status(args: dict, ctx) -> ToolResult:
+    from transbridge.ui.tools.terminology.sync_projection import outcome_rows
+
     try:
         context = _context(ctx)
         ref = JobRef.from_dict(args["job"])
         service = _service(ctx)
-        snapshot = service.status(ref, _owner(context))
-        result = service.result(ref, _owner(context)) if snapshot.is_terminal else None
+        owner = _owner(context)
+        snapshot = service.status(ref, owner)
+        result = service.result(ref, owner) if snapshot.is_terminal else None
+        failure = service.failure(ref, owner) if snapshot.is_terminal and result is None else None
+        rows = () if result is None else outcome_rows(result, service.result_items(ref, owner))
         return ToolResult.ok(
             "术语同步任务状态已读取",
-            data={"snapshot": _json_value(snapshot), "result": None if result is None else _json_value(result)},
+            data={
+                "snapshot": _json_value(snapshot),
+                "result": _json_value(result),
+                "failure": _json_value(failure),
+                "rows": _json_value(rows),
+            },
         )
     except Exception as exc:
         return _failure(exc)
@@ -170,8 +171,7 @@ def _tool_status(args: dict, ctx) -> ToolResult:
 def _tool_retry(args: dict, ctx) -> ToolResult:
     try:
         context = _context(ctx)
-        token = TerminologySyncRetryToken(**args["retry_token"])
-        ref = _service(ctx).retry(token, _owner(context))
+        ref = _service(ctx).retry(JobRef.from_dict(args["job"]), _owner(context))
         return ToolResult.ok("术语同步重试任务已提交", data=ref.to_dict())
     except Exception as exc:
         return _failure(exc)
@@ -180,8 +180,7 @@ def _tool_retry(args: dict, ctx) -> ToolResult:
 def _tool_reconcile(args: dict, ctx) -> ToolResult:
     try:
         context = _context(ctx)
-        token = TerminologySyncRetryToken(**args["retry_token"])
-        ref = _service(ctx).reconcile(token, _owner(context))
+        ref = _service(ctx).reconcile(JobRef.from_dict(args["job"]), _owner(context))
         return ToolResult.ok("术语同步核对任务已提交", data=ref.to_dict())
     except Exception as exc:
         return _failure(exc)
@@ -193,7 +192,16 @@ def _tool_list_inbound(args: dict, ctx) -> ToolResult:
         values = _service(ctx).list_inbound(_context(ctx))
         return ToolResult.ok(
             "已读取待复核的远端术语变化；这些变化尚未影响当前翻译术语版本",
-            data={"change_sets": [_json_value(item) for item in values]},
+            data={
+                "change_sets": [
+                    {
+                        "change_set_id": item.change_set_id,
+                        "created_at": item.created_at.isoformat(),
+                        "total": len(item.items),
+                    }
+                    for item in values
+                ]
+            },
         )
     except Exception as exc:
         return _failure(exc)
@@ -202,25 +210,47 @@ def _tool_list_inbound(args: dict, ctx) -> ToolResult:
 def _tool_get_inbound(args: dict, ctx) -> ToolResult:
     try:
         value = _service(ctx).get_inbound(_context(ctx), str(args["change_set_id"]))
-        offset = max(0, int(args.get("offset", 0)))
-        limit = min(1000, max(1, int(args.get("limit", 100))))
-        data = _json_value(value)
-        data["items"] = [_json_value(item) for item in value.items[offset : offset + limit]]
-        data["total"] = len(value.items)
-        data["next_offset"] = offset + limit if offset + limit < len(value.items) else None
+        page = InboundReviewPage.from_items(value.items, args.get("offset", 0))
+        data = {field.name: _json_value(getattr(value, field.name)) for field in fields(value) if field.name != "items"}
+        data.update(items=_json_value(page.items), offset=page.offset, total=page.total)
+        end = page.offset + len(page.items)
+        data["next_offset"] = end if end < page.total else None
         return ToolResult.ok("已读取入站术语变化；尚未影响当前翻译术语版本", data=data)
     except Exception as exc:
         return _failure(exc)
 
 
 def _tool_preview_inbound(args: dict, ctx) -> ToolResult:
+    from transbridge.ui.tools.terminology.sync_projection import proposal_rows
+
     try:
-        proposal = _service(ctx).preview_import(_selection(args["selection"]))
+        if set(args) != {"change_set_id", "choices"}:
+            raise ValueError("请提供入站变化集 change_set_id 和逐项审核 choices")
+        service = _service(ctx)
+        context = _context(ctx)
+        change_set = service.get_inbound(context, args["change_set_id"])
+        items = {item.item_id: item for item in change_set.items}
+        choices = []
+        for choice in args["choices"]:
+            decision = InboundReviewDecision(choice["decision"])
+            expected = (
+                {"item_id", "decision", "translation"}
+                if decision is InboundReviewDecision.EDIT
+                else {"item_id", "decision"}
+            )
+            if set(choice) != expected:
+                raise ValueError("审核项需包含 item_id、decision，并仅在选择 edit 时提供 translation")
+            choices.append(
+                DraftImportChoice.from_review(items[choice["item_id"]], decision, choice.get("translation", ""))
+            )
+        selection = service.prepare_import_selection(context, change_set.change_set_id, tuple(choices))
+        proposal = service.preview_import(selection)
         return ToolResult.ok(
             "入站变化草稿预览已生成；预览不会影响当前翻译术语版本",
             data={
                 "proposal_digest": proposal.proposal_digest,
                 "counts": _json_value(proposal.counts),
+                "changes": _json_value(proposal_rows(proposal)),
                 "diagnostics": list(proposal.diagnostics),
                 "committable": proposal.committable,
             },
@@ -231,7 +261,14 @@ def _tool_preview_inbound(args: dict, ctx) -> ToolResult:
 
 def _tool_commit_inbound(args: dict, ctx) -> ToolResult:
     try:
-        result = _service(ctx).commit_import_ref(str(args["proposal_digest"]), _context(ctx))
+        require_review(ctx, "terminology_sync_inbound_commit", args)
+        digest = args["proposal_digest"]
+        context = _context(ctx)
+        metadata = dict(context.metadata)
+        if not metadata.get("manual_actor_id") and "gui" in context.permissions and metadata.get("entrypoint") == "gui":
+            metadata["manual_actor_id"] = context.owner_id
+            context = replace(context, metadata=tuple(sorted(metadata.items())))
+        result = _service(ctx).commit_import_ref(digest, context)
         return ToolResult.ok(
             "入站变化已写入待发布草稿；仍未影响当前翻译术语版本",
             data=_json_value(result),
@@ -240,39 +277,9 @@ def _tool_commit_inbound(args: dict, ctx) -> ToolResult:
         return _failure(exc)
 
 
-def _selection(raw: dict[str, Any]) -> DraftImportSelection:
-    line = DraftLineState(**raw["expected_line"])
-    expectation_raw = raw.get("draft_expectation")
-    expectation = None
-    if expectation_raw is not None:
-        expectation = DraftWriteExpectation(
-            str(expectation_raw["draft_id"]),
-            int(expectation_raw["draft_revision"]),
-            str(expectation_raw["decision_set_digest"]),
-            line,
-        )
-    choices = []
-    for value in raw["choices"]:
-        edited = value.get("edited")
-        choices.append(
-            DraftImportChoice(
-                str(value["item_id"]),
-                InboundReviewDecision(str(value["decision"])),
-                None if edited is None else TerminologyContentSummary(**edited),
-                value.get("reason"),
-            )
-        )
-    return DraftImportSelection(
-        str(raw["change_set_id"]),
-        str(raw["change_set_content_digest"]),
-        int(raw["expected_review_revision"]),
-        line,
-        tuple(choices),
-        expectation,
-    )
-
-
 def _json_value(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
     if hasattr(value, "value"):
         return value.value
     if hasattr(value, "to_dict"):
@@ -296,6 +303,17 @@ def _failure(exc: Exception) -> ToolResult:
 
 _MODE_SCHEMA = {"type": "string", "enum": [mode.value for mode in TerminologySyncMode]}
 _PLAN_REF_PROPERTIES = {"plan_id": {"type": "string"}, "plan_hash": {"type": "string"}}
+_JOB_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "schema_version": {"type": "integer", "const": JobRef.SCHEMA_VERSION},
+        "job_id": {"type": "string", "minLength": 1},
+        "owner_id": {"type": "string", "minLength": 1},
+        "run_id": {"type": "string", "minLength": 1},
+    },
+    "required": ["job_id", "owner_id", "run_id"],
+}
 
 
 def _register_terminology_sync_tools() -> None:
@@ -309,7 +327,12 @@ def _register_terminology_sync_tools() -> None:
                 "display_name": "术语同步预检",
                 "description": "①Check terminology backup or bidirectional prerequisites without writing remote data.",
                 "execute": _tool_preflight,
-                "parameters": {"type": "object", "properties": {"mode": _MODE_SCHEMA}, "required": ["mode"]},
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"mode": _MODE_SCHEMA},
+                    "required": ["mode"],
+                },
             },
             {
                 "name": "terminology_sync_plan",
@@ -319,7 +342,8 @@ def _register_terminology_sync_tools() -> None:
                 "is_long_running": True,
                 "parameters": {
                     "type": "object",
-                    "properties": {"mode": _MODE_SCHEMA, "limit": {"type": "integer", "minimum": 1, "maximum": 1000}},
+                    "additionalProperties": False,
+                    "properties": {"mode": _MODE_SCHEMA},
                     "required": ["mode"],
                 },
             },
@@ -334,6 +358,7 @@ def _register_terminology_sync_tools() -> None:
                 "permission": "write",
                 "parameters": {
                     "type": "object",
+                    "additionalProperties": False,
                     "properties": {"mode": _MODE_SCHEMA, "replacement_token": {"type": "object"}},
                     "required": ["mode"],
                 },
@@ -344,7 +369,13 @@ def _register_terminology_sync_tools() -> None:
                 "description": "①Issue a one-use owner-bound confirmation before replacing another Variant mapping.",
                 "execute": _tool_confirm_mapping_replacement,
                 "permission": "write",
-                "parameters": {"type": "object", "properties": {"mode": _MODE_SCHEMA}, "required": ["mode"]},
+                "require_confirmation": True,
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"mode": _MODE_SCHEMA},
+                    "required": ["mode"],
+                },
             },
             {
                 "name": "terminology_sync_plan_page",
@@ -353,7 +384,8 @@ def _register_terminology_sync_tools() -> None:
                 "execute": _tool_plan_page,
                 "parameters": {
                     "type": "object",
-                    "properties": {**_PLAN_REF_PROPERTIES, "cursor": {"type": "string"}, "limit": {"type": "integer"}},
+                    "additionalProperties": False,
+                    "properties": {**_PLAN_REF_PROPERTIES, "cursor": {"type": "string"}},
                     "required": ["plan_id", "plan_hash"],
                 },
             },
@@ -363,8 +395,10 @@ def _register_terminology_sync_tools() -> None:
                 "description": "①Issue a request-bound one-use confirmation for the exact plan and owner scope.",
                 "execute": _tool_authorize,
                 "permission": "write",
+                "require_confirmation": True,
                 "parameters": {
                     "type": "object",
+                    "additionalProperties": False,
                     "properties": _PLAN_REF_PROPERTIES,
                     "required": ["plan_id", "plan_hash"],
                 },
@@ -380,6 +414,7 @@ def _register_terminology_sync_tools() -> None:
                 "is_long_running": True,
                 "parameters": {
                     "type": "object",
+                    "additionalProperties": False,
                     "properties": {**_PLAN_REF_PROPERTIES, "confirmation_token": {"type": "object"}},
                     "required": ["plan_id", "plan_hash"],
                 },
@@ -389,37 +424,43 @@ def _register_terminology_sync_tools() -> None:
                 "display_name": "术语同步任务状态",
                 "description": "①Read TaskRuntime status and the bounded terminal terminology sync result.",
                 "execute": _tool_status,
-                "parameters": {"type": "object", "properties": {"job": {"type": "object"}}, "required": ["job"]},
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"job": _JOB_SCHEMA},
+                    "required": ["job"],
+                },
             },
             {
                 "name": "terminology_sync_retry",
                 "display_name": "重试术语同步",
                 "description": (
-                    "①Retry only failed safe items using an owner-bound retry token; "
-                    "unknown items require reconciliation."
+                    "①Retry only failed safe items from the selected task result; unknown items require reconciliation."
                 ),
                 "execute": _tool_retry,
                 "permission": "write",
                 "is_long_running": True,
                 "parameters": {
                     "type": "object",
-                    "properties": {"retry_token": {"type": "object"}},
-                    "required": ["retry_token"],
+                    "additionalProperties": False,
+                    "properties": {"job": _JOB_SCHEMA},
+                    "required": ["job"],
                 },
             },
             {
                 "name": "terminology_sync_reconcile",
                 "display_name": "核对术语同步未知结果",
                 "description": (
-                    "①Reconcile unknown remote outcomes before any retry using the same owner-bound evidence token."
+                    "①Reconcile unknown remote outcomes recorded in the selected task result before retry."
                 ),
                 "execute": _tool_reconcile,
                 "permission": "write",
                 "is_long_running": True,
                 "parameters": {
                     "type": "object",
-                    "properties": {"retry_token": {"type": "object"}},
-                    "required": ["retry_token"],
+                    "additionalProperties": False,
+                    "properties": {"job": _JOB_SCHEMA},
+                    "required": ["job"],
                 },
             },
             {
@@ -429,7 +470,7 @@ def _register_terminology_sync_tools() -> None:
                     "①List bounded inbound terminology change sets; reading them never publishes a local version."
                 ),
                 "execute": _tool_list_inbound,
-                "parameters": {"type": "object", "properties": {}},
+                "parameters": {"type": "object", "additionalProperties": False, "properties": {}},
             },
             {
                 "name": "terminology_sync_inbound_get",
@@ -438,10 +479,10 @@ def _register_terminology_sync_tools() -> None:
                 "execute": _tool_get_inbound,
                 "parameters": {
                     "type": "object",
+                    "additionalProperties": False,
                     "properties": {
                         "change_set_id": {"type": "string"},
                         "offset": {"type": "integer", "minimum": 0},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
                     },
                     "required": ["change_set_id"],
                 },
@@ -455,8 +496,27 @@ def _register_terminology_sync_tools() -> None:
                 "execute": _tool_preview_inbound,
                 "parameters": {
                     "type": "object",
-                    "properties": {"selection": {"type": "object"}},
-                    "required": ["selection"],
+                    "additionalProperties": False,
+                    "properties": {
+                        "change_set_id": {"type": "string"},
+                        "choices": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "item_id": {"type": "string"},
+                                    "decision": {"type": "string", "enum": [d.value for d in InboundReviewDecision]},
+                                    "translation": {"type": "string", "description": "Replacement text for edit"},
+                                },
+                                "required": ["item_id", "decision"],
+                                "if": {"properties": {"decision": {"const": "edit"}}},
+                                "then": {"required": ["translation"]},
+                                "else": {"not": {"required": ["translation"]}},
+                            },
+                        },
+                    },
+                    "required": ["change_set_id", "choices"],
                 },
             },
             {
@@ -467,8 +527,10 @@ def _register_terminology_sync_tools() -> None:
                 ),
                 "execute": _tool_commit_inbound,
                 "permission": "write",
+                "require_confirmation": True,
                 "parameters": {
                     "type": "object",
+                    "additionalProperties": False,
                     "properties": {"proposal_digest": {"type": "string"}},
                     "required": ["proposal_digest"],
                 },

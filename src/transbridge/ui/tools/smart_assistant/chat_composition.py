@@ -41,6 +41,9 @@ def initialize_runtime(facade) -> None:
         ctx=facade._ctx,
         conversation_manager=facade._conversation,
         request_context_provider=facade._session_runtime.request_context,
+        edit_review_for=lambda step: facade._confirmation_view.edit_review_for(
+            step, required=not facade._controller.auto_mode
+        ),
         on_system_message=facade.add_system_message,
         on_plan_card=facade.add_plan_card,
         on_tool_card=facade.add_tool_card,
@@ -54,6 +57,9 @@ def initialize_runtime(facade) -> None:
         on_task_started=lambda task_id, run_id: _task_started(facade, task_id, run_id),
         on_confirm_permission=lambda title, message: (
             facade._confirmation_view.ask_permission(title, message) if facade._confirmation_view is not None else False
+        ),
+        choose_artifact_output=lambda name: (
+            facade._confirmation_view.choose_artifact_output(name) if facade._confirmation_view is not None else None
         ),
         on_tool_result=lambda step, result: _tool_result(facade, step, result),
         llm_client_provider=lambda: facade._orchestrator.get_llm_client(),

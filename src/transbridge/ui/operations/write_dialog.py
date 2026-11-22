@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.application.io.native_write import directory_output_filename
 from transbridge.application.preflight.sources import existing_reference
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 from transbridge.ui.text_encoding import TEXT_FORMATS
@@ -304,17 +305,7 @@ class WritePlanDialog(ExecutionPlanDialog):
         filename = Path(plugin_path or self._source_name)
         format_editor = self._field_edits.get("output_format")
         output_format = format_editor.currentData() if format_editor is not None else self._source_format
-        suffix = {
-            "json.paratranz": ".json",
-            "json.dsd": ".json",
-            "sst.ssu8": ".sst",
-            "sst.ssu9": ".sst",
-            "binary.eet": ".eet",
-            "xml.eet": ".xml",
-            "xml.xt": ".xml",
-        }.get(output_format)
-        if suffix:
-            filename = filename.with_suffix(suffix)
+        filename = directory_output_filename(filename, output_format)
         current = self._field_edits["target_path"].text().strip()
         reference = current or existing_reference(plugin_path or self._source_reference)
         directory = QFileDialog.getExistingDirectory(
@@ -323,7 +314,7 @@ class WritePlanDialog(ExecutionPlanDialog):
             str(Path(reference).parent) if reference else "",
         )
         if directory:
-            self._field_edits["target_path"].setText(str(Path(directory) / filename.name))
+            self._field_edits["target_path"].setText(str(Path(directory) / filename))
             if self._overwrite is not None:
                 self._overwrite.setChecked(False)
 

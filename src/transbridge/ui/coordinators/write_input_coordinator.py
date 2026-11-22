@@ -11,10 +11,13 @@ from PyQt6.QtWidgets import QFileDialog
 
 from transbridge.application.contracts import DomainError, ErrorCategory
 from transbridge.application.io.contracts import FormatId
-from transbridge.application.io.identity import SourceNamespace
 from transbridge.application.io.write_formats import SST_FORMATS
 from transbridge.application.projects.storage_contracts import ProjectReadToken
-from transbridge.application.projects.write_inputs import bind_plugin_write_input
+from transbridge.application.projects.write_inputs import (
+    ProjectPluginReferences,
+    bind_plugin_write_input,
+    native_write_template,
+)
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
 from transbridge.persistence.v2.ids import ProjectId, VariantId
 from transbridge.ui.project_rows import ProjectRowsCollection
@@ -72,9 +75,7 @@ class _WriteInputs:
             use_cases.resolve("project_source_references") if "project_source_references" in names else None
         )
         self.projection = use_cases.resolve("project_projection") if "project_projection" in names else None
-        self.token = None
-        self.pending = None
-        self.pending_namespaces = frozenset()
+        self.project_inputs = None
         self.snapshots = {}
         self.saved = {}
         self.repairs = {}
@@ -142,10 +143,7 @@ class _WriteInputs:
         if self._stop_reason() is not None:
             return
         for key, slot in self.slots.items():
-            rows = slot.collection
-            self.snapshots[key] = (
-                rows.native_template() if isinstance(rows, ProjectRowsCollection) else slot.source_snapshot
-            )
+            self.snapshots[key] = native_write_template(slot)
         if not self.missing:
             return
         if self.encodings is None:
@@ -163,42 +161,25 @@ class _WriteInputs:
 
     def _read_references(self):
         project_id, variant_id = ProjectId(self.request.project_id), VariantId(self.request.variant_id)
-        store = self.references.store_for(project_id)
-        infos = {info.namespace: info for info in store.sources(native_fields=False)}
+        token = None
         if self.projection is not None:
             projection = self.projection.snapshot()
             if projection is None or self._stop_reason() is not None:
                 return
             values = projection.values
-            self.token = ProjectReadToken(
+            token = ProjectReadToken(
                 project_id, variant_id, values["persisted_project_revision"], values["persisted_variant_revision"]
             )
-            _, project_revision, variant_revision = self.signature
-            stored_namespaces = {namespace.value for namespace in infos}
-            missing_stored = any(
-                (
-                    dict(getattr(self.snapshots[key], "metadata", ())).get("source_namespace")
-                    or self.slots[key].source_namespace
-                )
-                not in stored_namespaces
-                for key in self.missing
-            )
-            if project_revision != self.token.project_revision or missing_stored:
-                self.pending = self.references.capture_pending_sources(
-                    project_id, variant_id, project_revision=project_revision, variant_revision=variant_revision
-                )
-                if self.pending is None:
-                    raise RuntimeError(_STALE)
-                pending_infos = {info.namespace: info for info in self.pending.sources}
-                self.pending_namespaces = frozenset(pending_infos)
-                infos.update(pending_infos)
+        self.project_inputs = ProjectPluginReferences(
+            self.references, project_id, variant_id, *self.signature[1:], expected_token=token
+        )
         for key in self.missing:
             snapshot = self.snapshots[key]
             if snapshot is None:
                 raise RuntimeError("当前来源缺少可校验的插件记录。")
             namespace = dict(snapshot.metadata).get("source_namespace") or self.slots[key].source_namespace
-            info = infos.get(SourceNamespace(namespace)) if namespace else None
-            if info is not None and info.fingerprint == snapshot.sha256:
+            info = self.project_inputs.find(snapshot, namespace)
+            if info is not None:
                 self.saved[key] = info
 
     def _next(self):
@@ -290,16 +271,7 @@ class _WriteInputs:
                 return
             info = self.saved[key]
             source_id = self.slots[key].source_id or str(key)
-            update = dict(expected_fingerprint=info.fingerprint, expected_path=info.reference_path, reference_path=path)
-            if info.namespace in self.pending_namespaces:
-                saved = self.references.update_pending_source_reference(
-                    self.pending, source_id, info.namespace, **update
-                )
-            else:
-                saved = self.references.update_source_reference(
-                    ProjectId(self.request.project_id), source_id, info.namespace, token=self.token, **update
-                )
-            if not saved:
+            if not self.project_inputs.remember(source_id, info, path):
                 raise RuntimeError("工程来源路径已变化，请重新发起导出。")
 
     def _finish(self):

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
+from transbridge.application.io.identity import EntryKey
+from transbridge.application.workbench_edits import changed_entry_states, stage_edit
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 from transbridge.ui.context import AppContext
@@ -30,11 +32,13 @@ class TranslationStageAction:
         stage: int,
         *,
         entries: Iterable[TranslationEntry],
-        selected_ids: Iterable[str],
+        selected_ids: Iterable[str | EntryKey],
         parent: QWidget,
     ) -> None:
         scope = resolve_entry_action_scope(clicked_entry, entries, selected_ids)
-        self._changes = tuple(TranslationStageChange(entry, entry.stage) for entry in scope if entry.stage != stage)
+        changes = [(entry, edit) for entry in scope if (edit := stage_edit(entry.snapshot(), stage)).changed]
+        self._edits = tuple(edit for _, edit in changes)
+        self._changes = tuple(TranslationStageChange(entry, edit.before.stage) for entry, edit in changes)
         self._context = context
         self._stage = stage
         self._parent = parent
@@ -43,7 +47,6 @@ class TranslationStageAction:
         self._collection = context.collection
         self._project_revision = context.project_revision
         self._variant_revision = context.variant_revision
-        self._before_states = tuple((change.entry.translation, change.entry.stage) for change in self._changes)
 
     def run(self) -> tuple[TranslationStageChange, ...]:
         """Apply the captured stage changes only after the authoritative commit succeeds."""
@@ -54,8 +57,12 @@ class TranslationStageAction:
         if (
             context.active_version_identity != self._version_identity
             or context.active_key != self._source_key
+            or context.collection is None
             or context.collection is not self._collection
-            or tuple((change.entry.translation, change.entry.stage) for change in self._changes) != self._before_states
+            or any(
+                (current := context.collection.get(edit.before.entry_key)) is None or current.snapshot() != edit.before
+                for edit in self._edits
+            )
         ):
             QMessageBox.warning(self._parent, "翻译状态未修改", "翻译内容已变化，请重新选择词条后再试。")
             return ()
@@ -68,7 +75,7 @@ class TranslationStageAction:
             return ()
         project_id, variant_id = self._version_identity
         result = commands.replace_entry_states(
-            {change.entry.identity: (change.entry.translation, self._stage) for change in self._changes},
+            changed_entry_states(self._edits),
             runtime,
             expected_project_revision=self._project_revision,
             expected_variant_revision=self._variant_revision,

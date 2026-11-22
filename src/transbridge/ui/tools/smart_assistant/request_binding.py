@@ -21,6 +21,7 @@ from transbridge.smart_assistant.request_protocol import (
     ROUTING_TOOL,
     STATE_RETRIEVAL_TOOL,
 )
+from transbridge.smart_assistant.tools.workbench_rows import workbench_source_identity
 
 from .request_answer_binding import RequestAnswerBinding
 from .request_background import RequestBackground
@@ -100,12 +101,18 @@ class RequestBinding(QObject):
 
     def _selection(self):
         ctx = self.facade._ctx
+        rows = getattr(ctx, "workbench_row_selection", None)
+        if rows is not None and not rows.is_complete():
+            self.facade.add_system_message("工作台仍在载入选中的行，请在完整选区就绪后重试。")
+            return None
         selected = getattr(ctx, "selected_entries", None)
         if selected is None:
             selected = getattr(ctx, "selected_ids", ())
         selected = selected or ()
         return {
             "display_context": capture_display_context(ctx),
+            "workbench_source_identity": workbench_source_identity(ctx),
+            "workbench_source_key": str(ctx.active_key) if getattr(ctx, "active_key", None) is not None else None,
             "project_revision": getattr(ctx, "project_revision", None),
             "variant_revision": getattr(ctx, "variant_revision", None),
             "active_version_identity": (

@@ -353,7 +353,9 @@ def test_dry_run_only_reads_remote_and_never_calls_write_methods() -> None:
 
     assert plan.items[0].action is SyncAction.UPDATE_REMOTE
     service.list_entries.assert_called_once_with(7, limit=100_001, cancellation=None)
-    service.upsert_entry.assert_not_called()
+    service.update_entry_translation.assert_not_called()
+    service.update_entry_context.assert_not_called()
+    service.delete_entry.assert_not_called()
     service.trigger_export.assert_not_called()
 
 

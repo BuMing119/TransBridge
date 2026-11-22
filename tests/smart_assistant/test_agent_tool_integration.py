@@ -33,6 +33,7 @@ def _current_project(case, count):
     from PyQt6.QtWidgets import QApplication
 
     from tests.ui.fixtures.current_editing import CurrentEditingProject
+    from transbridge.ui.workbench.step2 import Step2PreviewWidget
 
     case.qt_app = QApplication.instance() or QApplication([])
     config = patch(
@@ -46,6 +47,9 @@ def _current_project(case, count):
     case.project = project
     case.ctx = project.context
     case.collection = project.context.collection
+    case.preview = Step2PreviewWidget(case.ctx)
+    case.preview.refresh(case.collection)
+    case.addCleanup(case.preview.close)
 
 
 # ── Test: 完整工作流链路 ────────────────────────────────────────────────
@@ -82,7 +86,7 @@ class TestFullWorkflowChain(unittest.TestCase):
 
         result = _tool_set_filters({"search_query": "Original", "search_field": "original"}, self.ctx)
         self.assertTrue(result.success)
-        self.assertEqual(self.ctx.filter_state["search_query"], "Original")
+        self.assertEqual(self.ctx.filter_state["search_orig"], "Original")
 
     def test_search_entries_invalid_field(self):
         from transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
@@ -233,7 +237,9 @@ class TestFullWorkflowChain(unittest.TestCase):
         TaskManager.reset()
         self.addCleanup(TaskManager.reset)
         ec = ExecutionContext(app_context=self.ctx, task_manager=TaskManager())
-        test_config = SimpleNamespace(api_key="test-key", term_priority=["dynamic"])
+        from transbridge.config.llm import LLMConfig
+
+        test_config = LLMConfig(api_key="test-key", model="offline", term_priority=["dynamic"])
         with (
             TemporaryDirectory(prefix="assistant-translation-") as directory,
             patch(
@@ -350,7 +356,7 @@ class TestLabelSystem(unittest.TestCase):
         self.assertTrue(r3.success)
         self.assertEqual(r3.data["assigned_count"], 2)
 
-        # 4. Batch assign (without label filter to avoid filter_entries label bug)
+        # 4. Apply the label across the current scope.
         r5 = _tool_manage_entry_labels({"action": "batch_assign", "name": "需要校对"}, ec, self.collection)
         self.assertTrue(r5.success)
         self.assertGreaterEqual(r5.data["assigned_count"], 2)
@@ -723,7 +729,7 @@ class TestParserWriterTools(unittest.TestCase):
 
         result = _tool_parse_esp({"path": "nonexistent.esp"}, self.ctx)
         self.assertFalse(result.success)
-        self.assertIn("文件不存在", result.message)
+        self.assertIn("授权", result.message)
 
     def test_parse_esp_invalid_extension(self):
         from transbridge.smart_assistant.tools.tool_parser import _tool_parse_esp
@@ -731,6 +737,7 @@ class TestParserWriterTools(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as f:
             exe_path = f.name
         try:
+            self.ctx.authorized_roots = (os.path.dirname(exe_path),)
             result = _tool_parse_esp({"path": exe_path}, self.ctx)
             self.assertFalse(result.success)
             self.assertIn("不支持的文件类型", result.message)
@@ -875,7 +882,8 @@ class TestFilterEntries(unittest.TestCase):
             self.assertEqual(e.stage, 0)
 
     def test_filter_by_category(self):
-        results = filter_entries(self.collection, {"category": ["NPC_"]})
+        results = filter_entries(self.collection, {"category": ["人名"]})
+        self.assertTrue(results)
         for e in results:
             self.assertTrue(e.context and e.context.startswith("NPC_"))
 
@@ -885,10 +893,9 @@ class TestFilterEntries(unittest.TestCase):
         for e in results:
             self.assertIn("Original text 0", e.original)
 
-    def test_filter_by_search_id(self):
-        results = filter_entries(self.collection, {"search_query": "entry_000", "search_field": "id"})
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].id, "entry_000")
+    def test_reject_retired_id_search_from_saved_filter(self):
+        with self.assertRaisesRegex(ValueError, "不支持"):
+            filter_entries(self.collection, {"search_query": "entry_000", "search_field": "id"})
 
     def test_filter_empty_returns_all(self):
         results = filter_entries(self.collection, {})

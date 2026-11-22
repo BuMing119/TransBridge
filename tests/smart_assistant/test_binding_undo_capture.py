@@ -7,11 +7,13 @@ import pytest
 
 from tests.smart_assistant.test_undo_capture import _adapter as _base_adapter
 from transbridge.application.assistant_requests.models import EffectStatus, RequestError, RequestStatus
+from transbridge.application.ports.paratranz import ParaTranzProject
 from transbridge.application.projects.remote_binding import (
     ParaTranzProjectBinding,
     ProjectRemoteBindingService,
     project_with_paratranz_binding,
 )
+from transbridge.paratranz.service import ParaTranzService
 from transbridge.smart_assistant.tools import tool_paratranz
 from transbridge.smart_assistant.tools.binding_undo_capture import capture_binding_command
 
@@ -50,20 +52,21 @@ def test_switch_tool_captures_local_binding_and_inverse_does_not_call_remote(com
     bindings = ProjectRemoteBindingService(harness.service)
     app = context.app_context
     app.active_project_id = request_context.project_id
+    app.config = SimpleNamespace(base_url="https://paratranz.cn", user_id=7)
     app.set_paratranz_binding = lambda binding: bindings.set_paratranz_binding(
         binding, request_context, expected_project_revision=app.project_revision
     )
     reads = []
 
-    def get_project(project_id, **_kwargs):
-        reads.append(project_id)
-        return {"id": project_id, "name": "Target", "visibility": "private"}
+    def list_projects(*, uid, **_kwargs):
+        reads.append(uid)
+        return (ParaTranzProject(42, "Target", "private"),)
 
     monkeypatch.setattr(
-        tool_paratranz, "_get_paratranz_client", lambda *_: (SimpleNamespace(get_project=get_project), None, None)
+        ParaTranzService, "from_config", lambda _: SimpleNamespace(list_projects=list_projects, close=lambda: None)
     )
     result = tool_paratranz._tool_switch_paratranz_project({"project_id": 42}, context)
-    assert result.success and reads == [42]
+    assert result.success and reads == ["my"]
     record = requests.state(request_context)["undo_rounds"][execution.work_round_id]
     assert len(record["commits"]) == 1
     commit = record["commits"][0]
@@ -71,7 +74,7 @@ def test_switch_tool_captures_local_binding_and_inverse_does_not_call_remote(com
     _settle(case)
     assert undo.preview(request_context, execution.work_round_id)["available"]
     assert not undo.undo(request_context, execution.work_round_id)["partial"]
-    assert reads == [42]
+    assert reads == ["my"]
     assert "paratranz" not in harness.service.active.project.envelope.data.get("remote_bindings", {})
 
 

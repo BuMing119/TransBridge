@@ -91,7 +91,7 @@ class ProductionTerminologyComposition:
     lifecycle: ProjectLifecycleService | None = None
     ids: object | None = None
     clock: object | None = None
-    _sync_services: dict[tuple[str, str, str], TerminologySyncApplicationService] = field(
+    _sync_services: dict[tuple[str, str, str, str | None], TerminologySyncApplicationService] = field(
         default_factory=dict, compare=False, repr=False
     )
     _profile_services: dict[str, TerminologyProfileService] = field(default_factory=dict, compare=False, repr=False)
@@ -118,7 +118,7 @@ class ProductionTerminologyComposition:
     def sync_service_for(self, context: RequestContext) -> TerminologySyncApplicationService:
         if context.project_id is None or context.variant_id is None:
             raise ValueError("terminology sync requires Project and Variant context")
-        key = (context.owner_id, context.project_id, context.variant_id)
+        key = (context.owner_id, context.project_id, context.variant_id, context.session_id)
         with self._sync_lock:
             existing = self._sync_services.get(key)
             if existing is not None:

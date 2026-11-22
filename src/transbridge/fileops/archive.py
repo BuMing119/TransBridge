@@ -57,7 +57,7 @@ class ArchiveExtractionError(RuntimeError):
 
 class ArchiveCancelledError(ArchiveExtractionError):
     def __init__(self) -> None:
-        super().__init__("ARCHIVE_CANCELLED", "archive extraction was cancelled")
+        super().__init__("ARCHIVE_CANCELLED", "archive operation was cancelled")
 
 
 def _find_unrar() -> str:
@@ -460,13 +460,31 @@ def pack(
     *,
     fmt: str = "zip",
     progress: Callable[[int, int], None] | None = None,
+    cancellation: object | None = None,
 ) -> str:
-    """Pack a directory as ZIP/7z; RAR creation is intentionally unavailable."""
-    if fmt == "zip":
-        return _pack_zip(src_dir, archive_path, progress)
-    if fmt == "7z":
-        return _pack_7z(src_dir, archive_path, progress)
-    raise ValueError(f"unsupported archive format for packing: {fmt}")
+    """Finish a ZIP/7z before replacing the destination, including on cancellation."""
+    packer = {"zip": _pack_zip, "7z": _pack_7z}.get(fmt)
+    if packer is None:
+        raise ValueError(f"unsupported archive format for packing: {fmt}")
+    destination = Path(archive_path)
+    if destination.resolve().is_relative_to(Path(src_dir).resolve()):
+        raise ValueError("output archive must be outside its source directory")
+
+    def report(done, total):
+        if _is_cancelled(cancellation):
+            raise ArchiveCancelledError()
+        if progress is not None:
+            progress(done, total)
+
+    if _is_cancelled(cancellation):
+        raise ArchiveCancelledError()
+    with tempfile.TemporaryDirectory(prefix=".tb_pack_", dir=destination.parent) as workspace:
+        staged = Path(workspace) / destination.name
+        packer(src_dir, str(staged), report)
+        if _is_cancelled(cancellation):
+            raise ArchiveCancelledError()
+        os.replace(staged, destination)
+    return os.fspath(archive_path)
 
 
 def _pack_zip(src_dir, archive_path, progress) -> str:
@@ -485,11 +503,13 @@ def _pack_7z(src_dir, archive_path, progress) -> str:
         import py7zr
     except ImportError as exc:
         raise ArchiveCapabilityError("ARCHIVE_7Z_BACKEND_UNAVAILABLE: py7zr is not installed") from exc
+    source = Path(src_dir)
+    members = sorted(source.rglob("*"))
     with py7zr.SevenZipFile(archive_path, mode="w") as archive:
-        archive.writeall(src_dir, arcname="")
-    if progress:
-        count = sum(1 for path in Path(src_dir).rglob("*") if path.is_file())
-        progress(count, count)
+        for index, member in enumerate(members, 1):
+            archive.write(member, arcname=member.relative_to(source).as_posix())
+            if progress:
+                progress(index, len(members))
     return os.fspath(archive_path)
 
 

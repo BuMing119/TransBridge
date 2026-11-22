@@ -23,8 +23,8 @@ class _SyncService:
         self.execution_result = result
         self.status_refs: list[JobRef] = []
         self.result_refs: list[JobRef] = []
-        self.retry_tokens: list[TerminologySyncRetryToken] = []
-        self.reconcile_tokens: list[TerminologySyncRetryToken] = []
+        self.retry_refs: list[JobRef] = []
+        self.reconcile_refs: list[JobRef] = []
         self.inbound_sets: tuple[object, ...] = ()
         self.import_choices: tuple[DraftImportChoice, ...] = ()
         self.proposal = SimpleNamespace(proposal_digest="proposal-1", committable=True)
@@ -40,12 +40,12 @@ class _SyncService:
         self.result_refs.append(ref)
         return self.execution_result
 
-    def retry(self, token: TerminologySyncRetryToken, actor: OwnerRef) -> JobRef:
-        self.retry_tokens.append(token)
+    def retry(self, ref: JobRef, actor: OwnerRef) -> JobRef:
+        self.retry_refs.append(ref)
         return JobRef("retry-job", actor.owner_id, "retry-run")
 
-    def reconcile(self, token: TerminologySyncRetryToken, actor: OwnerRef) -> JobRef:
-        self.reconcile_tokens.append(token)
+    def reconcile(self, ref: JobRef, actor: OwnerRef) -> JobRef:
+        self.reconcile_refs.append(ref)
         return JobRef("reconcile-job", actor.owner_id, "reconcile-run")
 
     def list_inbound(self, context: RequestContext) -> tuple[object, ...]:
@@ -122,20 +122,21 @@ def test_terminal_job_loads_result_and_unknown_outcomes_only_allow_reconcile() -
     with pytest.raises(RuntimeError, match="reconciled before retry"):
         presenter.retry()
     assert presenter.reconcile() == JobRef("reconcile-job", "owner", "reconcile-run")
-    assert service.reconcile_tokens == [service.execution_result.retry_token]
+    assert service.reconcile_refs == [ref]
 
 
 def test_confirmed_failures_can_retry_but_cannot_reconcile() -> None:
     service = _SyncService(_result(unknown=False))
     presenter = _presenter(service)
-    presenter.complete_job(JobRef("job-1", "owner", "run-1"))
+    ref = JobRef("job-1", "owner", "run-1")
+    presenter.complete_job(ref)
 
     assert presenter.state.can_retry
     assert not presenter.state.can_reconcile
     with pytest.raises(RuntimeError, match="only for unknown"):
         presenter.reconcile()
     assert presenter.retry() == JobRef("retry-job", "owner", "retry-run")
-    assert service.retry_tokens == [service.execution_result.retry_token]
+    assert service.retry_refs == [ref]
 
 
 def test_inbound_review_keeps_one_page_and_retains_preview_until_commit() -> None:

@@ -363,7 +363,7 @@ def test_agent_endpoint_update_rejects_partial_identity_and_commits_one_revision
     rejected = controller.set_translation_config({"model": "partial"}, None)
     accepted = controller.set_translation_config(
         {
-            "provider": "new",
+            "provider": "anthropic",
             "base_url": "https://new.example/v1",
             "model": "new-model",
             "target_lang": "ja_JP",
@@ -380,4 +380,4 @@ def test_agent_endpoint_update_rejects_partial_identity_and_commits_one_revision
         snapshot.value("llm", "base_url"),
         snapshot.value("llm", "model"),
         snapshot.value("llm", "target_lang"),
-    ) == ("new", "https://new.example/v1", "new-model", "ja_JP")
+    ) == ("anthropic", "https://new.example/v1", "new-model", "ja_JP")

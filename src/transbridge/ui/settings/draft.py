@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import os
 from urllib.parse import urlsplit
 
-from transbridge.infra.llm_request_config import resolve_anthropic_endpoint
+from transbridge.config.translation_preferences import is_http_url, validate_llm_preferences
 
 
 @dataclass(slots=True)
@@ -76,22 +76,9 @@ class SettingsConfigDraft:
 
     def validate(self) -> str | None:
         if self.llm is not None:
-            base_url = str(getattr(self.llm, "base_url", "") or "").strip()
-            if getattr(self.llm, "provider", "") == "anthropic":
-                try:
-                    resolve_anthropic_endpoint(base_url)
-                except ValueError as exc:
-                    return str(exc)
-            elif base_url and not _is_http_url(base_url):
-                return "AI 服务 Base URL 必须是有效的 HTTP(S) 地址。"
-            embedding = getattr(self.llm, "embedding", None)
-            embedding_url = str(getattr(embedding, "base_url", "") or "").strip()
-            if embedding_url and not _is_http_url(embedding_url):
-                return "Embedding Base URL 必须是有效的 HTTP(S) 地址。"
-            for attr, label in (("excel_original_col", "原文列"), ("excel_translation_col", "译文列")):
-                value = str(getattr(self.llm, attr, "") or "").strip()
-                if not value.isascii() or not value.isalpha():
-                    return f"Excel {label}必须使用字母列名。"
+            validation = validate_llm_preferences(self.llm)
+            if validation:
+                return validation
         if self.paratranz is not None:
             if not _is_paratranz_url(self.paratranz.base_url.strip()):
                 return "ParaTranz Base URL 必须是有效的 HTTP(S) 地址。"
@@ -179,16 +166,8 @@ def _environment_has(source: object | None, variable: str) -> bool:
     return bool(str(environment.get(variable, "") or "").strip())
 
 
-def _is_http_url(value: str) -> bool:
-    try:
-        parsed = urlsplit(value)
-    except ValueError:
-        return False
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc) and not parsed.username
-
-
 def _is_paratranz_url(value: str) -> bool:
-    if not _is_http_url(value):
+    if not is_http_url(value):
         return False
     parsed = urlsplit(value)
     return not parsed.query and not parsed.fragment

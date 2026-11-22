@@ -148,6 +148,44 @@ def test_worker_runs_same_executor_budget_and_shared_terms_for_each_source(sourc
     assert request.request_budget.snapshot().in_flight == 0
 
 
+def test_existing_background_thread_receives_outcomes_and_progress_with_shared_controls():
+    stop, pause, initialized, executed = (threading.Event() for _ in range(4))
+    task = _task()
+    progress = []
+    completed = []
+
+    class Executor:
+        def __init__(self, _request, **options):
+            assert options["stop_event"] is stop and options["pause_event"] is pause
+            self.progress = options["progress"]
+            initialized.set()
+
+        def execute(self, source):
+            executed.set()
+            self.progress(source.key, "翻译", 1, 1, "完成")
+            return SourceOutcome(source)
+
+    worker = AiTaskWorker(
+        _request(),
+        (task,),
+        executor_factory=Executor,
+        stop_event=stop,
+        pause_event=pause,
+        progress_callback=lambda *update: progress.append(update),
+    )
+    thread = threading.Thread(target=lambda: completed.extend(worker.execute()))
+    thread.start()
+    try:
+        assert initialized.wait(3)
+        assert not pause.is_set() and not executed.is_set()
+    finally:
+        pause.set()
+        thread.join(3)
+    assert not thread.is_alive() and executed.is_set()
+    assert [outcome.task for outcome in completed] == [task]
+    assert progress == [(task.key, "翻译", 1, 1, "完成")]
+
+
 def test_worker_continues_after_failed_source_and_preserves_failed_identity():
     tasks = (_task("first"), _task("second"))
 

@@ -312,8 +312,9 @@ class ExecutionContext:
     _target_version_identity: tuple[str, str] | None = field(default=None, init=False, repr=False)
     _target_project_revision: int | None = field(default=None, init=False, repr=False)
     _target_variant_revision: int | None = field(default=None, init=False, repr=False)
-    _target_source_fingerprint: str = field(default="", init=False, repr=False)
+    _target_dictionary_mod_id: str = field(default="", init=False, repr=False)
     _target_source_key: str | None = field(default=None, init=False, repr=False)
+    _target_workbench_source: dict | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         app_ctx = self.app_context
@@ -324,11 +325,13 @@ class ExecutionContext:
         object.__setattr__(self, "_target_version_identity", getattr(app_ctx, "active_version_identity", None))
         object.__setattr__(self, "_target_project_revision", getattr(app_ctx, "project_revision", None))
         object.__setattr__(self, "_target_variant_revision", getattr(app_ctx, "variant_revision", None))
-        snapshot = getattr(getattr(app_ctx, "active_slot", None), "source_snapshot", None)
-        from transbridge.application.projects.source_content import translation_source_fingerprint
+        from transbridge.application.projects.dictionary_apply import dictionary_mod_id
 
-        object.__setattr__(self, "_target_source_fingerprint", translation_source_fingerprint(snapshot))
+        from .workbench_rows import workbench_source_identity
+
+        object.__setattr__(self, "_target_dictionary_mod_id", dictionary_mod_id(app_ctx))
         object.__setattr__(self, "_target_source_key", getattr(app_ctx, "active_key", None))
+        object.__setattr__(self, "_target_workbench_source", workbench_source_identity(app_ctx))
 
     # ── C10: 线程安全状态变更 ──────────────────────────────────
 
@@ -428,6 +431,9 @@ class ExecutionContext:
         before: tuple[dict[str, set[str]], dict[str, dict]],
         source_identity=None,
         warnings=None,
+        expected_variant_revision=None,
+        exact_changes=None,
+        expected_collection=None,
     ) -> object:
         """Validate the labels read before preparation, then use the latest command CAS."""
 
@@ -436,21 +442,31 @@ class ExecutionContext:
             raise RuntimeError("运行上下文未初始化，标签修改未提交。")
 
         def commit() -> object:
+            token = self.__dict__.get("cancellation_token")
+            if token is not None:
+                token.raise_if_cancelled()
             identity = self.__dict__.get("_target_version_identity")
             if identity is None or getattr(app_ctx, "active_version_identity", None) != identity:
                 raise RuntimeError("活动 Project/Variant 已变化，标签修改未提交。")
             if source_identity is not None:
+                from .workbench_rows import label_source_identity, workbench_source_identity
+
                 current = getattr(app_ctx, "collection", None)
-                observed = (
-                    getattr(app_ctx, "active_key", None),
-                    frozenset(entry.identity.namespace for entry in current or ()),
-                )
-                if observed != source_identity:
+                key = getattr(app_ctx, "active_key", None)
+                if self._target_workbench_source != workbench_source_identity(app_ctx):
                     raise RuntimeError("活动来源已变化，标签修改未提交。")
-            if (getattr(app_ctx, "entry_labels", None) or {}, getattr(app_ctx, "label_library", None) or {}) != before:
+                if key != source_identity[0] or (
+                    current is not expected_collection and label_source_identity(key, current) != source_identity
+                ):
+                    raise RuntimeError("活动来源已变化，标签修改未提交。")
+            if (getattr(app_ctx, "label_library", None) or {}) != before[1] or (
+                exact_changes is None and (getattr(app_ctx, "entry_labels", None) or {}) != before[0]
+            ):
                 raise RuntimeError("标签状态或标签库已变化，请重新载入后核对。")
             expected_project = app_ctx.project_revision
             expected_variant = app_ctx.variant_revision
+            if expected_variant_revision is not None and expected_variant_revision != expected_variant:
+                raise RuntimeError("词条或标签已变化，请重新核对操作范围。")
             from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
             from .undo_capture import capture_variant_command
@@ -464,6 +480,7 @@ class ExecutionContext:
                     expected_project_revision=expected_project,
                     expected_variant_revision=expected_variant,
                     expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+                    **({"exact_changes": exact_changes} if exact_changes is not None else {}),
                 ),
                 warnings=warnings,
             )
@@ -479,9 +496,10 @@ class ExecutionContext:
                     object.__setattr__(self, "_target_project_revision", int(project_revision))
                 if variant_revision is not None:
                     object.__setattr__(self, "_target_variant_revision", int(variant_revision))
-                object.__setattr__(self, "_target_collection", app_ctx.collection)
-                if "collection" in self.__dict__:
-                    object.__setattr__(self, "collection", app_ctx.collection)
+                if self.__dict__.get("_source_input_full_collection") is None:
+                    object.__setattr__(self, "_target_collection", app_ctx.collection)
+                    if "collection" in self.__dict__:
+                        object.__setattr__(self, "collection", app_ctx.collection)
             return result
 
         return self.safe_mutate_wait(commit)

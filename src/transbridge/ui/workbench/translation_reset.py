@@ -7,6 +7,7 @@ from collections.abc import Iterable
 
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
+from transbridge.application.io.identity import EntryKey
 from transbridge.converter.translation_entry import STAGE_UNTRANSLATED, TranslationEntry
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 from transbridge.ui.context import AppContext
@@ -22,7 +23,7 @@ class TranslationResetAction:
         clicked_entry: TranslationEntry,
         *,
         entries: Iterable[TranslationEntry],
-        selected_ids: Iterable[str],
+        selected_ids: Iterable[str | EntryKey],
         parent: QWidget,
     ) -> None:
         scope = resolve_entry_action_scope(clicked_entry, entries, selected_ids)

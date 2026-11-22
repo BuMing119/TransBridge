@@ -137,7 +137,6 @@ def test_loading_only_previews_local_files_and_never_uploads(qapp, worker_queue)
     assert calls == ["preview"]
     assert subject.selection().source_ids == ("a", "b")
     assert subject.selection().file_keys == ("a:people", "b:items")
-    assert not subject.selection().migrate_existing
     assert subject._upload_button.isEnabled()
     assert subject._reload_button.isHidden()
     assert "2 个插件、2 个分类文件，共 8 条词条" in subject._summary.text()
@@ -154,7 +153,6 @@ def test_upload_scope_never_offers_legacy_migration(qapp, worker_queue, batch):
     worker_queue[-1].complete()
     try:
         assert subject.findChildren(QCheckBox) == []
-        assert not subject.selection().migrate_existing
         assert any("增量更新保留云端其他词条" in label.text() for label in subject.findChildren(QLabel))
     finally:
         subject.close()
@@ -181,7 +179,7 @@ def test_source_selection_is_passed_directly_to_upload_without_migration(dialog,
     assert dialog.selection().source_ids == ("b",)
     dialog._upload_button.click()
     worker_queue[-1].complete()
-    assert captured == [module.Selection(("b",), ("b:items",), False)]
+    assert captured == [module.Selection(("b",), ("b:items",))]
 
 
 def test_running_upload_keeps_captured_selection_and_cannot_start_twice(dialog, worker_queue):
@@ -194,7 +192,7 @@ def test_running_upload_keeps_captured_selection_and_cannot_start_twice(dialog, 
     dialog._request_upload()
     assert len(worker_queue) == workers_before
     worker_queue[-1].complete()
-    assert captured == [module.Selection(("a", "b"), ("a:people", "b:items"), False)]
+    assert captured == [module.Selection(("a", "b"), ("a:people", "b:items"))]
     assert dialog._files.isEnabled()
     assert dialog._upload_button.isEnabled()
 

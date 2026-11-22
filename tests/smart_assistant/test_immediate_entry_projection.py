@@ -7,15 +7,13 @@ import pytest
 
 from tests.conftest import make_entry, make_test_collection
 from tests.smart_assistant.tools import test_source_import_authority as source_fixtures
-from tests.smart_assistant.tools.test_upload_cancellation_receipt import _context
-from tests.smart_assistant.tools.test_upload_result_lifecycle import Remote
 from transbridge.application.io.identity import EntryKey, ExternalEntryRef, SourceNamespace
 from transbridge.application.projections.models import ProjectionSnapshot
+from transbridge.application.projects import EntryStatePatch
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence.project_store.repository import ProjectStore
 from transbridge.smart_assistant.request_scope import apply_captured_scope
 from transbridge.smart_assistant.tool_registry import ToolRegistry
-from transbridge.smart_assistant.tools._entry_upload import upload_entries
 from transbridge.smart_assistant.tools._project_tool_mutations import ProjectToolTarget
 from transbridge.smart_assistant.tools.tool_editor import (
     _tool_edit_translation,
@@ -24,7 +22,6 @@ from transbridge.smart_assistant.tools.tool_editor import (
 )
 from transbridge.smart_assistant.tools.types import ExecutionContext
 from transbridge.ui.context import CollectionSlot
-from transbridge.ui.entry_projection import EntryProjectionUpdate
 from transbridge.ui.project_rows import ProjectRowsCollection, build_paged_slots
 
 stored_project = source_fixtures.project
@@ -92,15 +89,23 @@ def test_external_reference_conflict_rejects_entire_command_before_commit(curren
     first, second, third = tuple(project.context.collection)
     reference = ExternalEntryRef("paratranz", "project:7", 701)
     target = ProjectToolTarget.capture(ExecutionContext(app_context=project.context))
-    target.commit_records((replace(second, external_refs=(reference,)),))
+
+    def commit(patches):
+        return project.context.project_commands.replace_entry_records(
+            patches,
+            project.context.runtime_context,
+            **target.expected(),
+        )
+
+    assert commit({second.identity: EntryStatePatch(second.translation, second.stage, (reference,))}).is_success
     before = project.aggregate.snapshot()
     collection = project.context.collection
 
-    with pytest.raises(ValueError, match="external reference conflict"):
-        target.commit_records((
-            replace(first, external_refs=(reference,)),
-            replace(third, translation="must not commit"),
-        ))
+    result = commit({
+        first.identity: EntryStatePatch(first.translation, first.stage, (reference,)),
+        third.identity: EntryStatePatch("must not commit", third.stage, ()),
+    })
+    assert not result.is_success and "external reference conflict" in result.diagnostics[0].message
 
     assert project.aggregate.snapshot() is before
     assert project.context.collection is collection
@@ -137,6 +142,47 @@ def test_captured_editor_scope_advances_only_after_its_own_successful_edit(curre
     current = project.context.collection.get(first.identity)
     assert (current.translation, current.stage) == ("assistant", 3)
     assert context.collection is project.context.collection
+
+
+def test_repaired_selection_keeps_exact_keys_across_successive_edits(current_project_factory):
+    project = current_project_factory(make_test_collection(3))
+    context = ExecutionContext(app_context=project.context)
+    first, second, _ = tuple(project.context.collection)
+    scoped = TranslationEntryCollection([first])
+    context._source_input_full_collection = project.context.collection
+    context._target_collection = scoped
+    object.__setattr__(context, "collection", scoped)
+    object.__setattr__(context, "active_slot", None)
+    assert _tool_edit_translation({"entry_id": first.key, "new_translation": "first"}, context).success
+    assert _tool_set_stage({"entry_ids": [first.key], "stage": 5}, context).success
+    assert len(context.collection) == 1 and context.collection.get(second.identity) is None
+    assert (
+        context.collection.get(first.identity).snapshot() == project.context.collection.get(first.identity).snapshot()
+    )
+    assert not _tool_edit_translation({"entry_id": second.key, "new_translation": "outside scope"}, context).success
+
+
+def test_set_stage_deduplicates_aliases_and_counts_only_real_writes(current_project_factory):
+    project = current_project_factory(make_test_collection(2))
+    context = ExecutionContext(app_context=project.context)
+    first, second = tuple(project.context.collection)
+    ids = [first.key, first.identity.serialize(), second.key]
+    revision = project.aggregate.snapshot().revision
+    for expected_count in (1, 0):
+        result = _tool_set_stage({"entry_ids": ids, "stage": second.stage}, context)
+        assert result.success and result.data["updated_count"] == expected_count
+        assert project.aggregate.snapshot().revision == revision + 1
+
+
+def test_return_to_original_text_does_not_revalidate_stale_confirmation(current_project_factory):
+    project = current_project_factory(make_test_collection(2))
+    context = ExecutionContext(app_context=project.context)
+    first = next(iter(project.context.collection))
+    assert project.context.update_projected_entry(first.identity, translation="temporary").is_success
+    assert project.context.update_projected_entry(first.identity, translation=first.translation).is_success
+    before = project.aggregate.snapshot()
+    result = _tool_edit_translation({"entry_id": first.key, "new_translation": "stale"}, context)
+    assert not result.success and project.aggregate.snapshot() is before
 
 
 def test_paged_editor_reuses_the_bound_collection_without_full_range_reads(stored_project, monkeypatch):
@@ -221,58 +267,6 @@ def test_label_command_uses_preparation_baseline_and_current_cas(current_project
         assert project.context.label_library == {"other": {"name": "Other"}}
 
 
-def test_upload_association_builds_one_collection_and_reuses_untouched_entry(
-    current_project_factory, tmp_path, monkeypatch
-):
-    context, project = _context(current_project_factory, tmp_path)
-    first, second, third = tuple(project.context.collection)
-    _forbid_snapshot_serialization(monkeypatch)
-
-    def forbid_reprojection(*_args):
-        pytest.fail("The upload association must use the project binding's projection")
-
-    monkeypatch.setattr(EntryProjectionUpdate, "collection", forbid_reprojection)
-    built = []
-    bulk_load = TranslationEntryCollection._bulk_load
-
-    def track(collection, entries):
-        built.append(collection)
-        return bulk_load(collection, entries)
-
-    monkeypatch.setattr(TranslationEntryCollection, "_bulk_load", track)
-    result = upload_entries({"entry_ids": [first.key]}, context, project.context.collection, Remote(), 7, None)
-
-    assert result.success, result.message
-    assert len(built) == 1
-    assert project.context.collection.get(second.identity) is second
-    assert project.context.collection.get(third.identity) is third
-    assert project.context.collection.get(first.identity).external_refs == (
-        ExternalEntryRef("paratranz", "project:7", 701),
-    )
-
-
-def test_upload_reference_conflict_preserves_remote_receipt_without_local_partial_commit(
-    current_project_factory, tmp_path, monkeypatch
-):
-    context, project = _context(current_project_factory, tmp_path)
-    first, second, _ = tuple(project.context.collection)
-    reference = ExternalEntryRef("paratranz", "project:7", 701)
-    ProjectToolTarget.capture(context).commit_records((replace(second, external_refs=(reference,)),))
-    before = project.aggregate.snapshot()
-    collection = project.context.collection
-
-    result = upload_entries({"entry_ids": [first.key]}, context, collection, Remote(), 7, None)
-
-    assert not result.success and result.partial
-    assert result.data["uploaded"] == 1
-    assert result.data["durable"]
-    assert result.data["upload_result"]["receipts"][0]["outcome"] == "confirmed"
-    assert result.data["upload_result"]["receipts"][0]["association"] == "deferred"
-    assert "external reference conflict" in result.data["deferred_associations"][0]["error"]
-    assert project.aggregate.snapshot() is before
-    assert project.context.collection is collection
-
-
 def test_registered_label_assignment_uses_captured_collection_without_third_argument(current_project_factory):
     project = current_project_factory(make_test_collection(2), label_library={"review": {"name": "Review"}})
     first = next(iter(project.context.collection))
@@ -338,5 +332,39 @@ def test_editor_rejects_reinstalled_source_with_new_exact_entry_identity(current
     result = _tool_edit_translation({"entry_id": entries[0].key, "new_translation": "wrong source"}, context)
 
     assert not result.success
-    assert "不属于捕获的来源" in result.message
+    assert "来源登记或命名空间已变化" in result.message
     assert project.aggregate.snapshot() is before
+
+
+def test_stage_rejects_whole_batch_for_an_ambiguous_alias(current_project_factory):
+    first = replace(make_entry("same"), entry_key=EntryKey(SourceNamespace("source:first"), "same"))
+    second = replace(make_entry("same"), entry_key=EntryKey(SourceNamespace("source:second"), "same"))
+    project = current_project_factory((make_entry("unique"), first, second))
+    context = ExecutionContext(app_context=project.context)
+    before = project.aggregate.snapshot()
+    result = _tool_set_stage({"entry_ids": ["unique", "same"], "stage": 3}, context)
+    assert not result.success and "完整 EntryKey" in result.message
+    assert project.aggregate.snapshot() is before
+    assert _tool_set_stage({"entry_ids": [second.identity.serialize()], "stage": 3}, context).success
+    assert project.context.collection.get(first.identity).stage == 0
+
+
+def test_source_switch_after_commit_cannot_retarget_the_next_edit(current_project_factory, monkeypatch):
+    project = current_project_factory(make_test_collection(2), key="first")
+    app = project.context
+    app.add_slot("second", CollectionSlot("Second", make_test_collection(2)))
+    app.activate_slot("first")
+    context = ExecutionContext(app_context=app)
+    before = project.aggregate.snapshot()
+    update = app.update_projected_entry
+
+    def switch_after_commit(*args, **expected):
+        result = update(*args, **expected)
+        app.activate_slot("second")
+        return result
+
+    monkeypatch.setattr(app, "update_projected_entry", switch_after_commit)
+    result = _tool_edit_translation({"entry_id": "entry_000", "new_translation": "first source"}, context)
+    assert result.success and project.aggregate.snapshot().revision == before.revision + 1
+    result = _tool_edit_translation({"entry_id": "entry_000", "new_translation": "wrong source"}, context)
+    assert not result.success and project.aggregate.snapshot().revision == before.revision + 1

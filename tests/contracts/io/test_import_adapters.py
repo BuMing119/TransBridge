@@ -18,7 +18,6 @@ from transbridge.application.io import (
     default_format_catalog,
 )
 from transbridge.application.io.identity import SourceNamespace
-from transbridge.application.io.json_source import parse_json_source
 
 FORMATS = ("json.transbridge", "json.dsd", "sst.ssu8", "sst.ssu9")
 
@@ -74,18 +73,6 @@ def test_explicit_namespace_is_applied_without_changing_local_keys(tmp_path, kin
     assert second.outcome is OperationOutcome.COMPLETED
     assert second.entries[0].identity.namespace == SourceNamespace("explicit")
     assert second.entries[0].key == first.entries[0].key
-
-
-@pytest.mark.parametrize("kind", ["json.transbridge", "json.dsd"])
-def test_shared_json_reader_matches_assistant_compatibility_entry(tmp_path, kind):
-    from transbridge.smart_assistant.tools._json_import import parse_json_source as assistant_reader
-
-    path = write_translation_source(tmp_path, kind)
-    args = {"format": kind.removeprefix("json.")}
-    shared = parse_json_source(str(path), args)
-    assistant = assistant_reader(str(path), args)
-    assert [entry.to_dict() for entry in shared.collection] == [entry.to_dict() for entry in assistant.collection]
-    assert shared.snapshot == assistant.snapshot
 
 
 @pytest.mark.parametrize("kind", ["json.transbridge", "json.dsd"])

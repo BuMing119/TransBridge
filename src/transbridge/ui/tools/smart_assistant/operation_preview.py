@@ -8,6 +8,7 @@ import json
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog, QLabel, QPlainTextEdit, QPushButton, QToolButton, QVBoxLayout, QWidget
 
+from transbridge.application.assistant_requests.undo_capabilities import FILE_IMPORT_TOOLS
 from transbridge.application.security import project_business_data
 from transbridge.converter.translation_entry import STAGE_LABELS
 from transbridge.smart_assistant.tool_registry import ToolRegistry
@@ -44,7 +45,7 @@ def operation_summary(step: dict, preview=None) -> str:
         scopes = {"all": "全部符合条件的词条", "passed": "已通过词条", "has_issues": "有问题的词条"}
         scope = args["scope"]
         parts.append(f"范围：{scopes.get(scope, scope) if isinstance(scope, str) else scope}（数量待执行时确定）")
-    elif step.get("tool") in {"start_translation", "start_polish", "run_postprocess"}:
+    elif step.get("tool") in {"start_translation", "start_polish"}:
         parts.append("范围：请求保存的默认处理范围（数量待执行时确定）")
     elif args.get("task_id"):
         parts.append(f"目标任务：{args['task_id']}")
@@ -52,6 +53,23 @@ def operation_summary(step: dict, preview=None) -> str:
         parts.append("范围：本请求范围内的全部任务")
     elif args.get("project_id"):
         parts.append(f"目标项目：{args['project_id']}")
+    if step.get("tool") in FILE_IMPORT_TOOLS:
+        if args.get("action", "create_slot") == "append":
+            behavior = "替换已有译文" if args.get("replace_existing") else "保留已有译文"
+            parts.append(f"向当前来源导入匹配译文（{behavior}）")
+        else:
+            parts.append("在当前工程登记来源")
+        parts.append(str(args.get("path", "")))
+    if step.get("tool") == "write_back":
+        if args.get("destination_mode") == "original":
+            parts.append("写回原插件并备份")
+        elif target := (args.get("output_dir") or args.get("path")):
+            parts.append(f"写出到 {target}")
+    if step.get("tool") == "export_artifact":
+        if args.get("action", "trigger") == "download":
+            parts.append("下载现有导出包，将在保存窗口选择文件并确认覆盖")
+        else:
+            parts.append("提交新的远端导出任务")
     if "new_translation" in args:
         parts.append(f"译文改为：{args['new_translation']}")
     if step.get("tool") == "manage_entry_labels":

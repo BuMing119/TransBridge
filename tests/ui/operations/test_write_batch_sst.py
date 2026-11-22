@@ -8,13 +8,13 @@ from tests.ui.operations.test_strict_write_routes import _context, _submit, feat
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io.contracts import FormatId, SourceDescriptor, SourceSnapshot
 from transbridge.application.io.operation_write import HydratedWriteDraft
+from transbridge.application.io.operation_write_batch import WriteBatchFailure
 from transbridge.application.io.publish import ConflictPolicy
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.parser.xt.sst_codec import SstDocument
 from transbridge.ui.operations.write_batch import (
     _HydratedWriteBatch,
     _write_batch_plan,
-    _WriteBatchFailure,
     retarget_write_batch,
 )
 
@@ -108,7 +108,7 @@ def test_mixed_xml_batch_has_no_sst_choice_and_rejects_forced_conversion(tmp_pat
 def test_incomplete_source_batch_does_not_offer_unproven_conversion(tmp_path):
     request = _HydratedWriteBatch(
         (_draft("mod.esp", FormatId.PLUGIN_SSE),),
-        (_WriteBatchFailure("", "unknown", "SOURCE_MISSING", "missing", "unknown.xml"),),
+        (WriteBatchFailure("", "unknown", "SOURCE_MISSING", "missing", "unknown.xml"),),
     )
     assert not any(item.field_id == "output_format" for item in _write_batch_plan(request).editable_fields)
     with pytest.raises(ValueError, match="SST"):

@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from typing import Literal, Protocol, TypeVar
 
-from transbridge.converter.translation_entry import STAGE_HIDDEN, STAGE_LOCKED
+from transbridge.application.translation.task_scope import TranslationScope
 from transbridge.ui.project_labels import entry_label_key
 
 EntryT = TypeVar("EntryT")
@@ -33,6 +33,9 @@ class Step2ScopeAdapter:
         return tuple(self._step2.filtered_entries())
 
     def selected_entry_ids(self) -> tuple[str, ...]:
+        keys = getattr(self._step2, "selected_row_entry_keys", None)
+        if callable(keys):
+            return tuple(key.serialize() for key in keys())
         selector = getattr(self._step2, "selected_row_entry_ids", None)
         if not callable(selector):
             return ()
@@ -42,15 +45,6 @@ class Step2ScopeAdapter:
         locator = getattr(self._step2, "locate_entry", None)
         if callable(locator):
             locator(entry_id)
-
-
-@dataclass(frozen=True, slots=True)
-class TranslationScope:
-    stage_filters: frozenset[int] = frozenset()
-    label_filters: frozenset[str] = frozenset()
-    category_filters: frozenset[str] = frozenset()
-    preset: str | None = None
-    selected_entry_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,8 +83,7 @@ class ScopePresenter:
         self._state = state
 
     def reset_default(self, *, polish: bool) -> TranslationScope:
-        stages = frozenset({1, 2, 3, 5} if polish else {0})
-        self._state = TranslationScope(stage_filters=stages)
+        self._state = TranslationScope.default_for_mode("polish" if polish else "translate")
         return self._state
 
     def select_preset(self, preset: str) -> TranslationScope:
@@ -126,26 +119,12 @@ class ScopePresenter:
     def candidates(self) -> list[EntryT]:
         state = self._state
         if state.preset == "table_view":
-            candidates = list(self._workbench.filtered_entries())
-        else:
-            collection = self._collection_provider()
-            if collection is None:
-                return []
-            candidates = list(collection)
-            if state.preset == "selection":
-                candidates = [entry for entry in candidates if entry_label_key(entry) in state.selected_entry_ids]
-            if state.stage_filters:
-                candidates = [entry for entry in candidates if entry.stage in state.stage_filters]
-            if state.label_filters:
-                labels = self._label_projection_provider()
-                candidates = [
-                    entry
-                    for entry in candidates
-                    if entry.id and labels.get(entry_label_key(entry), set()) & state.label_filters
-                ]
-            if state.category_filters:
-                candidates = [entry for entry in candidates if self._category_of(entry) in state.category_filters]
-        return [entry for entry in candidates if entry.stage not in (STAGE_LOCKED, STAGE_HIDDEN)]
+            return TranslationScope().candidates(self._workbench.filtered_entries(), {})
+        collection = self._collection_provider()
+        if collection is None:
+            return []
+        labels = self._label_projection_provider() if state.label_filters else {}
+        return state.candidates(collection, labels, category_of=self._category_of)
 
     def locate_entry(self, entry_id: str) -> None:
         self._workbench.locate_entry(entry_id)

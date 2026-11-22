@@ -61,7 +61,24 @@ class InputValidationGuard(GuardMiddleware):
             if not result.allowed:
                 return result
         # E1: 路径遍历检测
-        path_result = self._authorize_paths(args, ctx, output_path=step.get("tool") == "write_back")
+        if (
+            step.get("tool") == "export_artifact"
+            and args.get("action") == "download"
+            and callable(getattr(ctx, "choose_artifact_output", None))
+        ):
+            # Desktop passes only a suggested basename to its native save dialog.
+            # The publisher obtains the exact selected file directly from that dialog.
+            return GuardResult(True)
+        archive_paths = {"pack_archive": ("src_dir", "archive_path"), "extract_archive": ("archive_path", "dest_dir")}
+        if step.get("tool") in archive_paths:
+            input_key, output_key = archive_paths[step["tool"]]
+            source = self._authorize_paths({input_key: args.get(input_key)}, ctx)
+            if not source.allowed:
+                return source
+            return self._authorize_paths({output_key: args.get(output_key)}, ctx, output_path=True)
+        path_result = self._authorize_paths(
+            args, ctx, output_path=step.get("tool") in {"write_back", "export_artifact"}
+        )
         if not path_result.allowed:
             return path_result
         return GuardResult(True)

@@ -19,7 +19,12 @@ from transbridge.application.terminology_sync.execution_models import (
     TerminologyBackupExecutionResult,
     TerminologySyncRetryToken,
 )
-from transbridge.application.terminology_sync.inbound import InboundTerminologyChange, InboundTerminologyChangeSet
+from transbridge.application.terminology_sync.inbound import (
+    INBOUND_PAGE_SIZE,
+    InboundReviewPage,
+    InboundTerminologyChange,
+    InboundTerminologyChangeSet,
+)
 from transbridge.application.terminology_sync.models import TerminologySyncMode
 from transbridge.application.terminology_sync.plan_models import TerminologySyncPlanItem
 from transbridge.application.terminology_sync.service import (
@@ -182,7 +187,7 @@ class TerminologySyncPresenter:
         self._state = TerminologySyncViewState(mode=self._state.mode, preflight=result)
         return self._state
 
-    def load_inbound(self, *, page_size: int = 50) -> TerminologySyncViewState:
+    def load_inbound(self, *, page_size: int = INBOUND_PAGE_SIZE) -> TerminologySyncViewState:
         values = self._service.list_inbound(self._context)
         self.invalidate_inbound_preview()
         selected = self._state.selected_inbound_id
@@ -198,7 +203,7 @@ class TerminologySyncPresenter:
         )
         return self.page_inbound(0, page_size=page_size)
 
-    def select_inbound(self, change_set_id: str, *, page_size: int = 50) -> TerminologySyncViewState:
+    def select_inbound(self, change_set_id: str, *, page_size: int = INBOUND_PAGE_SIZE) -> TerminologySyncViewState:
         if change_set_id not in {item.change_set_id for item in self._state.inbound_sets}:
             raise KeyError("unknown inbound terminology change set")
         self.invalidate_inbound_preview()
@@ -210,20 +215,17 @@ class TerminologySyncPresenter:
         )
         return self.page_inbound(0, page_size=page_size)
 
-    def page_inbound(self, offset: int, *, page_size: int = 50) -> TerminologySyncViewState:
+    def page_inbound(self, offset: int, *, page_size: int = INBOUND_PAGE_SIZE) -> TerminologySyncViewState:
         selected = next(
             (item for item in self._state.inbound_sets if item.change_set_id == self._state.selected_inbound_id),
             None,
         )
-        if selected is None:
-            self._state = replace(self._state, inbound_items=(), inbound_offset=0, inbound_total=0)
-            return self._state
-        offset = max(0, min(offset, max(0, len(selected.items) - 1)))
+        page = InboundReviewPage.from_items(() if selected is None else selected.items, offset, page_size)
         self._state = replace(
             self._state,
-            inbound_items=selected.items[offset : offset + page_size],
-            inbound_offset=offset,
-            inbound_total=len(selected.items),
+            inbound_items=page.items,
+            inbound_offset=page.offset,
+            inbound_total=page.total,
         )
         return self._state
 
@@ -368,7 +370,7 @@ class TerminologySyncPresenter:
         if token is None or token.unknown_item_ids:
             raise RuntimeError("unknown remote outcomes must be reconciled before retry")
         self._begin_operation()
-        ref = self._service.retry(token, self._owner)
+        ref = self._service.retry(self._state.job_ref, self._owner)
         self._state = replace(
             self._state,
             job_ref=ref,
@@ -386,7 +388,7 @@ class TerminologySyncPresenter:
         if token is None or not token.unknown_item_ids:
             raise RuntimeError("reconcile is available only for unknown remote outcomes")
         self._begin_operation()
-        ref = self._service.reconcile(token, self._owner)
+        ref = self._service.reconcile(self._state.job_ref, self._owner)
         self._state = replace(
             self._state,
             job_ref=ref,

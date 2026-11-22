@@ -10,6 +10,8 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
+from transbridge.application.workbench_labels import label_catalog
+from transbridge.application.workbench_statistics import scope_statistics
 from transbridge.converter.translation_entry import STAGE_LABELS, TranslationEntry
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import ComponentDensity, ComponentKind, ComponentStyle, SemanticState
@@ -244,41 +246,39 @@ class FiltersView(QWidget):
         *,
         counts=None,
         labeled_count=None,
-    ) -> None:
+    ) -> int:
+        """Render source counts and return the same labeled-row total for the footer."""
         self._clear_layout(self.label_container)
         self._label_buttons.clear()
+        if counts is None or labeled_count is None:
+            stats = scope_statistics(entries, entry_labels)
+            counts = stats.labels if counts is None else counts
+            labeled_count = stats.labeled if labeled_count is None else labeled_count
         if not label_library:
             self.label_widget.hide()
             self.focus_button.setEnabled(False)
-            return
-        if counts is None:
-            counts = Counter(label for labels in entry_labels.values() for label in labels)
-        if labeled_count is None:
-            labeled_count = sum(bool(labels) for labels in entry_labels.values())
+            return labeled_count
         self._add_tag(
             self.label_container,
             f"全部 {labeled_count}",
             not self.label_filters,
             lambda: self.toggle_label(None),
         )
-        for label_id, info in label_library.items():
-            count = counts.get(label_id, 0)
+        for label in label_catalog(label_library, counts):
+            label_id, count = label["id"], label["count"]
             if count or label_id in self.label_filters:
                 button = self._add_tag(
                     self.label_container,
-                    f"● {info['name']} {count}",
+                    f"● {label['name']} {count}",
                     label_id in self.label_filters,
                     lambda checked=False, value=label_id: self.toggle_label(value),
                 )
-                button.setProperty("tbUserColor", info.get("color"))
+                button.setProperty("tbUserColor", label["color"])
                 self._label_buttons.append(button)
                 self._apply_user_color(button)
-        self.focus_button.setEnabled(bool(labeled_count))
-        if not labeled_count and self.focus_labeled:
-            self.focus_labeled = False
-            self.focus_button.setChecked(False)
-            self.sync_focus_style()
+        self.focus_button.setEnabled(bool(labeled_count) or self.focus_labeled)
         self.label_widget.setVisible(bool(entries) and self._advanced_visible)
+        return labeled_count
 
     def _add_tag(
         self,

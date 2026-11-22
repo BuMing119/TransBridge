@@ -113,23 +113,19 @@ class TaskMergeEvidenceStore:
 
     def load(self):
         """Expose original current-state evidence for explicit review and restoration."""
-        records = []
+        return tuple(payload for _, payload in sorted(self._dated_records(), key=lambda item: item[0]))
 
+    def _dated_records(self):
         def presentation_order(path):
             receipt = _evidence_path(path.with_suffix(".applied.json"))
             # Reusing identical pre-write content creates a new successful
             # overwrite event when its actual receipt is published again.
             return (receipt.stat().st_mtime_ns if receipt.exists() else path.stat().st_mtime_ns, path.name)
 
-        paths = sorted(
-            (
-                _evidence_path(path)
-                for path in self.root.glob(f"{self._task_token}-*.json")
-                if not path.name.endswith(".applied.json")
-            ),
-            key=presentation_order,
-        )
-        for path in paths:
+        for path in self.root.glob(f"{self._task_token}-*.json"):
+            if path.name.endswith(".applied.json"):
+                continue
+            path = _evidence_path(path)
             payload = json.loads(path.read_text(encoding="utf-8"))
             encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False)
             expected = f"{self._task_token}-{sha256(encoded.encode()).hexdigest()[:32]}.json"
@@ -151,8 +147,20 @@ class TaskMergeEvidenceStore:
                     raise ValueError(f"实际合入回执无效，原文件已保留：{receipt_path.name}")
                 applied = receipt["applied_keys"]
             payload["applied_keys"] = applied
-            records.append(payload)
-        return tuple(records)
+            yield presentation_order(path), payload
+
+
+def load_task_merge_evidence(directory: Path, record: dict):
+    """Read both assistant and desktop review receipts in publication order."""
+    task_id = record["task_id"]
+    stores = [
+        TaskMergeEvidenceStore(directory / "ai-task-recovery", run_id)
+        for run_id in record.get("execution_runs", (task_id,))
+    ]
+    if record.get("origin") == "smart-assistant":
+        stores.append(TaskMergeEvidenceStore(directory, task_id))
+    events = (item for store in stores for item in store._dated_records())
+    return tuple(payload for _, payload in sorted(events, key=lambda item: item[0]))
 
 
 def _evidence_path(path: Path) -> Path:

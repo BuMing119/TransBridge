@@ -17,7 +17,6 @@ from transbridge.converter.translation_entry_collection import TranslationEntryC
 from transbridge.parser.eet_binary_codec import EetDocument
 from transbridge.smart_assistant.tools import _source_import, tool_writer
 from transbridge.smart_assistant.tools.tool_parser import _tool_parse_eet, _tool_parse_esp
-from transbridge.smart_assistant.tools.translation_task_results import load_task_result
 from transbridge.smart_assistant.tools.types import ExecutionContext
 
 project = project_fixture
@@ -51,10 +50,7 @@ def test_eet_append_commits_target_identity_and_captures_evidence(project, kind)
     assert after.translation == "你好"
     assert project.services.project_lifecycle.active.variant.snapshot().entries[0].translation == "你好"
     assert not project.ctx.authoritative_projection_diverged()
-    _, record, payload = load_task_result(ctx, result.data["result_id"])
-    assert "input_snapshot" not in record and "raw_entries" not in record
-    assert str(path) not in repr(record)
-    assert [row["text"] for row in payload["rows"]] == ["你好"]
+    assert result.data["added_count"] == 1 and "result_id" not in result.data
 
 
 def test_binary_eet_source_is_registered_with_native_snapshot(project):
@@ -80,7 +76,7 @@ def test_eet_append_skips_ambiguous_or_unmatched_records(project, reason):
         records.append(eet_record(index=2))
     path = write_eet(project.root / "translated.eet", records)
     result = _tool_parse_eet({"path": str(path), "action": "append"}, ctx)
-    assert not result.success and result.partial
+    assert result.success, result.message
     assert result.data["added_count"] == 0
     assert tuple(project.ctx.collection) == before
 
@@ -88,31 +84,17 @@ def test_eet_append_skips_ambiguous_or_unmatched_records(project, reason):
 def test_eet_append_uses_captured_content_when_source_disappears(project, monkeypatch):
     ctx, _ = _load(project, "plugin")
     path = write_eet(project.root / "translated.eet")
-    publish = _source_import.publish_import
+    prepare = _source_import.prepare_translation_import
 
     def remove_then_publish(*args, **kwargs):
+        draft = prepare(*args, **kwargs)
         path.unlink()
-        return publish(*args, **kwargs)
+        return draft
 
-    monkeypatch.setattr(_source_import, "publish_import", remove_then_publish)
+    monkeypatch.setattr(_source_import, "prepare_translation_import", remove_then_publish)
     result = _tool_parse_eet({"path": str(path), "action": "append"}, ctx)
     assert result.success, result.message
     assert next(iter(project.ctx.collection)).translation == "你好"
-
-
-def test_eet_append_rejects_entries_tampered_after_parse(project, monkeypatch):
-    ctx, before = _load(project, "eet")
-    path = write_eet(project.root / "translated.eet")
-    publish = _source_import.publish_import
-
-    def changed(target, path, label, collection, *args, **kwargs):
-        injected = (replace(next(iter(collection)), translation="Injected"),)
-        return publish(target, path, label, injected, *args, **kwargs)
-
-    monkeypatch.setattr(_source_import, "publish_import", changed)
-    result = _tool_parse_eet({"path": str(path), "action": "append"}, ctx)
-    assert not result.success and "EET_IMPORT_SNAPSHOT_MISMATCH" in result.message
-    assert tuple(project.ctx.collection) == before
 
 
 @pytest.mark.parametrize("target", ["eet", "auto"])

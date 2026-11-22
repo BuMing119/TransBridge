@@ -27,6 +27,7 @@ def prepare_translation_import(
     target: TranslationEntryCollection,
     *,
     format_hint: str | None = None,
+    allowed_formats: frozenset[FormatId] | None = None,
     replace_existing: bool = False,
     plugin_stem: str = "",
     strings_lang: str = "chinese",
@@ -67,6 +68,8 @@ def prepare_translation_import(
         if probe.status is not ProbeStatus.EXACT:
             raise MigrationImportError("IMPORT_FORMAT_UNSUPPORTED", "无法识别译文文件，请检查文件内容和格式。")
         format_id = probe.candidates[0]
+        if allowed_formats is not None and format_id not in allowed_formats:
+            raise MigrationImportError("IMPORT_FORMAT_UNSUPPORTED", "所选工具不支持此译文文件的实际格式。")
         if format_id in {FormatId.XML_EET, FormatId.XML_XT}:
             proposals = xml_translation_proposals(content, format_id, target)
         else:
@@ -109,3 +112,12 @@ def prepare_translation_import(
     return LegacyMigrationDraft(
         TranslationEntryCollection(entries), legacy.strings_lookup if legacy is not None else None, applied
     )
+
+
+def changed_translation_states(before, after):
+    previous = {entry.identity: (entry.translation, entry.stage) for entry in before}
+    return {
+        entry.identity: (entry.translation, entry.stage)
+        for entry in after
+        if (entry.translation, entry.stage) != previous[entry.identity]
+    }

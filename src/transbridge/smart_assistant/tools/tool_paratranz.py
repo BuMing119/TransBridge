@@ -4,38 +4,18 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
-from copy import deepcopy
-from datetime import datetime
+from copy import copy
 from functools import wraps
 import logging
-import time
-from types import SimpleNamespace
 
-from transbridge.application.io.identity import EntryRevision, SourceNamespace
-from transbridge.application.io.paratranz_context_order import context_orders
-from transbridge.application.ports.paratranz import (
-    ExportJobStatus,
-    ParaTranzEntry,
-    ParaTranzExportJob,
-    ParaTranzProject,
-)
-from transbridge.application.projects import (
-    ParaTranzProjectBinding,
-    ParaTranzTargetResolver,
-    ParaTranzTargetStatus,
-)
-from transbridge.application.sync import (
-    ConflictPolicy,
-    CreateSyncPlanRequest,
-    LocalEntrySnapshot,
-    ParaTranzSyncPlanningUseCase,
-    SyncOperation,
-)
+from transbridge.application.ports.paratranz import ParaTranzProject
+from transbridge.application.projects import ParaTranzTargetStatus
+from transbridge.application.projects.target_context import resolved_paratranz_target
 from transbridge.application.tasks import TaskCancelled
-from transbridge.paratranz.artifact_download import is_new_artifact
-from transbridge.paratranz.sync_snapshot import ParaTranzRemoteSnapshotAdapter
+from transbridge.paratranz.management_queries import HISTORY_LAST_PAGE
 
-from .base import ToolResult, require_collection
+from ._project_upload import project_files
+from .base import ToolResult
 from .diagnostics import technical_error
 
 logger = logging.getLogger(__name__)
@@ -70,19 +50,21 @@ def _close_paratranz_clients(func):
 def _new_paratranz_client(ctx):
     from transbridge.paratranz.service import ParaTranzService
 
-    client = ParaTranzService.from_config(ctx.config)
+    config = ctx.config
+    snapshot = config.copy_for_execution() if hasattr(config, "copy_for_execution") else copy(config)
+    client = ParaTranzService.from_config(snapshot)
     _ACTIVE_CLIENTS.set((*_ACTIVE_CLIENTS.get(), client))
     return client
 
 
-def _get_paratranz_client(ctx, project_id=None):
+def _get_paratranz_client(ctx, args):
     """获取 typed ParaTranz port 并解析 project_id。
 
     Returns:
         (client, pid, error): ParaTranzPort、解析后的 project_id 和稳定错误信息。
     """
-    explicit_provided = project_id not in (None, "")
-    if explicit_provided:
+    if "project_id" in args:
+        project_id = args["project_id"]
         if isinstance(project_id, bool):
             return None, None, "project_id 必须是正整数；未使用工程默认绑定。"
         if isinstance(project_id, int):
@@ -95,21 +77,7 @@ def _get_paratranz_client(ctx, project_id=None):
             return None, None, "project_id 必须是正整数；未使用工程默认绑定。"
     else:
         explicit_project_id = None
-    resolve = getattr(ctx, "resolve_paratranz_target", None)
-    if callable(resolve):
-        target = resolve(
-            explicit_project_id=explicit_project_id,
-            explicit_verified=explicit_project_id is not None,
-        )
-    else:
-        target = ParaTranzTargetResolver().resolve(
-            binding=getattr(ctx, "paratranz_binding", None),
-            binding_revision=getattr(ctx, "project_revision", None),
-            explicit_project_id=explicit_project_id,
-            endpoint=_config_endpoint(ctx),
-            account_user_id=_account_user_id(ctx),
-            explicit_verified=explicit_project_id is not None,
-        )
+    target = resolved_paratranz_target(ctx, explicit_project_id=explicit_project_id)
     if target.status not in _EXECUTABLE_TARGET_STATES:
         error = (
             None if target.status is ParaTranzTargetStatus.UNBOUND else target.reason or "ParaTranz 同步目标不可用。"
@@ -120,17 +88,6 @@ def _get_paratranz_client(ctx, project_id=None):
 
 def _cancellation(ctx):
     return getattr(ctx, "cancellation_token", None)
-
-
-def _config_endpoint(ctx) -> str:
-    value = getattr(getattr(ctx, "config", None), "base_url", None)
-    return value if isinstance(value, str) and value.startswith(("http://", "https://")) else "https://paratranz.cn"
-
-
-def _account_user_id(ctx) -> int | None:
-    user = getattr(ctx, "current_user", None)
-    value = user.get("id") if isinstance(user, dict) else getattr(getattr(ctx, "config", None), "user_id", None)
-    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
 
 
 def _project_mapping(project):
@@ -144,79 +101,17 @@ def _project_mapping(project):
     return project
 
 
-def _paratranz_ref(entry, project_id: int):
-    scope = f"project:{project_id}"
-    matches = tuple(
-        reference
-        for reference in getattr(entry, "external_refs", ())
-        if reference.system == "paratranz" and reference.scope == scope
-    )
-    if len(matches) > 1:
-        raise ValueError(f"条目 {entry.key} 存在重复 ParaTranz 远端引用")
-    return matches[0] if matches else None
-
-
-def _local_sync_snapshots(collection, project_id: int, entry_ids=None):
-    all_entries = tuple(collection)
-    orders = dict(zip((entry.identity for entry in all_entries), context_orders(all_entries), strict=True))
-    if entry_ids:
-        entries = tuple(collection.get(entry_id) for entry_id in entry_ids)
-        missing = tuple(entry_id for entry_id, entry in zip(entry_ids, entries, strict=True) if entry is None)
-        if missing:
-            raise ValueError(f"找不到本地条目: {', '.join(map(str, missing[:5]))}")
-    else:
-        entries = tuple(collection)
-    namespaces = {entry.identity.namespace for entry in entries}
-    if len(namespaces) != 1:
-        raise ValueError("同步计划要求本地快照属于单一 source namespace")
-    namespace = next(iter(namespaces))
-    snapshots = tuple(
-        LocalEntrySnapshot(
-            entry.identity,
-            entry.revision if isinstance(entry.revision, EntryRevision) else EntryRevision(entry.revision),
-            entry.original,
-            entry.translation or "",
-            entry.context or "",
-            entry.stage,
-            _paratranz_ref(entry, project_id),
-            context_order=orders[entry.identity],
-        )
-        for entry in entries
-    )
-    return namespace, snapshots
-
-
-def _sync_planning_use_case(ctx, client, operation=SyncOperation.UPLOAD):
-    injected = getattr(ctx, "paratranz_sync_planning", None)
-    if injected is not None:
-        return injected
-    return ParaTranzSyncPlanningUseCase(
-        ParaTranzRemoteSnapshotAdapter(client, decode_keys=operation is SyncOperation.DOWNLOAD)
-    )
-
-
 @_close_paratranz_clients
 def _tool_list_projects(args: dict, ctx) -> ToolResult:
-    """列出 ParaTranz 项目。uid="my" 查看我的项目，不传则查看全部。"""
+    """列出参与的或全部 ParaTranz 项目。"""
     uid = args.get("uid", "my")
+    if uid not in ("my", ""):
+        return ToolResult.fail("uid 只支持 my 或空字符串。", error_code="PROJECT_SCOPE_INVALID")
     try:
         client = _new_paratranz_client(ctx)
-        projects = client.list_projects(uid=uid, cancellation=_cancellation(ctx))
-        # 兼容 API 返回 list 或 {"projects": [...]} 两种格式
-        if isinstance(projects, dict):
-            project_list = projects.get("projects", [])
-        elif isinstance(projects, (list, tuple)):
-            project_list = projects
-        else:
-            project_list = []
+        projects = client.list_projects(uid=uid or None, cancellation=_cancellation(ctx))
         summary = [
-            {
-                "id": mapped.get("id"),
-                "name": mapped.get("name"),
-                "visibility": mapped.get("visibility"),
-            }
-            for project in project_list
-            if isinstance((mapped := _project_mapping(project)), dict)
+            {"id": project.project_id, "name": project.name, "visibility": project.visibility} for project in projects
         ]
         return ToolResult.ok(f"找到 {len(summary)} 个项目", data={"projects": summary})
     except TaskCancelled:
@@ -229,21 +124,14 @@ def _tool_list_projects(args: dict, ctx) -> ToolResult:
 @_close_paratranz_clients
 def _tool_get_project_info(args: dict, ctx) -> ToolResult:
     """获取项目详细信息。"""
-    client, pid, target_error = _get_paratranz_client(ctx, args.get("project_id"))
-    if target_error:
-        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
-    if not pid:
-        return ToolResult.fail("请指定 project_id")
     try:
-        info = _project_mapping(client.get_project(pid, cancellation=_cancellation(ctx)))
-        return ToolResult.ok(
-            data={
-                "id": info.get("id"),
-                "name": info.get("name"),
-                "visibility": info.get("visibility"),
-                "member_count": info.get("member_count", len(info.get("members", []))),
-            }
-        )
+        client, pid, target_error = _get_paratranz_client(ctx, args)
+        if target_error:
+            return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
+        if not pid:
+            return ToolResult.fail("请指定 project_id")
+        project = client.get_project(pid, cancellation=_cancellation(ctx))
+        return ToolResult.ok(data=_project_mapping(project))
     except TaskCancelled:
         raise
     except Exception as exc:
@@ -251,169 +139,12 @@ def _tool_get_project_info(args: dict, ctx) -> ToolResult:
         return ToolResult.fail(f"获取项目信息失败: {technical_error(exc)}")
 
 
-@_close_paratranz_clients
-@require_collection
-def _tool_compare_with_remote(args: dict, ctx, collection) -> ToolResult:
-    """对比本地与远程差异。"""
-    client, pid, target_error = _get_paratranz_client(ctx, args.get("project_id"))
-    if target_error:
-        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
-    if not pid:
-        return ToolResult.fail("请指定 project_id")
-    try:
-        limit = args.get("limit", 500)
-        remote_entries = client.list_entries(pid, limit=limit, cancellation=_cancellation(ctx))
-        remote_map = {
-            (entry.key if isinstance(entry, ParaTranzEntry) else entry.get("key")): entry
-            for entry in remote_entries
-            if (entry.key if isinstance(entry, ParaTranzEntry) else entry.get("key"))
-        }
-        diff = {"only_local": 0, "only_remote": 0, "different": 0, "same": 0, "details": []}
-        local_keys = set()
-        for e in collection:
-            local_keys.add(e.key)
-            remote = remote_map.get(e.key)
-            if not remote:
-                diff["only_local"] += 1
-                if len(diff["details"]) < 20:
-                    diff["details"].append({"key": e.key, "status": "only_local"})
-            elif (
-                remote.translation if isinstance(remote, ParaTranzEntry) else remote.get("translation")
-            ) != e.translation:
-                diff["different"] += 1
-                if len(diff["details"]) < 20:
-                    diff["details"].append({"key": e.key, "status": "different"})
-            else:
-                diff["same"] += 1
-        diff["only_remote"] = len([k for k in remote_map if k not in local_keys])
-        return ToolResult.ok(
-            f"对比完成: 仅本地{diff['only_local']} 仅远程{diff['only_remote']} 不同{diff['different']}",
-            data=diff,
-        )
-    except TaskCancelled:
-        raise
-    except Exception as exc:
-        logger.error("对比远程条目失败")
-        return ToolResult.fail(f"对比失败: {technical_error(exc)}")
+def _tool_compare_with_remote(args: dict, ctx) -> ToolResult:
+    return project_files(args, ctx, compare=True)
 
 
-@_close_paratranz_clients
-@require_collection
-def _tool_plan_sync(args: dict, ctx, collection) -> ToolResult:
-    """Build an inspectable, side-effect-free ParaTranz synchronization plan."""
-
-    client, pid, target_error = _get_paratranz_client(ctx, args.get("project_id"))
-    if target_error:
-        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
-    if not pid:
-        return ToolResult.fail("请指定 project_id")
-    try:
-        project_id = int(pid)
-        namespace, local_entries = _local_sync_snapshots(
-            collection,
-            project_id,
-            args.get("entry_ids"),
-        )
-        requested_namespace = args.get("source_namespace")
-        if requested_namespace is not None and SourceNamespace(requested_namespace) != namespace:
-            return ToolResult.fail(
-                "source_namespace 与本地条目身份不一致",
-                error_category="input",
-                error_code="SOURCE_NAMESPACE_MISMATCH",
-            )
-        operation = SyncOperation(args.get("operation", "upload"))
-        use_case = _sync_planning_use_case(ctx, client, operation)
-        plan = use_case.create_plan(
-            CreateSyncPlanRequest(
-                project_id=project_id,
-                namespace=namespace,
-                local_entries=local_entries,
-                operation=operation,
-                conflict_policy=ConflictPolicy(args.get("conflict_policy", "abort")),
-                remote_limit=int(args.get("remote_limit", 100_000)),
-                cancellation=_cancellation(ctx),
-            )
-        )
-        page_size = int(args.get("page_size", 100))
-        offset = int(args.get("offset", 0))
-        return ToolResult.ok(
-            "同步计划已生成；尚未执行任何远端或本地写入",
-            data=plan.to_dict(offset=offset, limit=page_size),
-        )
-    except TaskCancelled:
-        raise
-    except (TypeError, ValueError) as exc:
-        return ToolResult.fail(
-            f"同步计划参数无效: {technical_error(exc)}",
-            error_category="input",
-            error_code="SYNC_PLAN_INPUT_INVALID",
-        )
-    except Exception as exc:
-        logger.error("生成 ParaTranz 同步计划失败: %s", type(exc).__name__)
-        return ToolResult.fail(
-            "生成同步计划失败",
-            error_category="internal",
-            error_code="SYNC_PLAN_FAILED",
-        )
-
-
-@_close_paratranz_clients
-@require_collection
-def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
-    """上传条目到 ParaTranz。
-
-    NOTE(M10): 当前全量同步上传采用逐条上传方式，无批处理机制。
-    对于大批量条目（>100条），逐个 API 调用可能导致耗时较长且易触发限流。
-    已知限制，后续可优化为批量上传接口。
-    """
-    from ._project_tool_mutations import ProjectToolTarget
-
-    target = ProjectToolTarget.capture(ctx)
-    config = ctx.config
-    copy_config = getattr(config, "copy_for_execution", None)
-    captured_config = copy_config() if callable(copy_config) else deepcopy(config)
-    captured = SimpleNamespace(
-        config=captured_config,
-        current_user=deepcopy(getattr(ctx, "current_user", None)),
-        paratranz_binding=deepcopy(getattr(ctx, "paratranz_binding", None)),
-        project_revision=target.project_revision,
-    )
-    client, pid, target_error = _get_paratranz_client(captured, args.get("project_id"))
-    if target_error:
-        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
-    if not pid:
-        return ToolResult.fail("请指定 project_id")
-    from ._entry_upload import upload_entries
-
-    try:
-        return upload_entries(
-            args,
-            ctx,
-            collection,
-            client,
-            pid,
-            _cancellation(ctx),
-            captured_target=target,
-            captured_config=captured_config,
-            captured_user=captured.current_user,
-        )
-    except TaskCancelled:
-        raise
-    except Exception as exc:
-        logger.exception("上传条目失败")
-        return ToolResult.fail(f"上传失败: {technical_error(exc)}")
-
-
-def _tool_recover_upload_associations(args: dict, ctx) -> ToolResult:
-    """Retry only local remote-ID association from a retained upload receipt."""
-    from ._entry_upload_recovery import recover_upload_associations
-
-    try:
-        return recover_upload_associations(ctx, result_id=args["result_id"])
-    except Exception as exc:
-        return ToolResult.fail(
-            f"恢复上传关联失败，未发送远端请求: {technical_error(exc)}", error_code="UPLOAD_ASSOCIATION_RECOVERY_FAILED"
-        )
+def _tool_upload_entries(args: dict, ctx) -> ToolResult:
+    return project_files(args, ctx, compare=False)
 
 
 @_close_paratranz_clients
@@ -427,37 +158,19 @@ def _tool_download_entries(args: dict, ctx) -> ToolResult:
 @_close_paratranz_clients
 def _tool_export_artifact(args: dict, ctx) -> ToolResult:
     """导出 ParaTranz 工件。"""
-    client, pid, target_error = _get_paratranz_client(ctx, args.get("project_id"))
-    if target_error:
-        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
-    if not pid:
-        return ToolResult.fail("请指定 project_id")
+    from transbridge.application.assistant_requests.models import RequestError
+
+    from ._export_artifact import export_artifact
+
     try:
-        cancellation = _cancellation(ctx)
-        baseline = client.get_latest_artifact(pid, cancellation=cancellation)
-        job_data = client.trigger_export(pid, cancellation=cancellation)
-        job = ParaTranzExportJob.from_mapping(job_data)
-        deadline = time.monotonic() + 30
-        while True:
-            if cancellation is not None:
-                cancellation.raise_if_cancelled()
-            job.raise_if_failed()
-            if job.status is ExportJobStatus.SUCCEEDED:
-                latest = client.get_latest_artifact(pid, cancellation=cancellation)
-                if latest is not None and is_new_artifact(latest, baseline):
-                    return ToolResult.ok("工件导出完成", data=dict(latest))
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            delay = min(2, remaining)
-            if cancellation is None:
-                time.sleep(delay)
-            elif cancellation.wait(delay):
-                cancellation.raise_if_cancelled()
-            if job.status is ExportJobStatus.PENDING:
-                job_data = client.get_job(pid, job.job_id, cancellation=cancellation)
-                job = ParaTranzExportJob.from_mapping(job_data, expected_id=job.job_id)
-        return ToolResult.ok("导出已触发，仍在处理中（超时未完成）", data={"job": job_data, "status": "pending"})
+        client, pid, target_error = _get_paratranz_client(ctx, args)
+        if target_error:
+            return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
+        if not pid:
+            return ToolResult.fail("请指定 project_id")
+        return export_artifact(args, ctx, client, pid)
+    except RequestError as exc:
+        return ToolResult.fail(str(exc), error_code=exc.code, error_category="permission")
     except TaskCancelled:
         raise
     except Exception as exc:
@@ -467,15 +180,17 @@ def _tool_export_artifact(args: dict, ctx) -> ToolResult:
 
 @_close_paratranz_clients
 def _tool_get_upload_history(args: dict, ctx) -> ToolResult:
-    """获取上传历史。"""
-    client, pid, target_error = _get_paratranz_client(ctx, args.get("project_id"))
+    """读取桌面文件上传历史的指定页。"""
+    if "limit" in args:
+        return ToolResult.fail("请按页查询上传历史。", error_code="ARGUMENT_SCHEMA_INVALID")
+    client, pid, target_error = _get_paratranz_client(ctx, args)
     if target_error:
         return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
-        history = client.list_upload_history(pid, limit=args.get("limit", 20), cancellation=_cancellation(ctx))
-        projected = [dict(item.raw) if hasattr(item, "raw") else item for item in history]
+        history = client.list_upload_history(pid, page=args.get("page", 1), cancellation=_cancellation(ctx))
+        projected = [dict(item.raw) for item in history]
         return ToolResult.ok(data={"history": projected})
     except TaskCancelled:
         raise
@@ -487,57 +202,71 @@ def _tool_get_upload_history(args: dict, ctx) -> ToolResult:
 # ── Story 15: 项目查询与切换 ───────────────────────────────────
 
 
-@_close_paratranz_clients
 def _tool_get_paratranz_project(args: dict, ctx) -> ToolResult:
-    """获取当前本地工程绑定的 ParaTranz 项目。"""
-    client, pid, target_error = _get_paratranz_client(ctx)
-    if target_error:
-        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
-    if not pid:
-        return ToolResult.ok("当前本地工程未绑定 ParaTranz 项目", data={"selected_project": None})
-    try:
-        info = _project_mapping(client.get_project(pid, cancellation=_cancellation(ctx)))
+    """Read the current local binding, including its workbench availability status."""
+    from .types import ExecutionContext
+
+    def snapshot():
+        if isinstance(ctx, ExecutionContext) and ctx._target_version_identity != getattr(
+            ctx.app_context, "active_version_identity", None
+        ):
+            return ToolResult.fail("本地工程或版本已切换，请重新查询。")
+        target = resolved_paratranz_target(ctx)
+        if target.project_id is None:
+            return ToolResult.ok("当前本地工程未绑定 ParaTranz 项目", data={"selected_project": None})
         return ToolResult.ok(
-            f"当前 ParaTranz 项目: {info.get('name')} (id={pid})",
-            data={"id": info.get("id"), "name": info.get("name"), "visibility": info.get("visibility")},
+            f"当前工程绑定到 {target.project_name} (#{target.project_id})",
+            data={
+                "id": target.project_id,
+                "name": target.project_name,
+                "status": target.status.value,
+                "reason": target.reason,
+                "local_project_id": getattr(ctx, "active_project_id", None),
+                "local_project_name": getattr(ctx, "project_name", None),
+            },
         )
-    except TaskCancelled:
-        raise
-    except Exception as exc:
-        logger.error("获取ParaTranz项目失败")
-        return ToolResult.fail(f"获取项目信息失败: {technical_error(exc)}")
+
+    return ctx.safe_mutate_wait(snapshot) if isinstance(ctx, ExecutionContext) else snapshot()
 
 
-@_close_paratranz_clients
 def _tool_switch_paratranz_project(args: dict, ctx) -> ToolResult:
-    """显式设置当前本地工程的 ParaTranz 默认同步目标。"""
-    project_id = args["project_id"]
-    try:
-        client, _, target_error = _get_paratranz_client(ctx, project_id)
-        if target_error:
-            return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
-        info = _project_mapping(client.get_project(project_id, cancellation=_cancellation(ctx)))  # 验证有效性
-        set_binding = getattr(ctx, "set_paratranz_binding", None)
-        if not callable(set_binding) or not getattr(ctx, "active_project_id", None):
-            return ToolResult.fail("请先打开本地工程，再设置 ParaTranz 同步目标")
-        now = datetime.now().astimezone().isoformat()
-        from .binding_undo_capture import capture_binding_command
+    """Bind one of the signed-in account's projects through the workbench command."""
+    from transbridge.paratranz.project_binding import BindingSelection
+    from transbridge.paratranz.project_catalog import ParaTranzProjectCatalog
 
-        binding = ParaTranzProjectBinding(
-            int(project_id),
-            str(info.get("name") or f"项目 #{project_id}"),
-            _config_endpoint(ctx),
-            _account_user_id(ctx),
-            now,
-            now,
-        )
-        result = capture_binding_command(ctx, lambda: set_binding(binding))
+    from .binding_undo_capture import capture_binding_command
+    from .types import ExecutionContext
+
+    project_id = args.get("project_id")
+    if type(project_id) is not int or project_id <= 0:
+        return ToolResult.fail("project_id 必须是正整数。", error_category="input")
+    try:
+        app = ctx.app_context if isinstance(ctx, ExecutionContext) else ctx
+        selection = BindingSelection.capture(app)
+        if isinstance(ctx, ExecutionContext) and (
+            ctx._target_version_identity != app.active_version_identity
+            or ctx._target_project_revision != selection.local_revision
+        ):
+            return ToolResult.fail("本地工程已变化，请重新确认要绑定的工程。", error_category="input")
+        cancellation = _cancellation(ctx)
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
+        project = selection.member_project(ParaTranzProjectCatalog(), project_id, cancellation=cancellation)
+        if project is None:
+            return ToolResult.fail("当前 ParaTranz 账号不是所选项目的成员。", error_category="input")
+
+        def commit():
+            if cancellation is not None:
+                cancellation.raise_if_cancelled()
+            return selection.bind(app, project, capture_commit=lambda update: capture_binding_command(ctx, update))
+
+        result = ctx.safe_mutate_wait(commit) if isinstance(ctx, ExecutionContext) else commit()
         if not result.is_success:
             message = result.diagnostics[0].message if result.diagnostics else "本地工程绑定失败"
             return ToolResult.fail(message)
         return ToolResult.ok(
-            f"已绑定当前工程到项目: {info.get('name')} (id={project_id})",
-            data={"id": info.get("id"), "name": info.get("name"), "visibility": info.get("visibility")},
+            f"已绑定当前工程到项目: {project.name} (id={project_id})",
+            data={"id": project_id, "name": project.name, "visibility": project.visibility},
         )
     except TaskCancelled:
         raise
@@ -548,11 +277,30 @@ def _tool_switch_paratranz_project(args: dict, ctx) -> ToolResult:
 
 # ── 参数 Schema ────────────────────────────────────────────────
 
+_FILE_PARAMETERS = {
+    "mode": {
+        "type": "str",
+        "required": True,
+        "description": "Desktop upload mode: orig_only, trans_safe, trans_force or both",
+    },
+    "source_ids": {
+        "type": "list",
+        "required": False,
+        "description": "Registered sources; defaults to the active plugin",
+    },
+    "categorized": {
+        "type": "bool",
+        "required": False,
+        "description": "Use the desktop category layout; defaults to ordinary plugin files",
+    },
+    "project_id": {"type": "int", "required": False, "description": "Remote project; defaults to the current binding"},
+}
 _PARAM_SCHEMAS = {
     "list_projects": {
         "uid": {
             "type": "str",
             "required": False,
+            "enum": ["my", ""],
             "description": 'Pass "my" to list my projects (default), or "" to list all projects',
         },
     },
@@ -561,68 +309,6 @@ _PARAM_SCHEMAS = {
             "type": "str",
             "required": False,
             "description": "Project ID (uses the current project binding when omitted)",
-        },
-    },
-    "compare_with_remote": {
-        "project_id": {
-            "type": "str",
-            "required": False,
-            "description": "Project ID (uses the current project binding when omitted)",
-        },
-    },
-    "plan_sync": {
-        "project_id": {
-            "type": "str",
-            "required": False,
-            "description": "Project ID (uses the current project binding when omitted)",
-        },
-        "operation": {
-            "type": "str",
-            "required": False,
-            "description": "upload, download, or bidirectional; defaults to upload",
-        },
-        "conflict_policy": {
-            "type": "str",
-            "required": False,
-            "description": "abort, prefer_local, prefer_remote, or skip; defaults to abort",
-        },
-        "entry_ids": {
-            "type": "list",
-            "required": False,
-            "description": "Optional list of local EntryKey.local_key values",
-        },
-        "source_namespace": {
-            "type": "str",
-            "required": False,
-            "description": "Optional explicit source namespace; must match the local identity",
-        },
-        "remote_limit": {
-            "type": "int",
-            "required": False,
-            "description": "Maximum size of the read-only remote snapshot; defaults to 100000",
-        },
-        "offset": {"type": "int", "required": False, "description": "Offset for displaying the plan; defaults to 0"},
-        "page_size": {
-            "type": "int",
-            "required": False,
-            "description": "Page size for displaying the plan; defaults to 100",
-        },
-    },
-    "upload_entries": {
-        "project_id": {
-            "type": "str",
-            "required": False,
-            "description": "Project ID (uses the current project binding when omitted)",
-        },
-        "force_overwrite": {
-            "type": "bool",
-            "required": False,
-            "description": "Overwrite only with a stored remote ID for this project; no key lookup; default false",
-        },
-        "entry_ids": {
-            "type": "list",
-            "required": False,
-            "description": "List of entry IDs to upload; defaults to all entries",
         },
     },
     "download_entries": {
@@ -638,6 +324,18 @@ _PARAM_SCHEMAS = {
         },
     },
     "export_artifact": {
+        "action": {
+            "type": "str",
+            "required": False,
+            "enum": ["trigger", "download"],
+            "default": "trigger",
+            "description": "trigger creates an export (default); download saves the existing ZIP.",
+        },
+        "output_path": {
+            "type": "str",
+            "required": False,
+            "description": "Suggested desktop ZIP name. A granted output path is required for headless downloads.",
+        },
         "project_id": {
             "type": "str",
             "required": False,
@@ -650,10 +348,13 @@ _PARAM_SCHEMAS = {
             "required": False,
             "description": "Project ID (uses the current project binding when omitted)",
         },
-        "limit": {
+        "page": {
             "type": "int",
             "required": False,
-            "description": "Maximum number of records to return; defaults to 20",
+            "min": 1,
+            "max": HISTORY_LAST_PAGE,
+            "default": 1,
+            "description": "History page (1–9999, default 1); 50 revisions per page.",
         },
     },
     "switch_paratranz_project": {
@@ -702,64 +403,42 @@ def _register_paratranz_tools():
             },
             {
                 "name": "compare_with_remote",
-                "display_name": "对比远程",
+                "display_name": "比较上传文件",
                 "description": (
-                    "①Compare local translations (ctx.collection) with the remote project. ②Parameters: project_id "
-                    "(optional). Read-only. ③Returns: "
-                    "{only_local,only_remote,different,same,details:[{key,status}]} with at "
-                    "most 20 details. status is only_local or different. Rules: "
-                    "use get_paratranz_project to confirm the "
-                    "project binding; a local collection must be loaded."
+                    "Preview upload differences for whole plugin files. Returns source_id, file_key, path, "
+                    "existence, source changes, key renames and translation change counts. Read only."
                 ),
                 "execute": _tool_compare_with_remote,
                 "permission": "read",
-                "parameters": _PARAM_SCHEMAS.get("compare_with_remote", {}),
-            },
-            {
-                "name": "plan_sync",
-                "display_name": "规划同步",
-                "description": (
-                    "Generate a side-effect-free ParaTranz synchronization plan. "
-                    "Returns a hash, counts, and paginated "
-                    "entries; overwrites or deletions require subsequent confirmation."
-                ),
-                "execute": _tool_plan_sync,
-                "permission": "read",
-                "parameters": _PARAM_SCHEMAS.get("plan_sync", {}),
+                "parameters": {
+                    **_FILE_PARAMETERS,
+                    "file_keys": {
+                        "type": "list",
+                        "required": False,
+                        "description": "Files to compare; defaults to all files of the selected sources",
+                    },
+                },
             },
             {
                 "name": "upload_entries",
-                "display_name": "上传条目",
+                "display_name": "上传工程文件",
                 "description": (
-                    "①Upload local entries to ParaTranz. ②Parameters: project_id (optional), "
-                    "entry_ids (optional list of "
-                    "keys from get_visible_entries; uploads all entries when omitted), "
-                    "force_overwrite (default false; updates require a stored remote ID for this project). "
-                    "Without that ID, creates directly and reports server conflicts; never searches by key. Key "
-                    "format: {record_type}:{form_id}, for example NPC_:00012345. Write permission, long-running, and "
-                    "confirmation required. ③Returns: {uploaded,total,failed_items:[{key,error}]}. "
-                    "Rule: uploading 100 or "
-                    "more entries may trigger rate limiting."
+                    "Publish explicitly selected complete project files using the desktop file upload workflow. "
+                    "Use file_keys from compare_with_remote with the same remote target, layout, sources and mode. "
+                    "trans_force overwrites differing nonblank translations. Requires confirmation. "
+                    "Returns file counts and details."
                 ),
                 "execute": _tool_upload_entries,
                 "permission": "write",
                 "is_long_running": True,
                 "require_confirmation": True,
-                "parameters": _PARAM_SCHEMAS.get("upload_entries", {}),
-            },
-            {
-                "name": "recover_upload_associations",
-                "display_name": "恢复上传关联",
-                "description": (
-                    "Retry local remote-ID associations from a retained upload result. Requires result_id returned by "
-                    "upload_entries. Makes no remote request; confirmed receipts preserve current translation, stage "
-                    "and unrelated references. Unknown remote outcomes require remote inspection first."
-                ),
-                "execute": _tool_recover_upload_associations,
-                "permission": "write",
-                "require_confirmation": True,
                 "parameters": {
-                    "result_id": {"type": "str", "required": True, "description": "Retained upload result ID"}
+                    **_FILE_PARAMETERS,
+                    "file_keys": {
+                        "type": "list",
+                        "required": True,
+                        "description": "Exact file keys authorized for upload",
+                    },
                 },
             },
             {
@@ -788,11 +467,11 @@ def _register_paratranz_tools():
                 "name": "export_artifact",
                 "display_name": "导出工件",
                 "description": (
-                    "①Export a translation artifact package (.zip) from ParaTranz. "
-                    "②Parameters: project_id (optional). "
-                    "Write permission, long-running, and confirmation required. ③Returns artifact data on success, or "
-                    '{job,status:"pending"} on timeout. Polls the triggered job every 2 seconds for up to '
-                    "30 seconds. Returns fresh artifact data after the job succeeds or an error if it fails."
+                    "Trigger a new ParaTranz export or download the existing ZIP. "
+                    "The default trigger action returns fresh artifact metadata or the pending job. "
+                    "Download saves the existing ZIP without triggering an export. The desktop user selects the file. "
+                    "Headless downloads require an authorized output_path. "
+                    "Both actions require write permission and confirmation."
                 ),
                 "execute": _tool_export_artifact,
                 "permission": "write",
@@ -805,11 +484,9 @@ def _register_paratranz_tools():
                 "display_name": "上传历史",
                 "description": (
                     "①Get the upload history for a ParaTranz project. "
-                    "②Parameters: project_id (optional), limit (default 20). "
-                    "Read-only. ③Returns: {history:[{id,timestamp,filename,status,entries_count}]}. status is success, "
-                    "failed, or processing. Rules: check the last synchronization time before "
-                    "uploading, verify success "
-                    "afterward, and use the history to troubleshoot synchronization issues."
+                    "②Parameters: project_id (optional), page (default 1). "
+                    "Read-only. ③Returns {history} containing remote file revisions with time, "
+                    "filename, operation, user and insert/update/remove counts."
                 ),
                 "execute": _tool_get_upload_history,
                 "permission": "read",
@@ -821,7 +498,8 @@ def _register_paratranz_tools():
                 "display_name": "PT同步目标",
                 "description": (
                     "①Get the ParaTranz synchronization target bound to the current local project. ②No parameters. "
-                    "Read-only. ③Returns {id,name,visibility}, or {selected_project:null} "
+                    "Local read, works offline. ③Returns {id,name,status,reason,local_project_id,local_project_name}, "
+                    "or {selected_project:null} "
                     "when no project is bound. Rule: use "
                     "get_project_info for details about a specific project or member_count."
                 ),
@@ -834,7 +512,8 @@ def _register_paratranz_tools():
                 "display_name": "绑定PT同步目标",
                 "description": (
                     "①Explicitly bind a ParaTranz project as the default synchronization target for the current local "
-                    "project. ②Parameters: project_id (required int from list_projects). Write permission. ③Returns: "
+                    "project. ②Parameters: project_id (required int from the signed-in account's projects). "
+                    "Write permission. ③Returns: "
                     "{id,name,visibility}. Rules: a local project must already exist; "
                     "browsing the management page does "
                     "not change the binding; local translation data remains unchanged when switching bindings."

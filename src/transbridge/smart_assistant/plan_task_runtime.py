@@ -28,6 +28,8 @@ class PlanTaskRuntime:
         self._manager = manager or TaskManager()
         captured = context if isinstance(context, ExecutionContext) else ExecutionContext(app_context=context)
         self.execution_context = copy(captured)
+        if captured.assistant_gate is not None:
+            self.execution_context.assistant_gate = captured.assistant_gate.for_dispatch()
         metadata = task_metadata(context, {"job_type": "assistant-plan", "display_name": "助手计划"})
         metadata.pop("parent_task_id", None)
         # Parent dispatch is not a leaf write. Each tool creates its own effect intent.

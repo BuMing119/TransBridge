@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol
 
@@ -12,7 +12,7 @@ from transbridge.application.terminology.drafts import DraftLineState, DraftWrit
 from transbridge.application.terminology.identity import canonical_digest
 from transbridge.application.terminology.models import DraftRef, ManualActionType, TermDecision
 
-from .inbound import InboundReviewDecision, InboundReviewState, InboundReviewStatus
+from .inbound import InboundReviewDecision, InboundReviewState, InboundReviewStatus, InboundTerminologyChange
 from .plan_models import TerminologyContentSummary
 
 
@@ -41,6 +41,16 @@ class DraftImportChoice:
     decision: InboundReviewDecision
     edited: TerminologyContentSummary | None = None
     reason: str | None = None
+
+    @classmethod
+    def from_review(cls, item: InboundTerminologyChange, decision: InboundReviewDecision, translation: str = ""):
+        edited = None
+        if decision is InboundReviewDecision.EDIT:
+            source = item.remote or item.local
+            if source is None:
+                raise ValueError("没有可编辑的术语内容")
+            edited = replace(source, translation=translation.strip(), digest="")
+        return cls(item.item_id, decision, edited)
 
     def __post_init__(self) -> None:
         if not isinstance(self.item_id, str) or not self.item_id.strip():

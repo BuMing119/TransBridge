@@ -12,7 +12,7 @@ from transbridge.application.tasks import JobEventType, JobState, TaskCancelled,
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.smart_assistant.tools.task_manager import TaskManager
-from transbridge.smart_assistant.tools.tool_proofreader import _tool_run_postprocess
+from transbridge.smart_assistant.tools.tool_translator import _tool_start_polish
 
 
 @pytest.fixture
@@ -168,7 +168,7 @@ class RecordingCollection(TranslationEntryCollection):
 
 
 @pytest.mark.parametrize("cancel", [False, True])
-def test_real_postprocess_respects_task_center_controls_before_candidate_commit(
+def test_desktop_polish_respects_task_center_controls_before_candidate_commit(
     manager, monkeypatch, tmp_path, cancel, current_project_factory
 ):
 
@@ -189,14 +189,11 @@ def test_real_postprocess_respects_task_center_controls_before_candidate_commit(
             })
 
     monkeypatch.setattr(
-        "transbridge.smart_assistant.tools._common.load_llm_config",
-        lambda: LLMConfig(api_key="fixture", model="fixture"),
+        LLMConfig,
+        "load_from_file",
+        lambda: LLMConfig(api_key="fixture", model="fixture", retrieval_enabled=False, term_priority=[]),
     )
     monkeypatch.setattr("transbridge.infra.llm_client.create_llm_client", lambda *_args: Client())
-    monkeypatch.setattr(
-        "transbridge.ai_translator.term_database.TermDatabaseManager",
-        lambda **_kwargs: SimpleNamespace(load_all=lambda: None, match_terms=lambda _texts: {}),
-    )
     monkeypatch.setattr("transbridge.paratranz.config_manager.ParatranzConfig.get_data_dir", lambda: str(tmp_path))
     collection = RecordingCollection([make_entry("entry", original="Source", translation="before", stage=1)])
     project = current_project_factory(collection)
@@ -214,7 +211,7 @@ def test_real_postprocess_respects_task_center_controls_before_candidate_commit(
             entry.identity: (entry.original, entry.context or "") for entry in collection if entry.identity in keys
         }
     )
-    result = _tool_run_postprocess({}, context)
+    result = _tool_start_polish({}, context)
     assert result.success, result.message
     task_id = result.data["task_id"]
     handle = manager.get_handle(task_id)

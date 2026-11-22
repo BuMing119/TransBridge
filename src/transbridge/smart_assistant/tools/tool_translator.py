@@ -3,9 +3,15 @@
 
 from __future__ import annotations
 
+from transbridge.application.preflight.ai import AiPreflightCode, preflight_ai_run
+from transbridge.application.translation.task_scope import task_entry_groups
+from transbridge.config.translation_preferences import TERM_SOURCES
+
 from .base import ToolResult, require_collection, require_runtime_context
 from .task_control import action_label, control_tasks, get_scoped_task_status
 from .task_manager import TaskManager
+from .translation_options import external_intensity, translation_config
+from .translation_scope import translation_candidates
 from .translation_task_run import launch_translation_task
 
 
@@ -22,68 +28,26 @@ class TranslationController:
             return ToolResult.fail(f"无效模式: {mode}，可选: translate, polish, mixed")
         if mode == "polish":
             return self.start_polish(args, ctx, collection)
-        entry_ids = args.get("entry_ids")
-        if entry_ids is None:
-            from .base import filter_entries
-
-            scope = getattr(ctx, "translation_scope", None) or {}
-            if any(scope.get(key) for key in ("stages", "labels", "categories")):
-                targets = filter_entries(
-                    collection,
-                    {"stage": scope.get("stages"), "category": scope.get("categories"), "labels": scope.get("labels")},
-                    entry_labels=getattr(ctx, "entry_labels", None),
-                )
-            else:
-                targets = [entry for entry in collection if mode == "mixed" or entry.stage == 0]
-        else:
-            targets = [collection.get(key) for key in entry_ids if collection.get(key) is not None]
-        if not targets:
-            return ToolResult.fail("本次作用域没有可处理的词条。")
-        return self._launch(args, ctx, collection, targets, mode=mode)
+        return self._start(args, ctx, collection, mode=mode)
 
     def start_polish(self, args: dict, ctx, collection) -> ToolResult:
-        intensity, scope = args.get("intensity", "medium"), args.get("scope", "all")
-        strategy = args.get("strategy", "proofread")
-        if strategy == "combined":
-            strategy = "proofread"
-        if scope not in ("all", "passed", "has_issues"):
-            return ToolResult.fail(f"无效 scope: {scope}，可选: all, passed, has_issues")
-        if intensity not in ("light", "medium", "heavy"):
-            return ToolResult.fail(f"无效 intensity: {intensity}，可选: light, medium, heavy")
-        if strategy not in ("proofread", "strict"):
-            return ToolResult.fail(f"无效 strategy: {strategy}，可选: proofread, strict")
-        entry_ids = args.get("entry_ids")
-        if entry_ids is None:
-            targets = [
-                entry
-                for entry in collection
-                if entry.translation
-                and (
-                    scope == "all"
-                    or scope == "passed"
-                    and entry.stage in (1, 3, 4, 5, 6)
-                    or scope == "has_issues"
-                    and entry.stage == 2
-                )
-            ]
-        else:
-            targets = [collection.get(key) for key in entry_ids if collection.get(key) is not None]
-        if not targets:
-            return ToolResult.fail("没有可润色的词条符合本次作用域。")
-        result = self._launch(
-            {**args, "intensity": intensity, "strategy": strategy},
-            ctx,
-            collection,
-            targets,
-            mode="polish",
-        )
-        if result.success:
-            result.data["scope"] = scope
+        result = self._start(args, ctx, collection, mode="polish")
+        if result.success and "scope" in args:
+            result.data["scope"] = args["scope"]
         return result
 
-    def _launch(self, args, ctx, collection, targets, *, mode):
-        from transbridge.paratranz.config_manager import LLMConfig
+    def _start(self, args, ctx, collection, *, mode):
+        try:
+            _, targets, memberships = translation_candidates(args, ctx, collection, mode=mode)
+        except ValueError as exc:
+            return ToolResult.fail(str(exc))
+        if not targets:
+            return ToolResult.fail(
+                "没有可润色的词条符合本次作用域。" if mode == "polish" else "本次作用域没有可处理的词条。"
+            )
+        return self._launch(args, ctx, collection, targets, memberships, mode=mode)
 
+    def _launch(self, args, ctx, collection, targets, memberships, *, mode):
         from .input_prerequisites import source_input_failure
 
         missing = source_input_failure(ctx, targets)
@@ -91,26 +55,36 @@ class TranslationController:
             return missing
 
         try:
-            config = LLMConfig.load_from_file()
+            config = translation_config(mode, args)
         except Exception as exc:
             return ToolResult.fail(
                 f"无法读取 LLM 配置：{exc}", error_category="config", error_code="CONFIG_LOAD_FAILED"
             )
-        if not config.api_key:
+        groups = task_entry_groups(targets, mode=mode, config=config, memberships=memberships)
+        if not (groups.translate or groups.polish):
+            return ToolResult.fail("本次作用域没有可处理的词条。")
+        preflight = preflight_ai_run(
+            mode, config, (*groups.translate, *groups.polish), mixed_has_translation=bool(groups.translate)
+        )
+        if preflight.blocking_issues:
+            issue = preflight.blocking_issues[0]
             return ToolResult.fail(
-                "API Key 未配置",
+                preflight.blocking_reason,
                 error_category="config",
-                error_code="API_KEY_MISSING",
-                recovery_action="请在 AI 翻译设置中配置 API Key",
+                error_code="API_KEY_MISSING"
+                if issue.code is AiPreflightCode.MISSING_API_KEY
+                else issue.code.value.upper(),
+                recovery_action="请检查 AI 翻译设置和运行条件。",
             )
         return launch_translation_task(
             ctx,
             collection,
-            targets,
+            groups,
             config,
             mode=mode,
-            intensity=args.get("intensity", "medium"),
-            strategy=args.get("strategy", "proofread"),
+            profile=args.get("profile"),
+            intensity=external_intensity(config.pp_polish_level),
+            strategy=config.pp_strategy,
             manager=self._task_mgr,
         )
 
@@ -264,8 +238,15 @@ def _tool_get_scope_preview(args: dict, ctx) -> ToolResult:
 #  参数 Schema
 # ═══════════════════════════════════════════════════════════════════
 
+_WORKFLOW_PROFILE = {
+    "type": "str",
+    "required": False,
+    "description": "Saved desktop workflow name or ID with the same base mode; omit to use the mode preset",
+}
+
 _PARAM_SCHEMAS = {
     "start_translation": {
+        "profile": _WORKFLOW_PROFILE,
         "mode": {
             "type": "str",
             "required": False,
@@ -274,27 +255,26 @@ _PARAM_SCHEMAS = {
         "entry_ids": {
             "type": "list",
             "required": False,
-            "description": "Target entry IDs; defaults to all untranslated entries",
+            "description": "Explicit entry IDs; omit to use the saved translation scope or mode default",
         },
     },
     "start_polish": {
-        "entry_ids": {"type": "list", "required": False, "description": "Entry IDs to polish; provide this or scope"},
+        "profile": _WORKFLOW_PROFILE,
+        "entry_ids": {"type": "list", "required": False, "description": "Entry IDs to polish; omit to use the scope"},
         "scope": {
             "type": "str",
             "required": False,
-            "description": (
-                "Polish scope: all (all translated), passed (stage 1/3/4/5/6), or has_issues (stage 2); default all"
-            ),
+            "description": "Use all to include every eligible translated stage within the configured scope",
         },
         "intensity": {
             "type": "str",
             "required": False,
-            "description": "Polish intensity: light/medium/heavy; default medium",
+            "description": "Override the saved polish intensity for this task: light/medium/heavy",
         },
         "strategy": {
             "type": "str",
             "required": False,
-            "description": "Proofreading strategy: proofread (default) or strict (multi-stage compatible)",
+            "description": "Override the saved polish strategy for this task: proofread or strict",
         },
     },
     "stop_task": {
@@ -342,7 +322,8 @@ _PARAM_SCHEMAS = {
         "provider": {
             "type": "str",
             "required": False,
-            "description": "Must be provided together with base_url and model",
+            "description": "openai_compatible or anthropic; supply together with base_url and model",
+            "enum": ["openai_compatible", "anthropic"],
         },
         "base_url": {
             "type": "str",
@@ -350,32 +331,38 @@ _PARAM_SCHEMAS = {
             "description": "Must be provided together with provider and model",
         },
         "model": {"type": "str", "required": False, "description": "Model name"},
-        "temperature": {"type": "float", "required": False, "description": "Generation temperature"},
-        "max_tokens": {"type": "int", "required": False, "description": "Maximum output tokens"},
+        "temperature": {"type": "float", "min": 0, "max": 2, "description": "Temperature, up to two decimal places"},
+        "max_tokens": {"type": "int", "min": 0, "max": 1000000, "description": "Output token limit, 0=auto"},
         "target_lang": {"type": "str", "required": False, "description": "Target language code"},
-        "game_profile": {"type": "str", "required": False, "description": "Game profile"},
     },
     "set_scope": {
         "stages": {"type": "list", "required": False, "description": "Target stages"},
         "labels": {"type": "list", "required": False, "description": "Target labels"},
         "categories": {"type": "list", "required": False, "description": "Target categories"},
-        "action": {
-            "type": "str",
-            "required": False,
-            "description": "Scope action: include/exclude/only; default include",
-        },
     },
-    "get_scope_preview": {},
+    "get_scope_preview": {
+        "profile": _WORKFLOW_PROFILE,
+        "mode": {"type": "str", "required": False, "description": "translate (default), mixed, or polish"},
+        "entry_ids": {"type": "list", "required": False, "description": "Explicit target IDs, as at launch"},
+        "scope": {"type": "str", "required": False, "description": "For polish, all selects all eligible stages"},
+    },
     # Story 24: 术语配置
     "set_term_config": {
-        "term_sources": {
-            "type": "list",
-            "required": False,
-            "description": "Terminology source priority list: dynamic/paratranz/json/csv/excel",
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "term_sources": {
+                "type": "array",
+                "description": "All five sources in priority order, once each",
+                "minItems": len(TERM_SOURCES),
+                "maxItems": len(TERM_SOURCES),
+                "uniqueItems": True,
+                "items": {"type": "string", "enum": list(TERM_SOURCES)},
+            },
+            "json_path": {"type": "string", "description": "Local JSON glossary path"},
+            "csv_path": {"type": "string", "description": "Local CSV glossary path"},
+            "excel_path": {"type": "string", "description": "Local Excel glossary path"},
         },
-        "json_path": {"type": "str", "required": False, "description": "Local JSON glossary path"},
-        "csv_path": {"type": "str", "required": False, "description": "Local CSV glossary path"},
-        "excel_path": {"type": "str", "required": False, "description": "Local Excel glossary path"},
     },
 }
 
@@ -396,7 +383,8 @@ def _register_translator_tools():
                 "display_name": "启动翻译",
                 "description": (
                     "①Start an AI translation background task. ②Arguments: mode=translate (default)/polish/mixed, "
-                    "optional entry_ids; without entry_ids use set_scope, defaulting to stage 0. "
+                    "optional entry_ids; omit to use the saved scope. Without a saved scope, translate uses stage 0, "
+                    "polish uses stages 1/2/3/5, and mixed applies the configured action rules to all eligible stages. "
                     "③Returns {task_id, mode}. "
                     "④Rules: configure the API key and inspect get_translation_config first; "
                     "parallel tasks are allowed."
@@ -411,12 +399,12 @@ def _register_translator_tools():
                 "name": "start_polish",
                 "display_name": "启动校对",
                 "description": (
-                    "①Start an AI proofreading background task. ②Provide entry_ids or scope; entry_ids wins. "
-                    "scope=all/passed(stage 1/3/4/5/6)/has_issues(stage 2), intensity=light/medium/heavy, "
+                    "①Start an AI proofreading background task. ②Optional entry_ids or the saved translation scope. "
+                    "Default stages 1/2/3/5; scope=all includes all eligible stages within the saved scope. "
+                    "intensity=light/medium/heavy, "
                     "strategy=proofread/strict. "
                     "③Returns {task_id, strategy, intensity, scope, entry_count}. "
-                    "④Rule: configure "
-                    "the API key and inspect get_translation_config first."
+                    "Omitted intensity and strategy use the saved desktop polish preset."
                 ),
                 "execute": _tool_start_polish,
                 "permission": "write",
@@ -448,7 +436,7 @@ def _register_translator_tools():
                     "①Query task progress. ②Optional task_id. ③One task returns "
                     "{task_id,status,progress{current,total,message},created_at,metadata}; all tasks return "
                     "{active_count,total_count,tasks[{task_id,status,metadata}]}. ④status is "
-                    "running/paused/completed/cancelled/failed."
+                    "queued/running/paused/cancelling/cancelled/completed/failed."
                 ),
                 "execute": _tool_get_task_status,
                 "permission": "read",
@@ -467,7 +455,7 @@ def _register_translator_tools():
                 "name": "merge_task_result",
                 "display_name": "重新合入任务成果",
                 "description": (
-                    "Merge saved AI, dictionary or parser results into their original version "
+                    "Apply saved translation candidates owned by this session to their original project version "
                     "without repeating computation."
                 ),
                 "execute": _tool_merge_task_result,
@@ -493,7 +481,7 @@ def _register_translator_tools():
                 "display_name": "设置翻译配置",
                 "description": (
                     "①Update the unified LLM configuration. ②provider/base_url/model must be supplied together; "
-                    "temperature/max_tokens/target_lang/game_profile are optional. "
+                    "temperature/max_tokens/target_lang are optional. "
                     "③Returns changed_fields/config_revision."
                 ),
                 "execute": _tool_set_translation_config,
@@ -506,10 +494,8 @@ def _register_translator_tools():
                 "description": (
                     "①Set the default translation scope used by start_translation without entry_ids. "
                     "②Arguments: stages, "
-                    "labels, categories, action=include/exclude/only. ③Returns a scope snapshot. ④Rules: AND across "
-                    "dimensions, OR within one; verify labels/categories with "
-                    "list_labels/get_statistics; include and only "
-                    "currently behave the same."
+                    "labels, categories. ③Returns a scope snapshot. ④Rules: AND across "
+                    "dimensions, OR within one. Verify labels/categories with list_labels/get_statistics."
                 ),
                 "execute": _tool_set_scope,
                 "permission": "write",
@@ -519,10 +505,10 @@ def _register_translator_tools():
                 "name": "get_scope_preview",
                 "display_name": "作用域预览",
                 "description": (
-                    "①Preview counts for the current scope. ②No arguments. ③Returns "
-                    "{matched,total,scope{stages,labels,categories,action}}. "
-                    "④Rules: returns counts, not entries; default "
-                    "scope is untranslated stage 0; call after set_scope to confirm the range."
+                    "①Preview the actual task range. ②Optional mode, entry_ids and polish scope. ③Returns "
+                    "{matched,total,scope{stages,labels,categories}}. "
+                    "④Defaults: translate uses stage 0, polish uses stages 1/2/3/5, mixed applies configured rules "
+                    "to all eligible stages. Explicit entry_ids select those identities. Use after set_scope to verify."
                 ),
                 "execute": _tool_get_scope_preview,
                 "permission": "read",
@@ -534,10 +520,8 @@ def _register_translator_tools():
                 "description": (
                     "①Set terminology-source priority and local paths. ②Arguments: ordered term_sources "
                     "(dynamic/paratranz/json/csv/excel), json_path, csv_path, excel_path. "
-                    "dynamic is always available for extraction during AI translation. ③Returns {changed}. ④Rules: "
-                    "inspect get_translation_config first; an empty list disables all sources; "
-                    "invalid source names are "
-                    "rejected."
+                    "③Returns {changed}. ④Rules: inspect get_translation_config first. "
+                    "To reorder, include each of the five sources exactly once."
                 ),
                 "execute": _tool_set_term_config,
                 "permission": "write",

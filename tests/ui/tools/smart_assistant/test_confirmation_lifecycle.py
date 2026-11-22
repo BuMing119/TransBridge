@@ -37,6 +37,78 @@ def _view(engine=None):
     return view, parent, intents, cards
 
 
+@pytest.mark.parametrize("choice", ["new", "overwrite", "decline", "changed", "cancel"])
+def test_artifact_download_uses_only_file_selected_in_desktop_confirmation(tmp_path, monkeypatch, choice):
+    from io import BytesIO
+    from zipfile import ZipFile
+
+    from PyQt6.QtWidgets import QFileDialog
+
+    from tests.conftest import MockAppContext
+    from transbridge.config.paratranz import ParatranzConfig
+    from transbridge.config.paratranz_credentials import UnavailableCredentialStore
+    from transbridge.paratranz.api.paratranz_export_api import ParatranzExportAPI
+    from transbridge.smart_assistant.guardrails import InputValidationGuard, PermissionGuard
+    from transbridge.smart_assistant.tool_execution_handler import ToolExecutionHandler
+    from transbridge.smart_assistant.tool_registry import ToolRegistry
+    from transbridge.smart_assistant.tools import tool_paratranz
+
+    if ToolRegistry.get("export_artifact") is None:
+        tool_paratranz._register_paratranz_tools()
+    view, parent, _, _ = _view()
+    app = MockAppContext()
+    app._config = ParatranzConfig(credential_store=UnavailableCredentialStore(), environment={})
+    handler = ToolExecutionHandler(
+        app, Mock(), choose_artifact_output=view.choose_artifact_output, on_confirm_permission=lambda *_: True
+    )
+    handler._middlewares = [PermissionGuard(), InputValidationGuard()]
+    target = tmp_path / "chosen.zip"
+    if choice in {"overwrite", "decline", "changed"}:
+        target.write_bytes(b"original")
+    nominated = tmp_path / "model.zip"
+    picker = Mock(return_value=("" if choice == "cancel" else str(target), ""))
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", picker)
+    questions = []
+
+    def confirm_overwrite(title, message):
+        questions.append(message)
+        if choice == "changed":
+            target.write_bytes(b"newer contents")
+        return choice != "decline"
+
+    monkeypatch.setattr(view, "ask_permission", confirm_overwrite)
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as archive:
+        archive.writestr("entries.json", "[]")
+    response = Mock()
+    response.iter_content.return_value = [buffer.getvalue()]
+    remote = Mock(return_value=response)
+    monkeypatch.setattr(ParatranzExportAPI, "_request", remote)
+    step = {"tool": "export_artifact", "args": {"project_id": "7", "action": "download", "output_path": str(nominated)}}
+    try:
+        run = handler.prepare_detached_write(step, threading.Event())
+        result = run()[0].result
+        assert picker.call_args.args[2] == "model.zip"
+        assert not nominated.exists()
+        if choice in {"overwrite", "decline", "changed"}:
+            assert len(questions) == 1 and str(target) in questions[0]
+        if choice in {"cancel", "decline", "changed"}:
+            assert not result.success
+            remote.assert_not_called()
+        else:
+            assert result.success and result.data == {"output_path": str(target)}
+            remote.assert_called_once()
+            assert remote.call_args.args == ("GET", "/projects/7/artifacts/download")
+            assert target.read_bytes() == buffer.getvalue()
+        if choice == "changed":
+            assert target.read_bytes() == b"newer contents"
+        if choice == "decline":
+            assert target.read_bytes() == b"original"
+    finally:
+        view.close()
+        parent.close()
+
+
 @pytest.mark.parametrize("kind", ["tool", "batch", "plan"])
 def test_expired_confirmation_cannot_execute_when_new_confirmation_is_pending(kind):
     view, parent, intents, cards = _view()

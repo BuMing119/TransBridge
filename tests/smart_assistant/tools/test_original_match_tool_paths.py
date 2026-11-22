@@ -1,19 +1,11 @@
-from dataclasses import replace
-import logging
 from types import SimpleNamespace
 
 import pytest
 
 from transbridge.application.assistant_requests.models import RequestError
-from transbridge.application.ports.paratranz import ParaTranzEntry
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from transbridge.paratranz.config_manager import LLMConfig
 from transbridge.smart_assistant.request_scope import apply_captured_scope
-from transbridge.smart_assistant.tools._entry_upload import upload_entries
-from transbridge.smart_assistant.tools._polish_execution import execute_polish
-from transbridge.smart_assistant.tools._postprocess_tool_runtime import _resolve_entries
-from transbridge.smart_assistant.tools.base import resolve_scope_to_entry_ids
 from transbridge.smart_assistant.tools.tool_editor import EditorController
 from transbridge.ui.tools.smart_assistant.request_binding import RequestBinding
 
@@ -26,6 +18,8 @@ def _entries():
 
 
 def test_assistant_query_ids_support_exact_edit_stage_and_selection(current_project_factory):
+    from transbridge.ui.workbench.step2 import Step2PreviewWidget
+
     first, second = _entries()
     collection = TranslationEntryCollection((first, second))
     project = current_project_factory(collection)
@@ -42,14 +36,74 @@ def test_assistant_query_ids_support_exact_edit_stage_and_selection(current_proj
     )
     assert controller.set_stage({"entry_ids": [first_id], "stage": 3}, context, context.collection).success
     assert tuple(context.collection.get(entry.identity).stage for entry in (first, second)) == (3, 1)
-    assert controller.select_entries({"entry_ids": [first_id]}, context).success
-    assert context.selected_ids == {first_id}
-    assert not controller.select_entries({"entry_ids": ["same"]}, context).success
-    with pytest.warns(RuntimeWarning, match="ambiguous"):
-        assert not controller.edit_translation(
-            {"entry_id": "same", "new_translation": "wrong"}, context, collection
-        ).success
+    preview = Step2PreviewWidget(context)
+    try:
+        preview.refresh(context.collection)
+        assert controller.select_entries({"entry_ids": [first_id]}, context).success
+        assert preview.selected_row_entry_ids() == (first_id,)
+        assert context.selected_ids == {first_id}
+        assert not controller.select_entries({"entry_ids": ["same"]}, context).success
+    finally:
+        preview.close()
+    before = project.aggregate.snapshot()
+    result = controller.edit_translation({"entry_id": "same", "new_translation": "wrong"}, context, collection)
+    assert not result.success and "完整 EntryKey" in result.message
+    assert project.aggregate.snapshot() is before
     assert (first.id, first.key) == ("same", "same")
+
+
+def test_selection_provider_detaches_when_qt_destroys_the_table(current_project_factory):
+    from PyQt6.QtCore import QCoreApplication, QEvent
+
+    from transbridge.ui.workbench.step2 import Step2PreviewWidget
+
+    project = current_project_factory(TranslationEntryCollection(_entries()))
+    preview = Step2PreviewWidget(project.context)
+    preview.refresh(project.context.collection)
+    preview._table.selectRow(0)
+    assert project.context.selected_ids
+    preview.deleteLater()
+    QCoreApplication.sendPostedEvents(preview, QEvent.Type.DeferredDelete)
+    assert not project.context.selected_ids
+    assert project.context.workbench_row_selection is None
+
+
+def test_selection_uses_distinct_keys_when_display_ids_repeat(current_project_factory):
+    from tests.ui.test_translation_reset import _stage_action
+    from transbridge.ui.tools.ai_translator.scope_presenter import ScopePresenter, Step2ScopeAdapter
+    from transbridge.ui.tools.ai_translator.task_scope import TaskScope
+    from transbridge.ui.workbench.step2 import Step2PreviewWidget
+    from transbridge.ui.workbench.translation_table_columns import COL_ORIGINAL
+
+    entries = (
+        TranslationEntry("shared", "a", "Zebra", "", 0, ""),
+        TranslationEntry("shared", "b", "Ant", "", 0, ""),
+    )
+    context = current_project_factory(TranslationEntryCollection(entries)).context
+    preview = Step2PreviewWidget(context)
+    try:
+        preview.refresh(context.collection)
+        select = EditorController().select_entries
+        assert select({"entry_ids": ["a"]}, context).data["selected_ids"] == ["a"]
+        preview._table.horizontalHeader().sectionClicked.emit(COL_ORIGINAL)
+        assert [entry.key for entry in context.selected_entries] == ["a"]
+        workbench = Step2ScopeAdapter(preview)
+        scope = ScopePresenter(lambda: context.collection, lambda: context.entry_labels, lambda _: "", workbench)
+        state = scope.select_preset("selection")
+        assert [entry.key for entry in scope.candidates()] == ["a"]
+        tasks = TaskScope(context, workbench, lambda _: "").build(
+            [context.active_slot], state, mode="translate", config=SimpleNamespace(), overwrite=False
+        )
+        assert [entry.key for entry in tasks[0].translate_entries] == ["a"]
+        _stage_action(preview, preview._table.row_for_identity(entries[0].identity), "已检查").trigger()
+        assert [context.collection.get(entry.identity).stage for entry in entries] == [3, 0]
+        with pytest.warns(RuntimeWarning, match="ambiguous"):
+            assert not select({"entry_ids": ["shared"]}, context).success
+        result = select({"entry_ids": [entries[1].identity.serialize()]}, context)
+        assert result.data["selected_count"] == 2 and set(result.data["selected_ids"]) == {"a", "b"}
+        assert context.selected_ids == {"a", "b"}
+    finally:
+        preview.close()
 
 
 def test_captured_selection_roundtrip_keeps_only_selected_original():
@@ -65,83 +119,3 @@ def test_captured_selection_roundtrip_keeps_only_selected_original():
     selection["selected_entry_ids"] = ["same"]
     with pytest.raises(RequestError, match="REQUEST_SCOPE_MISMATCH"):
         apply_captured_scope(request, [{"message_id": "message", "selection": selection}], context)
-
-
-def test_postprocess_scope_preserves_both_original_qualified_entries():
-    entries = _entries()
-    collection = TranslationEntryCollection(entries)
-    context = SimpleNamespace(translation_scope={"stages": [1]}, entry_labels={})
-    assert resolve_scope_to_entry_ids(context, collection) == [entry.identity.serialize() for entry in entries]
-    resolved, scope = _resolve_entries({"scope": "set_scope"}, context, collection, SimpleNamespace())
-    assert resolved == entries
-    assert scope == "set_scope"
-
-
-def test_assistant_polish_applies_each_accepted_original_result(monkeypatch):
-    entries = _entries()
-    collection = TranslationEntryCollection(entries)
-    results = {
-        entry.identity.serialize(): SimpleNamespace(
-            accepted=True, polished_translation=f"new-{entry.original}", target_stage=3
-        )
-        for entry in entries
-    }
-    monkeypatch.setattr(
-        "transbridge.ai_translator.post_processor.proofread_pipeline.ProofreadPipeline.create",
-        lambda **kwargs: SimpleNamespace(process=lambda *args, **options: results),
-    )
-    summary = execute_polish(
-        strategy="proofread",
-        intensity="medium",
-        llm_config=LLMConfig(),
-        llm_client=object(),
-        term_manager=object(),
-        targets=list(entries),
-        collection=collection,
-        stop_event=None,
-    )
-    assert (summary.polished_count, summary.failed_count) == (2, 0)
-    assert [(entry.original, entry.translation, entry.stage) for entry in collection] == [
-        ("first", "new-first", 3),
-        ("second", "new-second", 3),
-    ]
-
-
-@pytest.mark.parametrize("with_ordinary", [False, True])
-@pytest.mark.parametrize("force_overwrite", [False, True])
-def test_assistant_upload_skips_original_matched_entries_before_remote_write(
-    caplog, with_ordinary, force_overwrite, current_project_factory, tmp_path
-):
-    from transbridge.persistence.task_store import TaskStore
-
-    entries = _entries()
-    ordinary = TranslationEntry("normal", "normal", "plain", "translated", 1, "BOOK:FULL")
-    collection = TranslationEntryCollection((*entries, ordinary) if with_ordinary else entries)
-    sent = []
-
-    def upsert(project_id, entry, **kwargs):
-        sent.append(entry)
-        return replace(entry, remote_id=7)
-
-    project = current_project_factory(collection)
-    project.context.task_store = TaskStore(tmp_path / "task-store-v1")
-    with caplog.at_level(logging.WARNING):
-        result = upload_entries(
-            {"force_overwrite": force_overwrite},
-            project.context,
-            project.context.collection,
-            SimpleNamespace(upsert_entry=upsert),
-            11,
-            None,
-        )
-    assert result.success and result.partial
-    assert result.data["skipped"] == 2
-    assert result.data["uploaded"] == int(with_ordinary)
-    assert result.data["total"] == 2 + int(with_ordinary)
-    assert result.warnings
-    assert "PARATRANZ_ORIGINAL_MATCH_SKIPPED" in caplog.text
-    assert [entry.key for entry in sent] == (["normal"] if with_ordinary else [])
-    assert all(isinstance(entry, ParaTranzEntry) for entry in sent)
-    assert [entry.key for entry in project.context.collection if entry.external_refs] == (
-        ["normal"] if with_ordinary else []
-    )

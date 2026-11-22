@@ -21,13 +21,15 @@ from transbridge.application.tasks import (
     JobSpec,
     JobState,
     OwnerRef,
+    RuntimeTaskProjection,
     TaskAccessError,
+    TaskProjectionPort,
     TaskRuntime,
     TransitionError,
     job_snapshot_to_view,
 )
 
-from .task_runtime_bridge import TaskRuntimeBridge
+from .task_runtime_bridge import BRIDGE_JOB_METADATA, TaskRuntimeBridge
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +102,7 @@ class TaskManager:
                         id_generator=_LegacyIdGenerator(),
                         clock=_LegacyClock(),
                     )
+                    instance._projection = None
                     instance._owns_runtime = True
                     instance._refs = {}
                     instance._owners = {}
@@ -114,7 +117,7 @@ class TaskManager:
                     cls._instance = instance
         return cls._instance
 
-    def bind_runtime(self, runtime: TaskRuntime) -> None:
+    def bind_runtime(self, runtime: TaskRuntime, *, projection=None) -> None:
         """Bind the compatibility facade to the Composition Root runtime.
 
         Binding is only legal before any task is registered, preventing live
@@ -125,12 +128,15 @@ class TaskManager:
         previous: TaskRuntime | None = None
         with self._lock:
             if self._runtime is runtime:
+                if projection is not None:
+                    self._projection = projection
                 return
             if self._tasks:
                 raise RuntimeError("cannot rebind TaskManager while tasks exist")
             if self._owns_runtime:
                 previous = self._runtime
             self._runtime = runtime
+            self._projection = projection
             self._owns_runtime = False
         if previous is not None:
             previous.close()
@@ -139,6 +145,11 @@ class TaskManager:
     def runtime(self) -> TaskRuntime:
         """The bound application authority, shared with all other task entrypoints."""
         return self._runtime
+
+    @property
+    def task_projection(self) -> TaskProjectionPort:
+        """Use the task center's projection when the application has bound one."""
+        return self._projection if self._projection is not None else RuntimeTaskProjection(self._runtime)
 
     # ── 调度器注入 (ADR-008: 消除 PyQt6 耦合) ────────────────
 
@@ -249,6 +260,7 @@ class TaskManager:
             variant_id=task_metadata.get("variant_id"),
             session_id=task_metadata.get("session_id"),
         )
+        spec_metadata = task_metadata | {BRIDGE_JOB_METADATA: "true"}
         specification = JobSpec(
             job_type=str(task_metadata.get("job_type", "legacy-task")),
             input_ref=str(task_metadata.get("input_ref", "legacy:unspecified")),
@@ -259,7 +271,7 @@ class TaskManager:
                 supports_resume=True,
                 supports_cancel=True,
             ),
-            metadata=tuple(sorted((str(key), str(value)) for key, value in task_metadata.items())),
+            metadata=tuple(sorted((str(key), str(value)) for key, value in spec_metadata.items())),
         )
         ref = self._runtime.submit(specification, owner).ref
         task_id = ref.job_id
@@ -296,81 +308,45 @@ class TaskManager:
             raise
         return task_id
 
-    def cancel(self, task_id: str) -> bool:
-        """取消任务：set stop_event + 更新状态。返回是否成功。"""
-        with self._lock:
-            handle = self._tasks.get(task_id)
-            ref = self._refs.get(task_id)
-            owner = self._owners.get(task_id)
-        if handle is None or ref is None or owner is None:
+    def control(self, task_id, action, *, expected_revision=None):
+        """Dispatch through the task center and deliver legacy completion notifications."""
+        handle = self.get_handle(task_id)
+        if handle is None or handle.execution is None:
             return False
-        try:
-            snapshot = self._runtime.get(ref, owner)
-            if snapshot.state not in {JobState.CANCELLING, JobState.CANCELLED}:
-                if handle.execution is not None and handle.execution.assistant_gate is not None:
-                    handle.execution.assistant_gate.control_task(self._runtime, ref, owner, "cancel")
-                else:
-                    self._runtime.cancel(ref, owner)
-                snapshot = self._runtime.get(ref, owner)
-        except TransitionError:
-            # Another cancellation/terminal transition may have won the race.
-            snapshot = self._runtime.get(ref, owner)
-        except TaskAccessError:
-            return False
-        if snapshot.state is JobState.CANCELLED:
+        job = handle.execution
+        projection = self._projection
+        if projection is None:
+            projection = RuntimeTaskProjection(job.runtime)
+            if job.assistant_gate is not None:
+                from transbridge.application.assistant_requests.task_controls import request_task_control
+
+                projection.set_request_control(request_task_control(job.assistant_gate.service, job.runtime))
+        snapshot = projection.get(job.ref, job.owner)
+        if action == "cancel" and snapshot.state in {JobState.CANCELLING, JobState.CANCELLED}:
+            return True
+        if (
+            expected_revision is None
+            and job.assistant_gate is None
+            and (
+                (action == "resume" and snapshot.state is JobState.RUNNING)
+                or (action == "pause" and snapshot.state is JobState.PAUSED)
+            )
+        ):
+            job.refresh_controls()
+            return True
+        outcome = projection.control(job.ref, job.owner, action, expected_revision=expected_revision)
+        if outcome.accepted and action == "cancel" and projection.get(job.ref, job.owner).state is JobState.CANCELLED:
             self.notify_finished(task_id, False, "任务已取消")
-        return snapshot.state in {JobState.CANCELLING, JobState.CANCELLED}
+        return outcome.accepted
+
+    def cancel(self, task_id: str) -> bool:
+        return self.control(task_id, "cancel")
 
     def pause(self, task_id: str) -> bool:
-        """暂停任务：clear pause_event，更新状态为 paused。返回是否成功。"""
-        with self._lock:
-            handle = self._tasks.get(task_id)
-            ref = self._refs.get(task_id)
-            owner = self._owners.get(task_id)
-        if handle is None or ref is None or owner is None:
-            return False
-        if handle.pause_event is None:
-            handle.pause_event = threading.Event()
-        try:
-            if self._runtime.get(ref, owner).state is JobState.PAUSED:
-                handle.pause_event.clear()
-                handle.status = JobState.PAUSED.value
-                self._notify_updated(task_id)
-                return True
-            if handle.execution is not None and handle.execution.assistant_gate is not None:
-                snapshot = handle.execution.assistant_gate.control_task(self._runtime, ref, owner, "pause")
-            else:
-                snapshot = self._runtime.pause(ref, owner)
-        except (TaskAccessError, TransitionError):
-            return False
-        return snapshot.state is JobState.PAUSED
+        return self.control(task_id, "pause")
 
     def resume(self, task_id: str) -> bool:
-        """恢复任务：set pause_event，更新状态为 running。返回是否成功。"""
-        with self._lock:
-            handle = self._tasks.get(task_id)
-            ref = self._refs.get(task_id)
-            owner = self._owners.get(task_id)
-        if handle is None or ref is None or owner is None:
-            return False
-        if handle.pause_event is None:
-            handle.pause_event = threading.Event()
-        try:
-            if handle.execution is not None and handle.execution.assistant_gate is not None:
-                snapshot = handle.execution.assistant_gate.control_task(self._runtime, ref, owner, "resume")
-                return snapshot.state is JobState.RUNNING
-            if self._runtime.get(ref, owner).state is JobState.RUNNING:
-                handle.pause_event.set()
-                handle.status = JobState.RUNNING.value
-                self._notify_updated(task_id)
-                return True
-            if handle.execution is not None and handle.execution.assistant_gate is not None:
-                snapshot = handle.execution.assistant_gate.control_task(self._runtime, ref, owner, "resume")
-            else:
-                snapshot = self._runtime.resume(ref, owner)
-        except (TaskAccessError, TransitionError):
-            return False
-        return snapshot.state is JobState.RUNNING
+        return self.control(task_id, "resume")
 
     def get_status(self, task_id: str) -> dict:
         """获取任务状态快照。

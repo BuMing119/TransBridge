@@ -37,11 +37,9 @@ def open_term_editor(parent: QWidget, esp_path: str | None, *, source_key: str |
     if not esp_path and not source_key:
         QMessageBox.warning(parent, "术语库", "尚未选择处理来源。")
         return
-    from transbridge.ai_translator.term_database import DynamicTermDatabase
+    from transbridge.ui.dynamic_terminology_source import load_source_term_database
 
     from ._term_editor_dialog import _TermEditorDialog
-    from .source_terms import source_terminology_path
 
-    database = DynamicTermDatabase(source_terminology_path(esp_path, source_key))
-    database.load()
+    database = load_source_term_database(esp_path, source_key)
     _TermEditorDialog(database, parent=parent).exec()

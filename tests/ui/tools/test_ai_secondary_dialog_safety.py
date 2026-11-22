@@ -23,7 +23,7 @@ def qapp():
 
 @pytest.fixture
 def history(qapp, layout_app, tmp_path, monkeypatch):
-    monkeypatch.setattr(history_module, "get_data_dir", lambda: str(tmp_path))
+    monkeypatch.setattr("transbridge.ai_translator.report_history.get_data_dir", lambda: str(tmp_path))
     directory = tmp_path / "ai_translator" / "Fixture" / "reports"
     directory.mkdir(parents=True)
     report = directory / "Fixture_translate_report_20261019_001000.xlsx"

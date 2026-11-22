@@ -1,37 +1,36 @@
-from types import SimpleNamespace
-from unittest.mock import Mock
+import pytest
 
+from transbridge.config.llm import LLMConfig
 from transbridge.smart_assistant.tools import _common
 from transbridge.smart_assistant.tools.tool_translator import TranslationController
 
 
-def test_smart_assistant_accepts_and_persists_csv_term_source(monkeypatch) -> None:
-    config = SimpleNamespace(
-        term_priority=["dynamic"],
-        local_json_path="",
-        local_csv_path="",
-        local_excel_path="",
-        save_to_file=Mock(),
-    )
+def test_smart_assistant_accepts_and_persists_csv_term_source(tmp_path, monkeypatch) -> None:
+    from tests.contracts.config.test_unified_repository import _repository
+
+    repository = _repository(tmp_path)
+    config = LLMConfig.load_from_file(repository=repository)
     monkeypatch.setattr(_common, "load_llm_config", lambda: config)
 
+    sources = ["csv", "dynamic", "paratranz", "json", "excel"]
     result = TranslationController().set_term_config(
-        {"term_sources": ["csv", "dynamic"], "csv_path": "terms.csv"},
+        {"term_sources": sources, "csv_path": "  terms.csv  "},
         None,
     )
 
     assert result.success
-    assert config.term_priority == ["csv", "dynamic"]
+    assert config.term_priority == sources
     assert config.local_csv_path == "terms.csv"
-    config.save_to_file.assert_called_once_with()
+    assert repository.load().value("llm", "term_priority") == ",".join(sources)
 
 
-def test_smart_assistant_rejects_unknown_term_source(monkeypatch) -> None:
-    config = SimpleNamespace(term_priority=["dynamic"], save_to_file=Mock())
+@pytest.mark.parametrize("order", [[], ["yaml"], ["json", "csv"], ["dynamic", "dynamic", "csv", "excel", "json"]])
+def test_smart_assistant_rejects_unavailable_term_source_order(monkeypatch, order) -> None:
+    config = LLMConfig()
+    monkeypatch.setattr(LLMConfig, "save_to_file", lambda self: pytest.fail("invalid order was saved"))
     monkeypatch.setattr(_common, "load_llm_config", lambda: config)
 
-    result = TranslationController().set_term_config({"term_sources": ["yaml"]}, None)
+    result = TranslationController().set_term_config({"term_sources": order}, None)
 
     assert not result.success
     assert "csv" in result.message
-    config.save_to_file.assert_not_called()

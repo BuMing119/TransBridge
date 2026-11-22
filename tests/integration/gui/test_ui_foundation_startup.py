@@ -71,6 +71,8 @@ class _UseCases:
 
 
 class _Runtime:
+    task_projection = object()
+
     def __init__(self, preferences: UiPreferenceRepository, events: list[str]) -> None:
         self.use_cases = _UseCases(preferences)
         self.tasks = object()
@@ -118,7 +120,7 @@ def test_gui_entrypoint_creates_foundation_before_window_and_closes_it_before_ru
 
     monkeypatch.setattr(agents.AgentRegistry, "init_presets", staticmethod(lambda: None))
     monkeypatch.setattr(tools, "register_all", lambda: None)
-    monkeypatch.setattr(TaskManager, "bind_runtime", lambda _self, _runtime: None)
+    monkeypatch.setattr(TaskManager, "bind_runtime", lambda _self, _runtime, *, projection: None)
 
     assert app_module.main(runtime) == 0
     assert captured["runtime"] is runtime
@@ -159,7 +161,7 @@ def test_gui_entrypoint_keeps_business_window_available_when_foundation_startup_
 
     monkeypatch.setattr(agents.AgentRegistry, "init_presets", staticmethod(lambda: None))
     monkeypatch.setattr(tools, "register_all", lambda: None)
-    monkeypatch.setattr(TaskManager, "bind_runtime", lambda _self, _runtime: None)
+    monkeypatch.setattr(TaskManager, "bind_runtime", lambda _self, _runtime, *, projection: None)
 
     assert app_module.main(runtime) == 0
     assert captured["ui_foundation"] is None

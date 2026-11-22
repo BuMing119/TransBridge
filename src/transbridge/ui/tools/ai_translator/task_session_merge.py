@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-from transbridge.application.contracts import OperationResult
-from transbridge.application.tasks.result_application import ResultApplication, prior_merge_plan, select_saved_rows
+from transbridge.application.tasks.result_application import ResultApplication
 from transbridge.application.translation.result_merge import ResultEntryChange, ResultEntryState
+from transbridge.application.translation.saved_candidates import apply_saved_candidates
 
 
 def freeze_changes(draft, keys):
@@ -41,19 +41,16 @@ def freeze_application(session, candidates):
     )
 
     def operation():
-        application = None
-        if service is not None:
-            rows = select_saved_rows(recovery, task_id, candidates)
-            application = service.prepare(task_id, *session.version_identity, rows, policy)
-            prior = prior_merge_plan(application)
-            if prior is not None:
-                return OperationResult.completed(prior)
-        result = merge(application.request.operation_id if application is not None else None)
-        if result.is_success and writer is not None:
-            writer.acknowledge(candidates, result.value, policy)
-        if result.is_success and application is not None:
-            service.finish(application, result.value)
-        return result
+        return apply_saved_candidates(
+            recovery=recovery,
+            service=service,
+            task_id=task_id,
+            identity=session.version_identity,
+            candidates=candidates,
+            policy=policy,
+            writer=writer,
+            merge=merge,
+        ).result
 
     return operation
 

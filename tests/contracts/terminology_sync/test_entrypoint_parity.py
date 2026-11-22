@@ -45,8 +45,8 @@ def test_agent_and_legacy_mcp_project_the_same_shared_plan_hash_and_counts() -> 
     ctx = _Context()
     spec = ToolRegistry.get("terminology_sync_plan")
 
-    agent = spec.execute({"mode": "backup", "limit": 20}, ctx)
-    mcp = MCPAdapter(ctx=ctx).call_tool("terminology_sync_plan", {"mode": "backup", "limit": 20})
+    agent = spec.execute({"mode": "backup"}, ctx)
+    mcp = MCPAdapter(ctx=ctx).call_tool("terminology_sync_plan", {"mode": "backup"})
     mcp_data = mcp["structuredContent"]["value"]["data"]
 
     assert agent.success
@@ -54,3 +54,4 @@ def test_agent_and_legacy_mcp_project_the_same_shared_plan_hash_and_counts() -> 
     assert mcp_data == agent.data
     assert mcp_data["ref"]["plan_hash"] == "a" * 64
     assert mcp_data["counts"] == [["create_remote", 2]]
+    assert MCPAdapter(ctx=ctx).call_tool("terminology_sync_plan", {"mode": "backup", "limit": 20})["isError"]

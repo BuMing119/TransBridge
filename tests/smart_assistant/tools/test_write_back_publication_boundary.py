@@ -35,7 +35,9 @@ def plugin_case(tmp_path):
         active_slot=SimpleNamespace(source_snapshot=parsed.source_snapshot, collection=collection),
         request_context=request,
     )
-    return SimpleNamespace(source=source, output=tmp_path / "output.esp", context=context)
+    output = tmp_path / "output"
+    output.mkdir()
+    return SimpleNamespace(source=source, output=output / source.name, context=context)
 
 
 def _finish(manager, started, expected):
@@ -64,7 +66,9 @@ def test_output_plugin_is_never_used_as_a_transfer_template(plugin_case, manager
     write_plugin(case.output, [(0x800, "First", "Changed target"), (0x802, "Added", "New target record")])
     before = case.output.read_bytes()
     source_before = case.source.read_bytes()
-    started = tool_writer._tool_write_back({"target": "esp", "path": str(case.output), "overwrite": True}, case.context)
+    started = tool_writer._tool_write_back(
+        {"target": "esp", "output_dir": str(case.output.parent), "overwrite": True}, case.context
+    )
     handle = _finish(manager, started, "completed")
 
     assert _texts(case.output) == ["Translated Original", "Translated Unchanged"]
@@ -72,7 +76,7 @@ def test_output_plugin_is_never_used_as_a_transfer_template(plugin_case, manager
     assert handle.result["outcome"] == "completed"
     assert handle.result["artifacts"] == [str(case.output)]
     assert handle.result["backup_path"]
-    assert next(case.output.parent.glob(".output.esp.*.bak")).read_bytes() == before
+    assert next(case.output.parent.glob(".source.esp.*.bak")).read_bytes() == before
 
 
 @pytest.mark.parametrize("mutation", ["missing", "format", "content"])
@@ -87,7 +91,7 @@ def test_invalid_source_snapshot_rejects_before_task_registration(plugin_case, m
             **({"format_id": FormatId.XML_XT} if mutation == "format" else {"content": None, "lease_id": "unhydrated"}),
         )
     )
-    result = tool_writer._tool_write_back({"target": "esp", "path": str(case.output)}, case.context)
+    result = tool_writer._tool_write_back({"target": "esp", "output_dir": str(case.output.parent)}, case.context)
     assert not result.success
     assert result.error_code == ("WRITE_PLUGIN_INPUT_REQUIRED" if mutation == "content" else "SOURCE_SNAPSHOT_REQUIRED")
     assert not manager.list_all()
@@ -102,7 +106,7 @@ def test_missing_source_locator_fails_entire_publication(plugin_case, manager):
         replace(entries[0], original="Stale"),
         entries[1],
     ))
-    started = tool_writer._tool_write_back({"target": "esp", "path": str(case.output)}, case.context)
+    started = tool_writer._tool_write_back({"target": "esp", "output_dir": str(case.output.parent)}, case.context)
     handle = _finish(manager, started, "failed")
     assert not case.output.exists()
     assert handle.result["outcome"] == "failed"
@@ -119,7 +123,7 @@ def test_publication_fault_retains_outcome_artifacts_and_diagnostics(plugin_case
         raise OSError("injected fsync failure")
 
     monkeypatch.setattr(OsPublishFilesystem, "fsync_directory" if after_replace else "fsync_file", fail_sync)
-    started = tool_writer._tool_write_back({"target": "esp", "path": str(case.output)}, case.context)
+    started = tool_writer._tool_write_back({"target": "esp", "output_dir": str(case.output.parent)}, case.context)
     handle = _finish(manager, started, "failed")
     assert case.output.exists() is after_replace
     assert handle.result["outcome"] == ("partial" if after_replace else "failed")
@@ -138,7 +142,7 @@ def test_post_publish_undo_failure_retains_already_committed_artifact(plugin_cas
         raise OSError("undo receipt could not be persisted")
 
     monkeypatch.setattr(tool_writer, "capture_file_command", fail_receipt)
-    started = tool_writer._tool_write_back({"target": "esp", "path": str(case.output)}, case.context)
+    started = tool_writer._tool_write_back({"target": "esp", "output_dir": str(case.output.parent)}, case.context)
     handle = _finish(manager, started, "failed")
     assert _texts(case.output) == ["Translated Original", "Translated Unchanged"]
     assert handle.result["artifacts"] == [str(case.output)]

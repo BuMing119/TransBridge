@@ -179,9 +179,11 @@ class RequestManagementBinding:
             or not execution_allowed(binding.facade)
         ):
             return
+        selection = binding._selection()
+        if selection is None:
+            return
         self._operations.add(key)
         command_id = self._restart_commands.setdefault(key, uuid4().hex)
-        selection = binding._selection()
         binding._user_stopped = False
 
         def work():
@@ -254,6 +256,9 @@ class RequestManagementBinding:
         if not ok or binding.context != context or binding._closed or not execution_allowed(binding.facade):
             return
         target = targets[names.index(name)]
+        selection = binding._selection()
+        if selection is None:
+            return
         binding.interrupt()
         try:
             binding.service.reassign(
@@ -264,7 +269,7 @@ class RequestManagementBinding:
                 expected_source_revision=source.revision,
                 expected_target_revision=target.revision,
                 text=f"将事项 {label} 从 {source.goal} 调整到 {target.goal}",
-                selection=binding._selection(),
+                selection=selection,
             )
             self.sync_inputs()
         except Exception as exc:

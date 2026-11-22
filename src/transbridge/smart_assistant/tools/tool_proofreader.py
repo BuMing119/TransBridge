@@ -1,132 +1,108 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""Preset-aware post-processing tools for Smart Assistant."""
+"""Read task quality summaries and the desktop's exported report catalog."""
 
 from __future__ import annotations
 
-from copy import deepcopy
-import threading
+from dataclasses import asdict
 
 from .base import ToolResult, require_runtime_context
 
-_last_reports: dict[tuple, dict] = {}
-_last_report_lock = threading.Lock()
-
-
-def _report_scope(ctx) -> tuple:
-    from .translation_task_results import _caller
-
-    app, context = _caller(ctx)
-    identity = getattr(ctx, "_target_version_identity", None) or getattr(app, "active_version_identity", None)
-    return context.owner_id, context.session_id, identity
-
-
-def set_last_report(report: dict | None, ctx) -> None:
-    """Thread-safe write used by post-process and polish tools."""
-
-    scope = _report_scope(ctx)
-    with _last_report_lock:
-        if report is None:
-            _last_reports.pop(scope, None)
-        else:
-            _last_reports[scope] = deepcopy(report)
-
-
-def get_last_report(ctx) -> dict | None:
-    """Return the most recent canonical post-process summary."""
-
-    scope = _report_scope(ctx)
-    with _last_report_lock:
-        return deepcopy(_last_reports.get(scope))
-
 
 class ProofreaderController:
-    """Coordinate proofreader tools without owning execution details."""
-
-    def __init__(self, app_context=None, task_manager=None):
-        self._ctx = app_context
-        self._task_mgr = task_manager
-
-    def run_postprocess(self, args: dict, ctx) -> ToolResult:
-        """Start one preset-aware Proofread or strict post-process task."""
-
-        from .postprocess_task_run import launch_postprocess_task
-
-        return launch_postprocess_task(
-            args,
-            ctx,
-            report_callback=set_last_report,
-            manager=self._task_mgr,
-        )
-
     def get_quality_report(self, args: dict, ctx) -> ToolResult:
-        """Return the most recent post-process or polish report."""
+        from transbridge.application.tasks.history_service import load_candidate_report
+        from transbridge.application.translation.task_history import restore_report_snapshot
+        from transbridge.ui.tools.ai_translator.reporting import report_overview
+
+        from .translation_task_results import _caller, _recovery_view, _result_location
 
         try:
-            report = get_last_report(ctx)
+            app, context = _caller(ctx)
         except ValueError as exc:
             return ToolResult.fail(str(exc), error_code="TASK_RESULT_SCOPE_REQUIRED")
-        if report is None:
+        identity = getattr(app, "active_version_identity", None)
+        if getattr(ctx, "_target_version_identity", identity) != identity:
+            return ToolResult.fail("工程版本已切换，请重新查询报告。", error_code="TASK_RESULT_SCOPE_REQUIRED")
+        if identity is None:
             return ToolResult.ok("暂无质量报告", data={"reports": []})
-        phase = report.get("phase", "postprocess")
-        if phase == "polish":
-            lines = [
-                f"最近润色报告: 条目{report.get('entry_count', '?')}条, "
-                f"润色级别{report.get('polish_level', '?')}, 范围{report.get('scope', '?')}, "
-                f"变更总计{report.get('total', '?')}处"
-            ]
-        else:
-            lines = [
-                f"最近报告: 策略{report.get('strategy', '?')}, 检查{report.get('total_checked', '?')}条, "
-                f"发现问题{report.get('issue_count', '?')}个, 自动修复{report.get('auto_fixed', '?')}个"
-            ]
-            verdicts = report.get("verdict_stats", {})
-            if verdicts:
-                lines.append(
-                    f"结果: 通过{verdicts.get('passed', 0)}/"
-                    f"拒绝{verdicts.get('rejected', 0)}/待审{verdicts.get('pending', 0)}"
-                )
-        if report.get("report_file"):
-            lines.append(f"报告文件: {report['report_file']}")
-        return ToolResult.ok(" | ".join(lines), data={"reports": [report]})
+        try:
+            store = _result_location(app)
+            recovery = _recovery_view(store, context)
+            records = recovery.list_summaries(
+                project_id=identity[0], variant_id=identity[1], states=("completed", "partial", "failed", "cancelled")
+            )
+            record = next(
+                (
+                    item
+                    for item in records
+                    if item.get("origin") == "smart-assistant"
+                    and item.get("mode") in {"translate", "polish", "mixed", "postprocess"}
+                ),
+                None,
+            )
+            if record is None:
+                return ToolResult.ok("暂无质量报告", data={"reports": []})
+            result_id = record["task_id"]
+            history = store.history(owner_id=context.owner_id, session_id=context.session_id)
+            report = (
+                history.load(result_id) if history.contains(result_id) else load_candidate_report(recovery, result_id)
+            )
+            summaries = []
+            for source in report["sources"]:
+                if not source.get("snapshot"):
+                    continue
+                snapshot = restore_report_snapshot(source["snapshot"])
+                summaries.append({
+                    "source": source["label"],
+                    "input": snapshot.input_count,
+                    "accepted": snapshot.accepted_count,
+                    "issues": snapshot.issue_count,
+                    "failures": snapshot.failure_count,
+                    **asdict(report_overview(snapshot)),
+                })
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return ToolResult.fail(f"无法读取任务质量报告：{exc}", error_code="TASK_RESULT_UNAVAILABLE")
+        return ToolResult.ok(
+            "已读取任务质量报告" if summaries else "该任务没有已保存的质量报告条目",
+            data={
+                "result_id": result_id,
+                "state": record["state"],
+                "error": record.get("error", ""),
+                "reports": summaries,
+            },
+        )
 
     def list_quality_reports(self, args: dict, ctx) -> ToolResult:
-        """List historical post-process Excel reports."""
-        from .translation_task_results import _caller, _recovery_view, _result_location
+        """List the newest workbooks shown in the desktop report history."""
+        from transbridge.ai_translator.report_history import list_exported_reports
+
+        from .translation_task_results import _caller
 
         limit = args.get("limit", 50)
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             return ToolResult.fail("limit 必须是正整数")
-        files = []
         try:
-            app, context = _caller(ctx)
-            task_store = _result_location(app)
-            recovery = _recovery_view(task_store, context)
-            for record in recovery.list_summaries():
-                if record.get("origin") != "smart-assistant" or record.get("mode") != "postprocess":
-                    continue
-                reports_dir = task_store.run_directory(record["task_id"]) / "reports"
-                for path in reports_dir.glob("*.xlsx"):
-                    stat = path.stat()
-                    files.append({
-                        "name": path.name,
-                        "size": stat.st_size,
-                        "modified_at": stat.st_mtime,
-                        "result_id": record["task_id"],
-                    })
-                if len(files) >= limit:
-                    break
-        except (OSError, ValueError) as exc:
-            return ToolResult.fail(str(exc), error_code="TASK_RESULT_UNAVAILABLE")
-        files = sorted(files, key=lambda item: item["modified_at"], reverse=True)[:limit]
-        return ToolResult.ok(f"共 {len(files)} 份报告" if files else "暂无历史报告", data={"files": files})
+            _caller(ctx)
+        except ValueError as exc:
+            return ToolResult.fail(str(exc), error_code="TASK_RESULT_SCOPE_REQUIRED")
+        try:
+            reports = list_exported_reports()
+        except OSError as exc:
+            return ToolResult.fail(f"无法读取历史报告目录：{exc}", error_code="REPORT_HISTORY_UNAVAILABLE")
+        files = [
+            {
+                "name": report["filename"],
+                "mode": report["mode"],
+                "esp_stem": report["esp_stem"],
+                "timestamp": report["timestamp"].isoformat(timespec="seconds") if report["timestamp"] else None,
+                "size": report["size"],
+            }
+            for report in reports[:limit]
+        ]
+        return ToolResult.ok(f"已列出 {len(files)} 份报告" if files else "暂无历史报告", data={"files": files})
 
 
 _proofreader_ctrl = ProofreaderController()
-
-
-@require_runtime_context
-def _tool_run_postprocess(args: dict, ctx) -> ToolResult:
-    return _proofreader_ctrl.run_postprocess(args, ctx)
 
 
 @require_runtime_context
@@ -146,74 +122,9 @@ def _register_proofreader_tools() -> None:
         "proofreader",
         [
             {
-                "name": "run_postprocess",
-                "display_name": "校对 / 严格后处理",
-                "description": (
-                    "Run proofreading with the built-in polish preset by default. profile may be "
-                    "translate/polish/mixed, custom (the selected named configuration), or a named configuration "
-                    "name/UUID; strategy is proofread or strict. entry_ids takes priority; otherwise scope is "
-                    "configured/set_scope/all/passed/has_issues. intensity is "
-                    "configured/light/medium/heavy. In strict mode, "
-                    "phases may select consistency/format/quality_gate/refinement/"
-                    "polish/arbitration; legacy calls supplying only phases automatically use strict. max_concurrent, "
-                    "max_tokens_per_batch, max_output_tokens, and max_terms_per_batch may be overridden; max_workers "
-                    "remains a "
-                    "legacy concurrency alias. Runs in the background and requires user confirmation."
-                ),
-                "execute": _tool_run_postprocess,
-                "permission": "write",
-                "is_long_running": True,
-                "require_confirmation": True,
-                "parameters": {
-                    "profile": {
-                        "type": "str",
-                        "required": False,
-                        "description": "Preset or named workflow; default polish",
-                    },
-                    "strategy": {
-                        "type": "str",
-                        "required": False,
-                        "description": "proofread or strict; default proofread",
-                    },
-                    "phases": {
-                        "type": "list",
-                        "required": False,
-                        "description": "Strict-mode phases; supplying them selects strict automatically",
-                    },
-                    "entry_ids": {"type": "list", "required": False, "description": "Entry keys to process first"},
-                    "scope": {
-                        "type": "str",
-                        "required": False,
-                        "description": "configured/set_scope/all/passed/has_issues",
-                    },
-                    "intensity": {"type": "str", "required": False, "description": "configured/light/medium/heavy"},
-                    "max_concurrent": {
-                        "type": "int",
-                        "required": False,
-                        "description": "Shared maximum in-flight requests (1-128)",
-                    },
-                    "max_tokens_per_batch": {
-                        "type": "int",
-                        "required": False,
-                        "description": "Maximum business-content tokens per request",
-                    },
-                    "max_output_tokens": {
-                        "type": "int",
-                        "required": False,
-                        "description": "Maximum output tokens; 0 omits the value when supported by the provider",
-                    },
-                    "max_terms_per_batch": {
-                        "type": "int",
-                        "required": False,
-                        "description": "Maximum terminology entries injected per item",
-                    },
-                    "max_workers": {"type": "int", "required": False, "description": "Legacy concurrency alias (1-8)"},
-                },
-            },
-            {
                 "name": "get_quality_report",
                 "display_name": "质量报告",
-                "description": "Return the latest run_postprocess or start_polish report summary; no arguments.",
+                "description": "Read the latest saved AI task quality report for this session and project version.",
                 "execute": _tool_get_quality_report,
                 "permission": "read",
                 "parameters": {},
@@ -221,7 +132,8 @@ def _register_proofreader_tools() -> None:
             {
                 "name": "list_quality_reports",
                 "display_name": "历史报告",
-                "description": "List historical post-processing Excel reports; optional limit, default 50.",
+                "description": "List exported Excel files in the desktop AI translation report history across plugins, "
+                "newest first. Returns name, report type, plugin, time and size. Optional limit, default 50.",
                 "execute": _tool_list_quality_reports,
                 "permission": "read",
                 "parameters": {

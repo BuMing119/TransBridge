@@ -13,13 +13,13 @@ from transbridge.converter.translation_entry import STAGE_LABELS
 
 def build_entry_menu(
     *,
-    target_entry_ids: tuple[str, ...],
     current_stage: int | None,
     label_library: Mapping[str, Mapping[str, str]],
     assigned_labels: set[str],
-    on_label_toggle: Callable[[tuple[str, ...], str, bool], None],
+    label_error: str,
+    on_label_toggle: Callable[[str, bool], None],
     on_manage_labels: Callable[[], None],
-    on_create_label: Callable[[tuple[str, ...]], None],
+    on_create_label: Callable[[], None],
     on_stage_change: Callable[[int], None],
     parent: QWidget,
     on_cancel_translation: Callable[[], None] | None = None,
@@ -28,6 +28,8 @@ def build_entry_menu(
     """Build a stateless menu that emits intents through explicit callbacks."""
     menu = QMenu(parent)
     label_menu = menu.addMenu("标签")
+    if label_error:
+        label_menu.addAction(label_error).setEnabled(False)
     if not label_library:
         no_label = label_menu.addAction("暂无标签，请先创建")
         no_label.setEnabled(False)
@@ -36,10 +38,11 @@ def build_entry_menu(
             action = label_menu.addAction(f"● {info['name']}")
             action.setCheckable(True)
             action.setChecked(label_id in assigned_labels)
-            action.toggled.connect(lambda checked, value=label_id: on_label_toggle(target_entry_ids, value, checked))
+            action.setEnabled(not label_error)
+            action.toggled.connect(lambda checked, value=label_id: on_label_toggle(value, checked))
     label_menu.addSeparator()
     label_menu.addAction("管理标签…", on_manage_labels)
-    label_menu.addAction("+ 新建标签…", lambda: on_create_label(target_entry_ids))
+    label_menu.addAction("+ 新建标签…", on_create_label).setEnabled(not label_error)
 
     stage_menu = menu.addMenu("翻译状态")
     stage_group = QActionGroup(stage_menu)

@@ -1,6 +1,10 @@
 """Current lifecycle, command and projection fixture for widget editing tests."""
 
 from dataclasses import replace
+from types import SimpleNamespace
+
+from PyQt6.QtWidgets import QApplication
+import pytest
 
 from tests.application.projects.test_lifecycle import _active, _harness, _refs
 from transbridge.application.contracts import RequestContext
@@ -67,3 +71,23 @@ class CurrentEditingProject:
     def close(self):
         self.context.close_projection()
         self.store.close()
+
+
+@pytest.fixture
+def current_project_factory(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(
+        "transbridge.paratranz.config_manager.ParatranzConfig.create_or_load",
+        lambda: SimpleNamespace(token="test-token", credential_configured=True, user_id=None),
+    )
+    projects = []
+
+    def build(entries, **options):
+        project = CurrentEditingProject(entries, **options)
+        projects.append(project)
+        return project
+
+    yield build
+    app.processEvents()
+    for project in reversed(projects):
+        project.close()

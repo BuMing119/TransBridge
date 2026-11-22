@@ -19,6 +19,7 @@ from transbridge.ui.foundation.components import (
     reserve_text_width,
 )
 from transbridge.ui.foundation.components.elided_combo_box import ElidedComboBox
+from transbridge.ui.projection_types import projected_variant_name
 from transbridge.ui.text_encoding import context_text_encodings, text_encoding_summary
 from transbridge.ui.workbench.save_presenter import SavePhase, SaveStatePresenter, SaveTarget, SaveViewState
 from transbridge.ui.workbench.workflow_presenter import WorkbenchHierarchyViewState, WorkbenchWorkflowPresenter
@@ -235,11 +236,7 @@ class ProjectBar(QWidget):
         project_id = getattr(self._ctx, "active_project_id", None)
         project_name = getattr(self._ctx, "project_name", None)
         variant_id = self._ctx.active_variant_id
-        variant_name = None
-        for value in self._ctx.project_variants:
-            if str(value["id"]) == str(variant_id):
-                variant_name = str(value["name"])
-                break
+        variant_name = projected_variant_name(self._ctx.project_variants, variant_id)
         if not all((project_id, project_name, variant_id)):
             return None
         return SaveTarget(str(project_id), str(project_name), str(variant_id), variant_name or str(variant_id))
@@ -279,11 +276,7 @@ class ProjectBar(QWidget):
         variants = self._ctx.project_variants
         variant = self._ctx.active_variant_id
 
-        variant_name = None
-        for value in variants:
-            if str(value["id"]) == str(variant):
-                variant_name = str(value["name"])
-                break
+        variant_name = projected_variant_name(variants, variant)
         self._hierarchy_state = self._workflow_presenter.hierarchy(
             project_id=getattr(self._ctx, "active_project_id", None) or project_name,
             project_name=project_name,

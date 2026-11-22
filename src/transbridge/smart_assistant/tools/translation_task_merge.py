@@ -5,24 +5,19 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from transbridge.application.translation.result_merge import ResultConflictPolicy, ResultEntryChange, ResultEntryState
+from transbridge.application.translation.result_merge import ResultConflictPolicy
+from transbridge.application.translation.saved_candidates import apply_saved_candidates, saved_candidate_change
 from transbridge.application.translation.task_merge_evidence import TaskMergeEvidenceStore
-from transbridge.application.translation.task_result_recovery import recovery_source_context
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
 
 def merge_saved_results(ctx, store, record, payload, *, policy=None, execution=None, evidence=None):
     """Reapply existing successful results without entering any model execution path."""
-    from transbridge.application.tasks.result_application import ResultApplication, prior_merge_plan
+    from transbridge.application.tasks.result_application import ResultApplication
 
     from .translation_task_results import _MERGE_PENDING, _RUN_LOCK, _authorized, _caller, task_ports
     from .types import ExecutionContext
     from .undo_capture import capture_variant_command
-
-    if record.get("result_kind") == "source":
-        from ._source_import import merge_source_result
-
-        return merge_source_result(ctx, store, record)
 
     app, caller = _caller(ctx)
     _authorized(record, caller)
@@ -33,40 +28,17 @@ def merge_saved_results(ctx, store, record, payload, *, policy=None, execution=N
     if (record["project_id"], record["variant_id"]) != identity:
         raise ValueError("任务对应的工程版本已切换，成果已保留，请切回原版本再合入。")
     policy = ResultConflictPolicy(policy or record.get("conflict_policy", "keep_current"))
-    candidates = tuple(
-        ResultEntryChange(
-            ResultEntryState(
-                entry_key=_key(row),
-                original=row["before"]["original"],
-                translation=row["before"]["translation"],
-                stage=row["before"]["stage"],
-                context=recovery_source_context(row["before"]),
-                source_locator=row["before"].get("source_locator"),
-            ),
-            ResultEntryState(
-                entry_key=_key(row),
-                original=row["before"]["original"],
-                translation=row["text"],
-                stage=row["stage"],
-                context=recovery_source_context(row["before"]),
-                source_locator=row["before"].get("source_locator"),
-            ),
-        )
-        for row in (payload or {}).get("rows", ())
-    )
+    rows = (payload or {}).get("rows", ())
+    if record.get("result_kind") not in {None, "download", "import", "dictionary"} or not rows:
+        raise ValueError("此任务没有可合入的已保存译文。")
+    candidates = tuple(saved_candidate_change(row) for row in rows)
+    selected = vars(ctx).get("selected_entries") if isinstance(ctx, ExecutionContext) else None
+    if getattr(ctx, "_source_input_full_collection", None) is not None or selected:
+        allowed = {entry.identity for entry in (selected or ctx.collection)}
+        if any(candidate.base.entry_key not in allowed for candidate in candidates):
+            raise ValueError("任务成果包含请求范围以外的词条。")
     evidence = evidence or TaskMergeEvidenceStore(store.run_directory(record["task_id"]), record["task_id"])
     application_service = ResultApplication.for_commands(store, commands)
-    application = None
-    if application_service is not None and candidates:
-        application = application_service.prepare(record["task_id"], *identity, payload["rows"], policy)
-        if (prior := prior_merge_plan(application)) is not None:
-            return {
-                "applied_count": 0,
-                "unchanged_count": len(prior.unchanged_keys),
-                "policy": policy.value,
-                "application_state": application.state.value,
-                "receipt_saved": application.state.value == "committed",
-            }, ""
     dispatch = ctx if isinstance(ctx, ExecutionContext) else ExecutionContext(app_context=ctx)
 
     commit_warnings = []
@@ -99,8 +71,8 @@ def merge_saved_results(ctx, store, record, payload, *, policy=None, execution=N
 
     completed = []
 
-    def command():
-        operation = {"operation_id": application.request.operation_id} if application is not None else {}
+    def command(operation_id):
+        operation = {"operation_id": operation_id} if operation_id is not None else {}
         result = commands.merge_entry_states(
             candidates,
             context,
@@ -130,18 +102,34 @@ def merge_saved_results(ctx, store, record, payload, *, policy=None, execution=N
         )
 
     warning = ""
-    try:
-        dispatch.safe_mutate_wait(lambda: capture_variant_command(ctx, command))
-    except Exception as exc:
-        if not completed or not completed[0].is_success:
-            raise
-        warning = f"合入已完成，但助手执行或撤销回执尚未保存：{exc}"
-    result = completed[0]
+
+    def merge(operation_id):
+        nonlocal warning
+        try:
+            dispatch.safe_mutate_wait(lambda: capture_variant_command(ctx, lambda: command(operation_id)))
+        except Exception as exc:
+            if not completed or not completed[0].is_success:
+                raise
+            warning = f"合入已完成，但助手执行或撤销回执尚未保存：{exc}"
+        return completed[0]
+
+    outcome = apply_saved_candidates(
+        recovery=store,
+        service=application_service,
+        task_id=record["task_id"],
+        identity=identity,
+        candidates=candidates,
+        policy=policy,
+        writer=evidence,
+        merge=merge,
+        rows=rows,
+    )
+    result = outcome.result
     if not result.is_success:
         details = "; ".join(item.message for item in result.diagnostics)
         raise RuntimeError(f"成果已保存，合入未完成：{details}")
     plan = result.value
-    acknowledged = evidence.acknowledge(candidates, plan, policy)
+    acknowledged = outcome.evidence_saved
     summary = {
         "applied_count": len(plan.applied),
         "unchanged_count": len(plan.unchanged_keys),
@@ -150,9 +138,11 @@ def merge_saved_results(ctx, store, record, payload, *, policy=None, execution=N
         "receipt_saved": acknowledged,
         "policy": policy.value,
     }
-    if application is not None:
-        outcome = application_service.finish(application, plan)
-        summary.update(application_state=outcome.state.value, receipt_saved=outcome.state.value == "committed")
+    if outcome.application is not None:
+        state = outcome.application.state.value
+        summary.update(application_state=state, receipt_saved=state == "committed")
+    if outcome.previously_applied:
+        return summary, ""
     warning = "; ".join(filter(None, (warning, evidence.error, *commit_warnings)))
     applied = {row.entry_key for row in plan.applied} | set(plan.unchanged_keys)
     kept = set(plan.kept_current_keys)

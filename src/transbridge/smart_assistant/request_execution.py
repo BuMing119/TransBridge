@@ -35,7 +35,7 @@ from transbridge.application.assistant_requests.step_execution import (
 )
 from transbridge.application.io.publish import CommitDecision
 
-from .request_scope import apply_captured_scope, execution_version
+from .request_scope import WORKBENCH_SCOPE_TOOLS, apply_captured_scope, execution_version, with_scope_change
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,7 +339,38 @@ class RequestExecutionGate:
         if spec is None:
             raise RequestError("REQUEST_PROTOCOL_INVALID", "tool is not registered")
         ingress = self.service.state(self.context).get("ingress", ())
-        apply_captured_scope(request, ingress, execution_context, require_selection=spec.request_scope == "selection")
+        apply_captured_scope(
+            request,
+            ingress,
+            execution_context,
+            require_selection=spec.request_scope == "selection",
+            workbench=tool_name in WORKBENCH_SCOPE_TOOLS,
+        )
+
+    def change_workbench_filter(self, context, update):
+        """Apply a view change and keep its scope across steps of the same admitted request."""
+        return self._change_scope(context, update, "set_filters", "filter_state", "workbench_filter")
+
+    def change_translation_scope(self, context, update):
+        return self._change_scope(context, update, "set_scope", "translation_scope", "translation_scope")
+
+    def _change_scope(self, context, update, tool, field, receipt):
+        with self.service.serialized(self.context):
+            request = self.current_request()
+            self._validate(request, tool)
+            self._validate_scope(request, context, tool)
+            previous = getattr(context.app_context, field)
+            state, unchanged = update()
+            try:
+                self.service.update_request(
+                    self.context,
+                    request.request_id,
+                    lambda current: with_scope_change(current, context, receipt, state),
+                )
+            except Exception:
+                setattr(context.app_context, field, previous)
+                raise
+            return state, unchanged
 
     def after(self, handle: EffectHandle, result) -> None:
         if not handle.effect_id:
@@ -455,11 +486,6 @@ class RequestExecutionGate:
         else:
             self._validate(self.current_request(), "propose_plan", require_allowed=False)
 
-    def control_task(self, runtime, ref, actor, action):
-        from transbridge.application.assistant_requests.task_controls import request_task_control
-
-        return request_task_control(self.service, runtime)(ref, actor, action)
-
     def commit(self, effect_id: str, mutation, *, runtime_commit=None) -> CommitDecision:
         """Compose request and existing runtime guard; never retry an executed mutation."""
         try:
@@ -477,7 +503,7 @@ class RequestExecutionGate:
                         context = self._contexts.get(effect_id)
                         version_json = request.execution_version_json
                         if context is not None:
-                            version_json = execution_version(context)
+                            version_json = execution_version(context, version_json)
                         return replace(
                             request,
                             execution_version_json=version_json,

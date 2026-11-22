@@ -65,6 +65,22 @@ class TestExecutionEngine(unittest.TestCase):
 
     # ── 图执行 ──────────────────────────────────────────────────
 
+    def test_saved_plan_with_removed_tool_never_executes_earlier_steps(self):
+        from unittest.mock import Mock
+
+        active = FakeToolSpec("write")
+        active.execute = Mock()
+        self.registry.get = {"write": active}.get
+        for removed in ("recover_upload_associations", "plan_sync", "migrate_entries", "run_postprocess"):
+            results = self.engine.execute([
+                {"id": 1, "tool": "write", "args": {}},
+                {"id": 2, "tool": removed, "args": {}, "depends_on": [1]},
+            ])
+            self.assertEqual(len(results), 1)
+            self.assertFalse(results[0].success)
+            self.assertEqual(results[0].tool, removed)
+        active.execute.assert_not_called()
+
     def test_execute_linear_graph(self):
         nodes = [
             ActionNode(node_id="step_A", node_type="action", tool="tool_a"),

@@ -13,7 +13,7 @@ from transbridge.application.io import FormatId, legacy_migration, migration_imp
 from transbridge.application.io.eet_source import probe_eet_format
 from transbridge.application.io.migration_import import MigrationImportError
 from transbridge.application.io.migration_snapshot import detached_entries
-from transbridge.application.io.translation_import import prepare_translation_import
+from transbridge.application.io.translation_import import changed_translation_states, prepare_translation_import
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence.project_store.format import ProjectStorageConflict
@@ -30,7 +30,7 @@ _TARGET_CHANGED = (
 
 
 @dataclass(frozen=True)
-class _Target:
+class MigrationTarget:
     slot: object
     collection: TranslationEntryCollection | ProjectRowsCollection
     revision: object
@@ -105,7 +105,7 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
     active_slot = context.active_slot
     apply_all = bool(cfg.strings_apply_all and cfg.strings_dir)
     slots = tuple(scope.slots.values()) if apply_all else (slot,)
-    targets = tuple(_Target.capture(value) for value in slots)
+    targets = tuple(MigrationTarget.capture(value) for value in slots)
     sources = tuple(
         (path, hint)
         for path, hint in (
@@ -165,12 +165,7 @@ def run_migration(host, slot, config, *, source_keys=None) -> None:
                 )
                 labels.extend(formats)
                 skipped += unmatched
-            previous = {entry.identity: (entry.translation, entry.stage) for entry in entries}
-            changes = {
-                entry.identity: (entry.translation, entry.stage)
-                for entry in candidate
-                if (entry.translation, entry.stage) != previous[entry.identity]
-            }
+            changes = changed_translation_states(entries, candidate)
             for key, state in changes.items():
                 if key in states and states[key] != state:
                     raise MigrationImportError(

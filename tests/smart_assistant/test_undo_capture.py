@@ -11,6 +11,7 @@ from transbridge.application.assistant_requests.models import RequestError
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
 from transbridge.application.io.identity import ExternalEntryRef
 from transbridge.application.io.publish import CommitDecision
+from transbridge.application.projects import EntryStatePatch
 from transbridge.application.projects.assistant_undo import VariantUndoReceipt, build_variant_inverse
 from transbridge.application.projects.gui_facade import GuiProjectCommandFacade
 from transbridge.converter.translation_entry import TranslationEntry
@@ -22,8 +23,11 @@ from transbridge.smart_assistant.tools.tool_editor import (
     _tool_manage_entry_labels,
     _tool_set_stage,
 )
+from transbridge.smart_assistant.tools.tool_migrator import _tool_apply_dictionary
 from transbridge.smart_assistant.tools.types import ExecutionContext
 from transbridge.smart_assistant.tools.undo_capture import capture_variant_command
+from transbridge.translation_memory.manager import TranslationMemoryManager
+from transbridge.ui.entry_projection import EntryProjectionUpdate
 
 pytest_plugins = ["tests.application.assistant_requests.test_request_repository"]
 
@@ -56,8 +60,8 @@ def _adapter(composed):
         variant_revision=before.revision,
         project_commands=commands,
         runtime_context=replace(context, run_id="local-command"),
-        _project_projection=SimpleNamespace(
-            snapshot=lambda: SimpleNamespace(values=harness.service.active.variant.snapshot().to_dto().envelope.data)
+        entry_projection=lambda keys: EntryProjectionUpdate.from_snapshot(
+            SimpleNamespace(values=harness.service.active.variant.snapshot().to_dto().envelope.data), keys=keys
         ),
     )
     app.replace_projected_labels = lambda entries, labels, **kwargs: commands.replace_labels(
@@ -99,11 +103,18 @@ def test_real_variant_command_entrypoints_persist_scoped_inverse(composed, entry
             {first.identity: {"assistant-label"}}, {"assistant-label": {"name": "Assistant label"}}, before=({}, {})
         ).is_success
     else:
-        ProjectToolTarget.capture(context).commit_records((
-            replace(
-                first, translation="imported change", external_refs=(ExternalEntryRef("paratranz", "project:1", 99),)
+        capture_variant_command(
+            context,
+            lambda: context.project_commands.replace_entry_records(
+                {
+                    first.identity: EntryStatePatch(
+                        "imported change", first.stage, (ExternalEntryRef("paratranz", "project:1", 99),)
+                    )
+                },
+                context.runtime_context,
+                **ProjectToolTarget.capture(context).expected(),
             ),
-        ))
+        )
 
     current = harness.service.active.variant.snapshot()
     assert current.revision == before.revision + 1
@@ -153,6 +164,53 @@ def _project_adapter(composed, current_project_factory):
     return case, context, project
 
 
+def test_batch_label_records_only_changed_rows_for_round_undo(composed, current_project_factory):
+    case, context, project = _project_adapter(composed, current_project_factory)
+    _, requests, request_context, _, _, _, execution, undo = case
+    first, second = project.context.collection
+    library = {"review": {"name": "Review"}}
+    assert project.context.replace_projected_labels({first.id: {"review"}}, library).is_success
+    result = _tool_manage_entry_labels({"action": "batch_assign", "name": "Review"}, context)
+    assert result.success and result.data == {"assigned_count": 1, "filter_total": 2}, result.message
+    record = requests.state(request_context)["undo_rounds"][execution.work_round_id]
+    (commit,) = record["commits"]
+    assert commit["effect_id"] == "effect"
+    receipt = VariantUndoReceipt.from_dict(undo._read(request_context, commit["receipt"]))
+    inverse = build_variant_inverse(project.aggregate.snapshot(), receipt, run_id="restore-labels")
+    assert {state.entry_key: state.labels for state in inverse.entries} == {
+        first.identity: ("review",),
+        second.identity: (),
+    }
+
+
+def test_dictionary_round_undo_restores_only_newly_filled_entries(
+    composed, current_project_factory, tmp_path, monkeypatch
+):
+    case, context, project = _project_adapter(composed, current_project_factory)
+    _, requests, request_context, _, _, _, execution, undo = case
+    first, second = project.context.collection
+    monkeypatch.setattr(TranslationMemoryManager, "default_dir", lambda self: tmp_path)
+    manager = TranslationMemoryManager()
+    for entry in (first, second):
+        manager.add(entry.key, entry.original, "From dictionary", mod_file_id="Terms")
+    manager.save()
+    before = project.aggregate.snapshot()
+
+    result = _tool_apply_dictionary({}, context)
+
+    assert result.success and result.data["applied"] == 1, result.message
+    assert project.context.collection.get(second.identity).translation == second.translation
+    (commit,) = requests.state(request_context)["undo_rounds"][execution.work_round_id]["commits"]
+    assert commit["effect_id"] == "effect"
+    receipt = VariantUndoReceipt.from_dict(undo._read(request_context, commit["receipt"]))
+    assert [state.entry_key for state in receipt.before.entries] == [first.identity]
+    inverse = build_variant_inverse(project.aggregate.snapshot(), receipt, run_id="undo-dictionary")
+    assert [(e.translation, e.stage) for e in inverse.entries] == [(e.translation, e.stage) for e in before.entries]
+    repeated = _tool_apply_dictionary({}, context)
+    assert repeated.success and repeated.data["applied"] == 0, repeated.message
+    assert requests.state(request_context)["undo_rounds"][execution.work_round_id]["commits"] == [commit]
+
+
 @pytest.mark.parametrize("failure", ["receipt_store", "finish"])
 @pytest.mark.parametrize("action", ["edit", "labels"])
 def test_successful_command_survives_undo_receipt_failure_and_next_command_runs(
@@ -162,7 +220,7 @@ def test_successful_command_survives_undo_receipt_failure_and_next_command_runs(
     undo = case[-1]
     before = project.aggregate.snapshot()
     first = next(iter(project.context.collection))
-    command_name = "replace_entry_records" if action == "edit" else "replace_labels"
+    command_name = "update_entry" if action == "edit" else "replace_labels"
     command = getattr(project.commands, command_name)
     commands = []
 
@@ -172,6 +230,15 @@ def test_successful_command_survives_undo_receipt_failure_and_next_command_runs(
         return result
 
     monkeypatch.setattr(project.commands, command_name, counted)
+    if action == "edit":
+        stage_command = project.commands.replace_entry_states
+
+        def counted_stage(*args, **kwargs):
+            result = stage_command(*args, **kwargs)
+            commands.append(result)
+            return result
+
+        monkeypatch.setattr(project.commands, "replace_entry_states", counted_stage)
     if failure == "receipt_store":
         store = undo._store
         stored = []
@@ -241,7 +308,7 @@ def test_precommit_undo_or_command_failure_stays_failed(
         )
     else:
         failed = OperationResult.failed(DomainError(ErrorCategory.CONFLICT, "REJECTED", "command rejected"))
-        command_name = "replace_entry_records" if action == "edit" else "replace_labels"
+        command_name = "update_entry" if action == "edit" else "replace_labels"
         monkeypatch.setattr(project.commands, command_name, lambda *_args, **_kwargs: failed)
 
     result = (

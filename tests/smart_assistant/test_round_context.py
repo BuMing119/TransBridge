@@ -3,6 +3,7 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+from tests.conftest import make_entry
 from transbridge.application.assistant_context.models import CompactionSummary, ContextEpoch, state_material
 from transbridge.application.assistant_context.projection import append_context
 from transbridge.application.assistant_requests.models import RequestItem, UserRequest
@@ -13,7 +14,7 @@ from transbridge.smart_assistant.round_context import refresh_round_context, wit
 
 
 def test_each_round_reflects_project_and_progress_without_changing_static_system():
-    ctx = SimpleNamespace(collection=[SimpleNamespace(translation="", context="NPC_:FULL")], esp_path="First.esp")
+    ctx = SimpleNamespace(collection=[make_entry()], esp_path="First.esp")
     conversation = ConversationManager()
     conversation.add_user("Explain the selected entry", message_id="input")
     request = UserRequest(
@@ -29,7 +30,7 @@ def test_each_round_reflects_project_and_progress_without_changing_static_system
     )
     original_system = conversation.get_transcript()[0]
     ctx.esp_path = "Second.esp"
-    ctx.collection[0].translation = "名称"
+    ctx.collection = [make_entry(translation="名称", stage=1)]
     second_snapshot = refresh_round_context(conversation, ctx)
     second = append_context(
         conversation.get_transcript(),
@@ -101,7 +102,7 @@ def test_legacy_round_receives_fresh_workspace_without_persisting_it(monkeypatch
     monkeypatch.setattr("transbridge.smart_assistant.conversation_orchestrator.QTimer.singleShot", lambda *_: None)
     conversation = ConversationManager()
     conversation.add_user("Explain", message_id="input")
-    ctx = SimpleNamespace(collection=[SimpleNamespace(translation="", context="NPC_:FULL")], esp_path="First.esp")
+    ctx = SimpleNamespace(collection=[make_entry()], esp_path="First.esp")
     orchestrator = SimpleNamespace(
         _shutdown_complete=False,
         cancel_current_round=lambda: None,
@@ -119,7 +120,7 @@ def test_legacy_round_receives_fresh_workspace_without_persisting_it(monkeypatch
     assert '"material_only":true' in first[-1]["content"]
     evidence = conversation.get_transcript()
     ctx.esp_path = "Second.esp"
-    ctx.collection[0].translation = "名称"
+    ctx.collection = [make_entry(translation="名称", stage=1)]
     ConversationOrchestrator.start_round(orchestrator)
     assert "Plugin: Second" in orchestrator._round_messages[-1]["content"]
     assert "1 translated" in orchestrator._round_messages[-1]["content"]

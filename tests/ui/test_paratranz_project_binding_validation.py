@@ -7,6 +7,8 @@ from PyQt6.QtWidgets import QApplication, QListWidgetItem
 import pytest
 
 from transbridge.application.ports.paratranz import ParaTranzProject
+from transbridge.paratranz.project_catalog import ParaTranzProjectCatalog
+from transbridge.paratranz.service import ParaTranzService
 import transbridge.ui.paratranz.project_panel as project_panel
 
 
@@ -76,11 +78,11 @@ class _Service:
         self.closed = True
 
 
-class _Catalog:
+class _Catalog(ParaTranzProjectCatalog):
     def __init__(self, projects) -> None:
         self.projects = tuple(projects)
 
-    def list_my_projects(self, _service, _key, *, refresh=False):
+    def list_my_projects(self, _service, _key, *, refresh=False, cancellation=None):
         assert refresh is True
         return SimpleNamespace(projects=self.projects)
 
@@ -95,13 +97,28 @@ def _panel(monkeypatch, projects):
     panel = project_panel.ProjectListPanel(context)
     context.config.token = "configured"
     service = _Service()
-    monkeypatch.setattr(project_panel, "ParaTranzService", SimpleNamespace(from_config=lambda _config: service))
+    monkeypatch.setattr(ParaTranzService, "from_config", lambda _config: service)
     panel._catalog = _Catalog(projects)
     item = QListWidgetItem("Remote")
     item.setData(Qt.ItemDataRole.UserRole, {"id": 42, "name": "Remote"})
     panel._list.addItem(item)
     panel._list.setCurrentItem(item)
     return panel, context, service
+
+
+def test_project_list_shows_remote_member_count_including_zero(qapp, monkeypatch):
+    panel, _, _ = _panel(monkeypatch, ())
+    try:
+        panel._all_projects = [
+            {"id": 17, "name": "Empty", "members": 0, "total": 900},
+            {"id": 18, "name": "Unknown", "total": 7},
+        ]
+        panel._apply_filter()
+        assert panel._list.item(0).toolTip().endswith("成员数: 0")
+        assert panel._list.item(1).toolTip().endswith("成员数: ?")
+    finally:
+        panel.close()
+        panel.deleteLater()
 
 
 def test_binding_waits_for_async_membership_validation_and_closes_service(qapp, monkeypatch) -> None:

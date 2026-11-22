@@ -148,6 +148,11 @@ class ProjectViewBinding:
         self._consistency = ProjectionConsistency()
 
     @property
+    def generation(self) -> int:
+        with self._lock:
+            return self._generation
+
+    @property
     def opening(self):
         with self._lock:
             return self._token is not None

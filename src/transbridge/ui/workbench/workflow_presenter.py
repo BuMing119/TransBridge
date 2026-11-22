@@ -4,24 +4,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import PurePath
 
 from transbridge.application.projects.source_registry import select_workbench_source
-from transbridge.converter.translation_entry import (
-    STAGE_CHECKED,
-    STAGE_HIDDEN,
-    STAGE_LABELS,
-    STAGE_LOCKED,
-    STAGE_QUESTIONABLE,
-    STAGE_REVIEWED,
-    STAGE_TRANSLATED,
-    STAGE_UNTRANSLATED,
-    TranslationEntry,
-)
+from transbridge.application.workbench_statistics import StatisticsMetric, StatisticsSummary
+from transbridge.converter.translation_entry import STAGE_LABELS, STAGE_QUESTIONABLE
 from transbridge.ui.shell.action_catalog import IntentId
-from transbridge.ui.workbench.filters_presenter import FilterState
 
 
 class WorkbenchContentKind(StrEnum):
@@ -52,96 +42,6 @@ class WorkbenchHierarchyViewState:
     project_label: str
     variant_label: str
     content_label: str
-
-
-@dataclass(frozen=True, slots=True)
-class StatisticsMetric:
-    key: str
-    label: str
-    value: int
-    description: str
-
-
-_COMPLETED_STAGE_SEQUENCE = (STAGE_TRANSLATED, STAGE_CHECKED, STAGE_REVIEWED, STAGE_LOCKED)
-_COMPLETED_STAGES = frozenset(_COMPLETED_STAGE_SEQUENCE)
-_SUMMARY_STAGE_FILTERS = {
-    "untranslated": frozenset((STAGE_UNTRANSLATED,)),
-    "review": frozenset((STAGE_QUESTIONABLE,)),
-    "completed": _COMPLETED_STAGES,
-    "hidden": frozenset((STAGE_HIDDEN,)),
-    "total": frozenset(),
-}
-
-
-@dataclass(frozen=True, slots=True)
-class StatisticsSummary:
-    total: int
-    untranslated: int
-    needs_review: int
-    completed: int
-    hidden: int = 0
-
-    def __post_init__(self) -> None:
-        if min(self.total, self.untranslated, self.needs_review, self.completed, self.hidden) < 0:
-            raise ValueError("Workbench statistics cannot be negative")
-        if self.untranslated + self.needs_review + self.completed + self.hidden != self.total:
-            raise ValueError("Workbench statistics must partition the collection")
-
-    @classmethod
-    def from_entries(cls, entries: Sequence[TranslationEntry]) -> StatisticsSummary:
-        untranslated = needs_review = completed = hidden = 0
-        for entry in entries:
-            if entry.stage == STAGE_HIDDEN:
-                hidden += 1
-            elif entry.stage == STAGE_UNTRANSLATED:
-                untranslated += 1
-            elif entry.stage == STAGE_QUESTIONABLE:
-                needs_review += 1
-            elif entry.stage in _COMPLETED_STAGES:
-                completed += 1
-            else:
-                # Unknown external stages remain visible and actionable instead of
-                # disappearing from the partition. Canonical stages always take
-                # their meaning from ``stage``, never from whether text is empty.
-                untranslated += 1
-        return cls(len(entries), untranslated, needs_review, completed, hidden)
-
-    def metrics(self) -> tuple[StatisticsMetric, ...]:
-        """Return status counts using the canonical translation-stage vocabulary."""
-
-        completed_labels = "、".join(STAGE_LABELS[stage] for stage in _COMPLETED_STAGE_SEQUENCE)
-        return (
-            StatisticsMetric("total", "全部", self.total, "全部翻译状态"),
-            StatisticsMetric(
-                "untranslated",
-                STAGE_LABELS[STAGE_UNTRANSLATED],
-                self.untranslated,
-                f"翻译状态：{STAGE_LABELS[STAGE_UNTRANSLATED]}",
-            ),
-            StatisticsMetric(
-                "review",
-                STAGE_LABELS[STAGE_QUESTIONABLE],
-                self.needs_review,
-                f"翻译状态：{STAGE_LABELS[STAGE_QUESTIONABLE]}",
-            ),
-            StatisticsMetric(
-                "completed",
-                STAGE_LABELS[STAGE_TRANSLATED],
-                self.completed,
-                f"包括翻译状态：{completed_labels}",
-            ),
-        )
-
-    def filter_state(self, key: str, current: FilterState) -> FilterState:
-        try:
-            stages = _SUMMARY_STAGE_FILTERS[key]
-        except KeyError:
-            raise KeyError(key) from None
-        return replace(current, stages=stages)
-
-    @staticmethod
-    def active_filter(stages: frozenset[int]) -> str | None:
-        return next((key for key, value in _SUMMARY_STAGE_FILTERS.items() if key != "hidden" and value == stages), None)
 
 
 @dataclass(frozen=True, slots=True)

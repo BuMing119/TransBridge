@@ -423,8 +423,8 @@ def test_export_failure_restores_actions_and_retains_captured_api_target(views, 
     else:
         monkeypatch.setattr(
             export_tab,
-            "ParatranzExportAPI",
-            lambda **kwargs: SimpleNamespace(download_artifacts=lambda *args: calls.append(args)),
+            "ArtifactWorkflow",
+            lambda config: SimpleNamespace(download_existing=lambda *args: calls.append(args)),
         )
 
     pending.callback()

@@ -7,8 +7,8 @@ from copy import copy, deepcopy
 from dataclasses import dataclass, replace
 import json
 
-from transbridge.application.contracts import DiagnosticSeverity, ErrorCategory, OperationOutcome, RequestContext
-from transbridge.application.io.identity import EntryKey, Provenance
+from transbridge.application.contracts import OperationOutcome, RequestContext
+from transbridge.application.io.identity import Provenance
 from transbridge.application.io.mutation import ChangeSet, EntryPatch, MutationStatus
 from transbridge.application.translation.entry_alias import ai_entry_id
 from transbridge.application.translation.postprocess import PostProcessCandidate, ReportSnapshot
@@ -112,54 +112,6 @@ class TaskEntryResults:
                 decision="pending",
                 attempt=previous.attempt + 1,
                 report_details_json=evidence.get(previous.source, {}).get(key, "{}"),
-            )
-
-    def ingest_postprocess(self, snapshot, *, cancelled=False, expected_phases=()):
-        """Retain canonical post-processing candidates without inferring success from drafts."""
-        if snapshot.run_id != self.run_id:
-            raise ValueError("后处理报告不属于当前任务")
-        candidates = {item.entry_key: item for item in snapshot.candidates}
-        if len(candidates) != len(snapshot.candidates) or not set(candidates).issubset(self.entries):
-            raise ValueError("后处理报告包含重复条目或任务范围外的条目")
-        expected = tuple(expected_phases or snapshot.run_spec_summary.get("stages", ()))
-        completed_phases = tuple(item.phase for item in snapshot.stage_outcomes)
-        phase_aliases = {"refinement": "refine", "arbitration": "arbitrate"}
-        expected = tuple(phase_aliases.get(phase, phase) for phase in expected)
-        completed_phases = tuple(phase_aliases.get(phase, phase) for phase in completed_phases)
-        pipeline_complete = snapshot.outcome is not OperationOutcome.FAILED and (
-            set(expected).issubset(completed_phases)
-            if expected
-            else snapshot.outcome in {OperationOutcome.COMPLETED, OperationOutcome.PARTIAL}
-        )
-        verified_by_stage = tuple(_postprocess_verified_keys(outcome) for outcome in snapshot.stage_outcomes)
-        self._index = None
-        for key, previous in tuple(self.entries.items()):
-            if previous.action != "postprocess":
-                continue
-            candidate = candidates.get(key)
-            details = {} if candidate is None else dict(candidate.report_details)
-            processing = details.get("processing_status")
-            status = "cancelled" if cancelled else "failed"
-            if candidate is not None:
-                # Initial candidates are accepted by default; a cancelled/failed
-                # workload may return these without having executed any stage.
-                checked = pipeline_complete and (
-                    all(key in verified for verified in verified_by_stage)
-                    if expected
-                    else bool(candidate.phases) or processing == "completed"
-                )
-                status = "succeeded" if checked and candidate.accepted and candidate.text.strip() else status
-                if processing in {"cancelled", "not_started"}:
-                    status = processing
-            self.entries[key] = replace(
-                previous,
-                status=status,
-                text=previous.text if candidate is None else candidate.text,
-                stage=previous.stage if candidate is None else candidate.stage,
-                reason=str(details.get("note", "")),
-                decision="accepted" if status == "succeeded" else "pending",
-                attempt=previous.attempt + 1,
-                report_details_json=json.dumps(details, ensure_ascii=False, allow_nan=False),
             )
 
     @staticmethod
@@ -329,21 +281,3 @@ class TaskEntryResults:
             diagnostics=(),
             failure_count=failed,
         )
-
-
-def _postprocess_verified_keys(outcome):
-    """Exclude failed stage/batch evidence even when its input candidate was retained."""
-    verified = {item.entry_key for item in outcome.candidates}
-    for diagnostic in outcome.diagnostics:
-        if diagnostic.category not in {ErrorCategory.INTERNAL, ErrorCategory.EXTERNAL, ErrorCategory.CANCELLED} and (
-            diagnostic.severity is not DiagnosticSeverity.ERROR
-        ):
-            continue
-        details = dict(diagnostic.details)
-        keys = details.get("entry_keys", ())
-        if details.get("entry_key") is not None:
-            keys = (*keys, details["entry_key"])
-        if not keys:
-            return set()
-        verified.difference_update(EntryKey.from_dict(key) for key in keys)
-    return verified

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from PyQt6.QtWidgets import QApplication
 import pytest
 
+from transbridge.ai_translator.report_history import parse_report_filename
 from transbridge.ai_translator.translator import TranslationResult
 from transbridge.application.translation import (
     build_polish_report_snapshot,
@@ -13,7 +14,6 @@ from transbridge.application.translation import (
 )
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.paratranz.config_manager import LLMConfig
-from transbridge.ui.tools.ai_translator._report_history_dialog import _parse_report_filename
 from transbridge.ui.tools.ai_translator._translation_report_dialog import _TranslationReportDialog
 from transbridge.ui.tools.ai_translator.reporting import TranslationReportArtifacts, render_translation_report
 from transbridge.ui.tools.ai_translator.result_presenter import PolishApplySummary, ResultPresenter
@@ -146,7 +146,7 @@ def test_background_renderer_persists_all_formats_from_one_snapshot(tmp_path, mo
     assert report.excel_path is not None
     assert {Path(path).suffix for path in report.paths} == {".json", ".csv", ".xlsx"}
     assert all(Path(path).is_file() for path in report.paths)
-    assert _parse_report_filename(Path(report.excel_path).name)["mode"] == "AI 翻译"
+    assert parse_report_filename(Path(report.excel_path).name)["mode"] == "AI 翻译"
 
 
 def test_polish_presenter_builds_snapshot_with_explicit_decisions() -> None:
@@ -204,8 +204,8 @@ def test_dialog_exposes_partial_render_diagnostics_and_successful_paths(tmp_path
 
 
 def test_history_parser_recognizes_canonical_polish_reports() -> None:
-    parsed = _parse_report_filename("polish-report-0123456789abcdef.xlsx")
-    mixed = _parse_report_filename("mixed-report-fedcba9876543210.xlsx")
+    parsed = parse_report_filename("polish-report-0123456789abcdef.xlsx")
+    mixed = parse_report_filename("mixed-report-fedcba9876543210.xlsx")
 
     assert parsed["mode"] == "润色"
     assert mixed["mode"] == "混合"

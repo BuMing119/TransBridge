@@ -20,6 +20,7 @@ from .api.paratranz_history_api import ParatranzHistoryAPI
 from .api.paratranz_project_api import ParatranzProjectAPI
 from .api.paratranz_strings_api import ParatranzStringsAPI
 from .config_manager import ParatranzConfig
+from .management_queries import browse_projects, read_file_revision_page
 from .pagination import SnapshotPagination
 
 
@@ -91,23 +92,7 @@ class ParaTranzService:
         uid: str | int | None = None,
         cancellation: CancellationPort | None = None,
     ) -> tuple[ParaTranzProject, ...]:
-        items: list[Mapping[str, Any]] = []
-        page = 1
-        page_size = 200
-        while True:
-            if cancellation is not None:
-                cancellation.raise_if_cancelled()
-            payload = self._projects.list_projects(
-                page=page,
-                page_size=page_size,
-                uid=uid,
-                cancellation=cancellation,
-            )
-            current = self._items(payload, "projects", "results", "data", "items")
-            items.extend(current)
-            if len(current) < page_size:
-                break
-            page += 1
+        items = browse_projects(self._projects, uid, cancellation)
         return tuple(self._typed(ParaTranzProject.from_mapping, item, "project") for item in items)
 
     def get_project(
@@ -117,7 +102,10 @@ class ParaTranzService:
         cancellation: CancellationPort | None = None,
     ) -> ParaTranzProject:
         payload = self._projects.get_project(project_id, cancellation=cancellation)
-        return self._typed(ParaTranzProject.from_mapping, self._mapping(payload, "project"), "project")
+        project = self._typed(ParaTranzProject.from_mapping, self._mapping(payload, "project"), "project")
+        if project.project_id != project_id:
+            raise ExternalServiceError(ExternalServiceCategory.INVALID_RESPONSE, "ParaTranz project ID mismatch")
+        return project
 
     def list_entries(
         self,
@@ -177,46 +165,6 @@ class ParaTranzService:
         if result.remote_id != remote_id:
             raise ValueError("ParaTranz returned a different entry identity")
         return result
-
-    def upsert_entry(
-        self,
-        project_id: int,
-        entry: ParaTranzEntry,
-        *,
-        force_overwrite: bool = False,
-        cancellation: CancellationPort | None = None,
-    ) -> ParaTranzEntry:
-        """Create directly, or update an explicit remote identity with overwrite authorization.
-
-        No key lookup or collection scan precedes a write. Without an authorized
-        remote identity, duplicate keys are reported by the create endpoint.
-        """
-        remote_id = entry.remote_id if force_overwrite else None
-        if remote_id is not None:
-            if isinstance(remote_id, bool) or not isinstance(remote_id, int) or remote_id < 1:
-                raise ValueError("remote_id must be a positive integer")
-            payload = self._strings.update_string(
-                project_id,
-                remote_id,
-                entry.to_remote_payload(),
-                cancellation=cancellation,
-            )
-            if payload is None:
-                return ParaTranzEntry(
-                    remote_id,
-                    entry.key,
-                    entry.original,
-                    entry.translation,
-                    entry.context,
-                    entry.stage,
-                )
-        else:
-            payload = self._strings.create_string(project_id, entry.to_remote_payload(), cancellation=cancellation)
-        return self._typed(
-            ParaTranzEntry.from_mapping,
-            self._mapping(payload, "upsert entry"),
-            "upsert entry",
-        )
 
     def update_entry_context(
         self,
@@ -294,21 +242,11 @@ class ParaTranzService:
         self,
         project_id: int,
         *,
-        limit: int,
+        page: int = 1,
         cancellation: CancellationPort | None = None,
     ) -> tuple[ParaTranzUploadHistory, ...]:
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
-            raise ValueError("limit must be a positive integer")
-        payload = self._history.list_file_revisions(
-            project_id,
-            page=1,
-            page_size=min(limit, 200),
-            cancellation=cancellation,
-        )
-        return tuple(
-            self._typed(ParaTranzUploadHistory.from_mapping, item, "upload history")
-            for item in self._items(payload, "results", "revisions")[:limit]
-        )
+        rows = read_file_revision_page(self._history, project_id, page, cancellation)
+        return tuple(self._typed(ParaTranzUploadHistory.from_mapping, item, "upload history") for item in rows)
 
     def trigger_export(
         self,

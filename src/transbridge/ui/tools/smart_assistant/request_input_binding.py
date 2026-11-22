@@ -68,9 +68,11 @@ class RequestInputBinding:
             facade.add_system_message("请先创建或选择一个会话。")
             return False
         binding.context = context
+        selection = deepcopy(_recovery.selection) if _recovery else binding._selection()
+        if selection is None:
+            return False
         binding._user_stopped = False
         binding.interrupt()
-        selection = deepcopy(_recovery.selection) if _recovery else binding._selection()
         generation = self.generation
         command_id = _recovery.command_id if _recovery else uuid4().hex
         if command_id in self._pending:

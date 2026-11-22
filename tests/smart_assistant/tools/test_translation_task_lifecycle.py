@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.application.projects.test_categorized_upload import project as project_fixture
+from transbridge.ai_translator.project_terminology_runtime import ProjectTerminologyBinding
 from transbridge.ai_translator.translation_entry_outcomes import TranslationEntryOutcome
 from transbridge.ai_translator.translator import TranslationResult
 from transbridge.application.io.publish import CommitDecision
@@ -25,6 +26,7 @@ from transbridge.smart_assistant.tools.translation_task_results import (
 )
 from transbridge.smart_assistant.tools.translation_task_run import execute_task
 from transbridge.smart_assistant.tools.types import ExecutionContext
+from transbridge.ui.translation_task_execution import execute_translation_sources
 
 project = project_fixture
 
@@ -43,6 +45,7 @@ def environment(project, tmp_path):
         project_commands=services.gui_project_commands,
         runtime_context=context,
         task_store=TaskStore(tmp_path / "task-store-v1"),
+        translation_task_executor=execute_translation_sources,
         slots={},
         esp_path="fixed.esp",
         variant_revision=active.variant.revision,
@@ -57,8 +60,8 @@ def new_task(environment, *, mode="translate"):
         app,
         app.collection,
         list(app.collection),
-        LLMConfig(api_key="test-only", term_priority=[]),
-        SimpleNamespace(snapshot_ref=None),
+        LLMConfig(api_key="test-only", term_priority=[], retrieval_enabled=False),
+        ProjectTerminologyBinding(),
         mode=mode,
     )
 
@@ -105,7 +108,11 @@ def test_remerge_uses_saved_results_and_new_policy_after_runtime_is_gone(environ
     task.merge()
     TaskManager.reset()
     store, record, payload = load_task_result(app, task.result_id)
-    summary, _warning = merge_saved_results(app, store, record, payload, policy="prefer_incoming")
+    desktop_writer = TaskMergeEvidenceStore(store.run_directory(task.result_id) / "ai-task-recovery", task.result_id)
+    summary, _warning = merge_saved_results(
+        app, store, record, payload, policy="prefer_incoming", evidence=desktop_writer
+    )
+    assert result_view(app, task.result_id)["merge_evidence"] == task.evidence.load() + desktop_writer.load()
     assert summary["applied_count"] == 1
     assert current_texts(environment)[key] == task.ledger.entries[key].text
 
@@ -128,6 +135,82 @@ def test_failed_result_save_retains_queryable_memory_and_retry_never_merges_earl
     assert summary["applied_count"] == 2
 
 
+def test_preserved_postprocess_result_can_be_read_and_merged_without_execution(environment, monkeypatch):
+    from transbridge.smart_assistant.tools.tool_translator import TranslationController
+
+    app, _services, context = environment
+    monkeypatch.setattr(app, "translation_task_executor", lambda **_: pytest.fail("saved results cannot run a model"))
+    entry = next(iter(app.collection))
+    key = entry.identity.to_dict()
+    before = {
+        "original": entry.original,
+        "translation": entry.translation,
+        "stage": entry.stage,
+        "revision": entry.revision.value,
+        "context": entry.context or "",
+    }
+    result_id = "old-postprocess"
+    sources = [
+        {
+            "key": "source",
+            "label": "source",
+            "translate_keys": [],
+            "polish_keys": [],
+            "postprocess_keys": [key],
+            "inputs": [{"entry_key": key, **before}],
+        }
+    ]
+    recovery = app.task_store.recovery(owner_id=context.owner_id, session_id=context.session_id)
+    recovery.create({
+        "task_id": result_id,
+        "origin": "smart-assistant",
+        "project_id": app.active_version_identity[0],
+        "variant_id": app.active_version_identity[1],
+        "config_digest": "saved-digest",
+        "state": "completed",
+        "mode": "postprocess",
+        "results_only": True,
+        "created_at": "2026-10-02T10:00:00+00:00",
+        "recovery_contract": 2,
+        "overwrite": False,
+        "execution_runs": [result_id],
+        "execution_inputs": {result_id: sources},
+        "sources": sources,
+    })
+    recovery.save_results(
+        result_id,
+        [
+            {
+                "entry_key": key,
+                "source": "source",
+                "action": "postprocess",
+                "before": before,
+                "text": "已保存的校对成果",
+                "status": "succeeded",
+                "stage": 2,
+                "decision": "pending",
+                "applied": False,
+                "attempt": 1,
+                "reason": "",
+                "report_details": {},
+            }
+        ],
+    )
+
+    tools = TranslationController()
+    args = {"result_id": result_id}
+    app.runtime_context = replace(context, session_id="different-session")
+    assert not tools.get_task_result(args, app).success
+    assert not tools.merge_task_result(args, app).success
+    app.runtime_context = context
+    read = tools.get_task_result(args, app)
+    assert read.success and read.data["results"][0]["action"] == "postprocess"
+    assert current_texts(environment)[entry.identity] == before["translation"]
+    merged = tools.merge_task_result(args, app)
+    assert merged.success and merged.data["merge"]["applied_count"] == 1
+    assert current_texts(environment)[entry.identity] == "已保存的校对成果"
+
+
 def test_query_survives_version_switch_but_merge_cannot_write_other_version(environment):
     app, _services, _context = environment
     task = new_task(environment)
@@ -139,6 +222,20 @@ def test_query_survives_version_switch_but_merge_cannot_write_other_version(envi
     with pytest.raises(ValueError, match="切换"):
         task.merge()
     assert set(current_texts(environment).values()) == {""}
+
+
+def test_assistant_result_query_ignores_archived_entry_upload_receipts(environment):
+    from transbridge.smart_assistant.tools.tool_translator import TranslationController
+
+    app, _, _ = environment
+    receipt_id = "a" * 32
+    directory = app.task_store.root / "entry-upload-results" / receipt_id
+    directory.mkdir(parents=True)
+    (directory / "target.json").write_text("unreadable archive", encoding="utf-8")
+    assert receipt_id not in {row["result_id"] for row in result_view(app)["results"]}
+    result = TranslationController().get_task_result({"result_id": receipt_id}, app)
+    assert not result.success and result.error_code == "TASK_RESULT_UNAVAILABLE"
+    assert "JSON" not in result.message
 
 
 def test_result_authorization_does_not_depend_on_task_manager(environment):
@@ -271,11 +368,6 @@ def test_pending_merge_receipt_can_be_retried_without_reapplying(environment, mo
 
 def test_cancelled_translation_keeps_only_explicit_valid_partial_outcomes(environment, monkeypatch):
     task = new_task(environment)
-    task.terminology = SimpleNamespace(translator_kwargs=lambda: {})
-    monkeypatch.setattr(
-        "transbridge.smart_assistant.tools.translation_task_run._capture_references",
-        lambda task, *_args: setattr(task, "references", None),
-    )
 
     class Translator:
         def __init__(self, *_args, **_kwargs):
@@ -300,7 +392,7 @@ def test_cancelled_translation_keeps_only_explicit_valid_partial_outcomes(enviro
     handle = manager.get_handle(task_id)
     worker = manager.start_thread(
         task_id,
-        lambda: execute_task(task, manager, task_id, handle, None, None, intensity="medium", strategy="proofread"),
+        lambda: execute_task(task, manager, task_id, handle, None, None),
     )
     worker.join(5)
     try:
@@ -313,6 +405,50 @@ def test_cancelled_translation_keeps_only_explicit_valid_partial_outcomes(enviro
         assert all(not entry.translation for entry in environment[0].collection)
     finally:
         TaskManager.reset()
+
+
+@pytest.mark.parametrize("kind", ["download", "dictionary", "import", "source"])
+def test_historical_entry_candidates_use_desktop_report_and_original_target(environment, kind):
+    from transbridge.application.tasks.history_service import TaskHistoryService
+    from transbridge.smart_assistant.tools.tool_translator import TranslationController
+
+    app, _, context = environment
+    entry = next(iter(app.collection))
+    row = {
+        "entry_key": entry.identity.to_dict(),
+        "source": "plugin",
+        "action": "translation",
+        "before": {"original": entry.original, "translation": "", "stage": 0, "context": entry.context or ""},
+        "text": "Saved candidate",
+        "stage": 1,
+        "decision": "pending",
+    }
+    result_id = f"historical-{kind}"
+    store = app.task_store.recovery(owner_id=context.owner_id, session_id=context.session_id)
+    store.create({
+        "task_id": result_id,
+        "origin": "smart-assistant",
+        "result_kind": kind,
+        "mode": kind,
+        "results_only": True,
+        "config_digest": "test",
+        "state": "completed",
+        "created_at": "2026-11-22T08:00:00Z",
+        "sources": [],
+        "project_id": app.active_version_identity[0],
+        "variant_id": app.active_version_identity[1],
+        "candidate_rows": [] if kind == "source" else [row],
+    })
+    report = TaskHistoryService(app.task_store, app.project_commands).load(result_id)
+    tool = TranslationController()
+    args = {"result_id": result_id}
+    assert tool.get_task_result(args, app).data["sources"] == report["sources"]
+    for invalid in (replace(context, session_id="foreign"), replace(context, variant_id="foreign")):
+        assert not tool.merge_task_result(args, ExecutionContext(app_context=app, request_context=invalid)).success
+    assert not current_texts(environment)[entry.identity]
+    result = tool.merge_task_result(args, app)
+    assert result.success is (kind != "source"), result.message
+    assert current_texts(environment)[entry.identity] == ("" if kind == "source" else row["text"])
 
 
 def test_original_matched_same_local_key_results_keep_full_identity(environment):
@@ -332,7 +468,7 @@ def test_original_matched_same_local_key_results_keep_full_identity(environment)
     assert {row["text"] for row in payload["rows"]} == {"result:Alpha", "result:Beta"}
 
 
-@pytest.mark.parametrize("mode", ["translate", "polish", "postprocess"])
+@pytest.mark.parametrize("mode", ["translate", "polish"])
 def test_assistant_manifest_uses_shared_config_signature_and_gui_never_reexecutes_it(environment, mode):
     from transbridge.application.translation.task_config_snapshot import execution_signature, restore_execution_snapshot
     from transbridge.ui.tools.ai_translator.task_recovery_binding import configure_recovery
@@ -356,12 +492,8 @@ def test_launch_freezes_config_and_records_runtime_result_link(environment, monk
     from transbridge.smart_assistant.tools.tool_translator import TranslationController
 
     app, _services, _context = environment
-    config = LLMConfig(api_key="test", model="frozen-model", term_priority=[])
+    config = LLMConfig(api_key="test", model="frozen-model", term_priority=[], retrieval_enabled=False)
     monkeypatch.setattr("transbridge.paratranz.config_manager.LLMConfig.load_from_file", lambda: config)
-    monkeypatch.setattr(
-        "transbridge.smart_assistant.tools.translation_task_run._capture_references",
-        lambda task, *_args: setattr(task, "references", None),
-    )
     entered, release = threading.Event(), threading.Event()
     captured = []
 
@@ -404,53 +536,37 @@ def test_polish_cancellation_preserves_valid_completed_candidate(environment, mo
         app,
         app.collection,
         [next(iter(app.collection))],
-        LLMConfig(api_key="test"),
-        SimpleNamespace(snapshot_ref=None),
+        LLMConfig(api_key="test", retrieval_enabled=False),
+        ProjectTerminologyBinding(),
         mode="polish",
     )
-    task.terminology = SimpleNamespace(term_database_kwargs=lambda: {})
-    monkeypatch.setattr(
-        "transbridge.smart_assistant.tools.translation_task_run._capture_references",
-        lambda task, *_args: setattr(task, "references", None),
-    )
-    monkeypatch.setattr(
-        "transbridge.smart_assistant.tools._polish_llm_runtime.create_polish_llm_runtime",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            client=object(),
-            close=lambda: None,
-            log_store=SimpleNamespace(write_line=lambda *_args: None),
-        ),
-    )
-    monkeypatch.setattr(
-        "transbridge.ai_translator.term_database.TermDatabaseManager",
-        lambda **_kwargs: SimpleNamespace(load_all=lambda: None),
-    )
 
-    def polish(*, targets, stop_event, **_kwargs):
+    def polish(targets, *, stop_event, **_kwargs):
         from transbridge.application.translation.entry_alias import ai_entry_id
 
         stop_event.set()
-        return SimpleNamespace(
-            results={
-                ai_entry_id(targets[0]): SimpleNamespace(
-                    accepted=False,
-                    processing_status="completed",
-                    candidate_translation="validated polish",
-                    polished_translation="",
-                    target_stage=3,
-                    note="complete before cancellation",
-                ),
-            }
-        )
+        return {
+            ai_entry_id(targets[0]): SimpleNamespace(
+                accepted=False,
+                processing_status="completed",
+                candidate_translation="validated polish",
+                polished_translation="",
+                target_stage=3,
+                note="complete before cancellation",
+            )
+        }
 
-    monkeypatch.setattr("transbridge.smart_assistant.tools._polish_execution.execute_polish", polish)
+    monkeypatch.setattr(
+        "transbridge.ui.tools.ai_translator.proofread_composition.build_proofread_pipeline",
+        lambda *_args, **_kwargs: SimpleNamespace(process=polish),
+    )
     TaskManager.reset()
     manager = TaskManager()
     task_id = manager.register()
     handle = manager.get_handle(task_id)
     worker = manager.start_thread(
         task_id,
-        lambda: execute_task(task, manager, task_id, handle, None, None, intensity="heavy", strategy="strict"),
+        lambda: execute_task(task, manager, task_id, handle, None, None),
     )
     worker.join(5)
     try:

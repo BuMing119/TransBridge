@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from transbridge.ai_translator.activity import batch_message
+from transbridge.application.security import diagnostic_exception_text
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.application.translation.task_scope import SourceTask
 
@@ -173,7 +174,7 @@ class SourceExecutor:
                 result.failed_keys = tuple(ai_entry_key(e) for e in task.entries)
         except Exception as exc:
             logger.exception("AI 来源 %s 执行失败", task.label)
-            result.error = f"{task.label}：{exc}"
+            result.error = f"{task.label}：{diagnostic_exception_text(exc)}"
             result.failed_keys = tuple(ai_entry_key(e) for e in task.entries)
             result.cancelled = self.stop.is_set()
         finally:

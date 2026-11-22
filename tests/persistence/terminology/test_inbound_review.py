@@ -40,16 +40,16 @@ _NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
 _REMOTE_DIGEST = "a" * 64
 
 
-def _line() -> tuple[TerminologySyncLine, TerminologySyncProfile]:
+def _line(project_id="project-1", variant_id="variant-1") -> tuple[TerminologySyncLine, TerminologySyncProfile]:
     target = TerminologySyncTarget("https://example.com/api", 7, 41)
     line_id = sync_line_id(
-        project_id="project-1",
-        variant_id="variant-1",
+        project_id=project_id,
+        variant_id=variant_id,
         target_identity=target.target_id,
         profile_revision=0,
     )
     return (
-        TerminologySyncLine(line_id, "project-1", "variant-1", target, 0, _NOW.isoformat()),
+        TerminologySyncLine(line_id, project_id, variant_id, target, 0, _NOW.isoformat()),
         TerminologySyncProfile(line_id, 0),
     )
 
@@ -71,8 +71,8 @@ def _change_set(
         binding_revision=0,
         profile_revision=0,
         mode=TerminologySyncMode.BIDIRECTIONAL,
-        local_project_id="project-1",
-        local_variant_id="variant-1",
+        local_project_id=line.project_id,
+        local_variant_id=line.variant_id,
         local_version_id="version-1",
         local_content_digest="local-digest",
         remote_snapshot_digest=_REMOTE_DIGEST,

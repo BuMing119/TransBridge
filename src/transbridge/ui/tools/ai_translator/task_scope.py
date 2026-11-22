@@ -4,9 +4,8 @@
 from __future__ import annotations
 
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
-from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
-from transbridge.application.translation.entry_alias import ai_entry_id
-from transbridge.application.translation.task_scope import SourceTask
+from transbridge.application.translation.task_scope import SourceTask, task_entry_groups
+from transbridge.application.workbench_filters import FilterState, filtered_rows
 
 from .scope_presenter import ScopePresenter
 
@@ -36,36 +35,19 @@ class TaskScope:
         self._table = SourceWorkbenchScope(workbench.filtered_entries(), workbench.selected_entry_ids())
 
     def build(self, slots, state, *, mode: str, config, overwrite: bool) -> tuple[SourceTask, ...]:
-        from transbridge.paratranz.config_manager import apply_rules
-
-        profile = AiExecutionProfile.from_config(mode, config)
         by_object = {id(slot): str(key) for key, slot in self._ctx.slots.items()}
         tasks = []
         for slot in slots:
             if id(slot) not in by_object:
                 raise ValueError("处理来源已变化，请重新打开 AI 翻译任务。")
             candidates = self.candidates(slot, state)
-            candidates = [
-                entry
-                for entry in candidates
-                if entry.original.strip()
-                and DEFAULT_STAGE_POLICY.allows_ai(entry.stage, entry.translation, original=entry.original)
-            ]
-            translate, polish = [], []
-            if mode == "mixed":
-                actions = apply_rules(config.action_rules, candidates)
-                translate = [
-                    e
-                    for e in candidates
-                    if actions.get(ai_entry_id(e)) == "translate" and (not e.translation or e.stage == 0)
-                ]
-                polish = [e for e in candidates if actions.get(ai_entry_id(e)) == "polish" and e.translation]
-            elif mode == "polish":
-                polish = [e for e in candidates if e.translation]
-            else:
-                translate = [e for e in candidates if overwrite or not e.translation or e.stage == 0]
-            if not profile.has_proofread_work:
-                polish = []
+            memberships = None
+            if mode == "mixed" and any(rule.label_filter for rule in config.action_rules):
+                rows = filtered_rows(slot.collection, FilterState(), self._ctx.entry_labels)
+                memberships = {entry.identity: labels for entry, _, labels in rows}
+            translate, polish = task_entry_groups(
+                candidates, mode=mode, config=config, overwrite=overwrite, memberships=memberships
+            )
             tasks.append(
                 SourceTask(
                     by_object[id(slot)],

@@ -8,6 +8,7 @@ import threading
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from transbridge.application.security import diagnostic_exception_text
 from transbridge.application.translation.entry_alias import ai_entry_key
 
 from .source_execution import SourceExecutor
@@ -39,26 +40,35 @@ class AiTaskWorker(QThread):
         consistency=None,
         attempt_id=None,
         checkpoint_root=None,
+        attempt=None,
+        stop_event=None,
+        pause_event=None,
+        progress_callback=None,
     ):
         super().__init__()
         self.request = request
         self.tasks = tuple(tasks)
-        self._stop = threading.Event()
-        self._pause = threading.Event()
-        self._pause.set()
+        self._stop = stop_event if stop_event is not None else threading.Event()
+        self._pause = pause_event if pause_event is not None else threading.Event()
+        if pause_event is None:
+            self._pause.set()
         self._shared_terms = {}
         self._terms_lock = threading.Lock()
         self._factory = executor_factory
         self._client = client
         self._project_id = project_id
         self._consistency = consistency
+        if attempt is not None:
+            attempt_id = f"{request.run_id}-attempt-{attempt}"
+            directory = getattr(request, "recovery_directory", None)
+            checkpoint_root = directory / "ai-proofread-resume" if directory is not None else None
         self._attempt_id = attempt_id
         self._checkpoint_root = checkpoint_root
         self._control_lock = threading.Lock()
         self._monitor_done = threading.Event()
         self._pause_confirmed = False
         self._feedback = TaskFeedback(
-            progress=self.progress.emit,
+            progress=self.progress.emit if progress_callback is None else progress_callback,
             project_progress=self.project_name_progress.emit,
             log_batch=self._emit_logs,
             request_state=self.request_state_changed.emit,
@@ -126,6 +136,10 @@ class AiTaskWorker(QThread):
                     self.pause_state_changed.emit("paused")
 
     def run(self):
+        self.execute()
+
+    def execute(self):
+        """Execute once on the caller's worker thread and return the final source outcomes."""
         from transbridge.ai_translator.batch_execution import BatchExecutor
 
         from .source_dispatch import run_sources
@@ -179,11 +193,12 @@ class AiTaskWorker(QThread):
             logger.exception("AI task or final terminology check failed")
             # A closure failure occurs after every source has returned. Keep
             # those candidates, but never report them as fully verified.
-            outcomes = list(fail_task_term_closure(outcomes, str(exc)))
+            error = diagnostic_exception_text(exc)
+            outcomes = list(fail_task_term_closure(outcomes, error))
             finished = {outcome.task.key for outcome in outcomes}
             remaining = [task for task in self.tasks if task.key not in finished]
             outcomes.extend(
-                SourceOutcome(task, error=str(exc), failed_keys=tuple(ai_entry_key(e) for e in task.entries))
+                SourceOutcome(task, error=error, failed_keys=tuple(ai_entry_key(e) for e in task.entries))
                 for task in remaining
             )
         finally:
@@ -195,4 +210,6 @@ class AiTaskWorker(QThread):
             from .task_name_reuse import retain_unfinished_reuse
 
             outcomes = retain_unfinished_reuse(executor, self.tasks, outcomes)
-        self._feedback.finish(self.completed.emit, tuple(outcomes))
+        completed = tuple(outcomes)
+        self._feedback.finish(self.completed.emit, completed)
+        return completed

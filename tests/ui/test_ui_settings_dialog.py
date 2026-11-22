@@ -379,6 +379,7 @@ def test_environment_credentials_are_read_only_and_revision_conflicts_do_not_sav
 def test_paratranz_page_keeps_token_masked_and_notifies_after_save(qapp, tmp_path: Path) -> None:
     class Config:
         token = "paratranz-secret-canary"
+        credential_configured = True
         base_url = "https://paratranz.cn/api"
         timeout = 30
         user_id = 7

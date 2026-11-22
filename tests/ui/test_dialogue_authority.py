@@ -166,6 +166,23 @@ def test_new_authoritative_translation_cannot_be_overwritten_through_stale_ui(au
     assert draft.text == "旧草稿"
 
 
+@pytest.mark.parametrize("removed", ["absent", "tombstone"])
+def test_displayed_draft_requires_a_live_authoritative_row(authority, removed):
+    context, store, aggregate, _, target, _ = authority
+    draft = EntryDraft.capture(context, context.collection.get(target.identity))
+    draft.text = "草稿"
+    snapshot = store.snapshot()
+    rows = []
+    for row in snapshot.values["entries"]:
+        if EntryKey.from_dict(row["entry_key"]) != target.identity:
+            rows.append(row)
+        elif removed == "tombstone":
+            rows.append({**row, "tombstone": True})
+    stale_view = replace(snapshot, values={**snapshot.values, "entries": rows})
+    assert "工程中的词条已变化" in draft.commit(context, projection=SimpleNamespace(snapshot=lambda: stale_view))
+    assert aggregate.snapshot().revision == 0
+
+
 def test_version_change_rejects_draft_even_with_same_entry_keys(authority, monkeypatch):
     context, store, aggregate, _, target, _ = authority
     draft = EntryDraft.capture(context, context.collection.get(target.identity))

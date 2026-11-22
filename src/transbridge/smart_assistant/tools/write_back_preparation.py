@@ -8,19 +8,31 @@ from pathlib import Path
 from transbridge.application.assistant_requests.models import RequestError
 from transbridge.application.contracts import DomainError, ErrorCategory, RequestContext
 from transbridge.application.io import FormatId
-from transbridge.application.io.identity import SourceNamespace
-from transbridge.application.io.operation_write import HydratedWriteDraft, HydratedWritePreflightService
-from transbridge.application.io.operation_write_batch import isolate_batch_output_conflicts
+from transbridge.application.io.native_write import (
+    DIRECTORY,
+    ORIGINAL,
+    NativeWriteBatch,
+    directory_output_filename,
+    native_write_draft,
+    preflight_write_batch,
+    retarget_plugin,
+    retarget_write_batch,
+)
+from transbridge.application.io.operation_write import HydratedWritePreflightService
+from transbridge.application.io.operation_write_batch import WriteBatchFailure
 from transbridge.application.io.plugin_localized_sources import _snapshot_localized_sources
-from transbridge.application.io.publish import BackupPolicy, ConflictPolicy
 from transbridge.application.io.write_formats import SST_FORMATS, source_output_compatible, write_artifact_paths
-from transbridge.application.projects.write_inputs import bind_plugin_write_input
+from transbridge.application.projects.write_inputs import (
+    ProjectPluginReferences,
+    bind_plugin_write_input,
+    native_write_template,
+)
 from transbridge.application.security.paths import PathAuthorizationPolicy, PathGrant
 from transbridge.application.terminology_profiles import TerminologyProfileWriteProjectionSource
-from transbridge.parser.localized_resources import _case_child, candidate_input_paths
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
 from transbridge.persistence.v2.ids import ProjectId, VariantId
 
+from .file_input_access import authorize_plugin_resources, require_input_access
 from .file_undo_capture import authorize_file_outputs
 from .text_encoding import effective_text_encodings
 
@@ -36,7 +48,10 @@ class PreparedWriteBack:
 
     @property
     def paths(self) -> tuple[str, ...]:
-        return tuple(item.draft.target_path for item in self.preflights)
+        return tuple(
+            item.target_path if isinstance(item, WriteBatchFailure) else item.draft.target_path
+            for item in self.preflights
+        )
 
     @property
     def is_batch(self) -> bool:
@@ -53,7 +68,12 @@ def prepare_write_back(args: dict, ctx) -> PreparedWriteBack:
     directory, file_path = _path_argument(args, "output_dir"), _path_argument(args, "path")
     if len(selected) > 1 and file_path:
         raise RequestError("WRITE_BATCH_PATH_INVALID", "批量写回请使用 output_dir，不支持所有来源共用一个 path。")
-    if target == "strings" and not directory:
+    destination_mode = args.get("destination_mode", DIRECTORY)
+    if destination_mode not in (DIRECTORY, ORIGINAL):
+        raise RequestError("WRITE_DESTINATION_INVALID", "插件输出方式必须为 directory 或 original。")
+    if destination_mode == ORIGINAL and (directory or file_path):
+        raise RequestError("WRITE_DESTINATION_INVALID", "写回原插件时不能另外指定输出位置。")
+    if target == "strings" and not directory and destination_mode != ORIGINAL:
         raise RequestError("OUTPUT_DIRECTORY_REQUIRED", "请提供 output_dir；本地化插件与 Strings 将一起输出。")
     packed = args.get("pack_bsa", False)
     if not isinstance(packed, bool):
@@ -70,8 +90,16 @@ def prepare_write_back(args: dict, ctx) -> PreparedWriteBack:
         not isinstance(value, str) or not value.strip() for value in inputs.values()
     ):
         raise RequestError("WRITE_PLUGIN_INPUT_INVALID", "input_plugins 必须把来源键映射到本次插件文件。")
+    if inputs.keys() - {key for key, _slot in selected}:
+        raise RequestError("WRITE_PLUGIN_INPUT_INVALID", "input_plugins 只能指定已选来源。")
+    if "input_plugin" in args and (len(selected) != 1 or inputs):
+        raise RequestError("WRITE_PLUGIN_INPUT_INVALID", "单来源可用 input_plugin；多来源请按键提供 input_plugins。")
+    overwrite = args.get("overwrite", False)
+    if not isinstance(overwrite, bool):
+        raise RequestError("WRITE_OVERWRITE_INVALID", "overwrite 必须是布尔值。")
+    if directory:
+        directory = str(Path(os.path.abspath(base / directory)))
     project = None
-    pending = None
     reference_updates = {}
     project_stamp = _project_stamp(ctx)
     reference_store = getattr(ctx, "project_source_references", None)
@@ -101,106 +129,78 @@ def prepare_write_back(args: dict, ctx) -> PreparedWriteBack:
         if snapshot.format_id not in {*_FORMATS.values(), *SST_FORMATS, *_STRINGS_FORMATS, FormatId.BINARY_EET}:
             raise RequestError("SOURCE_FORMAT_UNSUPPORTED", f"来源格式不支持写回：{key}")
         entries = tuple(entry.snapshot() for entry in collection)
-        template_reader = getattr(collection, "native_template", None)
-        if template_reader is not None:
-            snapshot = template_reader()
+        snapshot = native_write_template(slot)
         source_id = getattr(slot, "source_id", None)
         project_source = reference_store is not None and source_id and project_stamp[0] is not None
-        if snapshot.format_id is FormatId.PLUGIN_SSE and snapshot.content is None and output_format not in SST_FORMATS:
-            explicit = inputs.get(key) or (_path_argument(args, "input_plugin") if len(selected) == 1 else "")
+        explicit = inputs.get(key) or _path_argument(args, "input_plugin")
+        needs_plugin = snapshot.format_id is FormatId.PLUGIN_SSE and output_format not in SST_FORMATS
+        if explicit and not needs_plugin:
+            raise RequestError("WRITE_PLUGIN_INPUT_INVALID", f"来源 {key} 的输出不需要绑定插件。")
+        if needs_plugin and (snapshot.content is None or explicit):
             stored = None
-            pending_source = False
             automatic_path = ""
             if project_source:
                 if project is None:
-                    project = _project_plugin_sources(ctx, request, reference_store, project_stamp[0])
-                _store, token, sources = project
-                namespace = SourceNamespace(dict(snapshot.metadata)["source_namespace"])
-                stored = sources.get(namespace)
-                if (
-                    getattr(collection, "token", token) != token
-                    or token.project_revision > project_stamp[1]
-                    or token.variant_revision > project_stamp[2]
-                ):
+                    project = _project_plugin_sources(ctx, request, reference_store, project_stamp)
+                if getattr(collection, "token", project.token) != project.token:
                     raise _project_changed()
+                namespace = dict(snapshot.metadata).get("source_namespace") or getattr(slot, "source_namespace", None)
+                stored = project.find(snapshot, namespace)
                 if stored is None:
-                    if pending is None:
-                        pending = reference_store.capture_pending_sources(
-                            token.project_id,
-                            token.variant_id,
-                            project_revision=project_stamp[1],
-                            variant_revision=project_stamp[2],
-                        )
-                        if pending is None:
-                            raise _project_changed()
-                    stored = next((item for item in pending.sources if item.namespace == namespace), None)
-                    pending_source = True
-                if (
-                    stored is None
-                    or stored.format_id is not FormatId.PLUGIN_SSE
-                    or stored.fingerprint != snapshot.sha256
-                ):
                     raise _project_changed()
                 automatic_path = stored.reference_path
             snapshot = _bind_write_plugin(
                 key, snapshot, entries, explicit, automatic_path, request, roots, base, encodings.input_encoding
             )
             if stored is not None and explicit and stored.reference_path != snapshot.source.uri:
-                reference_updates[key] = (source_id, stored, snapshot.source.uri, pending_source)
+                reference_updates[key] = (source_id, stored, snapshot.source.uri)
         source = Path(snapshot.source.display_name or snapshot.source.uri)
-        reference_field = {
-            FormatId.PLUGIN_SSE: "esp_path",
-            FormatId.XML_EET: "eet_path",
-            FormatId.BINARY_EET: "eet_path",
-            FormatId.XML_XT: "xt_path",
-            FormatId.SST_SSU8: "sst_path",
-            FormatId.SST_SSU9: "sst_path",
-        }.get(snapshot.format_id)
-        reference = (
-            None
-            if reference_field is None or project_source and snapshot.format_id is FormatId.PLUGIN_SSE
-            else getattr(slot, reference_field, None)
+        if destination_mode == ORIGINAL and output_format is not FormatId.PLUGIN_SSE:
+            raise RequestError("WRITE_DESTINATION_INVALID", "仅插件支持写回原插件。")
+        if file_path and (output_format is FormatId.PLUGIN_SSE or target == "strings"):
+            raise RequestError("WRITE_PLUGIN_PATH_INVALID", "插件另存请提供 output_dir，保留已定位插件的原文件名。")
+        if destination_mode != ORIGINAL and not (directory or file_path):
+            raise RequestError("OUTPUT", f"请为来源选择输出位置：{key}")
+        if file_path:
+            path = str(Path(os.path.abspath(base / file_path)))
+        elif directory:
+            path = str(Path(directory) / directory_output_filename(source, output_format))
+        else:
+            path = ""
+        revision = collection.collection_revision.value
+        if len(selected) > 1:
+            revision = int(getattr(ctx, "variant_revision", revision) or 0)
+        draft = native_write_draft(
+            snapshot,
+            entries,
+            revision,
+            request,
+            output_format,
+            path,
+            encodings=encodings,
+            overwrite=overwrite,
+            pack_bsa=packed,
         )
-        converting = snapshot.format_id is not output_format
-        if converting and not directory and not file_path:
-            raise RequestError("OUTPUT", "从插件生成 SST 必须提供新的 path 或 output_dir。")
-        if not directory and not file_path and not reference:
-            raise RequestError("OUTPUT", f"来源没有参考输出位置，请提供 path 或 output_dir：{key}")
-        destination = (
-            Path(directory)
-            / (
-                source.with_suffix(".sst").name
-                if converting
-                else source.with_suffix(".eet").name
-                if output_format is FormatId.BINARY_EET
-                else source.name
-            )
-            if directory and (target == "strings" or not file_path)
-            else Path(file_path or reference)
+        if len(selected) == 1 and output_format is FormatId.PLUGIN_SSE:
+            draft = retarget_plugin(draft, destination_mode, directory)
+        drafts.append(draft)
+    batch = None
+    if len(drafts) > 1:
+        batch = retarget_write_batch(
+            NativeWriteBatch(tuple(drafts)),
+            directory,
+            overwrite=overwrite,
+            pack_bsa=packed,
+            output_format="sst.ssu9" if target == "sst" else "auto",
+            destination_mode=destination_mode,
         )
-        # Keep lexical components for the authorization policy to reject links.
-        path = str(Path(os.path.abspath(destination if destination.is_absolute() else base / destination)))
-        options = (
-            ("pack_bsa", packed and output_format is FormatId.PLUGIN_SSE),
-            *encodings.read_options().items(),
-            ("output_encoding", encodings.output_encoding),
-            ("target_language", encodings.target_language),
-        )
-        authorize_file_outputs(ctx, write_artifact_paths(snapshot, path, options, format_id=output_format))
-        drafts.append(
-            HydratedWriteDraft(
-                snapshot,
-                output_format,
-                entries,
-                path,
-                collection.collection_revision.value,
-                request,
-                conflict_policy=ConflictPolicy.EXPLICIT_OVERWRITE
-                if args.get("overwrite", False)
-                else ConflictPolicy.FAIL,
-                backup_policy=BackupPolicy.REQUIRED_IF_EXISTS,
-                options=options,
-            )
+        drafts = batch.drafts
+    for draft in drafts:
+        if not draft.target_path:
+            raise RequestError("OUTPUT", "当前没有已定位的原插件，请先选择来源文件。")
+        authorize_file_outputs(
+            ctx,
+            write_artifact_paths(draft.source_snapshot, draft.target_path, draft.options, format_id=draft.format_id),
         )
     if packed and not any(
         item.format_id is FormatId.PLUGIN_SSE and _snapshot_localized_sources(item.source_snapshot) for item in drafts
@@ -215,33 +215,21 @@ def prepare_write_back(args: dict, ctx) -> PreparedWriteBack:
         else None
     )
     service = HydratedWritePreflightService(entry_projection=projection)
-    frozen = service.freeze_projection(drafts[0])
-    checked = isolate_batch_output_conflicts(
-        tuple(service.preflight(item, frozen_projection=frozen) for item in drafts)
-    )
+    checked = preflight_write_batch(batch, service) if batch is not None else (service.preflight(drafts[0]),)
     if project is not None:
-        store, token, _sources = project
-        if _project_stamp(ctx) != project_stamp or store.read_token(token.variant_id) != token:
+        if _project_stamp(ctx) != project_stamp or project.store.read_token(project.token.variant_id) != project.token:
             raise _project_changed()
         for (key, _slot), result in zip(selected, checked, strict=True):
-            if result.ready and key in reference_updates:
-                source_id, stored, new_path, pending_source = reference_updates[key]
-                values = {
-                    "expected_fingerprint": stored.fingerprint,
-                    "expected_path": stored.reference_path,
-                    "reference_path": new_path,
-                }
-                updated = (
-                    reference_store.update_pending_source_reference(pending, source_id, stored.namespace, **values)
-                    if pending_source
-                    else reference_store.update_source_reference(
-                        token.project_id, source_id, stored.namespace, token=token, **values
-                    )
-                )
-                if not updated:
+            if not isinstance(result, WriteBatchFailure) and result.ready and key in reference_updates:
+                if not project.remember(*reference_updates[key]):
                     raise _project_changed()
     captures = tuple(
-        dict.fromkeys(path for item in checked if item.ready for path, _fingerprint in item.artifact_fingerprints)
+        dict.fromkeys(
+            path
+            for item in checked
+            if not isinstance(item, WriteBatchFailure) and item.ready
+            for path, _fingerprint in item.artifact_fingerprints
+        )
     )
     return PreparedWriteBack(tuple(key for key, _slot in selected), checked, captures)
 
@@ -254,7 +242,8 @@ def _project_stamp(ctx) -> tuple:
     )
 
 
-def _project_plugin_sources(ctx, request, references, identity):
+def _project_plugin_sources(ctx, request, references, stamp):
+    identity, project_revision, variant_revision = stamp
     project_id, variant_id = identity
     expected = getattr(ctx, "_target_version_identity", None)
     if (
@@ -263,9 +252,9 @@ def _project_plugin_sources(ctx, request, references, identity):
         or getattr(request, "variant_id", None) not in {None, variant_id}
     ):
         raise _project_changed()
-    store = references.store_for(ProjectId(project_id))
-    token = store.read_token(VariantId(variant_id))
-    return store, token, {info.namespace: info for info in store.sources(native_fields=False)}
+    return ProjectPluginReferences(
+        references, ProjectId(project_id), VariantId(variant_id), project_revision, variant_revision
+    )
 
 
 def _project_changed() -> RequestError:
@@ -286,10 +275,11 @@ def _bind_write_plugin(key, snapshot, entries, explicit, automatic_path, request
             )
         ):
             raise RequestError("PATH_OUTSIDE_GRANT", "来源路径超出授权范围")
-        _require_input_access(grant, absolute_input, base)
+        require_input_access(grant, absolute_input, base)
         absolute_input = absolute_input if absolute_input.is_absolute() else base / absolute_input
-        if not explicit:
-            _authorize_saved_plugin_resources(grant, absolute_input.resolve(strict=True), snapshot)
+        authorize_plugin_resources(
+            grant, absolute_input.resolve(strict=True), dict(snapshot.metadata).get("localized_language", "english")
+        )
         return bind_plugin_write_input(
             snapshot,
             entries,
@@ -306,23 +296,6 @@ def _bind_write_plugin(key, snapshot, entries, explicit, automatic_path, request
         ):
             raise
         raise _plugin_input_required(key) from exc
-
-
-def _require_input_access(grant, path, base=None):
-    access = grant.authorize(path, working_directory=base)
-    if not access.allowed:
-        raise RequestError(access.code, access.reason)
-
-
-def _authorize_saved_plugin_resources(grant, path, snapshot):
-    _require_input_access(grant, path.parent)
-    strings = _case_child(path.parent, "Strings")
-    if strings.exists():
-        _require_input_access(grant, strings)
-    language = dict(snapshot.metadata).get("localized_language", "english")
-    for companion in candidate_input_paths(path, language):
-        if companion.exists():
-            _require_input_access(grant, companion)
 
 
 def _plugin_input_required(key) -> RequestError:

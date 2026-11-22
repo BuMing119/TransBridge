@@ -382,18 +382,17 @@ class GuiProjectCommandFacade:
         *,
         translation: str | None = None,
         stage: int | None = None,
+        expected_project_revision: int | None = None,
+        expected_variant_revision: int | None = None,
+        expected_variant_ref: VariantRef | None = None,
     ) -> OperationResult[dict[str, Any]]:
-        active = self._lifecycle.active
-        if active is not None and active.variant is not None and isinstance(local_key, EntryKey):
-            snapshot = active.variant.snapshot()
-            if isinstance(snapshot.entries, DeferredVariantRows):
-                from .variant_commands import update_deferred_entry
-
-                return update_deferred_entry(self._lifecycle, active, snapshot, local_key, context, translation, stage)
         update = update_entry_by_key if isinstance(local_key, EntryKey) else update_entry_by_local_key
         return self._commit_variant(
             context,
             update_entries=lambda entries: update(entries, local_key, translation=translation, stage=stage),
+            expected_project_revision=expected_project_revision,
+            expected_variant_revision=expected_variant_revision,
+            expected_variant_ref=expected_variant_ref,
         )
 
     def replace_labels(

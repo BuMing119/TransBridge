@@ -18,9 +18,8 @@ from collections.abc import Callable
 from copy import copy
 import functools
 import logging
-from typing import TYPE_CHECKING
 
-from transbridge.application.translation.entry_alias import ai_entry_key
+from transbridge.application.workbench_filters import filter_entries as filter_entries
 
 from .types import (
     ExecutionContext,
@@ -29,10 +28,6 @@ from .types import (
     HITLType as HITLType,
     ToolResult,
 )
-
-if TYPE_CHECKING:
-    from transbridge.converter.translation_entry import TranslationEntry
-    from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +137,12 @@ def execute_with_guardrails(
         guard_result = mw.before_execute(step, ctx)
         if not guard_result.allowed:
             return _guard_failure(guard_result, phase="input")
+        if getattr(guard_result, "code", "") == "CONFIRMED":
+            from .terminology_approval import REVIEW_ACTIONS, record_review
+
+            if resolved_tool_name in REVIEW_ACTIONS:
+                ctx = copy(ctx)
+                record_review(ctx, step)
         if guard_result.modified_args is not None:
             step["args"] = guard_result.modified_args
 
@@ -211,93 +212,6 @@ def execute_with_guardrails(
 
         return project_business_data(result)
     return raw_result
-
-
-# ── filter_entries (H8) ────────────────────────────────────────
-
-
-def filter_entries(
-    collection: TranslationEntryCollection, filter_state: dict, entry_labels: dict[str, set[str]] | None = None
-) -> list[TranslationEntry]:
-    """公共筛选函数。根据 filter_state 从 collection 中筛选条目。
-
-    供 Story 04/08/10 复用，统一筛选行为。(H8)
-    entry_labels: entry_id → set[label_name]，用于标签筛选（M1 修复）。
-    """
-    results = list(collection)
-
-    stages = filter_state.get("stage")
-    if stages:
-        results = [e for e in results if e.stage in stages]
-
-    categories = filter_state.get("category")
-    if categories:
-        results = [
-            e
-            for e in results
-            if e.context and any(e.context.startswith(c + ":") or e.context.startswith(c + "_") for c in categories)
-        ]
-
-    labels = filter_state.get("labels") or filter_state.get("label")  # M1: 兼容两种 key 名
-    if labels and entry_labels:
-        results = [
-            e
-            for e in results
-            if any(
-                lbl in entry_labels.get(e.identity.serialize() if e.requires_original_match else e.key, set())
-                for lbl in labels
-            )
-        ]
-
-    search_query = filter_state.get("search_query")
-    search_field = filter_state.get("search_field", "original")
-    if search_query:
-        q = search_query.lower()
-        if search_field == "id":
-            results = [e for e in results if q in (e.id or "").lower()]
-        elif search_field == "key":
-            results = [e for e in results if q in (e.key or "").lower()]
-        elif search_field in ("original", "text"):
-            results = [e for e in results if q in (e.original or "").lower()]
-        elif search_field == "translation":
-            results = [e for e in results if q in (e.translation or "").lower()]
-        elif search_field == "context":
-            results = [e for e in results if q in (e.context or "").lower()]
-        elif search_field == "all":
-            results = [
-                e
-                for e in results
-                if q in (e.key or "").lower()
-                or q in (e.original or "").lower()
-                or q in (e.translation or "").lower()
-                or q in (e.context or "").lower()
-            ]
-
-    return results
-
-
-# ── resolve_scope_to_entry_ids (M3) ────────────────────────────
-
-
-def resolve_scope_to_entry_ids(ctx, collection: TranslationEntryCollection) -> list[str] | None:
-    """从 ctx.translation_scope 解析条目 ID 列表。
-
-    供 start_translation / run_postprocess 等长运行工具复用，消除 scope 解析重复代码。
-
-    Returns:
-        条目 key 列表，若 scope 为空或无效则返回 None（调用方自行决定默认行为）。
-    """
-    scope = getattr(ctx, "translation_scope", None)
-    if not scope or not any(scope.get(k) for k in ("stages", "labels", "categories")):
-        return None
-    filter_state = {
-        "stage": scope.get("stages"),
-        "category": scope.get("categories"),
-        "labels": scope.get("labels"),
-    }
-    entry_labels = getattr(ctx, "entry_labels", None)
-    scoped = filter_entries(collection, filter_state, entry_labels=entry_labels)
-    return [ai_entry_key(e) for e in scoped]
 
 
 # ── @require_collection ─────────────────────────────────────────

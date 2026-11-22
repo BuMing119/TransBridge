@@ -3,6 +3,9 @@
 OverviewTab: 项目概览标签页，展示基本信息与翻译进度统计。
 """
 
+from contextlib import closing
+from copy import copy
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
@@ -21,8 +24,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.application.ports.paratranz import ParaTranzProject
 from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
 from transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
+from transbridge.paratranz.service import ParaTranzService
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, ElidedLabel, SemanticState
 
 from ..workers import ApiWorker
@@ -39,7 +44,7 @@ def _extract_list(data) -> list:
     return []
 
 
-_PRIVACY_LABELS = {0: "公开", 1: "内部", 2: "私密"}
+_PRIVACY_LABELS = {"public": "公开", "internal": "内部", "private": "私密"}
 _REVIEW_LABELS = {0: "无须校对", 1: "一次校对", 2: "二次校对"}
 _JOIN_LABELS = {0: "公开加入", 1: "申请加入", 2: "测试加入", 3: "私密"}
 
@@ -220,9 +225,7 @@ class OverviewTab(QWidget):
         self._set_empty()
 
     def _set_empty(self):
-        self._lbl_name.set_full_text("—")
-        self._lbl_name.setToolTip("")
-        self._lbl_name.setAccessibleDescription("")
+        self._show_project_name("")
         for lbl in (
             self._lbl_desc,
             self._lbl_game,
@@ -232,6 +235,7 @@ class OverviewTab(QWidget):
             self._lbl_members,
         ):
             lbl.setText("—")
+            lbl.setToolTip("")
         self._prog_bar.setValue(0)
         self._prog_bar.setFormat("请先选择项目")
         for lbl in self._stat_labels.values():
@@ -247,20 +251,68 @@ class OverviewTab(QWidget):
             return
 
         p = project
-        project_name = str(p.get("name", "—"))
-        self._lbl_name.set_full_text(project_name)
-        self._lbl_name.setToolTip(project_name)
-        self._lbl_name.setAccessibleDescription(project_name)
+        self._show_project_name(str(p.get("name") or ""))
         self._lbl_desc.setText(p.get("desc") or p.get("description") or "—")
         self._lbl_game.setText(p.get("game") or "—")
-        self._lbl_privacy.setText(_PRIVACY_LABELS.get(p.get("privacy", 0), "—"))
         self._lbl_review.setText(_REVIEW_LABELS.get(p.get("reviewMode", 0), "—"))
         self._lbl_join.setText(_JOIN_LABELS.get(p.get("joinMode", 0), "—"))
-        self._lbl_members.setText(str(p.get("total", "—")))
+        visibility, count = ParaTranzProject.overview_fields(p)
+        self._show_overview_fields(visibility, count)
+        project_id = p.get("id")
+        if type(project_id) is int and project_id > 0 and (visibility is None or count is None):
+            self._load_missing_details(project_id, visibility, count)
 
         self._refresh_permissions()
 
         self._load_progress(p.get("id"))
+
+    def _show_project_name(self, name):
+        self._lbl_name.set_full_text(name or "—")
+        self._lbl_name.setToolTip(name)
+        self._lbl_name.setAccessibleDescription(name)
+
+    def _show_overview_fields(self, visibility, count):
+        self._lbl_privacy.setText(_PRIVACY_LABELS.get(visibility, "—"))
+        self._lbl_members.setText("—" if count is None else str(count))
+        self._lbl_privacy.setToolTip("")
+        self._lbl_members.setToolTip("")
+
+    def _load_missing_details(self, project_id, visibility, count):
+        config = self._ctx.config
+        snapshot = config.copy_for_execution() if hasattr(config, "copy_for_execution") else copy(config)
+        generation = self._context_gen
+
+        def current():
+            return (
+                generation == self._context_gen
+                and self._ctx.config is config
+                and getattr(snapshot, "config_revision", None) == getattr(config, "config_revision", None)
+            )
+
+        def fetch():
+            with closing(ParaTranzService.from_config(snapshot)) as service:
+                return service.get_project(project_id)
+
+        def show(details):
+            if current():
+                self._show_project_name(details.name)
+                self._show_overview_fields(
+                    details.visibility or visibility,
+                    details.member_count if details.member_count is not None else count,
+                )
+
+        def failed(message):
+            if current():
+                for field, label in ((visibility, self._lbl_privacy), (count, self._lbl_members)):
+                    if field is None:
+                        label.setToolTip(f"无法读取项目详情：{message}")
+
+        worker = ApiWorker(fetch)
+        worker.result.connect(show)
+        worker.error.connect(failed)
+        worker.finished.connect(lambda: self._workers.remove(worker))
+        self._workers.append(worker)
+        worker.start()
 
     def _load_progress(self, project_id):
         if not project_id:

@@ -83,15 +83,21 @@ class ScopedTermMatches:
 class DynamicTermDatabase:
     """按 ESP stem 绑定，持久化到 data/ai_translator/{stem}/{stem}_terms.json。"""
 
-    def __init__(self, esp_path: str):
+    def __init__(self, esp_path: str, *, read_only: bool = False):
         stem = os.path.splitext(os.path.basename(esp_path))[0]
         from transbridge.paratranz.config_manager import LLMConfig
 
-        ai_dir = LLMConfig.get_ai_translator_dir(stem)
+        ai_dir = (
+            LLMConfig.get_ai_translator_dir(stem, create=False) if read_only else LLMConfig.get_ai_translator_dir(stem)
+        )
         self._path = os.path.join(ai_dir, f"{stem}_terms.json")
         self._entries: list[TermEntry] = []
         self._lock = threading.RLock()
         self._revision = 0
+
+    @property
+    def path(self) -> str:
+        return self._path
 
     @property
     def revision(self) -> int:

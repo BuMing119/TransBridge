@@ -14,7 +14,6 @@ import pytest
 from transbridge.application.ports.paratranz import (
     ExternalServiceCategory,
     ExternalServiceError,
-    ParaTranzEntry,
 )
 from transbridge.application.tasks import CancellationToken, TaskCancelled
 from transbridge.config.paratranz import ParatranzConfig
@@ -245,42 +244,32 @@ def test_cancellation_before_request_during_backoff_and_after_response() -> None
         assert len(calls) == 1
 
 
-def test_service_maps_tool_operations_to_real_endpoint_methods() -> None:
-    projects = MagicMock()
-    strings = MagicMock()
+def test_service_reads_remote_file_revisions() -> None:
     history = MagicMock()
-    exports = MagicMock()
-    service = ParaTranzService(projects, strings, history, exports)
-    strings.update_string.return_value = {
-        "id": 7,
-        "key": "NPC_:1",
-        "original": "Hello",
-        "translation": "你好",
-        "context": "NPC_:FULL",
-        "stage": 1,
-    }
     history.list_file_revisions.return_value = {"results": [{"id": 3, "status": "success", "filename": "a.json"}]}
-    entry = ParaTranzEntry(7, "NPC_:1", "Hello", "你好", "NPC_:FULL", 1)
+    service = ParaTranzService(MagicMock(), MagicMock(), history, MagicMock())
 
-    result = service.upsert_entry(11, entry, force_overwrite=True)
-    revisions = service.list_upload_history(11, limit=20)
+    revisions = service.list_upload_history(11, page=2)
 
-    assert result.remote_id == 7
     assert revisions[0].revision_id == 3
-    strings.list_strings.assert_not_called()
-    strings.update_string.assert_called_once_with(11, 7, entry.to_remote_payload(), cancellation=None)
-    history.list_file_revisions.assert_called_once()
-    assert not hasattr(service, "get_entries")
-    assert not hasattr(service, "get_upload_history")
+    history.list_file_revisions.assert_called_once_with(11, page=2, page_size=50, cancellation=None)
 
-    new_entry = ParaTranzEntry(None, "NPC_:2", "Hello", "你好", "NPC_:FULL", 1)
-    strings.create_string.return_value = {
-        "id": 8,
-        **new_entry.to_remote_payload(),
-    }
-    created = service.upsert_entry(11, new_entry)
-    assert created.remote_id == 8
-    strings.create_string.assert_called_once_with(11, new_entry.to_remote_payload(), cancellation=None)
+
+def test_bounded_entry_read_keeps_pagination_offsets_stable() -> None:
+    strings = MagicMock()
+    strings.list_strings.side_effect = [
+        {"results": [{"id": index, "key": str(index), "original": "x"} for index in range(1, 801)]},
+        {"results": [{"id": 801, "key": "801", "original": "x"}]},
+    ]
+    service = ParaTranzService(MagicMock(), strings, MagicMock(), MagicMock())
+
+    entries = service.list_entries(7, limit=801)
+
+    assert [entry.remote_id for entry in entries] == list(range(1, 802))
+    assert [(c.kwargs["page"], c.kwargs["page_size"]) for c in strings.list_strings.call_args_list] == [
+        (1, 800),
+        (2, 800),
+    ]
 
 
 def test_project_catalog_reads_all_pages_and_isolates_cache_by_configuration() -> None:

@@ -15,6 +15,8 @@ from transbridge.application.tasks import (
     TransitionError,
 )
 
+BRIDGE_JOB_METADATA = "task_manager_bridge"
+
 
 class TaskRuntimeBridge:
     """One registered worker, with runtime-owned controls and terminal arbitration.
@@ -55,6 +57,9 @@ class TaskRuntimeBridge:
         self._scheduled = target
 
     def _observe(self, event) -> None:
+        self.refresh_controls(event.message)
+
+    def refresh_controls(self, message="") -> None:
         # Read current authority: concurrent publishers may deliver older events last.
         snapshot = self.runtime.get(self.ref, self.owner)
         with self._projection_lock:
@@ -70,8 +75,8 @@ class TaskRuntimeBridge:
                 self.handle.pause_event.set()
             if snapshot.state in {JobState.CANCELLING, JobState.CANCELLED}:
                 self.handle.stop_event.set()
-            if event.message:
-                self.handle.message = event.message
+            if message:
+                self.handle.message = message
         self._updated()
 
     def wait_until_running(self) -> None:

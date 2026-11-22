@@ -6,58 +6,79 @@ Story 07: get_collection_summary deprecated(O8)，功能合并到 get_statistics
 
 from __future__ import annotations
 
-from collections import Counter
 import logging
-import os
+from pathlib import PureWindowsPath
+
+from transbridge.application.workbench_filters import FilterState
+from transbridge.converter.translation_entry import STAGE_LABELS
 
 from .base import ToolResult
+from .diagnostics import technical_error
+from .workbench_rows import tool_scope_statistics
 
 logger = logging.getLogger(__name__)
 
 
-_STAGE_LABELS = {0: "未翻译", 1: "已翻译", 2: "有疑问", 3: "已检查", 5: "已审核", 9: "已锁定", -1: "已隐藏"}
-
-
 def _tool_get_app_state(args: dict, ctx) -> ToolResult:
-    """返回当前应用状态摘要。"""
-    slot = ctx.active_slot
-    # m4: 只暴露文件名，不泄露绝对路径
-    project_name = ctx.project_name
-    # C5: ParaTranz 配置状态
-    pt_configured = False
-    try:
-        from transbridge.paratranz.config_manager import ParatranzConfig
+    """Read one coherent snapshot from the same context used by the workbench."""
+    from .types import ExecutionContext
+    from .workbench_rows import check_workbench_source
 
-        pt_cfg = ParatranzConfig.load_from_file()
-        pt_configured = bool(getattr(pt_cfg, "token", None))
-    except Exception as exc:
-        logger.warning("操作失败: %s", exc)
+    app = ctx.app_context if isinstance(ctx, ExecutionContext) else ctx
+    if app is None:
+        return ToolResult.fail("工作台上下文未初始化。", error_code="RUNTIME_CONTEXT_REQUIRED")
 
-    return ToolResult.ok(
-        data={
-            "active_collection": slot.label if slot else None,
-            "esp_file": os.path.basename(ctx.esp_path) if ctx.esp_path else None,
-            "eet_file": os.path.basename(ctx.eet_path) if ctx.eet_path else None,
-            "xt_file": os.path.basename(ctx.xt_path) if ctx.xt_path else None,
-            "project": project_name,
-            "variant": ctx.active_variant,
-            "filters": ctx.filter_state,
-            "collection_count": len(ctx.slots),
+    def snapshot():
+        check_workbench_source(ctx, app)
+        slot = app.active_slot
+        return {
+            "active_collection": slot.content_name(app.active_key) if slot else None,
+            "esp_file": PureWindowsPath(slot.esp_path).name if slot and slot.esp_path else None,
+            "eet_file": PureWindowsPath(slot.eet_path).name if slot and slot.eet_path else None,
+            "xt_file": PureWindowsPath(slot.xt_path).name if slot and slot.xt_path else None,
+            "project": app.project_name,
+            "variant": app.active_variant,
+            "filters": FilterState.from_mapping(ctx.filter_state).to_mapping(),
+            "collection_count": len(app.slots),
             "has_active_collection": slot is not None and slot.collection is not None,
-            "paratranz_configured": pt_configured,
+            "paratranz_configured": app.config.credential_configured,
         }
-    )
+
+    try:
+        data = ctx.safe_mutate_wait(snapshot) if isinstance(ctx, ExecutionContext) else snapshot()
+    except ValueError as error:
+        return ToolResult.fail(str(error), error_category="input")
+    return ToolResult.ok(data=data)
+
+
+def _read_workbench(ctx, read):
+    from .types import ExecutionContext
+
+    if not isinstance(ctx, ExecutionContext):
+        return read(ctx)
+    app = ctx.app_context
+
+    def snapshot():
+        if app is None or ctx._target_version_identity != getattr(app, "active_version_identity", None):
+            return ToolResult.fail("活动工程版本已变化，请重新读取工作台。")
+        return read(app)
+
+    return ctx.safe_mutate_wait(snapshot)
 
 
 def _tool_list_collections(args: dict, ctx) -> ToolResult:
     """列出所有已加载的翻译集合。"""
+    return _read_workbench(ctx, _list_collections)
+
+
+def _list_collections(ctx):
     collections = []
     for key, slot in ctx.slots.items():
         col = slot.collection
         collections.append({
             "key": key,
             "label": slot.label,
-            "esp_name": os.path.basename(slot.esp_path) if slot.esp_path else None,
+            "esp_name": PureWindowsPath(slot.esp_path).name if slot.esp_path else None,
             "entry_count": len(col) if col else 0,
             "is_active": key == ctx.active_key,
         })
@@ -66,6 +87,24 @@ def _tool_list_collections(args: dict, ctx) -> ToolResult:
 
 def _tool_switch_collection(args: dict, ctx) -> ToolResult:
     """切换活跃翻译集合。"""
+    from .types import ExecutionContext
+
+    if isinstance(ctx, ExecutionContext):
+        app = ctx.app_context
+
+        def activate():
+            if ctx._target_version_identity != app.active_version_identity:
+                return ToolResult.fail("活动工程版本已变化，请重新选择来源。")
+            token = getattr(ctx, "cancellation_token", None)
+            if token is not None:
+                token.raise_if_cancelled()
+            return _switch_source(args, app)
+
+        return ctx.safe_mutate_wait(activate)
+    return _switch_source(args, ctx)
+
+
+def _switch_source(args, ctx):
     collection_name = args.get("collection_name", "")
     slot_index = args.get("slot_index")
 
@@ -75,13 +114,15 @@ def _tool_switch_collection(args: dict, ctx) -> ToolResult:
             return ToolResult.fail(f"slot_index 超出范围: 0~{len(keys) - 1}")
         target_key = keys[slot_index]
     elif collection_name:
-        target_key = None
-        for key, slot in ctx.slots.items():
-            if slot.label == collection_name or key == collection_name:
-                target_key = key
-                break
-        if target_key is None:
-            return ToolResult.fail(f"未找到集合: {collection_name}")
+        if collection_name in ctx.slots:
+            target_key = collection_name
+        else:
+            matches = [key for key, slot in ctx.slots.items() if slot.label == collection_name]
+            if not matches:
+                return ToolResult.fail(f"未找到集合: {collection_name}")
+            if len(matches) > 1:
+                return ToolResult.fail("多个来源同名，请使用来源键或 slot_index。")
+            target_key = matches[0]
     else:
         return ToolResult.fail("请指定 collection_name 或 slot_index")
 
@@ -93,7 +134,10 @@ def _tool_switch_collection(args: dict, ctx) -> ToolResult:
 
 def _tool_get_current_filters(args: dict, ctx) -> ToolResult:
     """返回当前筛选状态。"""
-    fs = ctx.filter_state
+    try:
+        fs = FilterState.from_mapping(ctx.filter_state).to_mapping()
+    except ValueError as exc:
+        return ToolResult.fail(str(exc), error_category="input")
     active_count = sum(1 for v in fs.values() if v)
     return ToolResult.ok(
         f"当前有 {active_count} 个活跃筛选条件",
@@ -102,32 +146,25 @@ def _tool_get_current_filters(args: dict, ctx) -> ToolResult:
 
 
 def _tool_get_statistics(args: dict, ctx) -> ToolResult:
-    """返回翻译集合的详细统计。O8: 合并原 get_collection_summary 功能。"""
-    collection = ctx.collection
-    if not collection or len(collection) == 0:
-        return ToolResult.ok("当前未加载翻译集合", data={"total": 0, "translated": 0})
-
-    total = len(collection)
-    translated = sum(1 for e in collection if e.translation)
-    untranslated = total - translated
-
-    stage_dist = Counter()
-    category_dist = Counter()
-    for e in collection:
-        stage_dist[_STAGE_LABELS.get(e.stage, f"unknown({e.stage})")] += 1
-        if e.context:
-            cat = e.context.split(":")[0] if ":" in e.context else e.context[:4]
-            category_dist[cat] += 1
-
+    try:
+        statistics = tool_scope_statistics(ctx)
+    except (ValueError, RuntimeError, OSError) as exc:
+        return ToolResult.fail(technical_error(exc))
+    summary = statistics.summary
     return ToolResult.ok(
-        f"总计 {total} 条，已翻译 {translated} 条 ({100 * translated // max(total, 1)}%)",
+        f"总计 {summary.total} 条，已翻译 {summary.completed} 条 ({summary.translation_rate}%)",
         data={
-            "total": total,
-            "translated": translated,
-            "untranslated": untranslated,
-            "translation_rate": round(100 * translated / max(total, 1), 1),
-            "stage_distribution": dict(stage_dist.most_common()),
-            "category_distribution": dict(category_dist.most_common(20)),
+            "total": summary.total,
+            "translated": summary.completed,
+            "untranslated": summary.untranslated,
+            "needs_review": summary.needs_review,
+            "hidden": summary.hidden,
+            "translation_rate": summary.translation_rate,
+            "stage_distribution": {
+                STAGE_LABELS.get(stage, f"unknown({stage})"): count for stage, count in statistics.stages.most_common()
+            },
+            "category_distribution": dict(statistics.categories.most_common()),
+            "label_distribution": dict(statistics.labels),
         },
     )
 
@@ -150,6 +187,10 @@ def _tool_list_local_projects(args: dict, ctx) -> ToolResult:
 
 def _tool_get_current_project(args: dict, ctx) -> ToolResult:
     """获取当前活跃项目信息。"""
+    return _read_workbench(ctx, _current_project)
+
+
+def _current_project(ctx):
     project_name = ctx.project_name
     if not project_name:
         return ToolResult.ok("当前无活跃项目", data={"active_project": None})
@@ -195,13 +236,11 @@ def _register_default_tools():
                 "name": "get_app_state",
                 "display_name": "应用状态",
                 "description": (
-                    "①Return a comprehensive global state overview for identifying the current workflow phase. ②No "
-                    "arguments; read-only. ③Returns {active_collection, esp_file, eet_file, "
-                    "xt_file(filename only), project, "
-                    'variant(version variant such as "v1"), filters, collection_count, has_active_collection, '
-                    "paratranz_configured}. Rules: file paths expose filenames only; "
-                    "workflow phase is distinct from an "
-                    "entry's stage field."
+                    "①Read the current workbench project, version, and loaded source. ②No arguments. "
+                    "③Returns {active_collection, esp_file, eet_file, xt_file, project, variant, filters, "
+                    "collection_count, has_active_collection, paratranz_configured}. "
+                    "④Files are shown by name. Filters follow the admitted request. "
+                    "The ParaTranz flag reports whether the desktop has a credential configured."
                 ),
                 "execute": _tool_get_app_state,
                 "permission": "read",
@@ -214,7 +253,7 @@ def _register_default_tools():
                     "①List all loaded translation collections and basic information. "
                     "②No arguments; read-only. ③Returns "
                     "{collections: [{key, label, esp_name(null for non-ESP sources), entry_count, is_active}]}. Rules: "
-                    "parser action=create_slot creates and activates a collection; "
+                    "parser action=create_slot registers a source in the current project; "
                     "switch_collection changes it; this tool "
                     "queries it; the UI removes it. Filters and scope belong to the active collection."
                 ),
@@ -226,11 +265,9 @@ def _register_default_tools():
                 "name": "switch_collection",
                 "display_name": "切换集合",
                 "description": (
-                    "①Switch the active translation collection; subsequent operations target the new collection. "
-                    "②Arguments: preferred collection_name (key or label), or slot_index (zero-based position from "
-                    "list_collections). ③Returns {active_collection}. Rules: collection_name "
-                    "wins when both are supplied; "
-                    "prefer it over slot_index; write permission."
+                    "①Switch the active workbench source. ②Use collection_name (key or unique label) or "
+                    "slot_index (zero-based position in list_collections). When both are provided, slot_index "
+                    "takes precedence. ③Returns {active_collection}."
                 ),
                 "execute": _tool_switch_collection,
                 "permission": "write",
@@ -243,10 +280,10 @@ def _register_default_tools():
                     "①Return a complete snapshot of current filters. ②No arguments; "
                     "read-only. ③Returns {filter_state: "
                     "{stage(num[]: 0=untranslated/1=translated/2=question/3=checked/5=reviewed/9=locked/-1=hidden; "
-                    "4/6/7/8 reserved for ParaTranz), category, label, search_query, "
-                    "search_field(id/key/original/translation/context/all)}, active_filter_count}. "
+                    "4/6/7/8 reserved for ParaTranz), category, label, search_all, search_key, "
+                    "search_orig, search_trans, focus_labeled}, active_filter_count}. "
                     "Rules: discover categories "
-                    "via get_statistics.category_distribution and labels via list_labels; "
+                    "from the workbench and label IDs via list_labels; "
                     "modify filters with set_filters."
                 ),
                 "execute": _tool_get_current_filters,
@@ -259,8 +296,9 @@ def _register_default_tools():
                 "description": (
                     "①Return full statistics unaffected by current filters. "
                     "②No arguments; read-only. ③Returns {total, "
-                    'translated, untranslated, translation_rate(%), stage_distribution({"untranslated":120,...}), '
-                    'category_distribution({"NPC_":150,...}, top 20)}. '
+                    "translated, untranslated, needs_review, hidden, translation_rate(%), "
+                    "stage_distribution, category_distribution, label_distribution (by label ID)}. "
+                    "Counts use workbench stages and category names. "
                     "Rule: use for an overview; use get_visible_entries "
                     "for filtered entries."
                 ),
@@ -274,10 +312,7 @@ def _register_default_tools():
                 "display_name": "本地项目",
                 "description": (
                     "①List projects in the local workspace. ②No arguments; read-only. "
-                    "③Returns {projects: [{name(directory "
-                    "name only, no full path)}]}. Rule: each workspace subdirectory "
-                    "is a project; project CRUD is available "
-                    "only through the UI."
+                    "③Returns {projects: [{name}]}. Project names come from the desktop project catalog."
                 ),
                 "execute": _tool_list_local_projects,
                 "permission": "read",

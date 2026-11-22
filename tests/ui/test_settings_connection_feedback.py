@@ -158,7 +158,9 @@ def test_editing_connection_fields_invalidates_results_and_ignores_late_replies(
         layout_app,
         _preferences(tmp_path),
         llm_config=LLMConfig(),
-        paratranz_config=SimpleNamespace(token="synthetic-token", base_url="https://example.invalid", timeout=30),
+        paratranz_config=SimpleNamespace(
+            credential_configured=True, token="synthetic-token", base_url="https://example.invalid", timeout=30
+        ),
         initial_section=section,
     )
     page = dialog._settings_pages[section]

@@ -226,6 +226,8 @@ class GraphExecutor:
             (early_result, current_step): early_result 非 None 表示被护栏阻断，
             调用方应直接返回该 StepResult；current_step 为可能被修改后的 step 副本。
         """
+        from .tools.terminology_approval import REVIEW_ACTIONS, record_review
+
         current_step = dict(step)
         for mw in self._guards:
             guard_result = mw.before_execute(step, exec_ctx)
@@ -264,6 +266,8 @@ class GraphExecutor:
                             ),
                             current_step,
                         )
+                    if tool_name in REVIEW_ACTIONS:
+                        record_review(exec_ctx, step)
                 else:
                     return (
                         StepResult(
@@ -276,13 +280,15 @@ class GraphExecutor:
                         ),
                         current_step,
                     )
+            elif tool_name in REVIEW_ACTIONS and getattr(guard_result, "code", "") == "CONFIRMED":
+                record_review(exec_ctx, step)
             if guard_result.modified_args is not None:
                 current_step["args"] = guard_result.modified_args
         return (None, current_step)
 
     # ── 单步执行 ──────────────────────────────────────────────
 
-    def _run_single(self, step: dict) -> StepResult:
+    def _run_single(self, step: dict, *, node_id: str | None = None) -> StepResult:
         """执行单个步骤。支持 Agent namespace 路由。"""
         step_id = step["id"]
         tool_name = step.get("tool", "?")
@@ -323,6 +329,14 @@ class GraphExecutor:
         if isinstance(raw_ctx, ExecutionContext):
             # Preserve the admitted owner/request and captured mutation target across graph steps.
             exec_ctx = copy(raw_ctx)
+            reviews = getattr(raw_ctx, "plan_edit_reviews", None)
+            if reviews is not None:
+                from .entry_edit_review import EDIT_TOOLS
+
+                if tool_name in EDIT_TOOLS:
+                    if reviews.get(node_id) is None:
+                        return StepResult(step_id, tool_name, False, "未找到本计划步骤的词条修改预览，请重新确认。")
+                    exec_ctx.entry_edit_review = reviews[node_id]
             exec_ctx.task_manager = raw_ctx.task_manager or TaskManager()
         else:
             exec_ctx = ExecutionContext(app_context=raw_ctx, task_manager=TaskManager())
@@ -399,6 +413,11 @@ class GraphExecutor:
         else:
 
             def invoke(current_args):
+                if getattr(exec_ctx, "assistant_gate", None) is not None or getattr(
+                    exec_ctx, "assistant_required", False
+                ):
+                    # The graph already ran its permission and input guards above.
+                    return execute_with_guardrails(spec, current_args, exec_ctx, middlewares=[], tool_name=tool_name)
                 return spec.execute(current_args, exec_ctx)
 
         outcome = self._retry_executor.execute(
@@ -460,7 +479,7 @@ class GraphExecutor:
                 "agent_instance_id": "",
                 "_instance": None,
             }
-            return self._run_single(step)
+            return self._run_single(step, node_id=node.node_id)
         elif isinstance(node, ConditionNode):
             cond_results = {nid: results.get(nid) for nid in results}
             next_id = self._branch_decisions.get(node.node_id)
@@ -829,6 +848,15 @@ class GraphExecutor:
 
         if not steps:
             return []
+
+        # A saved plan can outlive a tool. Check every step before its first side effect.
+        for step in steps:
+            name = step.get("tool", "?")
+            spec = self._registry.get(name)
+            if spec is None or getattr(spec, "available", True) is False or getattr(spec, "deprecated", False) is True:
+                failure = StepResult(step["id"], name, False, f"计划中的工具已不可用：{name}，请重新规划。")
+                self._emit(self._on_all_finished, [failure])
+                return [failure]
 
         # 检查是否有任何步骤声明了 depends_on
         has_deps = any(s.get("depends_on") for s in steps)

@@ -38,3 +38,16 @@ def test_read_tools_and_supported_writes_do_not_get_spurious_undo_notices(monkey
     }
     monkeypatch.setattr(ToolRegistry, "get", specs.get)
     assert undo_notices([{"tool": name} for name in specs]) == []
+
+
+def test_file_registration_and_translation_import_have_distinct_undo_notices(monkeypatch):
+    from transbridge.ui.tools.smart_assistant.operation_preview import operation_summary
+
+    monkeypatch.setattr(ToolRegistry, "get", lambda _: SimpleNamespace(permission="write", display_name="导入"))
+    register = {"tool": "import_json", "args": {"path": "translation.json"}}
+    append = {"tool": "import_json", "args": {"action": "append", "replace_existing": True, "path": "donor.json"}}
+    assert "登记来源" in operation_summary(register)
+    assert "替换已有译文" in operation_summary(append)
+    assert undo_notices([append]) == []
+    (notice,) = undo_notices([append, register])
+    assert "无法移除" in notice

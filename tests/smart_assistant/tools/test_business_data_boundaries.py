@@ -118,7 +118,6 @@ class _RepairField:
 def test_real_read_tool_retry_preserves_query_and_schema():
     client = _RepairField()
     context = SimpleNamespace(filter_state={})
-    context.set_filter = lambda **args: context.filter_state.update(args)
     editor = EditorController()
     spec = ToolRegistry.get("set_filters")
     step = {"tool": "set_filters", "args": {"search_query": "password: swordfish", "search_field": "wrong"}}
@@ -131,7 +130,7 @@ def test_real_read_tool_retry_preserves_query_and_schema():
     )
     assert result.result.success
     assert result.attempts == 2
-    assert context.filter_state == {"search_query": "password: swordfish", "search_field": "original"}
+    assert context.filter_state["search_orig"] == "password: swordfish"
     assert "password: swordfish" in client.prompt
 
 

@@ -12,10 +12,11 @@ from .storage_contracts import ApplicationState
 
 
 class TaskHistoryService:
-    def __init__(self, task_store, project_commands):
-        self.reports = task_store.history()
-        self.recovery = task_store.recovery()
-        self.uploads = EntryUploadResultStore(task_store.root)
+    def __init__(self, task_store, project_commands, *, owner_id=None, session_id=None):
+        scope = {"owner_id": owner_id, "session_id": session_id}
+        self.reports = task_store.history(**scope)
+        self.recovery = task_store.recovery(**scope)
+        self.uploads = EntryUploadResultStore(task_store.root) if owner_id is None else None
         self.projects = project_commands
         self.applications = ResultApplication.for_commands(self.recovery, project_commands)
 
@@ -23,7 +24,7 @@ class TaskHistoryService:
         reports = self.reports.list_records()
         runs = (
             *self.recovery.list_summaries(),
-            *self.uploads.history(),
+            *(self.uploads.history() if self.uploads is not None else ()),
             *(
                 {"task_id": run_id, "state": "cleanup_pending", "supported": False, "sources": [], "scope_count": 0}
                 for run_id in self.recovery.list_cleanup_pending()
@@ -38,23 +39,29 @@ class TaskHistoryService:
         return reports, runs
 
     def load(self, run_id):
+        report, _ = self.load_with_applications(run_id)
+        return report
+
+    def load_with_applications(self, run_id):
+        """Read the desktop report and reconcile its application decisions once."""
         if self.reports.contains(run_id):
             report = self.reports.load(run_id)
-        elif self.uploads.contains(run_id):
+        elif self.uploads is not None and self.uploads.contains(run_id):
             report = _upload_report(self.uploads.load(run_id))
         else:
-            report = _candidate_report(self.recovery.load(run_id), self.recovery.load_results(run_id))
+            report = load_candidate_report(self.recovery, run_id)
         project_id = report.get("project_id")
         report["target_unavailable"] = project_id is not None and not self.projects.project_exists(project_id)
         result_id = report.get("recovery_task_id", run_id)
-        if self.recovery.contains(result_id):
+        applications = ()
+        if self.applications is not None and self.recovery.contains(result_id):
             applications = self.applications.list(result_id)
             if applications:
                 report["application_label"] = _application_label(applications[-1])
-        return report
+        return report, applications
 
     def delete(self, run_id):
-        if self.uploads.contains(run_id):
+        if self.uploads is not None and self.uploads.contains(run_id):
             self.uploads.delete_completed(run_id)
             return
         if self.recovery.contains(run_id):
@@ -111,6 +118,13 @@ def _upload_report(record):
             ]
         },
     )
+
+
+def load_candidate_report(recovery, run_id):
+    """Project the saved candidates from the caller's recovery view into a desktop report."""
+    record = recovery.load(run_id)
+    payload = {"rows": record["candidate_rows"]} if "candidate_rows" in record else recovery.load_results(run_id)
+    return _candidate_report(record, payload)
 
 
 def _candidate_report(record, payload):

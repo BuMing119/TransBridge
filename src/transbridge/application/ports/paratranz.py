@@ -101,7 +101,18 @@ class ParaTranzProject:
     project_id: int
     name: str
     visibility: str | None = None
-    member_count: int = 0
+    member_count: int | None = None
+
+    @staticmethod
+    def overview_fields(value: Mapping[str, Any]) -> tuple[str | None, int | None]:
+        privacy = value.get("privacy")
+        visibility = {0: "public", 1: "internal", 2: "private"}.get(privacy) if type(privacy) is int else None
+        if visibility is None and isinstance(value.get("visibility"), str):
+            visibility = value["visibility"]
+        members = value.get("members")
+        if type(members) is int and members >= 0:
+            return visibility, members
+        return visibility, len(members) if isinstance(members, (list, tuple)) else None
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> ParaTranzProject:
@@ -111,12 +122,9 @@ class ParaTranzProject:
             raise ValueError("ParaTranz project id must be an integer")
         if not isinstance(name, str) or not name:
             raise ValueError("ParaTranz project name must be a non-empty string")
-        visibility = value.get("visibility")
-        if visibility is not None and not isinstance(visibility, str):
+        if value.get("visibility") is not None and not isinstance(value["visibility"], str):
             raise ValueError("ParaTranz project visibility must be a string or null")
-        members = value.get("members", ())
-        member_count = len(members) if isinstance(members, (list, tuple)) else 0
-        return cls(project_id, name, visibility, member_count)
+        return cls(project_id, name, *cls.overview_fields(value))
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,7 +173,7 @@ class ParaTranzEntry:
 
 @dataclass(frozen=True, slots=True)
 class ParaTranzUploadHistory:
-    revision_id: int | str
+    revision_id: int | str | None
     status: str | None
     filename: str | None
     created_at: str | None
@@ -174,7 +182,7 @@ class ParaTranzUploadHistory:
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> ParaTranzUploadHistory:
         revision_id = value.get("id")
-        if isinstance(revision_id, bool) or not isinstance(revision_id, (int, str)):
+        if revision_id is not None and (isinstance(revision_id, bool) or not isinstance(revision_id, (int, str))):
             raise ValueError("ParaTranz revision id must be an integer or string")
         return cls(
             revision_id,
@@ -209,15 +217,6 @@ class ParaTranzPort(Protocol):
         self, project_id: int, *, limit: int, cancellation: CancellationPort | None = None
     ) -> Iterator[ParaTranzEntry]: ...
 
-    def upsert_entry(
-        self,
-        project_id: int,
-        entry: ParaTranzEntry,
-        *,
-        force_overwrite: bool = False,
-        cancellation: CancellationPort | None = None,
-    ) -> ParaTranzEntry: ...
-
     def update_entry_context(
         self,
         project_id: int,
@@ -243,7 +242,7 @@ class ParaTranzPort(Protocol):
     ) -> None: ...
 
     def list_upload_history(
-        self, project_id: int, *, limit: int, cancellation: CancellationPort | None = None
+        self, project_id: int, *, page: int = 1, cancellation: CancellationPort | None = None
     ) -> tuple[ParaTranzUploadHistory, ...]: ...
 
     def trigger_export(self, project_id: int, *, cancellation: CancellationPort | None = None) -> Mapping[str, Any]: ...

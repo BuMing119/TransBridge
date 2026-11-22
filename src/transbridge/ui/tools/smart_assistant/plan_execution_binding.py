@@ -62,6 +62,7 @@ class PlanExecutionBinding:
     def confirm(self, steps: list, confirmation_view: ConfirmationView) -> None:
         if self._closed:
             return
+        from transbridge.smart_assistant.entry_edit_review import EDIT_TOOLS
         from transbridge.smart_assistant.execution_engine import ExecutionEngine
         from transbridge.smart_assistant.plan_task_runtime import PlanTaskRuntime
         from transbridge.smart_assistant.tool_registry import ToolRegistry
@@ -74,6 +75,11 @@ class PlanExecutionBinding:
         runtime = None
         try:
             runtime = PlanTaskRuntime(self._execution_context())
+            runtime.execution_context.plan_edit_reviews = {
+                f"step_{step['id']}": confirmation_view.edit_review_for(step)
+                for step in steps
+                if step.get("tool") in EDIT_TOOLS
+            }
             engine = ExecutionEngine(
                 ToolRegistry,
                 runtime.execution_context,

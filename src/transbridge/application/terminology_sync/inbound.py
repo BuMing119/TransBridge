@@ -128,6 +128,23 @@ class InboundTerminologyChange:
         return payload
 
 
+INBOUND_PAGE_SIZE = 50
+
+
+@dataclass(frozen=True, slots=True)
+class InboundReviewPage:
+    offset: int
+    items: tuple[InboundTerminologyChange, ...]
+    total: int
+
+    @classmethod
+    def from_items(
+        cls, items: tuple[InboundTerminologyChange, ...], offset: int, page_size: int = INBOUND_PAGE_SIZE
+    ) -> InboundReviewPage:
+        start = max(0, min(offset, max(0, len(items) - 1)))
+        return cls(start, items[start : start + page_size], len(items))
+
+
 @dataclass(frozen=True, slots=True)
 class InboundTerminologyChangeSet:
     change_set_id: str
@@ -491,12 +508,14 @@ def _aware(value: datetime, label: str) -> datetime:
 
 
 __all__ = [
+    "INBOUND_PAGE_SIZE",
     "InboundAppliedProposal",
     "InboundChangeKind",
     "InboundChangeSetStorePort",
     "InboundItemDisposition",
     "InboundProposedEffect",
     "InboundReviewDecision",
+    "InboundReviewPage",
     "InboundReviewState",
     "InboundReviewStatus",
     "InboundTerminologyChange",

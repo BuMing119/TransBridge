@@ -292,6 +292,89 @@ def _create_batch_project(root, tmp_path):
     return database, variant
 
 
+def test_assistant_edits_the_workbench_selection_across_pages_and_rejects_a_stale_source(tmp_path, qapp, monkeypatch):
+    from transbridge.application.assistant_requests.models import RequestError
+    from transbridge.application.translation.entry_alias import ai_entry_key
+    from transbridge.smart_assistant.request_scope import apply_captured_scope
+    from transbridge.smart_assistant.tools.tool_editor import (
+        _tool_get_visible_entries,
+        _tool_select_entries,
+        _tool_set_filters,
+    )
+    from transbridge.smart_assistant.tools.types import ExecutionContext
+    from transbridge.ui.tools.smart_assistant.request_binding import RequestBinding
+
+    root = tmp_path / "data"
+    database, _ = _create_batch_project(root, tmp_path)
+    with _workbench(root, qapp) as (host, coordinator, _services):
+        failures = _begin_open(host, coordinator, database)
+        preview = host.workbench.preview
+        _wait_until(qapp, lambda: preview._paging.query_ready)
+        assert not failures
+        table = preview._table
+        first, distant = (table.entry_at_row(row) for row in (1, 570))
+        assert table.viewport_rows()[1] < 570
+        table.selectRow(1)
+        ctx = ExecutionContext(app_context=host.context)
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            job = worker.submit(_tool_select_entries, {"entry_ids": [ai_entry_key(distant)]}, ctx)
+            _wait_until(qapp, job.done)
+            result = job.result()
+        assert result.success and result.data["selected_ids"] == [ai_entry_key(first), ai_entry_key(distant)]
+        assert preview.selected_row_entry_ids() == tuple(map(entry_label_key, (first, distant)))
+        ingress = RequestBinding._selection(SimpleNamespace(facade=SimpleNamespace(_ctx=host.context)))
+        assert ingress["selected_entry_ids"] == result.data["selected_ids"]
+        assert ingress["workbench_source_key"] == host.context.active_key
+        request = SimpleNamespace(source_message_ids=("input",), execution_version_json="")
+        with monkeypatch.context() as patch:
+
+            def forbid_full_scan(*_):
+                pytest.fail("restoring two selected rows must not load the complete source")
+
+            patch.setattr(type(host.context.collection), "__iter__", forbid_full_scan)
+            apply_captured_scope(request, [{"message_id": "input", "selection": ingress}], ctx, workbench=True)
+            assert [entry.identity for entry in ctx.selected_entries] == [first.identity, distant.identity]
+        captured = ExecutionContext(app_context=host.context)
+        captured.selected_entry_ids = (ai_entry_key(first),)
+        assert not _tool_select_entries({"entry_ids": [ai_entry_key(distant)], "action": "deselect"}, captured).success
+        object.__setattr__(captured, "filter_state", {**host.context.filter_state, "search_orig": "earlier query"})
+        assert not _tool_select_entries({"entry_ids": [], "action": "clear"}, captured).success
+        assert not _tool_select_entries(
+            {"entry_ids": [ai_entry_key(first), "missing"], "action": "deselect"}, ctx
+        ).success
+        assert preview.selected_row_entry_ids() == tuple(map(entry_label_key, (first, distant)))
+        assert _tool_select_entries({"entry_ids": [ai_entry_key(first)], "action": "deselect"}, ctx).success
+        assert preview.selected_row_entry_ids() == (entry_label_key(distant),)
+        other = next(key for key in host.context.slots if key != host.context.active_key)
+        host.context.activate_slot(other)
+        _wait_until(qapp, lambda: preview._paging.query_ready)
+        table.selectRow(0)
+        assert not _tool_select_entries({"entry_ids": [], "action": "clear"}, ctx).success
+        assert preview.selected_row_entry_ids() == (entry_label_key(table.entry_at_row(0)),)
+        # Replace the slot without changing its public key. Stale callers must
+        # not select, query or refilter the newly installed source.
+        same_key = ExecutionContext(app_context=host.context)
+        earlier = RequestBinding._selection(SimpleNamespace(facade=SimpleNamespace(_ctx=host.context)))
+        host.context.add_slot(other, host.context.slots[ingress["workbench_source_key"]])
+        _wait_until(qapp, lambda: preview._paging.query_ready)
+        table.selectRow(3)
+        original_filter = host.context.filter_state
+        with monkeypatch.context() as patch:
+            patch.setattr(type(host.context.collection), "__iter__", forbid_full_scan)
+            fresh = ExecutionContext(app_context=host.context)
+            assert earlier["workbench_source_key"] == host.context.active_key
+            assert earlier["workbench_source_identity"]["namespace"] != fresh._target_workbench_source["namespace"]
+            with pytest.raises(RequestError, match="REQUEST_SCOPE_MISMATCH"):
+                apply_captured_scope(request, [{"message_id": "input", "selection": earlier}], fresh, workbench=True)
+            assert not _tool_get_visible_entries({}, same_key).success
+            assert not _tool_set_filters({"stages": [3]}, same_key).success
+            assert not _tool_select_entries({"entry_ids": [], "action": "clear"}, same_key).success
+        assert host.context.filter_state == original_filter
+        assert preview.selected_row_entry_ids() == (entry_label_key(table.entry_at_row(3)),)
+        preview.close()
+        assert not _tool_select_entries({"entry_ids": [], "action": "clear"}, ExecutionContext(host.context)).success
+
+
 def _record_decoded_keys(patch):
     decoded = []
     decode_entry, decode_state = reads.decode_entry, reads.decode_state
@@ -760,6 +843,15 @@ def test_workbench_preload_ignores_stale_rows(tmp_path, monkeypatch, qapp, durin
             model = table.model()
             _wait_until(qapp, captured.is_set)
             assert not preview._paging.resident_ready
+            if during_load == "switch":
+                from transbridge.ui.tools.smart_assistant.request_binding import RequestBinding
+
+                messages = []
+                binding = SimpleNamespace(facade=SimpleNamespace(_ctx=host.context, add_system_message=messages.append))
+                table.selectAll()
+                assert RequestBinding._selection(binding) is None
+                assert messages and "完整选区" in messages[0]
+                table.clearSelection()
             assert model.index(0, COL_ORIGINAL).data() == "Original 000"
             assert {key.namespace for key in decoded} == {first.namespace}
             if during_load == "direct-save":
@@ -1168,6 +1260,7 @@ def test_workbench_open_filter_sort_and_save_preserve_complete_range(tmp_path, m
         preview._filters_view.search_original.setText("Other")
         host.context.activate_slot(other_key)
         _wait_until(app, lambda: table.model().index(0, COL_ORIGINAL).data() == "Other source text")
+        _wait_until(app, lambda: preview._paging.query_ready)
         assert [entry.original for entry in preview.filtered_entries()] == ["Other source text"]
 
     (stored,) = ProjectStore(database).read_entries(variant, (edit_target.state.entry_key,))

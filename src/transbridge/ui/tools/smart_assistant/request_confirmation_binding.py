@@ -110,6 +110,7 @@ class RequestConfirmationBinding:
 
         binding.admission = selected.admission
         try:
+            binding._set_gate()
             parsed = renew_confirmation(saved["parsed"], binding.facade._conversation)
             binding.facade._controller.restore_confirmation(parsed)
             self.capture(parsed, expected_confirmation=saved)

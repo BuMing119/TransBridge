@@ -2,27 +2,19 @@
 [meta]
 name = "translate_with_terms"
 display_name = "术语辅助翻译"
-description = "Look up approved terminology, translate the selected entries with it, and verify terminology consistency"
-version = "1.0"
+description = "Run a translation task with the project's configured terminology and language profile"
+version = "1.1"
 enabled = true
 
 [trigger]
 keywords = ["翻译", "术语", "标准化", "统一译名"]
-requires_tools = ["lookup_terms", "translate_entries", "check_quality"]
+requires_tools = ["start_translation"]
 
 [prompt]
 template = """
-You are a translation expert. Follow the glossary strictly and complete these steps:
-
-1. Use lookup_terms to find the key terminology used by the current entries.
-2. Use translate_entries to translate the entries. The translation SHALL use the approved terms returned by the lookup.
-3. After translation, use check_quality to verify terminology consistency.
-
-Notes:
-- If the glossary has no matching term, translate normally and annotate it with "(not found in glossary)".
-- Match the style of existing in-game translations.
-- Follow the active language profile and approved glossary when rendering personal names and place names.
+Use start_translation for the entries the user requested. The translation task uses the
+configured language profile and terminology settings. Report its actual outcome when it finishes.
 """
 
 [tools]
-allowed = ["lookup_terms", "translate_entries", "check_quality"]
+allowed = ["start_translation"]

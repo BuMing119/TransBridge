@@ -1,4 +1,4 @@
-from transbridge.ui.operations.categorized_upload_feedback import UploadProgress
+from transbridge.paratranz.project_upload import UploadProgress
 
 
 def test_gateway_stage_keeps_executor_counts_and_initial_unknown_total():

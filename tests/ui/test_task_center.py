@@ -13,6 +13,7 @@ from transbridge.application.tasks import (
     JobCapabilities,
     JobSpec,
     OwnerRef,
+    RuntimeTaskProjection,
     TaskActionAvailability,
     TaskCenterAction,
     TaskCenterActionResult,
@@ -50,7 +51,7 @@ class _Catalog:
         return ()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def qapp():
     return QApplication.instance() or QApplication([])
 
@@ -108,6 +109,44 @@ def test_task_center_tracks_runtime_events_and_only_enables_real_actions(qapp):
     assert not panel._pause.isEnabled()
     assert panel._resume.isEnabled()
     controller.close()
+
+
+def test_task_center_and_assistant_use_the_same_revision_checked_controls(qapp):
+    from transbridge.application.contracts import RequestContext
+    from transbridge.smart_assistant.tools.task_control import control_tasks
+    from transbridge.smart_assistant.tools.task_manager import TaskManager
+
+    TaskManager.reset()
+    manager = TaskManager()
+    projection = RuntimeTaskProjection(manager.runtime)
+    manager.bind_runtime(manager.runtime, projection=projection)
+    use_cases = UseCaseRegistry({"task_history": _Catalog(), "task_recovery": _Catalog()})
+    panel = TaskCenterPanel()
+    runtime = SimpleNamespace(tasks=manager.runtime, use_cases=use_cases, task_projection=projection)
+    caller = RequestContext("owner", session_id="session")
+    controller = TaskCenterController(runtime, caller, panel)
+    controller.start()
+    try:
+        metadata = {"owner_id": caller.owner_id, "session_id": caller.session_id}
+        first = manager.register(metadata=metadata)
+        second = manager.register(metadata=metadata)
+        qapp.processEvents()
+        panel._current.setCurrentItem(panel._find(panel._current, manager.get_status(first)["run_id"]))
+        for button, action, state in (
+            (panel._pause, "pause", "paused"),
+            (panel._resume, "resume", "running"),
+            (panel._cancel, "stop", "cancelled"),
+        ):
+            assert button.isEnabled()
+            button.click()
+            result = control_tasks({"task_id": second, "action": action}, caller, manager)
+            assert result.success, result.message
+            qapp.processEvents()
+            assert manager.get_status(first)["status"] == result.data["status"] == state
+    finally:
+        controller.close()
+        TaskManager.reset()
+        panel.close()
 
 
 class _TaskCenterActions:

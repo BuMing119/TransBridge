@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import QAbstractItemView, QFormLayout, QLineEdit, QListWidget, QListWidgetItem, QSpinBox
 
+from transbridge.config.translation_preferences import apply_term_preferences, ordered_term_sources
+
 from .page_common import SettingsPage, apply_if_present
 
 _SOURCES = (
@@ -25,11 +27,10 @@ class TerminologySettingsPage(SettingsPage):
         self.priority_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         labels = dict(_SOURCES)
         priorities = list(getattr(config, "term_priority", ()) or ())
-        for key in (*priorities, *(key for key, _label in _SOURCES if key not in priorities)):
-            if key in labels:
-                item = QListWidgetItem(labels[key])
-                item.setData(256, key)
-                self.priority_list.addItem(item)
+        for key in ordered_term_sources(priorities):
+            item = QListWidgetItem(labels[key])
+            item.setData(256, key)
+            self.priority_list.addItem(item)
         form.addRow("来源优先级", self.priority_list)
         self.json_edit = QLineEdit(str(getattr(config, "local_json_path", "") or ""), self)
         form.addRow("本地 JSON", self.json_edit)
@@ -50,10 +51,17 @@ class TerminologySettingsPage(SettingsPage):
 
     def apply_to_draft(self) -> None:
         cfg = self._config
-        cfg.term_priority = [self.priority_list.item(index).data(256) for index in range(self.priority_list.count())]
-        apply_if_present(cfg, "local_json_path", self.json_edit.text().strip())
-        apply_if_present(cfg, "local_csv_path", self.csv_edit.text().strip())
-        apply_if_present(cfg, "local_excel_path", self.excel_edit.text().strip())
+        apply_term_preferences(
+            cfg,
+            {
+                "term_priority": [
+                    self.priority_list.item(index).data(256) for index in range(self.priority_list.count())
+                ],
+                "local_json_path": self.json_edit.text(),
+                "local_csv_path": self.csv_edit.text(),
+                "local_excel_path": self.excel_edit.text(),
+            },
+        )
         apply_if_present(cfg, "excel_original_col", self.original_col_edit.text().strip().upper())
         apply_if_present(cfg, "excel_translation_col", self.translation_col_edit.text().strip().upper())
         apply_if_present(cfg, "max_terms_per_batch", self.max_terms_spin.value())

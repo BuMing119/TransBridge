@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.paratranz.api.paratranz_history_api import ParatranzHistoryAPI
+from transbridge.paratranz.management_queries import read_file_revision_page
 
 from ..workers import ApiWorker
 from ._layout_stability import configure_stable_table_columns
@@ -241,7 +242,7 @@ class HistoryTab(QWidget):
 
         def _fetch():
             api = ParatranzHistoryAPI(token=config.token, config=config)
-            return _extract_list(api.list_file_revisions(pid, page=page, page_size=HistoryPager.PAGE_SIZE))
+            return read_file_revision_page(api, pid, page)
 
         def _on_done(records):
             if self._rev_gen != gen:

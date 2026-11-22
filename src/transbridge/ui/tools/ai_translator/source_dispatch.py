@@ -6,6 +6,8 @@ from __future__ import annotations
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import logging
 
+from transbridge.application.security import diagnostic_exception_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,7 +38,7 @@ def run_sources(tasks, executor, *, stop_event, pause_event, started, max_concur
             logger.exception("AI source workflow failed: %s", task.key)
             return SourceOutcome(
                 task,
-                error=str(exc),
+                error=diagnostic_exception_text(exc),
                 failed_keys=tuple(ai_entry_key(e) for e in task.entries),
                 cancelled=stop_event.is_set(),
             )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock
 
@@ -12,7 +13,7 @@ from transbridge.smart_assistant.context_builder import ContextBuilder
 
 def make_mock_ctx(collection=None, esp_path="/mods/test.esp", uploaded_docs=None, active_variant="v1"):
     """创建最小 Mock AppContext。"""
-    ctx = MagicMock()
+    ctx = SimpleNamespace()
     ctx.collection = collection
     ctx.esp_path = esp_path
     ctx.eet_path = None
@@ -62,6 +63,13 @@ class TestContextBuilder(unittest.TestCase):
         result = self.builder.build(ctx)
         self.assertIsInstance(result, str)
         self.assertGreater(len(result), 10)
+
+    def test_unavailable_workbench_statistics_do_not_become_zero_counts(self):
+        ctx = make_mock_ctx(collection=make_collection([make_entry()]))
+        ctx.workbench_statistics = MagicMock(side_effect=RuntimeError("stale read"))
+        snapshot = self.builder.build(ctx)
+        self.assertIn("statistics are unavailable", snapshot)
+        self.assertNotIn("Collection summary", snapshot)
 
     # ── 正常集合 ──────────────────────────────────────────────
 
@@ -113,7 +121,7 @@ class TestContextBuilder(unittest.TestCase):
         ])
         ctx = make_mock_ctx(collection=col)
         result = self.builder.build(ctx)
-        self.assertIn("BOOK", result)
+        self.assertIn("书名: 1 entries", result)
 
     # ── 依赖注入 (C1) ─────────────────────────────────────────
 

@@ -1,84 +1,87 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""Locale-aware dictionary candidates committed through the project boundary."""
+"""Bind the desktop dictionary command to an admitted assistant request."""
 
-from dataclasses import replace
-
-from transbridge.application.projects.source_content import translation_source_fingerprint
-from transbridge.translation_memory.contracts import TmMatchStatus, TranslationMemoryQuery
+from transbridge.application.projects.dictionary_apply import dictionary_mod_id, prepare_dictionary
 from transbridge.translation_memory.manager import TranslationMemoryManager
-from transbridge.translation_memory.service import TranslationMemoryQueryService
 
-from .entry_task_results import EntryTaskResults
-from .types import ExecutionContext
-
-
-def dictionary_scope(args, ctx, *, required: bool):
-    request = getattr(ctx, "request_context", None) or getattr(ctx, "runtime_context", None)
-    metadata = dict(getattr(request, "metadata", ()) or ())
-    source = args.get("source_locale") or metadata.get("source_locale") or getattr(ctx, "source_locale", "")
-    target = args.get("target_locale") or metadata.get("target_locale") or getattr(ctx, "target_locale", "")
-    if isinstance(ctx, ExecutionContext):
-        fingerprint = ctx._target_source_fingerprint
-    else:
-        snapshot = getattr(getattr(ctx, "active_slot", None), "source_snapshot", None)
-        fingerprint = translation_source_fingerprint(snapshot)
-    if required and (not source or not target or not fingerprint):
-        raise ValueError("请指定 source_locale 和 target_locale，并先解析可验证的来源快照；未知语言不会自动套用词典。")
-    return str(source), str(target), fingerprint
+from ._project_tool_mutations import ProjectToolTarget
+from .diagnostics import technical_error
+from .types import ExecutionContext, ToolResult
+from .undo_capture import capture_variant_command
+from .workbench_rows import check_workbench_source
 
 
-def apply_dictionary(args, ctx, collection):
-    source_locale, target_locale, fingerprint = dictionary_scope(args, ctx, required=True)
-    task = EntryTaskResults(
-        ctx,
-        collection,
-        kind="dictionary",
-        inputs={
-            "source_locale": source_locale,
-            "target_locale": target_locale,
-            "source_fingerprint": fingerprint,
-            "overwrite": bool(args.get("overwrite", False)),
+def apply_dictionary(ctx) -> ToolResult:
+    execution = ctx if isinstance(ctx, ExecutionContext) else ExecutionContext(app_context=ctx)
+    target = ProjectToolTarget.capture(execution)
+    app = target.app
+    if target.collection is None:
+        return ToolResult.fail("当前没有加载翻译集合", error_category="input", error_code="COLLECTION_NOT_LOADED")
+    commands = getattr(app, "project_commands", None)
+    caller = execution.request_context or getattr(app, "runtime_context", None)
+    if None in (caller, target.identity, target.project_revision, target.variant_revision) or commands is None:
+        return ToolResult.fail("工程写入服务不可用，词典尚未套用。", error_category="config")
+
+    mod_id = execution._target_dictionary_mod_id
+    token = getattr(execution, "cancellation_token", None)
+
+    def check_input():
+        if token is not None:
+            token.raise_if_cancelled()
+        check_workbench_source(execution, app)
+        if dictionary_mod_id(app) != mod_id:
+            raise ValueError("词典匹配的来源文件已变化，请重新核对。")
+        if (target.project_revision, target.variant_revision) != (app.project_revision, app.variant_revision):
+            raise ValueError("工程或译文已变化，请重新套用词典。")
+
+    check_input()
+    expected = target.expected()
+    plan = prepare_dictionary(target.collection, TranslationMemoryManager(), mod_file_id=mod_id)
+    if plan.choices:
+        reviewer = getattr(app, "review_dictionary_conflicts", None)
+        if not callable(reviewer):
+            return ToolResult.fail("词典有多个候选译文，请在桌面工作台处理冲突。本次未写入。", error_category="config")
+
+        def review():
+            check_input()
+            return reviewer(plan.choices)
+
+        # Let the modal dialog wait on Qt without holding the request commit lock.
+        selections = ExecutionContext(app_context=app).safe_mutate_wait(review)
+        plan.apply_choices(selections)
+
+    warnings = []
+    committed = False
+
+    def commit():
+        nonlocal committed
+        check_input()
+        if not plan.states:
+            return
+        result = capture_variant_command(
+            execution, lambda: plan.commit(commands, caller, **expected), warnings=warnings
+        )
+        if not result.is_success:
+            raise ValueError("；".join(item.message for item in result.diagnostics) or "词典套用未提交。")
+        committed = True
+        target.acknowledge_projection(preserve_scope=True)
+
+    try:
+        execution.safe_mutate_wait(commit)
+    except Exception as exc:
+        if not committed:
+            raise
+        warnings.append(f"词典已套用，但助手未能确认提交回执：{technical_error(exc)}。请勿重复执行。")
+    stats = plan.result
+    return ToolResult.ok(
+        f"词典已填充 {stats.applied} 条译文，{len(stats.needs_review)} 条原文有变化，需复核。",
+        data={
+            "applied": stats.applied,
+            "key_hits": stats.key_hits,
+            "text_hits": stats.text_hits,
+            "misses": stats.misses,
+            "needs_review": len(stats.needs_review),
+            "conflicts": plan.conflict_count,
         },
+        warnings=warnings or None,
     )
-    manager = TranslationMemoryManager()
-    manager.load()
-    service = TranslationMemoryQueryService(manager)
-    data = {"applied": 0, "key_hits": 0, "text_hits": 0, "misses": 0, "needs_review": 0, "conflicts": 0}
-    changes = []
-    error = ""
-    for entry in task.base.values():
-        if entry.translation and not args.get("overwrite", False):
-            continue
-        try:
-            cancellation = getattr(ctx, "cancellation_token", None)
-            if cancellation is not None:
-                cancellation.raise_if_cancelled()
-            result = service.query(
-                TranslationMemoryQuery(
-                    entry.identity,
-                    entry.original,
-                    source_locale,
-                    target_locale,
-                    entry.stage,
-                    fingerprint,
-                )
-            )
-        except Exception as exc:
-            error = f"词典查询未完成：{exc}"
-            break
-        selected = result.selected
-        if result.requires_confirmation or (selected is not None and selected.match_status is TmMatchStatus.STALE):
-            data["needs_review"] += 1
-            data["conflicts"] += int(result.requires_confirmation)
-            continue
-        if selected is None:
-            data["misses"] += 1
-            continue
-        changes.append(replace(entry, translation=selected.translation, stage=1))
-        data["applied"] += 1
-        data[f"{selected.matched_via}_hits"] += 1
-    task.candidates(changes)
-    result = task.finish(error=error)
-    data["applied"] = result.data.get("merge", {}).get("applied_count", 0)
-    result.data.update(data)
-    return result

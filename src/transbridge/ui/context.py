@@ -6,16 +6,22 @@ AppContext: 全局应用上下文，持有配置、当前用户、当前项目�
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
 
+from transbridge.application.translation.entry_alias import ai_entry_key
+from transbridge.application.workbench_filters import FilterState
+from transbridge.application.workbench_statistics import scope_statistics
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.config_manager import ParatranzConfig
 from transbridge.ui.project_labels import entry_label_key, exact_label_key
 from transbridge.ui.project_rows import ProjectRowsCollection
 from transbridge.ui.project_view_binding import ProjectViewBinding
-from transbridge.ui.projection_types import CollectionSlot
+from transbridge.ui.projection_types import CollectionSlot, projected_variant_name
+from transbridge.ui.tools.conflict_dialog import review_dictionary_conflicts
+from transbridge.ui.translation_task_execution import execute_translation_sources
 
 __all__ = ["AppContext", "CollectionSlot"]
 
@@ -57,6 +63,7 @@ class AppContext(QObject):
         runtime_context=None,
         effective_terminology_factory=None,
         terminology_profile_service_factory=None,
+        terminology_sync_service_factory=None,
         task_result_preferences_provider=None,
         project_catalog=None,
         task_store=None,
@@ -76,7 +83,7 @@ class AppContext(QObject):
         self._workspace: WorkspaceState | None = None
 
         # Story 03: ViewModel 扩展
-        self._filter_state: dict = dict(self.DEFAULT_FILTER_STATE)
+        self._filter_state = FilterState()
         self._label_library: dict[str, dict] = {}  # B1: 标签库 {label_id: {name, color}}
         self._entry_labels: dict[str, set[str]] = {}  # B1: 条目标签 {entry_id: {label_id, ...}}
         self._entry_labels_exact: dict[tuple[str, ...], set[str]] = {}
@@ -84,9 +91,8 @@ class AppContext(QObject):
             "stages": [],
             "labels": [],
             "categories": [],
-            "action": "include",
         }
-        self._selected_ids: set[str] = set()  # H2: Agent 选择集合（独立于标签系统）
+        self.workbench_row_selection = None
         self.paratranz_project_id: int | None = None  # Story 15: 当前选中的 ParaTranz 项目 ID（会话内有效）
         self._project_projection = project_projection
         self._project_commands = project_commands
@@ -97,7 +103,10 @@ class AppContext(QObject):
         self._runtime_context = runtime_context
         self._effective_terminology_factory = effective_terminology_factory
         self._terminology_profile_service_factory = terminology_profile_service_factory
+        self.terminology_sync_service_factory = terminology_sync_service_factory
         self.task_result_preferences_provider = task_result_preferences_provider
+        self.translation_task_executor = execute_translation_sources
+        self.review_dictionary_conflicts = review_dictionary_conflicts
         self.project_catalog = project_catalog
         self.task_store = task_store
         self.__init_safe_mutate()
@@ -106,38 +115,27 @@ class AppContext(QObject):
 
     # ── Story 03: 筛选/标签/作用域 ViewModel ─────────────────────
 
-    DEFAULT_FILTER_STATE = {
-        "stage": [],
-        "category": [],
-        "label": [],
-        "search_query": "",
-        "search_field": "text",  # "id" | "key" | "text" (E6: Agent 统一搜索字段)
-    }
+    DEFAULT_FILTER_STATE = FilterState().to_mapping()
 
     @property
     def filter_state(self) -> dict:
         """获取当前筛选状态（只读副本）。"""
-        return dict(self._filter_state)
+        return self._filter_state.to_mapping()
 
     @filter_state.setter
     def filter_state(self, v: dict) -> None:
-        self._filter_state = dict(v)
-        self.filter_changed.emit(dict(self._filter_state))
+        state = FilterState.from_mapping(v)
+        if state != self._filter_state:
+            self._filter_state = state
+            self.filter_changed.emit(state.to_mapping())
 
     def set_filter(self, **kwargs) -> None:
         """合并更新筛选状态并发射 filter_changed 信号。"""
-        changed = False
-        for k, v in kwargs.items():
-            if k in self._filter_state and self._filter_state[k] != v:
-                self._filter_state[k] = v
-                changed = True
-        if changed:
-            self.filter_changed.emit(dict(self._filter_state))
+        self.filter_state = {**self.filter_state, **kwargs}
 
     def clear_filters(self) -> None:
         """重置所有筛选条件为默认值。"""
-        self._filter_state = dict(self.DEFAULT_FILTER_STATE)
-        self.filter_changed.emit(dict(self._filter_state))
+        self.filter_state = self.DEFAULT_FILTER_STATE
 
     # B1: 标签数据
     @property
@@ -172,6 +170,17 @@ class AppContext(QObject):
         self._entry_labels_exact = {}
         self.label_data_changed.emit()
 
+    def workbench_statistics(self, collection, *, keys=None):
+        """Read the source's durable entry labels alongside its stage and category counts."""
+        if isinstance(collection, ProjectRowsCollection):
+            return collection.workbench_statistics(keys=keys)
+        if self._project_projection is not None:
+            exact = self._entry_labels_exact
+            return scope_statistics(
+                collection, keys=keys, labels_for_entry=lambda entry: exact.get(exact_label_key(entry.identity), ())
+            )
+        return scope_statistics(collection, self._entry_labels, keys=keys)
+
     # E8: 翻译作用域（带类型校验的正式属性）
     @property
     def translation_scope(self) -> dict:
@@ -179,38 +188,26 @@ class AppContext(QObject):
 
     @translation_scope.setter
     def translation_scope(self, v: dict) -> None:
-        stages = v.get("stages", [])
-        if not isinstance(stages, list) or not all(isinstance(s, int) for s in stages):
-            raise TypeError("translation_scope.stages 必须为 list[int]")
-        valid_actions = {"include", "exclude", "only"}
-        action = v.get("action", "include")
-        if action not in valid_actions:
-            raise ValueError(f"translation_scope.action 必须为 {valid_actions}")
-        self._translation_scope = {
-            "stages": list(stages),
-            "labels": list(v.get("labels", [])),
-            "categories": list(v.get("categories", [])),
-            "action": action,
-        }
+        from transbridge.application.translation.task_scope import TranslationScope
 
-    # H2: Agent 选择集合（独立于用户标签系统）
+        scope = TranslationScope.from_filters(v)
+        self._translation_scope = {key: list(v.get(key, [])) for key in ("stages", "labels", "categories")}
+        if scope.preset == "all":
+            self._translation_scope["preset"] = "all"
+
+    @property
+    def selected_entries(self) -> tuple:
+        return () if self.workbench_row_selection is None else self.workbench_row_selection.entries()
+
     @property
     def selected_ids(self) -> set[str]:
-        return self._selected_ids
-
-    @selected_ids.setter
-    def selected_ids(self, v: set[str]) -> None:
-        self._selected_ids = v
+        return {ai_entry_key(entry) for entry in self.selected_entries}
 
     def select_entries(self, entry_ids: list[str], action: str = "select") -> int:
-        """Agent 条目选择操作。action: select/deselect/clear。返回当前选中数。"""
-        if action == "clear":
-            self._selected_ids.clear()
-        elif action == "select":
-            self._selected_ids.update(entry_ids)
-        elif action == "deselect":
-            self._selected_ids.difference_update(entry_ids)
-        return len(self._selected_ids)
+        if self.workbench_row_selection is None:
+            raise RuntimeError("请先打开工作台表格，再选择词条。")
+        self.workbench_row_selection.apply(entry_ids, action)
+        return len(self.selected_entries)
 
     # ── config ────────────────────────────────────────────────
 
@@ -394,10 +391,7 @@ class AppContext(QObject):
     @property
     def active_variant(self) -> str | None:
         """Display name of the current projected variant."""
-        return next(
-            (str(item["name"]) for item in self.project_variants if item["id"] == self.active_variant_id),
-            None,
-        )
+        return projected_variant_name(self.project_variants, self.active_variant_id)
 
     @property
     def dirty(self) -> bool:
@@ -450,9 +444,12 @@ class AppContext(QObject):
     def set_paratranz_binding(self, binding):
         if self._project_remote_bindings is None or self._runtime_context is None:
             raise RuntimeError("authoritative Project remote binding adapter is unavailable")
+        request = self._runtime_context
+        if request.project_id is None:
+            request = replace(request, project_id=self.active_project_id)
         return self._project_remote_bindings.set_paratranz_binding(
             binding,
-            self._runtime_context,
+            request,
             expected_project_revision=self._project_view.state.project_revision,
         )
 
@@ -479,6 +476,18 @@ class AppContext(QObject):
     @property
     def uses_authoritative_projection(self) -> bool:
         return self._project_projection is not None
+
+    def entry_projection(self, keys, *, snapshot: ProjectionSnapshot | None = None):
+        """Read authoritative values for exact workbench rows in a single snapshot."""
+        from transbridge.ui.entry_projection import EntryProjectionUpdate
+
+        if snapshot is None and self._project_projection is not None:
+            snapshot = self._project_projection.snapshot()
+        return EntryProjectionUpdate.from_snapshot(snapshot, keys=keys)
+
+    @property
+    def project_open_generation(self) -> int:
+        return self._project_view.generation
 
     @property
     def project_opening(self) -> bool:
@@ -523,6 +532,9 @@ class AppContext(QObject):
         *,
         translation: str | None = None,
         stage: int | None = None,
+        expected_project_revision: int | None = None,
+        expected_variant_revision: int | None = None,
+        expected_variant_ref: VariantRef | None = None,
     ):
         if self._project_commands is None or self._runtime_context is None:
             raise RuntimeError("authoritative Variant command adapter is unavailable")
@@ -534,6 +546,9 @@ class AppContext(QObject):
             self._runtime_context,
             translation=translation,
             stage=stage,
+            expected_project_revision=expected_project_revision,
+            expected_variant_revision=expected_variant_revision,
+            expected_variant_ref=expected_variant_ref,
         )
 
     def replace_projected_labels(
@@ -544,6 +559,7 @@ class AppContext(QObject):
         expected_project_revision: int | None = None,
         expected_variant_revision: int | None = None,
         expected_variant_ref: VariantRef | None = None,
+        exact_changes: dict | None = None,
     ):
         if self._project_commands is None or self._runtime_context is None:
             raise RuntimeError("authoritative Variant command adapter is unavailable")
@@ -551,7 +567,9 @@ class AppContext(QObject):
         if rejected is not None:
             return rejected
         collection = self.collection
-        if isinstance(collection, ProjectRowsCollection):
+        if exact_changes is not None:
+            exact_labels = exact_changes
+        elif isinstance(collection, ProjectRowsCollection):
             exact_labels = collection.label_changes(
                 entry_labels, label_library, removing_library_labels=bool(self._label_library.keys() - label_library)
             )
@@ -567,7 +585,9 @@ class AppContext(QObject):
                 )
                 labels = next((entry_labels[key] for key in keys if key in entry_labels), ())
                 exact_labels[entry.identity] = set(labels)
-        expected = {"only_listed": True} if isinstance(collection, ProjectRowsCollection) else {}
+        expected = (
+            {"only_listed": True} if exact_changes is not None or isinstance(collection, ProjectRowsCollection) else {}
+        )
         if expected_project_revision is not None:
             expected["expected_project_revision"] = expected_project_revision
         if expected_variant_revision is not None:

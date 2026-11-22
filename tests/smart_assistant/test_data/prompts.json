@@ -36,11 +36,11 @@
     {"id": 30, "namespace": "parser", "text": "把这个ESP的内容追加到当前集合", "expect_tool": "parse_esp"},
     {"id": 31, "namespace": "parser", "text": "加载Dragonborn.esm的翻译", "expect_tool": "parse_esp"},
 
-    {"id": 32, "namespace": "proofreader", "text": "运行后处理检查质量", "expect_tool": "run_postprocess"},
+    {"id": 32, "namespace": "translator", "text": "用润色任务检查这批译文", "expect_tool": "start_polish"},
     {"id": 33, "namespace": "proofreader", "text": "最近的质量报告是什么？", "expect_tool": "get_quality_report"},
     {"id": 34, "namespace": "proofreader", "text": "列出所有历史质量报告", "expect_tool": "list_quality_reports"},
-    {"id": 35, "namespace": "proofreader", "text": "检查一下翻译质量", "expect_tool": "run_postprocess"},
-    {"id": 36, "namespace": "proofreader", "text": "对这批翻译做质检", "expect_tool": "run_postprocess"},
+    {"id": 35, "namespace": "translator", "text": "检查一下翻译质量", "expect_tool": "start_polish"},
+    {"id": 36, "namespace": "translator", "text": "对这批翻译做质检", "expect_tool": "start_polish"},
     {"id": 37, "namespace": "proofreader", "text": "看看上次检查的结果", "expect_tool": "get_quality_report"},
 
     {"id": 38, "namespace": "paratranz", "text": "列出ParaTranz上的项目", "expect_tool": "list_projects"},

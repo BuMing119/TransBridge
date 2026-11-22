@@ -138,7 +138,7 @@ def build_settings_center(dialog: object, initial_section: SettingsSection) -> N
         read_only = getattr(source, "_secret_source", "") == "environment"
         page = ParaTranzSettingsPage(
             paratranz,
-            token_configured=bool(getattr(source, "token", None)),
+            token_configured=source.credential_configured,
             token_read_only=read_only,
             parent=dialog,
         )

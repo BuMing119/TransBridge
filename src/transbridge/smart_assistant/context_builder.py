@@ -1,12 +1,16 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 from __future__ import annotations
 
-from collections import Counter
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .tools.workbench_rows import tool_scope_statistics
+
 if TYPE_CHECKING:
     from transbridge.ui.context import AppContext
+
+logger = logging.getLogger(__name__)
 
 
 class ContextBuilder:
@@ -32,30 +36,18 @@ class ContextBuilder:
             )
 
         esp_name = Path(ctx.esp_path).stem if ctx.esp_path else "No plugin selected"
-        total = len(collection)
-
-        # M21: 单次遍历 — 合并 translated 计数与分类分布统计
-        translated = 0
-        cat_counter: Counter[str] = Counter()
-        for entry in collection:
-            if entry.translation:
-                translated += 1
-            ctx_str = entry.context or ""
-            base = ctx_str.split("|")[0] if "|" in ctx_str else ctx_str
-            rec = base.split(":")[0]
-            if rec in ("INFO", "DIAL"):
-                cat_counter["Dialogue"] += 1
-            else:
-                cat_counter[base] += 1
-        untranslated = total - translated
-
-        cat_lines = "\n".join(
-            f"  - {cat}: {cnt} entries" for cat, cnt in sorted(cat_counter.items(), key=lambda x: -x[1])
-        )
+        try:
+            stats = tool_scope_statistics(ctx)
+        except (ValueError, RuntimeError, OSError) as error:
+            logger.warning("Could not read current workbench statistics (%s)", type(error).__name__)
+            return "Current workspace statistics are unavailable. Refresh the workbench and query get_statistics again."
+        summary = stats.summary
+        cat_lines = "\n".join(f"  - {cat}: {cnt} entries" for cat, cnt in stats.categories.most_common())
 
         return (
             f"Current workspace context:\n"
             f"- Plugin: {esp_name}\n"
-            f"- Collection summary: {total} total, {translated} translated, {untranslated} untranslated\n"
+            f"- Collection summary: {summary.total} total, {summary.completed} translated, "
+            f"{summary.untranslated} untranslated, {summary.needs_review} in question, {summary.hidden} hidden\n"
             f"- Category distribution:\n{cat_lines}"
         )

@@ -22,6 +22,7 @@ from transbridge.paratranz.workflow.artifact import ArtifactWorkflow
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, ElidedLabel
 
 from ..workers import ApiWorker
+from .artifact_destination import choose_artifact_destination
 
 
 class ExportTab(QWidget):
@@ -277,7 +278,7 @@ class ExportTab(QWidget):
         if self._busy or not self._project_id:
             return
         pid = self._project_id
-        save_path, _ = QFileDialog.getSaveFileName(self, "保存导出包", "export.zip", "ZIP 文件 (*.zip)")
+        save_path = choose_artifact_destination(self)
         if not save_path or self._project_id != pid:
             return
         config = self._ctx.config
@@ -289,9 +290,7 @@ class ExportTab(QWidget):
         self._set_busy(True, "正在下载导出包…")
 
         def _download():
-            api = ParatranzExportAPI(token=config.token, config=config)
-            api.download_artifacts(pid, save_path)
-            return save_path
+            return ArtifactWorkflow(config).download_existing(pid, save_path)
 
         def _on_done(p):
             if self._is_current_operation(pid, generation):

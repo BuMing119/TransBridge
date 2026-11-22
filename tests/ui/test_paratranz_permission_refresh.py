@@ -15,6 +15,7 @@ from transbridge.ui.paratranz.strings_tab import StringsTab
 class ManualWorker(QObject):
     result = pyqtSignal(object)
     error = pyqtSignal(str)
+    finished = pyqtSignal()
 
     def __init__(self, _callback, **_kwargs):
         super().__init__()

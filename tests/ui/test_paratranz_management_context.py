@@ -1,13 +1,17 @@
 """Management requests must not follow the user into a different project."""
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QComboBox, QFileDialog, QLineEdit, QMessageBox, QPushButton
 import pytest
 
+from tests.conftest import MockAppContext
 from tests.ui.responsive_layout_support import settle_layout, themed_layout_app as themed_layout_app
+from transbridge.paratranz.service import ParaTranzService
+from transbridge.smart_assistant.tools.tool_paratranz import _tool_get_project_info
 from transbridge.ui.paratranz import files_tab, members_tab, overview_tab, terms_tab
 
 
@@ -40,6 +44,7 @@ class _Context(QObject):
 class _Worker(QObject):
     result = pyqtSignal(object)
     error = pyqtSignal(str)
+    finished = pyqtSignal()
 
     def __init__(self, call):
         super().__init__()
@@ -75,7 +80,7 @@ def management(layout_app, monkeypatch):
         monkeypatch.setattr(module, "ApiWorker", _Worker)
         context = _Context()
         page = cls(context)
-        context.current_project = {"id": 7, "name": "Original project"}
+        context.current_project = {"id": 7, "name": "Original project", "privacy": 0, "members": 1}
         page._workers[-1].result.emit(_DATA[kind])
         if hasattr(page, "_table"):
             page._table.selectRow(0)
@@ -92,10 +97,49 @@ def management(layout_app, monkeypatch):
     settle_layout(layout_app)
 
 
+@pytest.mark.parametrize("count", [0, 6])
+def test_overview_and_assistant_share_remote_project_details(management, monkeypatch, count):
+    context, page, _ = management("overview")
+    project = {"id": 12, "name": "Cloud", "privacy": 1, "members": count, "total": 750}
+    api = Mock()
+    api.get_project.return_value = project
+    monkeypatch.setattr(ParaTranzService, "from_config", lambda config: ParaTranzService(api, Mock(), Mock(), Mock()))
+    context.current_project = {"id": 12, "name": "Cached name"}
+    fetch = page._workers[-2]
+    fetch.result.emit(fetch.call())
+    result = _tool_get_project_info({"project_id": 12}, MockAppContext())
+    assert result.success
+    assert result.data == {"id": 12, "name": "Cloud", "visibility": "internal", "member_count": count}
+    assert page._lbl_name.toolTip() == result.data["name"]
+    assert page._lbl_privacy.text() == "内部"
+    assert page._lbl_members.text() == str(count)
+    assert [call.args for call in api.get_project.call_args_list] == [(12,), (12,)]
+    old_result = fetch.call()
+    before = len(page._workers)
+    context.current_project = {"id": 13, "name": "Cached", "privacy": 2, "members": 4}
+    assert len(page._workers) == before + 1  # only the existing progress query
+    fetch.result.emit(old_result)
+    fetch.error.emit("delayed failure")
+    assert (page._lbl_privacy.text(), page._lbl_members.text(), page._lbl_members.toolTip()) == ("私密", "4", "")
+
+
+def test_unknown_remote_member_count_and_mismatched_project_id(management, monkeypatch):
+    context, page, _ = management("overview")
+    api = Mock()
+    api.get_project.return_value = {"id": 12, "name": "Cloud", "privacy": 0, "total": 750}
+    monkeypatch.setattr(ParaTranzService, "from_config", lambda config: ParaTranzService(api, Mock(), Mock(), Mock()))
+    context.current_project = {"id": 12, "name": "Cloud"}
+    fetch = page._workers[-2]
+    fetch.result.emit(fetch.call())
+    assert page._lbl_members.text() == "—"
+    assert _tool_get_project_info({"project_id": 12}, MockAppContext()).data["member_count"] is None
+    assert not _tool_get_project_info({"project_id": 13}, MockAppContext()).success
+
+
 def _accept_modal(context=None):
     dialog = QApplication.activeModalWidget()
     if context is not None:
-        context.current_project = {"id": 8, "name": "New project"}
+        context.current_project = {"id": 8, "name": "New project", "privacy": 1, "members": 2}
     if isinstance(dialog, QMessageBox):
         dialog.button(QMessageBox.StandardButton.Yes).click()
     else:

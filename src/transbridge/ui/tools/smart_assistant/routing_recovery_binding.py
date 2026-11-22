@@ -102,6 +102,8 @@ class RoutingRecoveryBinding:
             return
         target = requests[names.index(name)]
         selection = binding._selection()
+        if selection is None:
+            return
         self._submit(
             context,
             lambda: binding.service.clarify(

@@ -1,23 +1,75 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from threading import get_ident
+from threading import Event, get_ident
 from types import SimpleNamespace
 
 import pytest
 
 from tests.ui.tools.ai_runtime_support import ai_task_runtime
-from transbridge.application.contracts import JobRef
+from transbridge.ai_translator.project_terminology_runtime import ProjectTerminologyBinding, capture_terminology_owner
+from transbridge.application.contracts import JobRef, RequestContext
 from transbridge.application.terminology.effective import EffectiveSnapshotStatus, EffectiveTerminologySnapshot
 from transbridge.ui.tools.ai_translator import run_controller, run_request_preparation
 from transbridge.ui.tools.ai_translator.run_controller import RunAlreadyActiveError, RunController
-from transbridge.ui.tools.ai_translator.run_request_preparation import (
-    capture_terminology_owner,
-    prepare_run_request,
-)
+from transbridge.ui.tools.ai_translator.run_request_preparation import prepare_run_request
+from transbridge.ui.translation_task_execution import execute_translation_sources
 
 
 def config():
     return SimpleNamespace(max_concurrent=3, model="frozen-model", api_key="secret")
+
+
+@pytest.mark.parametrize("work_fails", [False, True])
+def test_background_request_owns_one_terms_client_and_keeps_outcomes_on_cleanup_error(
+    tmp_path, monkeypatch, work_fails
+):
+    from transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
+    from transbridge.ui.tools.ai_translator.task_worker import AiTaskWorker
+
+    closed = []
+    remote_config = object()
+    source = SimpleNamespace(entries=(SimpleNamespace(id="one", key="one"),), esp_path=None)
+    owner = RequestContext("owner", project_id="project", variant_id="version", session_id="request")
+    result = (object(),)
+
+    def close(_client):
+        closed.append(True)
+        raise OSError("transport cleanup failed")
+
+    def execute(worker):
+        assert worker.request.spec.owner.entrypoint == "smart-assistant"
+        assert worker.request.spec.owner.session_id == owner.session_id
+        assert worker.request.run_id == "test-task" and worker.request.runtime_ref is None
+        assert worker._attempt_id == "test-task-attempt-1"
+        assert worker._checkpoint_root == tmp_path / "ai-proofread-resume"
+        assert worker._project_id == 7 and worker._client.config is remote_config
+        if work_fails:
+            raise RuntimeError("source execution failed")
+        return result
+
+    monkeypatch.setattr(ParatranzTermsAPI, "__init__", lambda self, config: setattr(self, "config", config))
+    monkeypatch.setattr(ParatranzTermsAPI, "close", close)
+    monkeypatch.setattr(AiTaskWorker, "execute", execute)
+    options = dict(
+        source=source,
+        config=config(),
+        mode="translate",
+        owner=owner,
+        result_id="test-task",
+        directory=tmp_path,
+        terminology=ProjectTerminologyBinding(),
+        remote_config=remote_config,
+        remote_project=7,
+        stop_event=Event(),
+        pause_event=Event(),
+        progress_callback=lambda *_: None,
+    )
+    if work_fails:
+        with pytest.raises(RuntimeError, match="source execution failed"):
+            execute_translation_sources(**options)
+    else:
+        assert execute_translation_sources(**options) is result
+    assert closed == [True]
 
 
 def prepared(controller, **updates):

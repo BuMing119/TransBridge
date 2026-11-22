@@ -82,6 +82,30 @@ def _global_exception_hook(exc_type, exc_value, exc_tb):
     sys.__excepthook__(exc_type, exc_value, exc_tb)
 
 
+def create_workbench_context(runtime: AppRuntime, context) -> AppContext:
+    use_cases = runtime.use_cases
+    available = set(use_cases.names())
+
+    def optional(name):
+        return use_cases.resolve(name) if name in available else None
+
+    return AppContext(
+        project_projection=use_cases.resolve("project_projection"),
+        project_commands=use_cases.resolve("gui_project_commands"),
+        project_source_references=use_cases.resolve("project_source_references"),
+        project_text_encodings=use_cases.resolve("project_text_encodings"),
+        text_encoding_defaults=use_cases.resolve("text_encoding_defaults"),
+        project_catalog=use_cases.resolve("project_catalog"),
+        project_remote_bindings=use_cases.resolve("project_remote_bindings"),
+        runtime_context=context,
+        effective_terminology_factory=optional("effective_terminology_factory"),
+        terminology_profile_service_factory=optional("terminology_profile_service_factory"),
+        terminology_sync_service_factory=optional("terminology_sync_service_factory"),
+        task_result_preferences_provider=use_cases.resolve("task_result_preferences").load,
+        task_store=use_cases.resolve("task_store"),
+    )
+
+
 def main(
     runtime: AppRuntime | None = None,
     *,
@@ -119,35 +143,11 @@ def main(
         from transbridge.smart_assistant.tools import register_all as register_all_tools
         from transbridge.smart_assistant.tools.task_manager import TaskManager
 
-        TaskManager().bind_runtime(app_runtime.tasks)
+        TaskManager().bind_runtime(app_runtime.tasks, projection=app_runtime.task_projection)
         AgentRegistry.init_presets()
         register_all_tools()
 
-        use_case_names = app_runtime.use_cases.names()
-        effective_terminology_factory = (
-            app_runtime.use_cases.resolve("effective_terminology_factory")
-            if "effective_terminology_factory" in use_case_names
-            else None
-        )
-        terminology_profile_service_factory = (
-            app_runtime.use_cases.resolve("terminology_profile_service_factory")
-            if "terminology_profile_service_factory" in use_case_names
-            else None
-        )
-        projection = AppContext(
-            project_projection=app_runtime.use_cases.resolve("project_projection"),
-            project_commands=app_runtime.use_cases.resolve("gui_project_commands"),
-            project_source_references=app_runtime.use_cases.resolve("project_source_references"),
-            project_text_encodings=app_runtime.use_cases.resolve("project_text_encodings"),
-            text_encoding_defaults=app_runtime.use_cases.resolve("text_encoding_defaults"),
-            project_catalog=app_runtime.use_cases.resolve("project_catalog"),
-            project_remote_bindings=app_runtime.use_cases.resolve("project_remote_bindings"),
-            runtime_context=binding.context,
-            effective_terminology_factory=effective_terminology_factory,
-            terminology_profile_service_factory=terminology_profile_service_factory,
-            task_result_preferences_provider=app_runtime.use_cases.resolve("task_result_preferences").load,
-            task_store=app_runtime.use_cases.resolve("task_store"),
-        )
+        projection = create_workbench_context(app_runtime, binding.context)
         window = MainWindow(
             app_context=projection,
             runtime=app_runtime,

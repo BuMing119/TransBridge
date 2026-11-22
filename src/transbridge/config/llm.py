@@ -366,9 +366,10 @@ class LLMConfig:
         return profiles
 
     @staticmethod
-    def get_ai_translator_dir(esp_stem: str) -> str:
+    def get_ai_translator_dir(esp_stem: str, *, create: bool = True) -> str:
         path = Path(get_data_dir()) / "ai_translator" / esp_stem
-        path.mkdir(parents=True, exist_ok=True)
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
         return str(path)
 
 

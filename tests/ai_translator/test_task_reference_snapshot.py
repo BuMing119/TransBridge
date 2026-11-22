@@ -58,6 +58,15 @@ def test_repeated_stages_and_sources_reuse_baseline_while_generated_terms_remain
     assert managers.create(TaskReferenceStore("new-task")).load_all()["Sword"] == "不应进入当前任务"
 
 
+def test_durable_reference_round_trip_in_deep_task_directory(tmp_path):
+    root = tmp_path / ("project-" * 12) / ("variant-" * 12) / "ai-task-recovery" / "references"
+    store = TaskReferenceStore("task", root=root, identity=("p", "v", "zh"))
+    store.capture_published({"terms": ["Sword"]})
+    restored = TaskReferenceStore("task", root=root, identity=("p", "v", "zh"))
+    assert len(str(store.path)) > 260
+    assert restored.restored and restored.published == {"terms": ["Sword"]}
+
+
 def test_recovery_loads_complete_baseline_without_contacting_remote(managers, tmp_path):
     store = TaskReferenceStore("task", root=tmp_path / "references", identity=("p", "v", "zh"))
     managers.create(store).load_all()

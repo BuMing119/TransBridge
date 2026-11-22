@@ -6,32 +6,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import uuid4
 
-from transbridge.ai_translator.project_terminology_runtime import ProjectTerminologyBinding, freeze_project_terminology
+from transbridge.ai_translator.project_terminology_runtime import (
+    ProjectTerminologyBinding,
+    TerminologyPreparationOwner,
+    freeze_project_terminology,
+)
 from transbridge.application.tasks import OwnerRef
 from transbridge.application.translation.ai_request_budget import AiRequestBudget
 
 from .run_spec import AiRunSpec, FrozenExecutionConfig, build_run_spec
-
-
-@dataclass(frozen=True, slots=True)
-class TerminologyPreparationOwner:
-    """Factories are injected services; this object never retains the live UI context."""
-
-    active_version_identity: tuple[str, str] | None
-    effective_terminology_factory: object | None
-    terminology_echo_links_factory: object | None
-
-
-def capture_terminology_owner(owner) -> TerminologyPreparationOwner | None:
-    """Call on the GUI thread; capture dependencies without invoking storage."""
-    if owner is None:
-        return None
-    identity = getattr(owner, "active_version_identity", None)
-    return TerminologyPreparationOwner(
-        tuple(identity) if isinstance(identity, tuple) else None,
-        getattr(owner, "effective_terminology_factory", None),
-        getattr(owner, "terminology_echo_links_factory", None),
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +26,18 @@ class PreparedRun:
     esp_path: str | None
     project_revision: int | None
     max_concurrent: int
+
+    def execution_request(self):
+        """Give a task its own request budget over the already frozen source inputs."""
+        from .run_controller import TranslationRunRequest
+
+        return TranslationRunRequest(
+            spec=self.spec,
+            config_snapshot=self.config_snapshot,
+            entries=self.entries,
+            request_budget=AiRequestBudget(self.max_concurrent),
+            terminology_binding=self.terminology_binding,
+        )
 
     def validate_admission(
         self, *, owner, mode, entries, overwrite, esp_path, project_revision, run_id, terminology_snapshot_ref
@@ -66,6 +61,7 @@ def prepare_run_request(
     config,
     entries,
     *,
+    entrypoint="ui.ai-translator",
     overwrite=False,
     esp_path=None,
     project_id=None,
@@ -114,7 +110,7 @@ def prepare_run_request(
     values = tuple(entries)
     owner = OwnerRef(
         owner_id=owner_id,
-        entrypoint="ui.ai-translator",
+        entrypoint=entrypoint,
         project_id=project_id,
         variant_id=variant_id,
         session_id=session_id,

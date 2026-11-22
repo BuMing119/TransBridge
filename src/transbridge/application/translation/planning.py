@@ -220,6 +220,34 @@ def _retrieval_snapshot(
     return RetrievalSnapshot(RetrievalStatus.AVAILABLE, manifest)
 
 
+def entry_actions(rules, entries, memberships=None):
+    """Plan mixed actions by full identity, with the source's current label memberships."""
+    planning_entries = [
+        PlanningEntry(
+            entry.identity,
+            entry.stage,
+            entry.original,
+            entry.translation,
+            entry.context or "",
+            frozenset((memberships or {}).get(entry.identity, getattr(entry, "labels", ()) or ())),
+        )
+        for entry in entries
+    ]
+    rule_specs = [
+        ActionRuleSpec(
+            rule.rule_id,
+            rule.priority,
+            TranslationAction(rule.action),
+            None if rule.status_filter is None else frozenset(rule.status_filter),
+            None if rule.label_filter is None else frozenset(rule.label_filter),
+            None if rule.category_filter is None else frozenset(rule.category_filter),
+        )
+        for rule in rules
+    ]
+    assignments = ActionPlanner().plan(planning_entries, rule_specs).assignments
+    return {assignment.key: assignment.action.value for assignment in assignments}
+
+
 def _matches(rule: ActionRuleSpec, entry: PlanningEntry) -> bool:
     if rule.stages is not None and entry.stage not in rule.stages:
         return False

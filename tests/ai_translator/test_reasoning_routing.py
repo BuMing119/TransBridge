@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import threading
 from unittest.mock import patch
 
 from tests.conftest import make_llm_config
@@ -57,27 +56,6 @@ def test_proofread_pipeline_keeps_its_single_stage_on_direct_client() -> None:
     )
 
     assert pipeline._proofread_stage._llm_client is direct
-
-
-def test_smart_assistant_runtime_keeps_provider_client_unscoped(tmp_path: Path) -> None:
-    from transbridge.smart_assistant.tools._workflow_llm_runtime import create_workflow_llm_runtime
-
-    config = make_llm_config(max_concurrent=1)
-    provider = _FakeClient()
-    with patch("transbridge.infra.llm_client.create_llm_client", return_value=provider):
-        runtime = create_workflow_llm_runtime(
-            config,
-            esp_path=str(tmp_path / "fixture.esp"),
-            workflow="assistant-test",
-            stop_event=threading.Event(),
-        )
-
-    try:
-        limited = runtime.client._delegate
-        assert limited.delegate is provider
-        assert not isinstance(limited.delegate, ReasoningScopedLLMClient)
-    finally:
-        runtime.close()
 
 
 def test_fomod_xml_ai_translation_uses_direct_scope(tmp_path: Path) -> None:

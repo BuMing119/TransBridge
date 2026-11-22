@@ -31,8 +31,7 @@ class TestSetFilters(unittest.TestCase):
     def test_set_search_query_and_field(self):
         r = self.func({"search_query": "hello", "search_field": "translation"}, self.ctx)
         self.assertTrue(r.success)
-        self.assertEqual(self.ctx.filter_state["search_query"], "hello")
-        self.assertEqual(self.ctx.filter_state["search_field"], "translation")
+        self.assertEqual(self.ctx.filter_state["search_trans"], "hello")
 
     def test_clear_true_with_new_values(self):
         r = self.func({"clear": True, "stages": [3]}, self.ctx)
@@ -250,12 +249,14 @@ class TestDeprecatedWrappers(unittest.TestCase):
             "pack_archive",
             "diff_directories",
             "filter_files",
-            "migrate_entries",
             "apply_dictionary",
             "save_dictionary",
-            "plan_sync",
         }
         self.assertTrue(required_fr16.issubset(active))
+        retired = {"recover_upload_associations", "plan_sync", "migrate_entries", "run_postprocess"}
+        self.assertTrue(retired.isdisjoint(active))
+        for name in retired:
+            self.assertIsNone(ToolRegistry.get(name))
         definitions = build_native_tool_definitions(ToolRegistry.list_all_namespaces())
         native_names = [definition.name for definition in definitions]
         available = {spec.name for spec in specifications if spec.available}

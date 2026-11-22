@@ -110,3 +110,41 @@ def test_reset_also_clears_labels_and_focus(preview):
     filters.apply_state(FilterState(labels=frozenset({"tag"}), focus_labeled=True))
     filters.reset_filters()
     assert filters.state() == FilterState()
+
+
+def test_assistant_and_workbench_apply_the_same_filters_in_both_directions(preview):
+    from transbridge.smart_assistant.tools.tool_default import _tool_get_current_filters
+    from transbridge.smart_assistant.tools.tool_editor import _tool_get_visible_entries, _tool_set_filters
+
+    ctx = preview._ctx
+    ctx.label_library = {"review": {"name": "待校对"}}
+    assert _tool_set_filters({"labels": ["待校对"]}, ctx).success
+    assert preview.get_filter_state()["label"] == ["review"]
+    assert _tool_get_visible_entries({}, ctx).data["total_count"] == len(preview.filtered_entries()) == 0
+    assert not _tool_set_filters({"search_field": "context", "clear": True}, ctx).success
+    assert ctx.filter_state["label"] == ["review"]
+
+    preview.apply_filter_state(FilterState(search_all="Dragon", stages=frozenset({0})).to_mapping())
+    assert _tool_get_current_filters({}, ctx).data["active_filter_count"] == 2
+    page = _tool_get_visible_entries({}, ctx)
+    assert [row["id"] for row in page.data["entries"]] == [entry.id for entry in preview.filtered_entries()] == ["3"]
+    assert _tool_set_filters({"search_query": "Wolf", "search_field": "original"}, ctx).success
+    assert preview.get_filter_state()["search_all"] == "Dragon"
+    assert _tool_get_visible_entries({}, ctx).data["total_count"] == len(preview.filtered_entries()) == 0
+
+
+def test_saved_search_can_be_cleared_and_ambiguous_label_is_rejected(preview):
+    from transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
+    from transbridge.smart_assistant.tools.types import ExecutionContext
+
+    app = preview._ctx
+    app.label_library = {"a": {"name": "待校对"}, "b": {"name": "待校对"}}
+    execution = ExecutionContext(app_context=app)
+    object.__setattr__(execution, "filter_state", {"search_query": "editor-id", "search_field": "id"})
+    assert not _tool_set_filters({"labels": ["a"]}, execution).success
+    assert preview.get_filter_state() == FilterState().to_mapping()
+    assert _tool_set_filters({"clear": True, "labels": ["a"]}, execution).success
+    assert not _tool_set_filters({"labels": ["待校对"]}, execution).success
+    assert preview.get_filter_state()["label"] == ["a"]
+    assert _tool_set_filters({"labels": ["missing-label"]}, execution).success
+    assert not preview.filtered_entries()

@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
 
+from transbridge.config.paths import get_data_resource_dir
 from transbridge.smart_assistant.agents.agent_registry import AgentRegistry
 from transbridge.smart_assistant.context_builder import ContextBuilder
 from transbridge.smart_assistant.native_tools import build_native_tool_definitions
 from transbridge.smart_assistant.prompts import build_system_prompt
 from transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
 from transbridge.smart_assistant.skills.skill_executor import SkillExecutor
-from transbridge.smart_assistant.skills.skill_loader import SkillSpec
+from transbridge.smart_assistant.skills.skill_loader import SkillLoader, SkillSpec
 from transbridge.smart_assistant.tool_registry import ToolRegistry
 from transbridge.smart_assistant.tools import register_all
 
@@ -37,7 +39,26 @@ def _schema_descriptions(value) -> list[str]:
 def test_built_system_prompt_and_static_context_are_english() -> None:
     register_all()
 
-    _assert_english(build_system_prompt(ContextBuilder().build()))
+    prompt = build_system_prompt(ContextBuilder().build())
+    _assert_english(prompt)
+    assert "retain important cross-session information" not in prompt
+    assert "recover_upload_associations" not in prompt
+    assert "run_postprocess" not in prompt
+
+
+def test_builtin_translation_skill_uses_tools_available_to_its_agent() -> None:
+    register_all()
+    skills = {s.name: s for s in SkillLoader.load_all(Path(get_data_resource_dir("skills")))}
+    for agent in AgentRegistry.list_all():
+        for name in agent.skills:
+            skill = skills[name]
+            assert set(skill.required_tools) <= set(skill.allowed_tools) <= set(agent.tools)
+            assert all(ToolRegistry.get(tool) is not None for tool in skill.allowed_tools)
+    translation = skills["translate_with_terms"]
+    assert "start_translation" in translation.required_tools
+    assert "start_translation" in translation.prompt_template
+    for obsolete in ("lookup_terms", "translate_entries", "check_quality"):
+        assert obsolete not in translation.prompt_template
 
 
 def test_native_tool_descriptions_and_parameter_descriptions_are_english() -> None:
@@ -57,6 +78,8 @@ def test_builtin_agent_instructions_are_english() -> None:
     for agent in AgentRegistry.list_all():
         _assert_english(agent.role)
         _assert_english(agent.system_prompt)
+        assert "run_postprocess" not in agent.system_prompt
+        assert all(tool.split(":")[-1] != "run_postprocess" for tool in agent.tools)
 
 
 def test_reflexion_prompt_is_english() -> None:

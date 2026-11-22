@@ -1,8 +1,4 @@
-"""Story 25: run_postprocess / start_polish 参数验证测试。
-
-Test A: run_postprocess 参数验证（空集合/entry_ids/scope/API key 检查）
-Test C: start_polish 参数验证（scope 校验 / intensity 映射）
-"""
+"""Validate scope, intensity and strategy on the desktop polish task."""
 
 from __future__ import annotations
 
@@ -12,163 +8,11 @@ from unittest.mock import patch
 
 from tests.conftest import (
     make_entry,
-    make_llm_config,
     make_test_collection,
 )
 from tests.smart_assistant.postprocess.project_support import project_context
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.smart_assistant.tools.base import ExecutionContext
-
-# ── Test A: run_postprocess Parameter Validation ──────────────────────────
-
-
-class TestRunPostprocessParamValidation(unittest.TestCase):
-    """验收标准: run_postprocess 参数校验正确拒绝无效输入。"""
-
-    def setUp(self):
-        from transbridge.smart_assistant.tools.tool_proofreader import _tool_run_postprocess
-
-        self.func = _tool_run_postprocess
-
-    def test_a1_empty_collection_returns_fail(self):
-        ctx = project_context(self, collection=None)
-        ec = ExecutionContext(app_context=ctx)
-        result = self.func({}, ec)
-        self.assertFalse(result.success)
-        self.assertIn("没有加载翻译集合", result.message)
-
-    def test_a2_empty_collection_length_zero(self):
-        empty_col = TranslationEntryCollection([])
-        ctx = project_context(self, collection=empty_col)
-        ec = ExecutionContext(app_context=ctx)
-        result = self.func({}, ec)
-        self.assertFalse(result.success)
-        self.assertIn("没有加载翻译集合", result.message)
-
-    def test_a3_nonexistent_entry_ids_returns_fail(self):
-        collection = make_test_collection(5)
-        ctx = project_context(self, collection=collection)
-        ec = ExecutionContext(app_context=ctx)
-        result = self.func({"entry_ids": ["nonexistent_1", "nonexistent_2"]}, ec)
-        self.assertFalse(result.success)
-        self.assertIn("所有指定的 entry_id 均无效", result.message)
-
-    def test_a4_mixed_entry_ids_filters_correctly(self):
-        collection = make_test_collection(5)
-        ctx = project_context(self, collection=collection)
-        ec = ExecutionContext(app_context=ctx)
-
-        with patch("transbridge.paratranz.config_manager.LLMConfig.load_from_file") as mock_load:
-            mock_cfg = make_llm_config(api_key="")
-            mock_load.return_value = mock_cfg
-
-            with patch.object(threading.Thread, "start", return_value=None):
-                result = self.func({"entry_ids": ["entry_001", "nonexistent_999"]}, ec)
-        self.assertTrue(result.success)
-        self.assertIn("task_id", result.data)
-        self.assertEqual(result.data["entry_count"], 1)
-
-    def test_a5_valid_entry_ids_reaches_config_check(self):
-        collection = make_test_collection(5)
-        ctx = project_context(self, collection=collection)
-        ec = ExecutionContext(app_context=ctx)
-
-        with patch("transbridge.paratranz.config_manager.LLMConfig.load_from_file") as mock_load:
-            mock_cfg = make_llm_config(api_key="")
-            mock_load.return_value = mock_cfg
-
-            with patch.object(threading.Thread, "start", return_value=None):
-                result = self.func({"entry_ids": ["entry_001", "entry_002"]}, ec)
-        self.assertTrue(result.success)
-        self.assertIn("task_id", result.data)
-        self.assertEqual(result.data["entry_count"], 2)
-
-    def test_a6_translation_scope_resolves_entries(self):
-        collection = make_test_collection(10)
-        ctx = project_context(self, collection=collection)
-        ctx.translation_scope = {
-            "stages": [1],
-            "labels": [],
-            "categories": [],
-            "action": "include",
-        }
-        ec = ExecutionContext(app_context=ctx)
-
-        with patch("transbridge.paratranz.config_manager.LLMConfig.load_from_file") as mock_load:
-            mock_cfg = make_llm_config(api_key="")
-            mock_load.return_value = mock_cfg
-
-            with patch.object(threading.Thread, "start", return_value=None):
-                result = self.func({}, ec)
-        self.assertTrue(result.success)
-        self.assertIn("task_id", result.data)
-        self.assertGreater(result.data["entry_count"], 0)
-
-    def test_a7_translation_scope_empty_result_behavior(self):
-        collection = make_test_collection(5)
-        ctx = project_context(self, collection=collection)
-        ctx.translation_scope = {
-            "stages": [99],
-            "labels": [],
-            "categories": [],
-            "action": "include",
-        }
-        ec = ExecutionContext(app_context=ctx)
-
-        result = self.func({}, ec)
-        self.assertFalse(result.success)
-        self.assertIn("没有可处理的条目", result.message)
-
-    def test_a8_default_phases_list(self):
-        collection = make_test_collection(5)
-        ec = ExecutionContext(app_context=project_context(self, collection=collection))
-
-        with patch.object(threading.Thread, "start", return_value=None):
-            result = self.func({}, ec)
-
-        self.assertTrue(result.success)
-        self.assertEqual(result.data["strategy"], "proofread")
-        self.assertEqual(result.data["phases"], ["proofread"])
-
-    def test_a9_custom_phases_in_data(self):
-        collection = make_test_collection(5)
-        ec = ExecutionContext(app_context=project_context(self, collection=collection))
-
-        with patch.object(threading.Thread, "start", return_value=None):
-            result = self.func(
-                {"entry_ids": ["entry_001"], "phases": ["consistency", "polish"]},
-                ec,
-            )
-
-        self.assertTrue(result.success)
-        self.assertEqual(result.data["strategy"], "strict")
-        self.assertEqual(result.data["phases"], ["consistency", "polish"])
-
-    def test_a10_unknown_phase_name_no_crash(self):
-        collection = make_test_collection(3)
-        ctx = project_context(self, collection=collection)
-        ec = ExecutionContext(app_context=ctx)
-
-        result = self.func({"entry_ids": ["entry_000"], "phases": ["unknown_phase", "garbage"]}, ec)
-        self.assertFalse(result.success)
-        self.assertIn("无效的阶段名", result.message)
-
-    def test_a11_api_key_missing_error_fields(self):
-        collection = make_test_collection(3)
-        ctx = project_context(self, collection=collection)
-        ec = ExecutionContext(app_context=ctx)
-
-        with patch("transbridge.paratranz.config_manager.LLMConfig.load_from_file") as mock_load:
-            mock_cfg = make_llm_config(api_key="")
-            mock_load.return_value = mock_cfg
-
-            with patch.object(threading.Thread, "start", return_value=None):
-                result = self.func({"entry_ids": ["entry_001"]}, ec)
-        self.assertTrue(result.success)
-        self.assertIn("task_id", result.data)
-
-
-# ── Test C: start_polish Parameter Validation ─────────────────────────────
 
 
 class TestStartPolishParamValidation(unittest.TestCase):
@@ -199,26 +43,13 @@ class TestStartPolishParamValidation(unittest.TestCase):
         self.assertEqual(result.data["entry_count"], 4)
         self.assertEqual(result.data["scope"], "all")
 
-    def test_c3_scope_passed_finds_correct_entries(self):
-        collection = make_test_collection(10)
-        ctx = project_context(self, collection=collection)
-        ec = ExecutionContext(app_context=ctx)
-
-        with patch.object(threading.Thread, "start", return_value=None):
-            result = self.func({"scope": "passed"}, ec)
-        self.assertTrue(result.success)
-        self.assertEqual(result.data["scope"], "passed")
-        self.assertGreater(result.data["entry_count"], 0)
-
-    def test_c4_scope_has_issues_finds_stage2_entries(self):
-        collection = make_test_collection(10)
-        ctx = project_context(self, collection=collection)
-        ec = ExecutionContext(app_context=ctx)
-
-        with patch.object(threading.Thread, "start", return_value=None):
-            result = self.func({"scope": "has_issues"}, ec)
-        self.assertTrue(result.success)
-        self.assertEqual(result.data["scope"], "has_issues")
+    def test_retired_stage_shortcuts_are_rejected_before_launch(self):
+        ctx = project_context(self, collection=make_test_collection(10))
+        for scope in ("passed", "has_issues"):
+            with self.subTest(scope=scope):
+                result = self.func({"scope": scope}, ExecutionContext(app_context=ctx))
+                self.assertFalse(result.success)
+                self.assertIn("set_scope", result.message)
 
     def test_c5_scope_no_matching_entries_returns_fail(self):
         entries = [make_entry(f"e{i}", original=f"orig {i}", translation="", stage=0) for i in range(3)]
@@ -268,7 +99,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
         with patch.object(threading.Thread, "start", return_value=None):
             result = self.func({"entry_ids": ["entry_000", "entry_001"], "scope": "all"}, ec)
         self.assertTrue(result.success)
-        self.assertEqual(result.data["entry_count"], 2)
+        self.assertEqual(result.data["entry_count"], 1)
 
     def test_c10_empty_entry_ids_with_scope_default(self):
         collection = make_test_collection(5)
@@ -278,7 +109,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
         with patch.object(threading.Thread, "start", return_value=None):
             result = self.func({}, ec)
         self.assertTrue(result.success)
-        self.assertEqual(result.data["scope"], "all")
+        self.assertNotIn("scope", result.data)
 
     def test_c11_proofread_is_the_default_strategy(self):
         collection = make_test_collection(5)

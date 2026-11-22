@@ -71,7 +71,7 @@ def _complete(task):
     task.persist(state="completed")
 
 
-@pytest.mark.parametrize("mode", ["translate", "polish", "postprocess"])
+@pytest.mark.parametrize("mode", ["translate", "polish"])
 def test_saved_original_capture_wire_and_merge_preserve_unknown_context(saved_only, mode):
     app, services = saved_only
     task = _task(app, mode)
@@ -114,7 +114,7 @@ def test_saved_original_merge_keeps_known_context_and_legacy_locator_guards(save
     assert all(row["merge_reason"] == "source_changed_or_missing" for row in viewed["results"])
 
 
-@pytest.mark.parametrize("mode", ["translate", "polish", "postprocess"])
+@pytest.mark.parametrize("mode", ["translate", "polish"])
 def test_assistant_dynamic_terms_use_the_gui_source_cache_identity(saved_only, tmp_path, monkeypatch, mode):
     from transbridge.ai_translator.term_database import DynamicTermDatabase
 
@@ -122,16 +122,18 @@ def test_assistant_dynamic_terms_use_the_gui_source_cache_identity(saved_only, t
     monkeypatch.setattr(LLMConfig, "get_ai_translator_dir", lambda name: str(tmp_path / "cache" / name))
     task = _task(app, mode)
     expected = source_terminology_path(None, app.active_key)
-    assert task.esp_path == expected and task.task.esp_path == expected
+    assert task.task.esp_path is None
+    cache_path = source_terminology_path(task.task.esp_path, task.task.key)
+    assert cache_path == expected
     gui = DynamicTermDatabase(expected)
     Path(gui._path).parent.mkdir(parents=True)
     gui.add("Dragon", "巨龙", "manual")
     gui.save()
-    assistant = DynamicTermDatabase(task.esp_path)
+    assistant = DynamicTermDatabase(cache_path)
     assistant.load()
     assert [(entry.term, entry.translation) for entry in assistant.as_list()] == [("Dragon", "巨龙")]
     other = replace(task.task, key="another-source")
-    assert source_terminology_path(None, other.key) != task.esp_path
+    assert source_terminology_path(None, other.key) != cache_path
 
 
 def test_filtered_captured_collection_keeps_its_source_identity_after_active_source_changes(saved_only):
@@ -155,60 +157,8 @@ def test_filtered_captured_collection_keeps_its_source_identity_after_active_sou
         mode="translate",
     )
     assert task.task.key == "source:known"
-    assert task.esp_path == source_terminology_path(None, "source:known")
-    assert task.report_context.active_slot.source_snapshot.source.display_name == "Captured.esp"
-
-
-def test_postprocess_dispatch_keeps_report_in_run_and_lists_it_without_active_project(saved_only, monkeypatch):
-    from transbridge.smart_assistant.tools._postprocess_tool_runtime import PostprocessToolRequest
-    from transbridge.smart_assistant.tools.postprocess_task_run import launch_postprocess_task
-    from transbridge.smart_assistant.tools.tool_proofreader import ProofreaderController
-
-    app, _services_value = saved_only
-    source = SimpleNamespace(display_name="SavedPlugin.esp", uri="old/SavedPlugin.esp")
-    app.active_slot.source_snapshot = SimpleNamespace(source=source)
-    request = PostprocessToolRequest(
-        tuple(app.collection),
-        LLMConfig(api_key="fixture", term_priority=[]),
-        "polish",
-        None,
-        "polish",
-        "proofread",
-        ("proofread",),
-        "all",
-        "medium",
-        {},
-        SimpleNamespace(snapshot_ref=None),
-    )
-    monkeypatch.setattr(
-        "transbridge.smart_assistant.tools.postprocess_task_run.resolve_postprocess_request", lambda *_args: request
-    )
-    workers = []
-    manager = SimpleNamespace(
-        register=lambda **_options: "job",
-        get_handle=lambda _key: None,
-        start_thread=lambda _key, callback: workers.append(callback),
-        get_status=lambda _key: {"run_id": "job"},
-    )
-    directories = []
-
-    def execute(task, _request, directory, *_args):
-        directories.append(directory)
-        assert task.report_context.active_slot.source_snapshot.source.display_name == "SavedPlugin.esp"
-        directory.mkdir(parents=True)
-        (directory / "postprocess-report-fixture.xlsx").write_bytes(b"report fixture")
-        task.persist(state="completed")
-
-    monkeypatch.setattr("transbridge.smart_assistant.tools.postprocess_task_run.execute_task", execute)
-    launched = launch_postprocess_task({}, app, report_callback=lambda *_args: None, manager=manager)
-    assert launched.success and directories == []
-    app.active_slot.source_snapshot = SimpleNamespace(source=SimpleNamespace(display_name="Other.esp"))
-    app.esp_path = "later.esp"
-    workers[0]()
-    assert directories == [app.task_store.run_directory(launched.data["result_id"]) / "reports"]
-    app.active_version_identity = None
-    listed = ProofreaderController().list_quality_reports({}, app)
-    assert [item["name"] for item in listed.data["files"]] == ["postprocess-report-fixture.xlsx"]
+    assert task.task.esp_path is None
+    assert task.task.label == "Captured.esp"
 
 
 def test_real_saved_hydration_with_empty_context_keeps_the_known_context_guard(tmp_path, monkeypatch):

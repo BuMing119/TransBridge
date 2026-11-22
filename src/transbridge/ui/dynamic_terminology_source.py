@@ -4,6 +4,8 @@
 from dataclasses import dataclass
 from pathlib import PureWindowsPath
 
+from transbridge.ai_translator.term_database import DynamicTermDatabase
+
 
 @dataclass(frozen=True, slots=True)
 class DynamicTerminologySource:
@@ -43,3 +45,13 @@ def dynamic_terminology_source(context, source=None) -> DynamicTerminologySource
         or ""
     )
     return DynamicTerminologySource(key, reference, str(display_name))
+
+
+def load_source_term_database(
+    reference: str | None, source_key: str | None, *, read_only: bool = False
+) -> DynamicTermDatabase:
+    from transbridge.ui.tools.ai_translator.source_terms import source_terminology_path
+
+    database = DynamicTermDatabase(source_terminology_path(reference, source_key), read_only=read_only)
+    database.load()
+    return database

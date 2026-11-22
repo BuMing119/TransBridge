@@ -95,6 +95,11 @@ class ParatranzConfig:
         )
 
     @property
+    def credential_configured(self) -> bool:
+        """Expose the current credential status without revealing the secret."""
+        return self._secret is not None
+
+    @property
     def token(self) -> str | None:
         """Legacy facade; callers must not log or persist the returned value."""
         return self._secret._reveal_for_request() if self._secret is not None else None

@@ -16,8 +16,8 @@ from .models import JobSnapshot, OwnerRef
 class CancellationToken:
     """Thread-safe cooperative cancellation signal owned by ``TaskRuntime``."""
 
-    def __init__(self) -> None:
-        self._event = threading.Event()
+    def __init__(self, event: threading.Event | None = None) -> None:
+        self._event = event if event is not None else threading.Event()
         self._lock = threading.Lock()
         self._reason: str | None = None
 

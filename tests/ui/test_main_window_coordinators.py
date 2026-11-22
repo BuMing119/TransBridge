@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from transbridge.application.contracts import OperationResult
+from transbridge.application.contracts import OperationResult, RequestContext
 from transbridge.application.io import FormatId, SourceDescriptor, SourceSnapshot
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.projects.provisioning_models import PreparedSourceHydration
@@ -244,7 +244,10 @@ def test_migration_draft_is_non_blocking_and_owned_until_finished(monkeypatch) -
 
 def test_project_dialog_receives_real_window_host(monkeypatch) -> None:
     observed = []
-    host = SimpleNamespace(context=SimpleNamespace(active_variant_id="variant"))
+    host = SimpleNamespace(
+        context=SimpleNamespace(active_project_id="project", active_variant_id="variant"),
+        runtime_context=RequestContext("test"),
+    )
     monkeypatch.setattr(
         "PyQt6.QtWidgets.QInputDialog.getText",
         lambda parent, *_args: (observed.append(parent) or "", False),

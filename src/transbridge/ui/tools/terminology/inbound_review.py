@@ -1,7 +1,7 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Keep incomplete inbound-review edits across page changes until preview."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from transbridge.application.terminology_sync.draft_import_models import DraftImportChoice
 from transbridge.application.terminology_sync.inbound import InboundReviewDecision, InboundTerminologyChange
@@ -25,13 +25,7 @@ class InboundReviewEdit:
         )
 
     def to_choice(self) -> DraftImportChoice:
-        edited = None
-        if self.decision is InboundReviewDecision.EDIT:
-            source = self.item.remote or self.item.local
-            if source is None:
-                raise ValueError("没有可编辑的术语内容")
-            edited = replace(source, translation=self.translation.strip(), digest="")
-        return DraftImportChoice(self.item.item_id, self.decision, edited)
+        return DraftImportChoice.from_review(self.item, self.decision, self.translation)
 
 
 class InboundReviewDrafts:

@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from transbridge.application.io.mutation import EntrySnapshot
 from transbridge.converter.translation_entry import STAGE_TRANSLATED, STAGE_UNTRANSLATED, TranslationEntry
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
-from transbridge.ui.entry_projection import EntryProjectionUpdate
 
 
 def content_scope(context) -> tuple:
@@ -66,8 +65,8 @@ def commit_drafts(context, drafts, *, projection=None) -> str | None:
     snapshot = projection.snapshot()
     if snapshot is None:
         return "工程权威快照不可用，草稿已保留。请重新加载工程后重试。"
-    authoritative = EntryProjectionUpdate.from_snapshot(snapshot, keys=(draft.before.entry_key for draft in drafts))
-    if any(authoritative.entry(collection.get(draft.before.entry_key)).snapshot() != draft.before for draft in drafts):
+    authoritative = context.entry_projection((draft.before.entry_key for draft in drafts), snapshot=snapshot)
+    if any(not authoritative.matches(draft.before, collection.get(draft.before.entry_key)) for draft in drafts):
         return "工程中的词条已变化，草稿未覆盖新内容。请重新载入词条后核对。"
     result = context.project_commands.replace_entry_states(
         states_to_write,

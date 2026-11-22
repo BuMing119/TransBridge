@@ -10,7 +10,7 @@ from typing import Protocol
 
 from transbridge.application.contracts import JobRef, RequestContext
 from transbridge.application.security.hitl import ConfirmationAuthority, ConfirmationToken
-from transbridge.application.tasks import JobSnapshot, OwnerRef, TaskRuntime
+from transbridge.application.tasks import JobSnapshot, OwnerRef, TaskAccessError, TaskRuntime
 from transbridge.application.terminology.ports import Page, PageRequest, SnapshotCursor
 
 from .draft_import_models import DraftImportChoice, DraftImportCommitResult, DraftImportProposal, DraftImportSelection
@@ -139,7 +139,7 @@ class TerminologySyncApplicationService:
         self._bidirectional_tasks = bidirectional_tasks
         self._max_plans = max_plans
         self._plans: dict[str, _StoredPlan] = {}
-        self._jobs: dict[str, tuple[JobRef, OwnerRef, TerminologySyncTaskEntrypoint]] = {}
+        self._jobs: dict[str, tuple[JobRef, TerminologySyncTaskEntrypoint]] = {}
         self._proposals: dict[str, DraftImportProposal] = {}
         self._lock = RLock()
         self._mapping_confirmations = ConfirmationAuthority()
@@ -245,7 +245,7 @@ class TerminologySyncApplicationService:
             task_entrypoint = self._bidirectional_tasks
         ref = task_entrypoint.submit(TerminologySyncTaskDraft(authorized_plan), owner)
         with self._lock:
-            self._jobs[ref.job_id] = (ref, owner, task_entrypoint)
+            self._jobs[ref.job_id] = (ref, task_entrypoint)
         return ref
 
     def execute(
@@ -257,13 +257,15 @@ class TerminologySyncApplicationService:
         return self.submit(self.authorize(ref, owner, confirmation_token), owner)
 
     def status(self, ref: JobRef, actor: OwnerRef) -> JobSnapshot:
-        return self._runtime.get(ref, actor)
+        snapshot = self._runtime.get(ref, actor)
+        self._job_entrypoint(ref)
+        return snapshot
 
     def result(self, ref: JobRef, actor: OwnerRef) -> TerminologyBackupExecutionResult | None:
-        return self._job_entrypoint(ref, actor).result(ref, actor)
+        return self._job_entrypoint(ref).result(ref, actor)
 
     def failure(self, ref: JobRef, actor: OwnerRef) -> TerminologySyncTaskFailure | None:
-        return self._job_entrypoint(ref, actor).failure(ref, actor)
+        return self._job_entrypoint(ref).failure(ref, actor)
 
     def result_items(self, ref: JobRef, actor: OwnerRef) -> tuple[TerminologySyncPlanItem, ...]:
         result = self.result(ref, actor)
@@ -271,18 +273,25 @@ class TerminologySyncApplicationService:
             stored = None if result is None else self._plans.get(result.plan_hash)
         return () if stored is None else stored.plan.items
 
-    def _job_entrypoint(self, ref: JobRef, actor: OwnerRef) -> TerminologySyncTaskEntrypoint:
-        self._runtime.get(ref, actor)
+    def _job_entrypoint(self, ref: JobRef) -> TerminologySyncTaskEntrypoint:
         with self._lock:
             stored = self._jobs.get(ref.job_id)
-        if stored is None:
-            raise KeyError("unknown terminology sync job")
-        stored_ref, _owner, entrypoint = stored
-        if stored_ref != ref:
-            raise PermissionError("terminology sync job identity changed")
-        return entrypoint
+        if stored is None or stored[0] != ref:
+            raise TaskAccessError("job_not_found", "unknown terminology sync job")
+        return stored[1]
 
-    def retry(self, token: TerminologySyncRetryToken, actor: OwnerRef) -> JobRef:
+    def _retry_token_for(self, ref: JobRef, actor: OwnerRef) -> TerminologySyncRetryToken:
+        if not self.status(ref, actor).is_terminal:
+            raise ValueError("terminology sync task has not finished")
+        result = self.result(ref, actor)
+        if result is None or result.retry_token is None:
+            raise ValueError("terminology sync task has no retry evidence")
+        return result.retry_token
+
+    def retry(self, ref: JobRef, actor: OwnerRef) -> JobRef:
+        token = self._retry_token_for(ref, actor)
+        if token.unknown_item_ids:
+            raise ValueError("unknown remote outcomes must be reconciled before retry")
         if token.owner_id != actor.owner_id:
             raise PermissionError("terminology sync retry belongs to another owner")
         with self._lock:
@@ -295,10 +304,11 @@ class TerminologySyncApplicationService:
         entrypoint = self._entrypoint_for(stored.plan.mode)
         ref = entrypoint.submit(TerminologySyncTaskDraft(authorized, retry_token=token), actor)
         with self._lock:
-            self._jobs[ref.job_id] = (ref, actor, entrypoint)
+            self._jobs[ref.job_id] = (ref, entrypoint)
         return ref
 
-    def reconcile(self, token: TerminologySyncRetryToken, actor: OwnerRef) -> JobRef:
+    def reconcile(self, ref: JobRef, actor: OwnerRef) -> JobRef:
+        token = self._retry_token_for(ref, actor)
         if token.owner_id != actor.owner_id:
             raise PermissionError("terminology sync reconciliation belongs to another owner")
         if not token.unknown_item_ids:
@@ -312,7 +322,7 @@ class TerminologySyncApplicationService:
         entrypoint = self._entrypoint_for(stored.plan.mode)
         ref = entrypoint.reconcile(TerminologySyncTaskDraft(authorized, retry_token=token), actor)
         with self._lock:
-            self._jobs[ref.job_id] = (ref, actor, entrypoint)
+            self._jobs[ref.job_id] = (ref, entrypoint)
         return ref
 
     def list_inbound(self, context: RequestContext) -> tuple[InboundTerminologyChangeSet, ...]:

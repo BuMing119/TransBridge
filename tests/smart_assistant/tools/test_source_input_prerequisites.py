@@ -8,7 +8,6 @@ from transbridge.application.preflight.inputs import ORIGINAL_KNOWN
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.smart_assistant.tools.input_prerequisites import source_input_failure, source_slot_for
-from transbridge.smart_assistant.tools.postprocess_task_run import launch_postprocess_task
 from transbridge.smart_assistant.tools.tool_editor import EditorController
 from transbridge.smart_assistant.tools.tool_translator import TranslationController
 
@@ -99,26 +98,6 @@ def test_assistant_unknown_original_returns_repair_before_task_or_model_setup(sa
     assert repair["source_keys"] == ["source-saved"]
     assert repair["entry_keys"] == [saved_context.collection.get("unknown").identity.to_dict()]
     assert (repair["project_id"], repair["variant_id"]) == ("project", "variant")
-
-
-def test_postprocess_checks_the_resolved_scope_once_and_preserves_repair_receipt(saved_context, monkeypatch):
-    resolved = []
-
-    def resolve(_args, _ctx, collection):
-        resolved.append(collection)
-        return SimpleNamespace(entries=(collection.get("unknown"),), stages=("proofread",))
-
-    monkeypatch.setattr("transbridge.smart_assistant.tools.postprocess_task_run.resolve_postprocess_request", resolve)
-    monkeypatch.setattr(
-        "transbridge.smart_assistant.tools.postprocess_task_run.AssistantTaskResults.capture",
-        lambda *_args, **_kwargs: pytest.fail("Missing original must not create a task"),
-    )
-    result = launch_postprocess_task(
-        {}, saved_context, report_directory=lambda _: None, report_callback=lambda *_: None
-    )
-    assert len(resolved) == 1
-    assert result.error_code == "SOURCE_INPUT_REQUIRED"
-    assert result.data["source_input_repair"]["entry_keys"][0]["local_key"] == "unknown"
 
 
 def test_reading_saved_entries_distinguishes_missing_original_from_real_text(saved_context):

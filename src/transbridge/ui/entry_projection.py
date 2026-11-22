@@ -35,6 +35,13 @@ class EntryProjectionUpdate:
         changes = {name: value for name, value in values.items() if getattr(entry, name) != value}
         return replace(entry, **changes) if changes or not reuse_unchanged else entry
 
+    def matches(self, before, entry) -> bool:
+        """Require the captured row to match both the displayed row and its live Variant state."""
+        if entry is None or entry.snapshot() != before or self.is_tombstone(before.entry_key):
+            return False
+        values = self.projected_values(before.entry_key, entry)
+        return bool(values) and all(value == getattr(before, name) for name, value in values.items())
+
     def saved_rows(self):
         """Reuse canonical keys when projecting rows without available hydration."""
         return self._states.items()

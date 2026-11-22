@@ -124,12 +124,12 @@ class AgentRegistry:
                 name="校对 Agent",
                 role=(
                     "You are a professional translation proofreading agent. Check "
-                    "translation consistency and formatting "
-                    "and perform LLM post-processing when requested."
+                    "translation consistency and formatting using the desktop polish task."
                 ),
                 namespace="proofreader",
                 tools=[
                     "proofreader:*",
+                    "translator:start_polish",
                     "translator:get_task_status",
                     "translator:stop_task",
                     "translator:get_task_result",
@@ -161,14 +161,12 @@ class AgentRegistry:
                     "translator:get_task_status",
                     "paratranz:list_projects",
                     "paratranz:get_project_info",
-                    "proofreader:run_postprocess",
+                    "translator:start_polish",
                 ],
                 skills=[],
                 system_prompt=(
-                    "You are the TransBridge orchestration engine. Analyze user intent and "
-                    "create an execution plan. Use "
-                    "these meta-tools to describe sub-agent dispatch: parse/manage_entries/translate/run_postprocess/"
-                    "sync_paratranz/write/query_state."
+                    "You are the TransBridge orchestration engine. Analyze user intent and create an execution "
+                    "plan using the available agent tools. Use start_polish to proofread existing translations."
                 ),
             )
         )
@@ -178,10 +176,7 @@ class AgentRegistry:
             AgentSpec(
                 agent_id=AGENT_PARSER,
                 name="解析 Agent",
-                role=(
-                    "Parse translation source files (ESP/EET/XT/SST/JSON/Strings) and load them into translation "
-                    "collections."
-                ),
+                role="Register source files or import translations into the active project source.",
                 namespace="parser",
                 tools=["parser:*"],
                 skills=[],

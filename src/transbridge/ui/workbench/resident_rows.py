@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, replace
 
 from transbridge.ui.project_labels import entry_label_key
@@ -17,15 +18,23 @@ class ResidentTableRows:
     identities: tuple
     positions: dict
     key_positions: dict
+    ambiguous_ids: frozenset
 
     @classmethod
     def index(cls, entries):
         identities = tuple(entry_label_key(entry) for entry in entries)
+        positions = {key: row for row, key in enumerate(identities)}
+        duplicates = (
+            frozenset(key for key, count in Counter(identities).items() if count > 1)
+            if len(positions) != len(identities)
+            else frozenset()
+        )
         return cls(
             entries,
             identities,
-            {key: row for row, key in enumerate(identities)},
+            positions,
             {entry.identity: row for row, entry in enumerate(entries)},
+            duplicates,
         )
 
     def get(self, row):

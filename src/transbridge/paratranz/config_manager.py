@@ -85,36 +85,8 @@ def apply_rules(rules: list, entries: list) -> dict:
     Returns:
         {entry_id: action} 映射，未匹配的条目默认 "skip"
     """
-    from transbridge.application.translation import (
-        ActionPlanner,
-        ActionRuleSpec,
-        PlanningEntry,
-        TranslationAction,
-    )
     from transbridge.application.translation.entry_alias import ai_entry_id
+    from transbridge.application.translation.planning import entry_actions
 
-    planning_entries = [
-        PlanningEntry(
-            entry.identity,
-            entry.stage,
-            entry.original,
-            entry.translation,
-            entry.context or "",
-            frozenset(getattr(entry, "labels", set()) or set()),
-        )
-        for entry in entries
-    ]
-    rule_specs = [
-        ActionRuleSpec(
-            rule.rule_id,
-            rule.priority,
-            TranslationAction(rule.action),
-            None if rule.status_filter is None else frozenset(rule.status_filter),
-            None if rule.label_filter is None else frozenset(rule.label_filter),
-            None if rule.category_filter is None else frozenset(rule.category_filter),
-        )
-        for rule in rules
-    ]
-    assignments = ActionPlanner().plan(planning_entries, rule_specs).assignments
-    by_key = {entry.identity: entry for entry in entries}
-    return {ai_entry_id(by_key[assignment.key]): assignment.action.value for assignment in assignments}
+    actions = entry_actions(rules, entries)
+    return {ai_entry_id(entry): actions[entry.identity] for entry in entries}

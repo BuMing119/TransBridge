@@ -8,7 +8,7 @@ from .config_undo import FIELDS, capture_config_undo
 from .round_undo import _execution_owner
 
 
-def capture_config_commit(undo, context, execution, effect_id, updates):
+def capture_config_commit(undo, context, execution, effect_id, updates, *, expected_revision=None):
     if not updates or set(updates) - FIELDS:
         raise ConfigRepositoryError("config_undo_invalid", "unsupported assistant configuration fields")
     with undo.requests.serialized(context):
@@ -18,6 +18,10 @@ def capture_config_commit(undo, context, execution, effect_id, updates):
             raise ConfigRepositoryError("config_undo_invalid", "configuration effect ownership does not match")
         repository = undo.configuration()
         before = repository.load()
+        if expected_revision is not None and expected_revision != before.revision:
+            raise ConfigRepositoryError(
+                "config_revision_conflict", "configuration changed since the command was prepared"
+            )
         identity = undo.begin_receipt(
             context,
             execution,

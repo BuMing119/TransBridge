@@ -23,7 +23,9 @@ def test_settings_tab_visits_active_form_before_footer_and_returns_to_navigation
         preferences,
         task_result_preferences=TaskResultPreferenceRepository(preferences._repository),
         llm_config=LLMConfig(),
-        paratranz_config=SimpleNamespace(token="", base_url="https://example.invalid", timeout=30),
+        paratranz_config=SimpleNamespace(
+            credential_configured=False, token="", base_url="https://example.invalid", timeout=30
+        ),
     )
     try:
         service.set_preference(ThemePreference(mode, DEFAULT_THEME_ID), persist=False)

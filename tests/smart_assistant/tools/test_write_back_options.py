@@ -441,11 +441,14 @@ def test_all_colliding_outputs_are_rejected_before_scheduling(sources, manager):
     assert not (sources.root / "output").exists()
 
 
-def test_explicit_single_file_path_preserves_precedence_over_output_dir(sources, manager):
+def test_native_plugin_rejects_renamed_output_and_requires_explicit_destination(sources, manager):
     destination = sources.root / "chosen.esp"
     output = sources.root / "unused-directory"
-    started = tool_writer._tool_write_back(
+    original = sources.plugin.read_bytes()
+    rejected = tool_writer._tool_write_back(
         {"target": "esp", "path": str(destination), "output_dir": str(output)}, sources.ctx
     )
-    assert _result(manager, started)["artifacts"] == [str(destination)]
-    assert not output.exists()
+    assert rejected.error_code == "WRITE_PLUGIN_PATH_INVALID"
+    assert tool_writer._tool_write_back({"target": "esp", "overwrite": True}, sources.ctx).error_code == "OUTPUT"
+    assert not output.exists() and not destination.exists() and not manager.list_all()
+    assert sources.plugin.read_bytes() == original

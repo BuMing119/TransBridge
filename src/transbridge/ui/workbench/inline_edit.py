@@ -20,7 +20,8 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.application.io.mutation import EntrySnapshot
-from transbridge.converter.translation_entry import STAGE_TRANSLATED, STAGE_UNTRANSLATED, TranslationEntry
+from transbridge.application.workbench_edits import translation_edit
+from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 
 
@@ -110,13 +111,11 @@ class InlineEditController(QObject):
         self._commit(draft, entry, row)
 
     def _commit(self, draft: _FailedEdit, entry: TranslationEntry, row: int = -1) -> None:
-        old_translation, old_stage = entry.translation, entry.stage
-        translation = draft.text.strip()
-        if translation == "（无译文）":
-            translation = ""
-        stage = STAGE_TRANSLATED if translation and entry.stage == STAGE_UNTRANSLATED else entry.stage
+        edit = translation_edit(draft.before, draft.text)
         try:
-            result = self.context.update_projected_entry(entry.identity, translation=translation, stage=stage)
+            result = self.context.update_projected_entry(
+                edit.before.entry_key, translation=edit.translation, stage=edit.stage
+            )
             if not result.is_success:
                 self._retain(draft, result.diagnostics[0].message if result.diagnostics else "工程提交失败")
                 return
@@ -125,12 +124,12 @@ class InlineEditController(QObject):
             self._retain(draft, f"提交译文失败：{exc}")
             return
         if _scope(self.context) == draft.scope:
-            entry.translation, entry.stage = translation, stage
+            entry.translation, entry.stage = edit.translation, edit.stage
             self._refresh_entry(
                 entry,
                 preferred_row=row,
-                old_stage=old_stage,
-                translation_filter_may_change=old_translation != translation,
+                old_stage=edit.before.stage,
+                translation_filter_may_change=edit.before.translation != edit.translation,
             )
         self._failed.pop(draft.key, None)
         self._refresh_feedback()

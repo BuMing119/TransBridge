@@ -5,7 +5,6 @@ ProjectListPanel: ParaTranz 管理模式左侧项目列表面板。
 """
 
 from contextlib import closing
-from datetime import datetime
 
 from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -25,28 +24,17 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError
-from transbridge.application.projects import ParaTranzProjectBinding
+from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError, ParaTranzProject
 from transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
+from transbridge.paratranz.management_queries import browse_projects
+from transbridge.paratranz.project_binding import BindingSelection
 from transbridge.paratranz.project_catalog import (
     ParaTranzCatalogCancellation,
-    ParaTranzCatalogKey,
     ParaTranzProjectCatalog,
 )
-from transbridge.paratranz.service import ParaTranzService
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 
 from ..workers import ApiWorker
-
-
-def _extract_list(data) -> list:
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        for key in ("data", "results", "items"):
-            if isinstance(data.get(key), list):
-                return data[key]
-    return []
 
 
 class NewProjectDialog(QDialog):
@@ -240,20 +228,10 @@ class ProjectListPanel(QWidget):
         self._load_cancellation = cancellation
 
         def _fetch():
-            projects = []
             try:
                 cancellation.raise_if_cancelled()
                 with closing(ParatranzProjectAPI(config=config)) as api:
-                    page = 1
-                    while True:
-                        cancellation.raise_if_cancelled()
-                        current = _extract_list(
-                            api.list_projects(page=page, page_size=200, uid=uid, cancellation=cancellation)
-                        )
-                        projects.extend(current)
-                        if len(current) < 200:
-                            break
-                        page += 1
+                    projects = browse_projects(api, uid, cancellation)
             except ExternalServiceError as exc:
                 if exc.category != ExternalServiceCategory.CANCELLED:
                     raise
@@ -306,7 +284,8 @@ class ProjectListPanel(QWidget):
                 item.setData(Qt.ItemDataRole.UserRole, p)
                 src = p.get("source", "?")
                 dest = p.get("dest", "?")
-                item.setToolTip(f"{src} → {dest}  |  成员数: {p.get('total', '?')}")
+                _, member_count = ParaTranzProject.overview_fields(p)
+                item.setToolTip(f"{src} → {dest}  |  成员数: {member_count if member_count is not None else '?'}")
                 self._list.addItem(item)
                 if current_id is not None and p.get("id") == current_id:
                     self._list.setCurrentItem(item)
@@ -357,9 +336,11 @@ class ProjectListPanel(QWidget):
         if not config.token:
             QMessageBox.warning(self, "无法绑定", "尚未配置 ParaTranz Token。")
             return
-        endpoint = str(config.base_url)
-        local_project_id = self._ctx.active_project_id
-        local_project_revision = self._ctx.project_revision
+        try:
+            selection = BindingSelection.capture(self._ctx)
+        except ValueError as exc:
+            QMessageBox.warning(self, "无法绑定", str(exc))
+            return
         config_revision = self._config_revision
         self._bind_gen += 1
         bind_gen = self._bind_gen
@@ -368,13 +349,7 @@ class ProjectListPanel(QWidget):
         self._status.setText("正在验证当前账号的项目成员身份…")
 
         def _validate_membership():
-            service = ParaTranzService.from_config(config)
-            try:
-                key = ParaTranzCatalogKey(endpoint, user_id, config_revision)
-                snapshot = self._catalog.list_my_projects(service, key, refresh=True)
-                return next((value for value in snapshot.projects if value.project_id == project_id), None)
-            finally:
-                service.close()
+            return selection.member_project(self._catalog, project_id)
 
         def _on_validated(remote_project):
             if bind_gen != self._bind_gen:
@@ -382,23 +357,14 @@ class ProjectListPanel(QWidget):
             if self._config_revision != config_revision:
                 QMessageBox.warning(self, "绑定已取消", "ParaTranz 连接配置在验证期间发生变化，请重新选择。")
                 return
-            if self._ctx.active_project_id != local_project_id or self._ctx.project_revision != local_project_revision:
-                QMessageBox.warning(self, "绑定已取消", "当前本地工程在验证期间发生变化，请重新选择。")
-                return
             if remote_project is None:
                 QMessageBox.warning(self, "无法绑定", "当前 ParaTranz 账号不是所选项目的成员。")
                 return
-            now = datetime.now().astimezone().isoformat()
-            binding = ParaTranzProjectBinding(
-                project_id,
-                remote_project.name,
-                endpoint,
-                user_id,
-                now,
-                now,
-            )
             try:
-                result = self._ctx.set_paratranz_binding(binding)
+                result = selection.bind(self._ctx, remote_project)
+            except ValueError as exc:
+                QMessageBox.warning(self, "绑定已取消", str(exc))
+                return
             except RuntimeError as exc:
                 QMessageBox.critical(self, "绑定失败", str(exc))
                 return

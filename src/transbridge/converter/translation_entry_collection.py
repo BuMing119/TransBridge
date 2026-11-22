@@ -201,7 +201,7 @@ class TranslationEntryCollection:
             metadata=entry.metadata or existing.metadata,
         )
 
-    def get(self, key: str | EntryKey) -> TranslationEntry | None:
+    def get(self, key: str | EntryKey, *, reject_ambiguous: bool = False) -> TranslationEntry | None:
         """Read by exact EntryKey, or by an unambiguous legacy key/id facade."""
         if isinstance(key, EntryKey):
             return self._entries.get(key.serialize())
@@ -212,6 +212,8 @@ class TranslationEntryCollection:
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
+            if reject_ambiguous:
+                raise ValueError(f"条目标识不唯一：{key}，请使用完整 EntryKey。")
             warnings.warn(
                 f"Legacy key {key!r} is ambiguous across source namespaces",
                 RuntimeWarning,

@@ -8,10 +8,10 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
+from threading import Event
 
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -20,16 +20,24 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
 )
 
-from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.application.projects.dictionary_apply import (
+    dictionary_mod_id,
+    dictionary_source_path,
+    prepare_dictionary,
+)
+from transbridge.application.tasks.controls import CancellationToken
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 from transbridge.translation_memory import TranslationMemoryManager
+from transbridge.translation_memory.publication import capture_dictionary_save, publish_dictionary
 from transbridge.ui.foundation.components import WrappingLabel
+from transbridge.ui.workers import ApiWorker
 
 
 class DictionaryPanel(QDialog):
@@ -43,6 +51,9 @@ class DictionaryPanel(QDialog):
         super().__init__(parent)
         self._ctx = ctx
         self._manager = TranslationMemoryManager(base_dir=base_dir)
+        self._save_cancel: Event | None = None
+        self._save_progress: QProgressDialog | None = None
+        self.finished.connect(self._cancel_dictionary_save)
         self.setWindowTitle("翻译词典")
         self.resize(860, 560)
 
@@ -215,57 +226,76 @@ class DictionaryPanel(QDialog):
 
         dlg = SaveToDictionaryDialog(
             self,
-            source_path=self._default_source_path(),
+            source_path=dictionary_source_path(self._ctx),
         )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
+        if self._ctx.collection is not collection:
+            QMessageBox.warning(self, "提示", "活动来源已变化，请重新存为词典。")
+            return
         mod_file_id, scope, selected_only, tags = dlg.result()
-
-        # 确定目标条目
-        if selected_only:
-            entry_ids = list(self._ctx.selected_ids) if hasattr(self._ctx, "selected_ids") else []
-            if not entry_ids:
-                QMessageBox.information(self, "提示", "没有选中条目")
-                return
-        else:
-            entry_ids = None
-
         try:
-            added = self._manager.save_from_collection(
-                collection,
-                mod_file_id=mod_file_id,
-                scope=scope,
-                entry_ids=entry_ids,
-                tags=tags,
+            selected = (
+                (entry.identity for entry in getattr(self._ctx, "selected_entries", ())) if selected_only else None
             )
-            self._manager.save()
-            self._rebuild_combo()
-            self._refresh_table()
-            QMessageBox.information(self, "完成", f"已写入词典，新增 {added} 条词条")
+            save = capture_dictionary_save(collection, mod_file_id, scope, selected, tags)
         except Exception as exc:  # noqa: BLE001 - 用户可见错误
             QMessageBox.critical(self, "错误", f"存为词典失败: {exc}")
+            return
+        stopped = Event()
+        token = CancellationToken(stopped)
+        manager = self._manager
+        progress = QProgressDialog("正在存为词典…", "取消", 0, 0, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        self._save_progress = progress
+        self._save_cancel = stopped
+        progress.canceled.connect(stopped.set)
+        worker = ApiWorker(
+            lambda: publish_dictionary(
+                manager, save, commit=lambda publish: publish(), checkpoint=token.raise_if_cancelled
+            ),
+            route_http_errors=False,
+            cancel_read_on_close=stopped.set,
+        )
 
-    def _default_source_path(self) -> str:
-        """当前源文件路径（供 mod 名推断）。
+        worker.result.connect(self._dictionary_saved)
+        worker.error.connect(self._dictionary_save_failed)
+        worker.finished.connect(self._dictionary_save_finished)
+        worker.finished.connect(worker.deleteLater)
+        self._save_btn.setEnabled(False)
+        progress.show()
+        try:
+            worker.start()
+        except RuntimeError as exc:
+            self._dictionary_save_failed(str(exc))
+            self._dictionary_save_finished()
+            worker.deleteLater()
 
-        优先从 active_slot 取 esp_path（当前解析的插件文件）；
-        其次取 eet_path / xt_path。
-        """
-        esp_path = getattr(self._ctx, "esp_path", None)
-        if esp_path:
-            return str(esp_path)
-        eet_path = getattr(self._ctx, "eet_path", None)
-        if eet_path:
-            return str(eet_path)
-        xt_path = getattr(self._ctx, "xt_path", None)
-        if xt_path:
-            return str(xt_path)
-        return ""
+    def _cancel_dictionary_save(self) -> None:
+        if self._save_cancel is not None:
+            self._save_cancel.set()
 
-    def _default_mod_id(self) -> str:
-        """从源文件路径推断 mod 名（去扩展名）。"""
-        sp = self._default_source_path()
-        return Path(sp).stem if sp else ""
+    def _dictionary_saved(self, result):
+        self._save_progress.hide()
+        added, dictionary = result
+        if dictionary is not None:
+            self._manager.dictionaries[dictionary.mod_file_id] = dictionary
+        self._rebuild_combo()
+        self._refresh_table()
+        if not self._save_cancel.is_set():
+            QMessageBox.information(self, "完成", f"已写入词典，新增 {added} 条词条")
+
+    def _dictionary_save_failed(self, message):
+        self._save_progress.hide()
+        if not self._save_cancel.is_set():
+            QMessageBox.critical(self, "错误", f"存为词典失败: {message}")
+
+    def _dictionary_save_finished(self):
+        self._save_progress.deleteLater()
+        self._save_progress = None
+        self._save_cancel = None
+        self._save_btn.setEnabled(True)
 
     def _on_apply_dict(self) -> None:
         collection = self._ctx.collection
@@ -288,23 +318,13 @@ class DictionaryPanel(QDialog):
             error.setDetailedText("权威 Variant 写入适配器不可用。")
             error.exec()
             return
-        # Dictionary arbitration operates on a detached candidate. Projection state
-        # stays unchanged until the command commits the complete reviewed batch.
-        collection = TranslationEntryCollection(replace(entry) for entry in collection)
-
-        from transbridge.translation_memory.manager import QueryContext
-
-        manager = self._manager
         try:
-            manager.load()
+            application = prepare_dictionary(collection, self._manager, mod_file_id=dictionary_mod_id(self._ctx))
         except RuntimeError as exc:
-            QMessageBox.critical(self, "错误", f"词典加载失败: {exc}")
+            QMessageBox.critical(self, "套用失败", str(exc))
             return
 
-        # 激活集默认：同名 mod 词典最优先（其余 project/global 自动纳入）
-        context = QueryContext(mod_file_id=self._default_mod_id())
-        result = manager.apply_to_collection(collection, context=context)
-
+        result = application.result
         msg = (
             f"套用完成：键命中 {result.key_hits} 条，文本命中 {result.text_hits} 条，"
             f"实际填充 {result.applied} 条，未命中 {result.misses} 条"
@@ -312,30 +332,15 @@ class DictionaryPanel(QDialog):
         if result.needs_review:
             msg += f"\n\n⚠ {len(result.needs_review)} 条键命中但原文已变化（需复核）"
 
-        # 冲突仲裁
-        if result.conflicts:
-            from transbridge.ui.tools.conflict_dialog import DictionaryConflictDialog
-
-            # apply_to_collection has already filled the automatic winner; its
-            # conflicts list contains only the other translations.
-            choices = []
-            for entry_id in dict.fromkeys(item["entry_id"] for item in result.conflicts):
-                entry = collection.get(entry_id)
-                if entry is not None:
-                    choices.append({"entry_id": entry_id, "translation": entry.translation, "wins": True})
-            choices.extend(result.conflicts)
-            dlg = DictionaryConflictDialog(choices, self)
-            if dlg.exec() == QDialog.DialogCode.Accepted:
-                selections = dlg.result()
-                for entry_id, chosen in selections:
-                    entry = collection.get(entry_id)
-                    if entry is not None:
-                        entry.translation = chosen
+        if application.choices:
+            selections = self._ctx.review_dictionary_conflicts(application.choices, self)
+            application.apply_choices(selections)
+            if selections:
                 msg += f"\n\n已处理 {len(selections)} 处译文冲突"
 
         project_id, variant_id = expected_identity
-        commit = commands.replace_entry_states(
-            {entry.identity: (entry.translation, entry.stage) for entry in collection},
+        commit = application.commit(
+            commands,
             runtime_context,
             expected_project_revision=expected_project_revision,
             expected_variant_revision=expected_variant_revision,

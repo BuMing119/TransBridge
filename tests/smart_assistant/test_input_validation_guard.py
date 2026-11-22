@@ -53,7 +53,7 @@ def test_plain_search_text_reaches_the_real_filter_unchanged():
     )
 
     assert result.success
-    assert app_context.filter_state["search_query"] == text
+    assert app_context.filter_state["search_orig"] == text
 
 
 @pytest.mark.parametrize("reason", ["invalid-stage", "missing-identity"])

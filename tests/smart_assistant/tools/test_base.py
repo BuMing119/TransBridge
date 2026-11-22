@@ -1,16 +1,15 @@
-"""Tests for base.py infrastructure: _apply_after_guards (m5) and resolve_scope_to_entry_ids (M3)."""
+"""Assistant tool middleware and runtime-context checks."""
 
 from __future__ import annotations
 
 import unittest
 from unittest.mock import MagicMock
 
-from tests.conftest import MockAppContext, make_test_collection
 from transbridge.smart_assistant.execution_engine import StepResult
 from transbridge.smart_assistant.guardrails.base import GuardResult
 
 # Module-level imports to avoid bound-method descriptor wrapping
-from transbridge.smart_assistant.tools.base import _apply_after_guards, resolve_scope_to_entry_ids
+from transbridge.smart_assistant.tools.base import _apply_after_guards
 
 
 # ============================================================
@@ -189,137 +188,6 @@ class TestApplyAfterGuards(unittest.TestCase):
         self.assertIsNone(rejection)
         self.assertFalse(sr.success)
         self.assertEqual(sr.message, "something went wrong")
-
-
-# ============================================================
-# TestResolveScopeToEntryIds (M3: scope -> entry_ids)
-# ============================================================
-class TestResolveScopeToEntryIds(unittest.TestCase):
-    """Test resolve_scope_to_entry_ids public function."""
-
-    def test_valid_scope_with_stages_returns_filtered_entry_ids(self):
-        """Scope with stages should filter collection and return matching entry keys."""
-        ctx = MockAppContext(make_test_collection(10))
-        ctx.translation_scope = {
-            "stages": [0],
-            "labels": [],
-            "categories": [],
-            "action": "include",
-        }
-
-        result = resolve_scope_to_entry_ids(ctx, ctx.collection)
-
-        self.assertIsNotNone(result)
-        expected = [e.key for e in ctx.collection if e.stage == 0]
-        self.assertEqual(sorted(result), sorted(expected))
-
-    def test_valid_scope_with_categories_returns_filtered_ids(self):
-        """Scope with categories should filter by context prefix."""
-        ctx = MockAppContext(make_test_collection(10))
-        ctx.translation_scope = {
-            "stages": [],
-            "labels": [],
-            "categories": ["INFO"],
-            "action": "include",
-        }
-
-        result = resolve_scope_to_entry_ids(ctx, ctx.collection)
-
-        self.assertIsNotNone(result)
-        expected = [e.key for e in ctx.collection if e.context and e.context.startswith("INFO:")]
-        self.assertEqual(sorted(result), sorted(expected))
-
-    def test_empty_scope_returns_none(self):
-        """Empty scope (all lists empty) -> returns None."""
-        ctx = MockAppContext(make_test_collection(10))
-        ctx.translation_scope = {
-            "stages": [],
-            "labels": [],
-            "categories": [],
-            "action": "include",
-        }
-
-        result = resolve_scope_to_entry_ids(ctx, ctx.collection)
-
-        self.assertIsNone(result)
-
-    def test_missing_translation_scope_returns_none(self):
-        """ctx without translation_scope attribute -> returns None."""
-        from types import SimpleNamespace
-
-        ctx_no_scope = SimpleNamespace()
-        # Note: resolve_scope_to_entry_ids also accesses ctx.collection via arg,
-        # but the function only uses ctx for translation_scope and entry_labels
-        setattr(ctx_no_scope, "something_else", True)
-
-        result = resolve_scope_to_entry_ids(ctx_no_scope, make_test_collection(5))
-
-        self.assertIsNone(result)
-
-    def test_none_scope_returns_none(self):
-        """translation_scope attribute exists but value is falsy -> returns None."""
-        from types import SimpleNamespace
-
-        collection = make_test_collection(5)
-        ctx = SimpleNamespace()
-        ctx.collection = collection
-        ctx.translation_scope = None  # explicitly None
-        ctx.entry_labels = None
-
-        result = resolve_scope_to_entry_ids(ctx, collection)
-
-        self.assertIsNone(result)
-
-    def test_scope_with_only_labels_and_entry_labels(self):
-        """Scope with labels and matching entry_labels should filter correctly."""
-        collection = make_test_collection(6)
-        ctx = MockAppContext(collection)
-        ctx.translation_scope = {
-            "stages": [],
-            "labels": ["npc"],
-            "categories": [],
-            "action": "include",
-        }
-        ctx._entry_labels = {
-            "entry_000": {"npc", "quest"},
-            "entry_001": {"item"},
-            "entry_002": {"npc"},
-        }
-
-        result = resolve_scope_to_entry_ids(ctx, ctx.collection)
-
-        self.assertIsNotNone(result)
-        self.assertEqual(sorted(result), ["entry_000", "entry_002"])
-
-    def test_scope_all_empty_strings_returns_none(self):
-        """Scope keys present but all empty strings/lists -> returns None."""
-        ctx = MockAppContext(make_test_collection(10))
-        ctx.translation_scope = {
-            "stages": [],
-            "labels": [],
-            "categories": [],
-            "action": "include",
-        }
-
-        result = resolve_scope_to_entry_ids(ctx, ctx.collection)
-
-        self.assertIsNone(result)
-
-    def test_scope_stages_and_categories_combined(self):
-        """Combined stages + categories scope -> intersection filter."""
-        ctx = MockAppContext(make_test_collection(10))
-        ctx.translation_scope = {
-            "stages": [0, 1],
-            "labels": [],
-            "categories": ["NPC_"],
-            "action": "include",
-        }
-
-        result = resolve_scope_to_entry_ids(ctx, ctx.collection)
-
-        self.assertIsNotNone(result)
-        expected = [e.key for e in ctx.collection if e.stage in (0, 1) and e.context and e.context.startswith("NPC_:")]
-        self.assertEqual(sorted(result), sorted(expected))
 
 
 if __name__ == "__main__":

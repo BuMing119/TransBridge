@@ -21,6 +21,8 @@ from transbridge.smart_assistant.tools.base import ToolResult
 
 logger = logging.getLogger(__name__)
 
+DETACHED_WRITE_TOOLS = frozenset({"upload_entries", "manage_entry_labels", "export_artifact"})
+
 
 @dataclass(frozen=True)
 class DetachedToolResult:
@@ -52,12 +54,15 @@ class ToolExecutionHandler:
         on_tool_result: Callable[[dict, ToolResult], None] | None = None,
         on_task_started: Callable[[str, str], None] | None = None,
         on_confirm_permission: Callable[[str, str], bool] | None = None,
+        choose_artifact_output: Callable | None = None,
         retry_handler: RetryHandler | None = None,
         llm_client_provider: Callable[[], object] | None = None,
         request_context_provider: Callable[[], object] | None = None,
+        edit_review_for: Callable[[dict], object | None] | None = None,
     ):
         self._ctx = ctx
         self._request_context_provider = request_context_provider
+        self._edit_review_for = edit_review_for
         self._conversation = conversation_manager
         self._middlewares: list | None = None
 
@@ -71,6 +76,7 @@ class ToolExecutionHandler:
         self._on_tool_result = on_tool_result or (lambda _step, _result: None)
         self._on_task_started = on_task_started or (lambda _task_id, _run_id: None)
         self._on_confirm_permission = on_confirm_permission
+        self._choose_artifact_output = choose_artifact_output
         self._confirmation_authority = ConfirmationAuthority(ttl_seconds=60.0)
         self._fallback_owner_id = f"gui:{id(ctx)}"
         self._structured_observations: list = []
@@ -157,6 +163,7 @@ class ToolExecutionHandler:
             confirmation_authority=self._confirmation_authority,
         )
         provider = getattr(self, "assistant_gate_provider", None)
+        context.choose_artifact_output = self._choose_artifact_output
         if provider is not None:
             context.assistant_gate = provider()
             context.assistant_required = True
@@ -227,6 +234,21 @@ class ToolExecutionHandler:
             f"工具 '{tool_name}' 需要{perm_label}权限确认。是否继续？",
         )
         elapsed = time.monotonic() - started
+        request_context = self._current_request_context()
+        from .tools.terminology_approval import REVIEW_ACTIONS
+
+        if tool_name in REVIEW_ACTIONS and exec_ctx.request_context != request_context:
+            result = reject_step(
+                step,
+                exec_ctx,
+                ToolResult.fail(
+                    "确认期间会话或术语作用域已变化",
+                    error_category="permission",
+                    error_code="CONFIRMATION_SCOPE_CHANGED",
+                ),
+            )
+            self._handle_result(step, result, skip_react_continue=skip_react_continue, mode=mode)
+            return False, middlewares
         if not confirmed or elapsed > self._confirmation_authority.ttl_seconds:
             code = "CONFIRMATION_EXPIRED" if confirmed else "CONFIRMATION_DENIED"
             result = ToolResult.fail(
@@ -244,7 +266,6 @@ class ToolExecutionHandler:
         )
         # Re-read mutable GUI context after the callback. Owner/plan changes make
         # the issued token fail closed when PermissionGuard consumes it.
-        request_context = self._current_request_context()
         exec_ctx.request_context = request_context
         exec_ctx.owner_id = (
             getattr(request_context, "owner_id", "") or getattr(self._ctx, "owner_id", "") or self._fallback_owner_id
@@ -372,17 +393,8 @@ class ToolExecutionHandler:
 
     # ── 单步执行 ──────────────────────────────────────────
 
-    def execute_step(self, step: dict, skip_react_continue: bool = False, mode: str = "react") -> ToolResult | None:
-        """执行单个工具步骤。
-
-        Args:
-            step: 工具步骤字典，含 tool/args 等字段。
-            skip_react_continue: 为 True 时不在执行后触发 ReAct 继续（批量场景由调用方统一触发）。
-            mode: "react" 或 "plan"，影响执行后是否触发 ReAct 继续。
-
-        Returns:
-            ToolResult 或 None（用户拒绝权限确认时返回 None）。
-        """
+    def _prepare_step(self, step, *, skip_react_continue, mode, capture=None):
+        """Capture the caller and obtain any required permission on the GUI thread."""
         tool_name = step.get("tool", "?")
         from .tool_registry import ToolRegistry
 
@@ -404,7 +416,32 @@ class ToolExecutionHandler:
             return result
 
         exec_ctx = self._build_execution_context()
+        if self._edit_review_for is not None:
+            from .operation_preview import bind_entry_edit_review
+
+            try:
+                bind_entry_edit_review(step, exec_ctx, self._edit_review_for)
+            except ValueError as exc:
+                result = reject_step(step, exec_ctx, ToolResult.fail(str(exc), error_code="EDIT_REVIEW_STALE"))
+                self._handle_result(step, result, skip_react_continue=skip_react_continue, mode=mode)
+                return result
         middlewares = self._ensure_middlewares()
+        if capture is not None:
+            try:
+                capture(step.get("args", {}), exec_ctx)
+            except Exception as exc:
+                from .tools.diagnostics import technical_error
+
+                result = reject_step(
+                    step,
+                    exec_ctx,
+                    ToolResult.fail(
+                        technical_error(exc),
+                        error_code="UPLOAD_TARGET_INVALID" if tool_name == "upload_entries" else "LABEL_SCOPE_INVALID",
+                    ),
+                )
+                self._handle_result(step, result, skip_react_continue=skip_react_continue, mode=mode)
+                return result
 
         allowed, middlewares = self._check_permission(
             step,
@@ -416,6 +453,44 @@ class ToolExecutionHandler:
         if not allowed:
             return None
 
+        return spec, middlewares, exec_ctx
+
+    def prepare_detached_write(self, step, cancel_event):
+        """Confirm the operation on Qt, then prepare its invocation for the shared worker."""
+        from transbridge.application.tasks import CancellationToken
+        from transbridge.paratranz.file_transport import UploadCancellation
+
+        from .tools._editor_labels import capture_label_scope
+        from .tools._project_upload import capture_upload_target
+
+        name = step.get("tool")
+        if name not in DETACHED_WRITE_TOOLS:
+            raise ValueError("工具不支持确认后后台执行。")
+        upload = name == "upload_entries"
+        prepared = self._prepare_step(
+            step,
+            skip_react_continue=True,
+            mode="react",
+            capture={"upload_entries": capture_upload_target, "manage_entry_labels": capture_label_scope}.get(name),
+        )
+        if not isinstance(prepared, tuple):
+            return None  # Rejection has already been delivered on the GUI thread.
+        spec, middlewares, exec_ctx = prepared
+        exec_ctx.cancellation_token = UploadCancellation(cancel_event) if upload else CancellationToken(cancel_event)
+        frozen = deepcopy(step)
+
+        def run():
+            result = self._execute_with_retry(spec, frozen, middlewares, exec_ctx, cancelled=cancel_event.is_set)
+            return (DetachedToolResult(frozen, result, source_step=step),)
+
+        return run
+
+    def execute_step(self, step: dict, skip_react_continue: bool = False, mode: str = "react") -> ToolResult | None:
+        """Execute a tool through the same confirmation and request-admission chain."""
+        prepared = self._prepare_step(step, skip_react_continue=skip_react_continue, mode=mode)
+        if not isinstance(prepared, tuple):
+            return prepared
+        spec, middlewares, exec_ctx = prepared
         result = self._execute_with_retry(spec, step, middlewares, exec_ctx)
         awaiting_task = False
         if getattr(spec, "is_long_running", False) and getattr(result, "success", False):

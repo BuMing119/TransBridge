@@ -13,10 +13,11 @@ from PyQt6 import sip
 from PyQt6.QtCore import QObject, Qt, QTimer
 from PyQt6.QtWidgets import QMessageBox, QProgressDialog, QWidget
 
+from transbridge.ai_translator.project_terminology_runtime import capture_terminology_owner
 from transbridge.ui.windowing import show_and_activate
 
 from .run_preparation import confirm_optional_retrieval
-from .run_request_preparation import capture_terminology_owner, prepare_run_request
+from .run_request_preparation import prepare_run_request
 from .run_spec import FrozenExecutionConfig, preflight_ai_run
 from .source_terms import source_terminology_path
 from .task_consistency import TaskConsistency

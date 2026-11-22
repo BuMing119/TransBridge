@@ -10,6 +10,7 @@ from transbridge.application.dialogue.record_fields import record_identity
 from transbridge.application.io.contracts import FormatId
 from transbridge.application.io.identity import EntryKey, EntryRevision
 from transbridge.application.projections.models import DeferredProjectRows, copy_projection_value
+from transbridge.application.workbench_statistics import scope_statistics
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence.project_store.paged_reads import describe_source
@@ -35,6 +36,7 @@ class ProjectRowsCollection:
         self._pages = {0: source.preview} if source.preview else {}
         self._initial_count = source.count
         self._reading_order = source.info.format_id is FormatId.PLUGIN_SSE
+        self._workbench_statistics = None
 
     @property
     def collection_revision(self):
@@ -51,12 +53,12 @@ class ProjectRowsCollection:
     def __contains__(self, key):
         return self.get(key) is not None
 
-    def get(self, key):
+    def get(self, key, *, reject_ambiguous=False):
         if isinstance(key, str):
             try:
                 key = EntryKey.deserialize(key)
             except ValueError:
-                return TranslationEntryCollection(self).get(key)
+                return TranslationEntryCollection(self).get(key, reject_ambiguous=reject_ambiguous)
         if key.namespace != self.source.info.namespace:
             return None
         for rows in self._pages.values():
@@ -72,16 +74,19 @@ class ProjectRowsCollection:
 
     def freeze_entries(self):
         """Capture a revision-bound batch reader without doing I/O on the GUI thread."""
-        store, token = self.reader.store, self.token
+        reader, token = self.reader, self.token
         namespace = self.source.info.namespace
         authority = self._authority
         states = None if self._states is None else dict(self._states)
 
-        def read(keys):
+        def read(keys=None):
+            if keys is None:
+                rows = reader.full_rows(namespace=namespace, token=token, include_removed=True)
+                return tuple(_translation_entries(rows, authority, states))
             selected = tuple(key for key in keys if key.namespace == namespace)
             if not selected:
                 return ()
-            rows = store.read_entries(token.variant_id, selected, token=token)
+            rows = reader.store.read_entries(token.variant_id, selected, token=token)
             return tuple(_translation_entries(rows, authority, states))
 
         return read
@@ -125,15 +130,36 @@ class ProjectRowsCollection:
         reader, source, token = self.reader, self.source, self.token
         return lambda: reader.template(source, token)
 
-    def statistics(self):
+    def workbench_statistics(self, *, keys=None):
+        """Share the completed source summary for the same version as the workbench table."""
+        if keys is not None:
+            return scope_statistics(self, keys=keys)
+        version = (self.collection_revision, self.token)
+        cached = self._workbench_statistics
+        if cached is not None and cached[0] == version:
+            return cached[1]
+        statistics = scope_statistics(self)
+        if version == (self.collection_revision, self.token):
+            self._workbench_statistics = (version, statistics)
+        return statistics
+
+    def statistics(self, *, keys=None):
         authority = self._authority
-        if self._states is None:
+        if keys is not None:
+            selected = tuple(key for key in keys if key.namespace == self.source.info.namespace)
+            if not selected:
+                return Counter()
+            records = self.reader.store.read_entries(self.token.variant_id, selected, token=self.token)
+            rows = self._rows_with_labels(records, authority, self._states)
+        elif self._states is None:
             return self.reader.store.scope_statistics(
                 self.token, self.source.info.namespace, () if authority is None else authority.pending()
             )
+        else:
+            rows = self.query_rows()
         return Counter(
             (entry.context or "", entry.stage, bool(entry.stage >= 1 and entry.translation), tuple(sorted(labels)))
-            for entry, _key, labels in self.query_rows()
+            for entry, _key, labels in rows
         )
 
     def visible_rows(self):

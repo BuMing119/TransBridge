@@ -10,6 +10,7 @@ from pathlib import Path
 from threading import RLock
 
 from transbridge.application.translation.task_history import atomic_json
+from transbridge.filesystem_paths import native_path
 
 from .shared_term_snapshot import FrozenTermEntry
 from .term_formats import term_entries_from_data, term_entry_to_canonical_dict
@@ -39,7 +40,7 @@ class TaskReferenceStore:
     def __init__(self, task_id: str, *, root: Path | None = None, identity=()):
         self.task_id = task_id
         self.identity = tuple(identity)
-        self.path = None if root is None else Path(root) / f"{sha256(task_id.encode()).hexdigest()}.json"
+        self.path = None if root is None else native_path(Path(root) / f"{sha256(task_id.encode()).hexdigest()}.json")
         self._lock = RLock()
         self._snapshots = {}
         self._dynamic_databases = {}

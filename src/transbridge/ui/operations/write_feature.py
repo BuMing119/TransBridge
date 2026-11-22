@@ -15,13 +15,18 @@ from transbridge.application.io.json_export import (
     JsonExportWorkload,
     preflight_json_export,
 )
+from transbridge.application.io.native_write import batch_write_target, native_write_draft, preflight_write_batch
 from transbridge.application.io.operation_write import HydratedWriteDraft, HydratedWriteWorkload
+from transbridge.application.io.operation_write_batch import (
+    WriteBatchFailure as _WriteBatchFailure,
+    batch_output_conflicts,
+)
 from transbridge.application.io.plugin_transfer import (
     PluginTransferDraft,
     PluginTransferPreflightService,
     PluginTransferWorkload,
 )
-from transbridge.application.io.publish import BackupPolicy, ConflictPolicy as PublishConflictPolicy
+from transbridge.application.io.publish import ConflictPolicy as PublishConflictPolicy
 from transbridge.application.tasks import OwnerRef, TaskRuntime
 from transbridge.config.text_encoding import TextEncodings
 
@@ -36,10 +41,6 @@ from .write_batch import (
     _HydratedWriteBatch,
     _HydratedWriteBatchWorkload,
     _write_batch_plan,
-    _WriteBatchFailure,
-    batch_output_conflicts,
-    batch_write_target,
-    isolate_batch_output_conflicts,
     retarget_write_batch,
 )
 from .write_json_export import json_export_plan, native_export_plan, with_json_choices
@@ -79,7 +80,7 @@ def build_write_feature(context_factory, operation_tasks, write_preflights, *, t
                 _display_check(item, include_message=item.code.startswith("TRANSFER_")) for item in checked.checks
             )
         if isinstance(value, _HydratedWriteBatch):
-            checked_batch = _check_batch(value, write_preflights)
+            checked_batch = preflight_write_batch(value, write_preflights)
             with cache_lock:
                 write_cache[id(value)] = checked_batch
                 _trim_cache(write_cache)
@@ -162,12 +163,6 @@ def build_write_feature(context_factory, operation_tasks, write_preflights, *, t
         if encodings is None:
             encodings = TextEncodings() if text_encodings is None else text_encodings(request_context)
         pack_bsa = bool(values.get("pack_bsa", False))
-        options = (
-            ("pack_bsa", pack_bsa),
-            *encodings.read_options().items(),
-            ("output_encoding", encodings.output_encoding),
-            ("target_language", encodings.target_language),
-        )
         if batch:
             drafts = []
             failures = []
@@ -206,18 +201,16 @@ def build_write_feature(context_factory, operation_tasks, write_preflights, *, t
                     continue
                 try:
                     drafts.append(
-                        HydratedWriteDraft(
+                        native_write_draft(
                             slot.source_snapshot,
-                            slot.format_id,
                             tuple(item.snapshot() for item in slot.collection),
-                            str(target),
                             int(getattr(context, "variant_revision", slot.collection.collection_revision.value) or 0),
                             request_context,
-                            conflict_policy=(
-                                PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL
-                            ),
-                            backup_policy=BackupPolicy.REQUIRED_IF_EXISTS,
-                            options=options,
+                            slot.format_id,
+                            str(target),
+                            encodings=encodings,
+                            overwrite=overwrite,
+                            pack_bsa=pack_bsa,
                             entry_projection=values.get("entry_projection"),
                         )
                     )
@@ -247,16 +240,16 @@ def build_write_feature(context_factory, operation_tasks, write_preflights, *, t
         plugin_path = str(values.get("plugin_path") or "").strip()
         target = str(values.get("target_path") or "").strip()
         overwrite = bool(values.get("overwrite_confirmed", False))
-        request = HydratedWriteDraft(
+        request = native_write_draft(
             slot.source_snapshot,
-            FormatId(values.get("output_format") or slot.format_id),
             entries,
-            target,
             collection.collection_revision.value,
             request_context,
-            conflict_policy=(PublishConflictPolicy.EXPLICIT_OVERWRITE if overwrite else PublishConflictPolicy.FAIL),
-            backup_policy=BackupPolicy.REQUIRED_IF_EXISTS,
-            options=options,
+            FormatId(values.get("output_format") or slot.format_id),
+            target,
+            encodings=encodings,
+            overwrite=overwrite,
+            pack_bsa=pack_bsa,
             entry_projection=values.get("entry_projection"),
         )
         return single_write_plan(request, plugin_path, values)
@@ -428,28 +421,6 @@ def build_write_feature(context_factory, operation_tasks, write_preflights, *, t
         supports_write,
         discard_write,
     )
-
-
-def _check_batch(value, service, **kwargs):
-    checked = []
-    unfrozen = next(
-        (item for item in value.drafts if isinstance(item, HydratedWriteDraft) and item.entry_projection is None), None
-    )
-    fallback = service.freeze_projection(unfrozen) if unfrozen is not None else None
-    for item in value.drafts:
-        try:
-            checked.append(
-                PluginTransferPreflightService(service).preflight(item)
-                if isinstance(item, PluginTransferDraft)
-                else service.preflight(item, frozen_projection=item.entry_projection or fallback, **kwargs)
-            )
-        except (OSError, TypeError, ValueError) as exc:
-            checked.append(
-                _WriteBatchFailure(
-                    item.target_path, Path(item.source_snapshot.source.uri).name, "WRITE_PREFLIGHT_FAILED", str(exc)
-                )
-            )
-    return isolate_batch_output_conflicts((*checked, *value.failures))
 
 
 def _check_label(code: str) -> str:

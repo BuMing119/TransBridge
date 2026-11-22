@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,14 +16,20 @@ from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.config.text_encoding import TextEncodings
 from transbridge.persistence.task_store import TaskStore
 from transbridge.smart_assistant.tools.tool_parser import _tool_import_json, _tool_parse_eet, _tool_parse_esp
-from transbridge.smart_assistant.tools.tool_translator import _tool_merge_task_result
+from transbridge.smart_assistant.tools.tool_translator import _tool_get_task_result
 from transbridge.smart_assistant.tools.types import ExecutionContext
-from transbridge.ui import source_hydration
 from transbridge.ui.context import AppContext
+from transbridge.ui.coordinators import open_file_coordinator
 
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
+    with file_project(tmp_path, monkeypatch) as case:
+        yield case
+
+
+@contextmanager
+def file_project(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(
         "transbridge.ui.context.ParatranzConfig.create_or_load",
@@ -76,7 +83,7 @@ def test_agent_retries_source_view_without_replaying_registration(project, monke
     monkeypatch.setattr(project.services.project_projection, "_notify", lambda _snapshot: ())
     installer = project.ctx.install_working_sources
     attempts = []
-    prepare_slot = source_hydration.slot_from_hydration
+    prepare_slot = open_file_coordinator.slot_from_hydration
     slot_attempts = []
 
     def install(identity, **options):
@@ -90,7 +97,7 @@ def test_agent_retries_source_view_without_replaying_registration(project, monke
         return prepare_slot(hydration)
 
     monkeypatch.setattr(project.ctx, "install_working_sources", install)
-    monkeypatch.setattr(source_hydration, "slot_from_hydration", prepare)
+    monkeypatch.setattr(open_file_coordinator, "slot_from_hydration", prepare)
     lifecycle = project.services.project_lifecycle
     before = lifecycle.active.project.envelope.revision
     execution = ExecutionContext(app_context=project.ctx)
@@ -111,8 +118,7 @@ def test_agent_retries_source_view_without_replaying_registration(project, monke
     assert not project.ctx.project_opening and not project.ctx.authoritative_projection_diverged()
 
     project.source.unlink()
-    receipt = _tool_merge_task_result({"result_id": result.data["result_id"]}, execution)
-    assert receipt.success and receipt.data["merge"]["registered"], receipt.message
+    assert "result_id" not in result.data
     assert len(project.ctx.project_sources) == 1
     assert lifecycle.active is committed
     assert len(attempts) == (2 if failure == "installation" else 1)
@@ -171,6 +177,36 @@ def test_agent_plugin_import_uses_language_fallback_and_preserves_project_on_fai
     assert project.services.project_lifecycle.active.variant.snapshot() == before
 
 
+def test_internal_json_is_limited_to_translation_import(project):
+    entry = load_source(project)
+    before = tuple(project.ctx.project_sources)
+    path = write_json(project, "internal.json", [entry.to_dict()])
+    ctx = ExecutionContext(app_context=project.ctx)
+    previous_results = _tool_get_task_result({}, ctx)
+    assert previous_results.success
+
+    result = _tool_import_json({"path": path, "format": "transbridge"}, ctx)
+
+    assert not result.success
+    assert "append" in result.message
+    assert tuple(project.ctx.project_sources) == before
+    assert _tool_get_task_result({}, ctx).data == previous_results.data
+
+
+def test_dsd_json_can_be_registered_as_a_project_source(project):
+    path = write_json(
+        project,
+        "source.json",
+        [{"form_id": "123456|Example.esp", "type": "QUST CNAM", "original": "Original", "string": "Translated"}],
+    )
+
+    result = _tool_import_json({"path": path, "format": "dsd"}, ExecutionContext(app_context=project.ctx))
+
+    assert result.success, result.message
+    assert result.data["entry_count"] == 1 and result.data["activated"]
+    assert project.ctx.active_slot.format_id is FormatId.JSON_DSD
+
+
 def test_internal_append_commits_existing_complete_entry_key(project):
     entry = load_source(project)
     data = entry.to_dict()
@@ -192,7 +228,7 @@ def test_foreign_append_does_not_mutate_projection_or_authority(project):
     assert project.services.project_lifecycle.active.variant.snapshot() == before
 
 
-def test_paratranz_sources_preserve_remote_ids_extensions_and_equal_local_keys(project):
+def test_paratranz_registration_preserves_extensions_and_rejects_duplicate_source_identity(project):
     for index in (1, 2):
         path = write_json(
             project,
@@ -208,16 +244,21 @@ def test_paratranz_sources_preserve_remote_ids_extensions_and_equal_local_keys(p
                 }
             ],
         )
-        result = _tool_import_json({"path": path, "project_id": 7}, ExecutionContext(app_context=project.ctx))
+        ctx = ExecutionContext(app_context=project.ctx)
+        assert not _tool_import_json({"path": path, "project_id": 7}, ctx).success
+        result = _tool_import_json({"path": path}, ctx)
+        if index == 2:
+            assert not result.success and "PROJECT_SOURCE_DUPLICATE" in result.message
+            continue
         assert result.success, result.message
         entry = next(iter(project.ctx.collection))
         assert entry.external_refs[0].opaque_id == index
-        assert entry.external_refs[0].scope == "project:7"
+        assert entry.external_refs[0].scope == "offline"
         extensions = dict(entry.metadata)[PARATRANZ_EXTENSION_METADATA]
         assert extensions["note"] == "preserved"
         assert extensions["metadata"] == {"remote_extension": True}
     states = project.services.project_lifecycle.active.variant.snapshot().entries
-    assert len(states) == 2 and states[0].entry_key != states[1].entry_key
+    assert len(states) == 1
     assert not project.ctx.authoritative_projection_diverged()
     assert project.services.gui_project_commands.save(project.request).is_success
     prepared = project.services.current_project_opener.prepare_active(project.request)
@@ -225,13 +266,13 @@ def test_paratranz_sources_preserve_remote_ids_extensions_and_equal_local_keys(p
     assert prepared.value.recovery is None
     hydrated = tuple(entry for source in prepared.value.hydrations for entry in source.entries)
     assert {entry.entry_key for entry in hydrated} == {state.entry_key for state in states}
-    assert {entry.external_refs[0].opaque_id for entry in hydrated} == {1, 2}
+    assert {entry.external_refs[0].opaque_id for entry in hydrated} == {1}
 
 
 def test_ambiguous_json_requires_choice_without_changing_project(project):
     path = write_json(project, "ambiguous.json", [{"id": "opaque", "key": "key", "original": "Text"}])
     result = _tool_import_json({"path": path}, ExecutionContext(app_context=project.ctx))
-    assert not result.success and "format" in result.message
+    assert not result.success and "格式" in result.message
     assert not project.ctx.slots and not project.ctx.project_sources
 
 

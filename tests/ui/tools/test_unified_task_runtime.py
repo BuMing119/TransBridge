@@ -5,6 +5,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QApplication
 import pytest
 
@@ -180,7 +181,7 @@ def launch(monkeypatch, qapp):
         task_runtime.start_task(window)
         wait_until(qapp, lambda: getattr(window, "_task_launch", None) is None)
 
-    return SimpleNamespace(
+    yield SimpleNamespace(
         window=window,
         config=config,
         controller=controller,
@@ -192,6 +193,8 @@ def launch(monkeypatch, qapp):
         start=start,
         wait=lambda condition: wait_until(qapp, condition),
     )
+    # processEvents() above does not deliver deleteLater() from the desktop launch dialog.
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 @pytest.mark.parametrize("count", [1, 3])

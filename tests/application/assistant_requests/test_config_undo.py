@@ -220,13 +220,14 @@ def test_term_tool_maps_only_explicit_arguments_to_sparse_persisted_fields(compo
 
     _, repository, tool_context = _tool_context(composed, tmp_path, monkeypatch)
     repository.update_sections({"llm": {"local_csv_path": "unchanged.csv", "temperature": "0.4"}})
-    result = _tool_set_term_config({"term_sources": ["json", "csv"], "json_path": "terms.json"}, tool_context)
+    sources = ["json", "csv", "dynamic", "paratranz", "excel"]
+    result = _tool_set_term_config({"term_sources": sources, "json_path": "terms.json"}, tool_context)
     assert result.success, result.message
     after = repository.load()
     assert dict(after.section("llm").values) == {
         "local_csv_path": "unchanged.csv",
         "temperature": "0.4",
-        "term_priority": "json,csv",
+        "term_priority": ",".join(sources),
         "local_json_path": "terms.json",
     }
 
@@ -241,3 +242,18 @@ def test_cancelled_effect_cannot_save_configuration_or_add_intent(composed, tmp_
         capture_config_commit(undo, context, execution, "effect", {"temperature": "0.7"})
     assert undo.configuration().load() == before
     assert requests.state(context) == state_before
+
+
+def test_stale_settings_snapshot_keeps_new_settings_and_undo_state(composed, tmp_path, monkeypatch):
+    from transbridge.smart_assistant.tools.tool_translator import _tool_set_translation_config
+
+    case, repository, tool_context = _tool_context(composed, tmp_path, monkeypatch)
+    _, requests, context, *_ = case
+    loaded = LLMConfig.load_from_file(repository=repository, environment={})
+    monkeypatch.setattr("transbridge.smart_assistant.tools._common.load_llm_config", lambda: loaded)
+    latest = repository.update_sections({"llm": {"temperature": 0.5}})
+    before = requests.state(context)
+    result = _tool_set_translation_config({"temperature": 0.3}, tool_context)
+    assert not result.success and result.error_code == "config_revision_conflict"
+    assert repository.load() == latest
+    assert requests.state(context) == before

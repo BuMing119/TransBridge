@@ -104,6 +104,10 @@ class ConfirmationView:
         def deliver(*args) -> None:
             if self._closed or generation != self._generation or card not in self._pending_cards or sip.isdeleted(card):
                 return
+            if accepted and not self._preview_loader.ready(card):
+                card.restore_pending()
+                card._exec_btn.setEnabled(False)
+                return
             if accepted and not ensure_execution(self._parent, "执行操作", lambda: deliver(*args)):
                 if (
                     not self._closed
@@ -129,6 +133,9 @@ class ConfirmationView:
                 card.expire()
 
         signal.connect(deliver)
+
+    def edit_review_for(self, step, *, required=True):
+        return self._preview_loader.review_for(step, required=required)
 
     def complete_tool(self, step: dict, result) -> None:
         """Deliver only to the original accepted invocation, never a matching name."""
@@ -220,13 +227,39 @@ class ConfirmationView:
                 and (is_current is None or is_current())
             )
 
+        self._on_gui(lambda: self._show_dialog(node_id, prompt, choices, source_engine, active), active)
+
+    def choose_artifact_output(self, suggested_name):
+        from transbridge.smart_assistant.tools._export_artifact import SelectedArtifactOutput
+        from transbridge.ui.paratranz.artifact_destination import choose_artifact_destination
+
+        generation = self._generation
+
+        def active():
+            return not self._closed and generation == self._generation
+
+        def choose():
+            path = choose_artifact_destination(self._parent, suggested_name, confirm_overwrite=False)
+            if not path or not active():
+                return None
+            selected = SelectedArtifactOutput.capture(path)
+            if selected.stamp is not None and not self.ask_permission(
+                "覆盖已有导出包", f"确认替换此文件？\n{selected.path}"
+            ):
+                return None
+            return selected if active() else None
+
+        return self._on_gui(choose, active)
+
+    def _on_gui(self, callback, active):
         if not active():
             return
         app = QCoreApplication.instance()
         if app is None or QThread.currentThread() == app.thread():
-            self._show_dialog(node_id, prompt, choices, source_engine, active)
-            return
+            return callback()
         done = threading.Event()
+        result = []
+        errors = []
         with self._pending_lock:
             if not active():
                 return
@@ -235,7 +268,9 @@ class ConfirmationView:
         def on_main_thread() -> None:
             try:
                 if active():
-                    self._show_dialog(node_id, prompt, choices, source_engine, active)
+                    result.append(callback())
+            except Exception as error:
+                errors.append(error)
             finally:
                 with self._pending_lock:
                     self._pending_events.discard(done)
@@ -243,6 +278,9 @@ class ConfirmationView:
 
         self._bridge.requested.emit(on_main_thread)
         done.wait()
+        if errors:
+            raise errors[0]
+        return result[0] if active() and result else None
 
     def ask_permission(self, title: str, message: str) -> bool:
         if self._closed:

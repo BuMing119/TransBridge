@@ -54,6 +54,7 @@ class TranslationTable(QTableView):
         self._display_order: tuple[int, ...] = ()
         self._label_keys = ()
         self._entry_rows: dict[str, int] = {}
+        self._identity_rows = {}
         self._selected_logical_ids: dict[int, str] = {}
         self._entry_labels: Mapping[str, set[str]] = {}
         self._label_library: Mapping[str, Mapping[str, str]] = {}
@@ -162,7 +163,9 @@ class TranslationTable(QTableView):
         super().mouseDoubleClickEvent(event)
 
     def start_render(self, session, entry_labels, label_library, *, preserve_scroll=True) -> None:
-        selected, current, top, scroll = self._capture_view_state()
+        selected, current, top, scroll = (
+            self._capture_view_state() if session.content_scope == self._session.content_scope else ((), None, None, 0)
+        )
         self._selected_logical_ids.clear()
         self._closed = False
         self._session = session
@@ -176,6 +179,7 @@ class TranslationTable(QTableView):
         self._display_order = order
         reset = self._translation_model.install(session, order, entry_labels, label_library, source_keys=source_keys)
         if reset:
+            self._identity_rows = {source_keys[source_row]: row for row, source_row in enumerate(order)}
             self._restore_view_state(
                 selected, current, top if preserve_scroll else None, scroll if preserve_scroll else 0
             )
@@ -202,6 +206,11 @@ class TranslationTable(QTableView):
             rows.positions
             if isinstance(rows, ResidentTableRows)
             else {entry_label_key(entry): row for row, entry in rows.items()}
+        )
+        self._identity_rows = (
+            rows.key_positions
+            if isinstance(rows, ResidentTableRows)
+            else {entry.identity: row for row, entry in rows.items()}
         )
         self._label_keys, self._display_order = (), ()
         if model.install_logical(session, total, rows, entry_labels, label_library, editing_row=editing_row):
@@ -237,6 +246,7 @@ class TranslationTable(QTableView):
         self._sorting.clear()
         self._translation_model.default_ranks = {}
         self._entry_rows = {}
+        self._identity_rows = {}
         self._selected_logical_ids.clear()
         self._session = RenderSession(self._session.generation + 1, None, ())
         self._translation_model.install(self._session, (), {}, {})
@@ -259,8 +269,7 @@ class TranslationTable(QTableView):
         return self.selectionModel().isRowSelected(row, QModelIndex())
 
     def _on_check_state_requested(self, row, checked):
-        flag = QItemSelectionModel.SelectionFlag.Select if checked else QItemSelectionModel.SelectionFlag.Deselect
-        self.selectionModel().select(self.model().index(row, COL_KEY), flag | QItemSelectionModel.SelectionFlag.Rows)
+        self.select_rows((row,), select=checked)
 
     def selectionCommand(self, index, event=None):  # noqa: N802 - Qt override
         if (
@@ -286,6 +295,9 @@ class TranslationTable(QTableView):
 
     def find_translation_index(self, preferred_row: int, entry_id: str) -> QModelIndex:
         return self.model().index(self.find_entry_row(preferred_row, entry_id), COL_TRANSLATION)
+
+    def row_for_identity(self, identity):
+        return self._identity_rows.get(identity, -1)
 
     def locate_entry(self, entry_id: str) -> None:
         row = self.find_entry_row(-1, entry_id)
@@ -350,7 +362,11 @@ class TranslationTable(QTableView):
         self.scope_select_all_requested.emit()
 
     def _capture_view_state(self):
-        selected = self.selected_entry_ids()
+        selected = tuple(
+            entry.identity
+            for index in self.selectionModel().selectedRows(COL_KEY)
+            if (entry := self.entry_at_row(index.row())) is not None
+        )
         current = self.entry_at_row(self.currentIndex().row())
         scroll = self.verticalScrollBar().value()
         top_row = self.rowAt(0)
@@ -359,13 +375,14 @@ class TranslationTable(QTableView):
         top = self.entry_at_row(top_row)
         return (
             selected,
-            None if current is None else entry_label_key(current),
-            (None if top is None or not top.id else entry_label_key(top)),
+            None if current is None else current.identity,
+            None if top is None else top.identity,
             scroll,
         )
 
-    def _restore_view_state(self, selected, current, top, scroll):
-        rows = sorted(self._entry_rows[key] for key in selected if key in self._entry_rows)
+    def select_rows(self, rows, *, select=True):
+        """Apply one selection change, including rows outside the viewport."""
+        rows = sorted(set(rows))
         if rows:
             selection = QItemSelection()
             start = previous = rows[0]
@@ -375,19 +392,24 @@ class TranslationTable(QTableView):
                     start = row
                 previous = row
             selection.select(self.model().index(start, 0), self.model().index(previous, NUM_COLUMNS - 1))
-            self.selectionModel().select(selection, QItemSelectionModel.SelectionFlag.Select)
-        if current in self._entry_rows:
+            flag = QItemSelectionModel.SelectionFlag.Select if select else QItemSelectionModel.SelectionFlag.Deselect
+            self.selectionModel().select(selection, flag)
+
+    def _restore_view_state(self, selected, current, top, scroll):
+        self.select_rows(self._identity_rows[key] for key in selected if key in self._identity_rows)
+        if current in self._identity_rows:
             auto_scroll = self.hasAutoScroll()
             self.setAutoScroll(False)
             try:
                 self.selectionModel().setCurrentIndex(
-                    self.model().index(self._entry_rows[current], COL_KEY), QItemSelectionModel.SelectionFlag.NoUpdate
+                    self.model().index(self._identity_rows[current], COL_KEY),
+                    QItemSelectionModel.SelectionFlag.NoUpdate,
                 )
             finally:
                 self.setAutoScroll(auto_scroll)
-        if top in self._entry_rows:
+        if top in self._identity_rows:
             self.scrollTo(
-                self.model().index(self._entry_rows[top], COL_KEY), QAbstractItemView.ScrollHint.PositionAtTop
+                self.model().index(self._identity_rows[top], COL_KEY), QAbstractItemView.ScrollHint.PositionAtTop
             )
         elif scroll:
             self.verticalScrollBar().setValue(min(scroll, self.verticalScrollBar().maximum()))

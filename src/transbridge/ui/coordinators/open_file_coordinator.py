@@ -1,15 +1,14 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Owned open-file dialog and worker, with immutable source publication."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import logging
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
 
-from transbridge.application.io.open_translation_file import prepare_open_file
+from transbridge.application.io.open_translation_file import prepare_open_file, register_opened_source
 from transbridge.application.projects.provisioning_models import PreparedSourceHydration
-from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 from transbridge.ui.projection_types import CollectionSlot
 from transbridge.ui.source_hydration import slot_from_hydration, source_slot_key
 from transbridge.ui.text_encoding import context_text_encodings
@@ -19,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
-class _OpenedSource:
+class OpenedSourceView:
     key: str
     hydration: PreparedSourceHydration
     strings_lookup: object
@@ -38,7 +37,7 @@ class _OpenedSource:
 
 @dataclass(frozen=True, slots=True)
 class _OpenResult:
-    sources: tuple[_OpenedSource, ...]
+    sources: tuple[OpenedSourceView, ...]
     failures: tuple[str, ...]
     authority: object
 
@@ -127,27 +126,11 @@ class OpenFileCoordinator:
                         raise ValueError("工程版本或内容已变化，文件未添加。")
                     hydration = opened.source.hydration
                     if authority is not None:
-                        (project_id, variant_id), project_revision, variant_revision = expected
-                        added = commands.add_prepared_source(
-                            opened.source,
-                            runtime_context,
-                            expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
-                            expected_project_revision=project_revision,
-                            expected_variant_revision=variant_revision,
-                        )
-                        if not added.is_success or added.value is None:
-                            raise ValueError("\n".join(f"{d.code}: {d.message}" for d in added.diagnostics))
-                        value = added.value
-                        expected = (project_id, variant_id), value.project_revision, value.variant_revision
-                        hydration = replace(
-                            value.hydration,
-                            source_id=value.source_id,
-                            reference_location=value.location or value.hydration.reference_location,
-                        )
+                        hydration, expected = register_opened_source(commands, opened, runtime_context, expected)
                     key = source_slot_key(hydration)
                     if key in seen or authority is None and key in context.slots:
                         raise ValueError("该翻译来源已打开，请使用导入译文或管理已有内容。")
-                    source = _OpenedSource(key, hydration, opened.strings_lookup, options.strings_lang, opened.note)
+                    source = OpenedSourceView(key, hydration, opened.strings_lookup, options.strings_lang, opened.note)
                     try:
                         source.prepare_slot()
                     except Exception:

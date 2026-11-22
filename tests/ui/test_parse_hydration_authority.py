@@ -125,10 +125,13 @@ def test_gui_parse_publishes_authoritative_hydration_usable_by_safe_writer(proje
     assert not project.ctx.authoritative_projection_diverged()
 
     project.ctx.activate_slot(keys[-1])
-    target = project.root / ("written.xml" if kind == "eet" else "written.esp")
-    options = {"target": "eet" if kind == "eet" else "esp", "path": str(target)}
-    if kind != "eet":
-        options["input_plugins"] = {keys[-1]: paths[-1]}
+    if kind == "eet":
+        target = project.root / "written.xml"
+        options = {"target": "eet", "path": str(target)}
+    else:
+        directory = project.root / "written"
+        target = directory / Path(paths[-1]).name
+        options = {"target": "esp", "output_dir": str(directory), "input_plugins": {keys[-1]: paths[-1]}}
     result = _tool_write_back(options, ExecutionContext(app_context=project.ctx, request_context=project.request))
     assert result.success, result.message
     handle = TaskManager().get_handle(result.data["task_id"])

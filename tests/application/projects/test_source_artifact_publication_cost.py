@@ -38,10 +38,12 @@ def _create(services, name, source=None, **options):
     return ProjectStore(services.projects.path_for(active.project_ref)), active.formal_variant_ref.identity
 
 
-def _assert_no_artifacts(services, store, plugins):
+def _assert_no_artifacts(services, store, plugins, *, import_only=()):
     payload = store.path.read_bytes()
-    for plugin in plugins:
+    assert [Path(source.reference_path) for source in store.sources()] == list(plugins)
+    for plugin in (*plugins, *import_only):
         assert plugin.read_bytes() not in payload
+    for plugin in import_only:
         assert str(plugin).encode() not in payload
     assert not (Path(services.root) / "source_artifacts").exists()
 
@@ -78,7 +80,7 @@ def test_folded_import_stores_final_translations_without_either_plugin(service_f
     assert calls == [primary, translated]
     (entry,) = store.read_page(variant)
     assert (entry.snapshot.original, entry.state.translation) == ("Welcome", "欢迎")
-    _assert_no_artifacts(services, store, (primary, translated))
+    _assert_no_artifacts(services, store, (primary,), import_only=(translated,))
 
 
 @pytest.mark.parametrize("with_initial", [False, True])

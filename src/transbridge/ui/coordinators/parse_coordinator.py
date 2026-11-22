@@ -4,6 +4,9 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QMessageBox
 
+from transbridge.application.io.open_translation_file import (
+    apply_open_file_dictionary as _apply_dictionary_to_collection,
+)
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 from ..context import CollectionSlot
@@ -11,28 +14,6 @@ from ..source_hydration import reading_entries_from_hydration, source_slot_key
 from ..text_encoding import context_text_encodings
 from ..workers import ApiWorker
 from .parse_migration import prepare_parse_migrations
-
-
-def _apply_dictionary_to_collection(collection):
-    """解析后自动套用词典，将已有译文填入未翻译条目。
-
-    自动套用走「全词典兜底」（mod_file_id 为空，跳过同名 mod，其余 project/global 全查）。
-    只填空译文（不覆盖已有译文）；词典为空或加载失败时静默返回 0，不阻断解析。
-
-    :return: 命中填充的条目数（用于累加到 migrate_count）
-    """
-    try:
-        from transbridge.translation_memory import TranslationMemoryManager
-        from transbridge.translation_memory.manager import QueryContext
-
-        manager = TranslationMemoryManager()
-        manager.load()
-
-        context = QueryContext(mod_file_id="")
-        result = manager.apply_to_collection(collection, context=context)
-        return result.applied
-    except Exception:  # noqa: BLE001 - 词典不可用时不影响解析
-        return 0
 
 
 class ParseCoordinator:

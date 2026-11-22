@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from PyQt6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QLabel, QLineEdit, QPushButton, QSpinBox
 
 from transbridge.config.llm import DEFAULT_MAX_CONCURRENT, MAX_CONCURRENT
+from transbridge.config.translation_preferences import apply_service_preferences
 from transbridge.infra.llm_request_config import (
     ANTHROPIC_DEFAULT_ENDPOINT,
     ASSISTANT_OUTPUT_TOKENS,
@@ -144,19 +145,24 @@ class AiServicePage(SettingsPage):
 
     def apply_to_draft(self) -> None:
         cfg = self._config
-        apply_if_present(cfg, "provider", str(self.provider_combo.currentData()))
-        apply_if_present(cfg, "model", self.model_edit.text().strip())
+        apply_service_preferences(
+            cfg,
+            {
+                "provider": str(self.provider_combo.currentData()),
+                "model": self.model_edit.text(),
+                "base_url": self.base_url_edit.text(),
+                "max_output_tokens": self.output_tokens_spin.value(),
+                "temperature": self.temperature_spin.value(),
+            },
+        )
         if self.api_key_edit.isEnabled() and self.api_key_edit.text():
             apply_if_present(cfg, "api_key", self.api_key_edit.text().strip())
-        apply_if_present(cfg, "base_url", self.base_url_edit.text().strip())
         apply_if_present(cfg, "max_concurrent", self.concurrent_spin.value())
         apply_if_present(cfg, "llm_max_retries", self.retries_spin.value())
         apply_if_present(cfg, "max_tokens_per_batch", self.input_tokens_spin.value())
-        apply_if_present(cfg, "max_output_tokens", self.output_tokens_spin.value())
         apply_if_present(cfg, "assistant_context_window", self.context_window_spin.value())
         apply_if_present(cfg, "assistant_auto_compaction", self.auto_compaction_check.isChecked())
         apply_if_present(cfg, "assistant_prompt_cache", self.prompt_cache_check.isChecked())
-        apply_if_present(cfg, "temperature", self.temperature_spin.value())
 
 
 def _spin(minimum: int, maximum: int, value: int, parent) -> QSpinBox:

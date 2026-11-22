@@ -23,6 +23,27 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
+class TerminologyPreparationOwner:
+    """Factories are injected services; this object never retains the live UI context."""
+
+    active_version_identity: tuple[str, str] | None
+    effective_terminology_factory: object | None
+    terminology_echo_links_factory: object | None
+
+
+def capture_terminology_owner(owner) -> TerminologyPreparationOwner | None:
+    """Call on the GUI thread; capture dependencies without invoking storage."""
+    if owner is None:
+        return None
+    identity = getattr(owner, "active_version_identity", None)
+    return TerminologyPreparationOwner(
+        tuple(identity) if isinstance(identity, tuple) else None,
+        getattr(owner, "effective_terminology_factory", None),
+        getattr(owner, "terminology_echo_links_factory", None),
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class ProjectTerminologyBinding:
     """One Project/Variant-scoped read-only translation dependency."""
 

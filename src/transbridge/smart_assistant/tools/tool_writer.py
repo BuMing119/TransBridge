@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from transbridge.application.assistant_requests.models import RequestError
 from transbridge.application.contracts import OperationOutcome
 from transbridge.application.io.operation_write import HydratedWriteWorkload
-from transbridge.application.io.operation_write_batch import HydratedWriteBatchWorkload
+from transbridge.application.io.operation_write_batch import HydratedWriteBatchWorkload, WriteBatchFailure
 from transbridge.application.tasks import TaskCancelled
 
 from .base import ToolResult
@@ -26,17 +26,15 @@ def _tool_write_back(args: dict, ctx) -> ToolResult:
         prepared = prepare_write_back(args, ctx)
         if not prepared.capture_paths:
             blocked = [
-                (key, check)
+                (key, check.code, check.message)
                 for key, checked in zip(prepared.source_keys, prepared.preflights, strict=True)
-                for check in checked.checks
-                if not check.passed and not check.warning
+                for check in ((checked,) if isinstance(checked, WriteBatchFailure) else checked.checks)
+                if isinstance(check, WriteBatchFailure) or not check.passed and not check.warning
             ]
             return ToolResult.fail(
-                "；".join(f"{key}：{check.message}" for key, check in blocked),
-                error_code=blocked[0][1].code,
-                failed_items=[
-                    {"source_key": key, "code": check.code, "message": check.message} for key, check in blocked
-                ]
+                "；".join(f"{key}：{message}" for key, _code, message in blocked),
+                error_code=blocked[0][1],
+                failed_items=[{"source_key": key, "code": code, "message": message} for key, code, message in blocked]
                 if prepared.is_batch
                 else None,
             )
@@ -126,8 +124,7 @@ def _write_receipt(result, prepared):
             ),
             (),
         )
-    sources = dict(zip(prepared.paths, prepared.source_keys, strict=True))
-    data["outcomes"] = [{**item, "source_key": sources[item["object_ref"]]} for item in outcomes]
+    data["outcomes"] = [{**item, "source_key": key} for item, key in zip(outcomes, prepared.source_keys, strict=True)]
     data.pop("path", None)
     data.update(paths=list(prepared.paths), source_keys=list(prepared.source_keys))
     return data
@@ -155,16 +152,21 @@ _PARAM_SCHEMAS = {
         "path": {
             "type": "str",
             "required": False,
-            "description": ("Output file. Required when output_dir is omitted."),
+            "description": "Single non-plugin output file. Native plugins use output_dir or original.",
         },
         "output_dir": {
             "type": "str",
             "required": False,
             "description": (
                 "Save selected sources together under their original names; supports all targets. "
-                "Required for strings. "
-                "Single-file path takes precedence except for strings."
+                "Native plugins keep their filename. Required for native plugin save-as and batch save-as."
             ),
+        },
+        "destination_mode": {
+            "type": "str",
+            "required": False,
+            "enum": ["directory", "original"],
+            "description": "Native plugin save-as (directory) or write to the verified original plugin (original).",
         },
         "source_keys": {
             "type": "list",
@@ -220,8 +222,8 @@ def _register_writer_tools():
                     "sst preserves native SSU8/SSU9 or exports plugin sources as experimental SSU9; "
                     "plugin-to-SST requires an explicit .sst path or output_dir. "
                     "source_keys selects exact keys returned by list_collections; omit for the active source. "
-                    "output_dir saves original filenames together for all formats; path selects one output file. "
-                    "strings requires output_dir and publishes the plugin and its localized resources together. "
+                    "output_dir saves original filenames together; path selects one non-plugin output file. "
+                    "Use destination_mode=original to write back verified native plugins without a separate output. "
                     "pack_bsa defaults to false (loose STRINGS); true optionally packs localized resources. "
                     "Existing outputs require overwrite=true. "
                     "③Returns {task_id,path} or {task_id,paths,source_keys}; task results include per-source outcomes, "
@@ -230,7 +232,7 @@ def _register_writer_tools():
                     "Requires admin confirmation and an authorized output root. "
                     "Project plugins use the saved source path when it is authorized and matches the project. "
                     "Provide input_plugin or input_plugins to select a matching plugin explicitly. "
-                    "Specify path or output_dir for the output."
+                    "Choose an output explicitly."
                 ),
                 "execute": _tool_write_back,
                 "permission": "admin",

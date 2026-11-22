@@ -12,12 +12,7 @@ class WorkflowPresentationMixin:
 
     def _on_summary_filter_requested(self, key: str) -> None:
         state = self._summary.filter_state(key, self._filters_view.state())
-        self._filters_view.apply_state(state)
-        self._focus_labeled = self._filters_view.focus_labeled
-        self._build_category_tags()
-        self._build_stage_tags()
-        self._build_label_tags()
-        self._populate_table()
+        self.apply_filter_state(state.to_mapping())
 
     def _update_workflow_actions(self) -> None:
         has_context = bool(getattr(self._ctx, "project_name", None) or self._entries)

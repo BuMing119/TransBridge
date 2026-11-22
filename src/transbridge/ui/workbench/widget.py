@@ -6,7 +6,6 @@ Story-19: 左侧 CollectionStatsPanel 已移除，分类统计以标签组形式
 """
 
 import logging
-from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QShowEvent
@@ -138,6 +137,7 @@ class WorkbenchWidget(QWidget):
             )
 
         self._ctx.collection_list_changed.connect(self._rebuild_collection_combo)
+        self._ctx.collection_changed.connect(self._sync_active_collection)
         self._rebuild_collection_combo()
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt override
@@ -341,7 +341,7 @@ class WorkbenchWidget(QWidget):
                             project_id=getattr(self._ctx, "active_project_id", None),
                             project_name=getattr(self._ctx, "project_name", None),
                             variant_id=getattr(self._ctx, "active_variant_id", None),
-                            variant_name=self._active_variant_name(),
+                            variant_name=self._ctx.active_variant,
                             sources=(source,),
                         )
                         self._collection_combo.addItem(state.content_label, state.identity)
@@ -360,7 +360,7 @@ class WorkbenchWidget(QWidget):
             self._btn_remove.setEnabled(True)
             active_idx = 0
             for i, (key, slot) in enumerate(slots.items()):
-                label = self._content_display_label(key, slot)
+                label = slot.content_label(key)
                 self._collection_combo.addItem(label, key)
                 self._collection_combo.setItemData(i, label, Qt.ItemDataRole.ToolTipRole)
                 if key == active:
@@ -370,21 +370,10 @@ class WorkbenchWidget(QWidget):
             self._collection_combo.blockSignals(False)
             self._collection_combo.setToolTip(self._collection_combo.currentText())
 
-    @staticmethod
-    def _content_display_label(key: str, slot) -> str:
-        name = slot.label or (Path(key).name if key else "未命名内容")
-        if getattr(slot, "plugin", None) is not None or getattr(slot, "esp_path", None):
-            return f"插件 · {name}"
-        if getattr(slot, "strings_path", None):
-            return f"本地化字符串 · {name}"
-        return f"翻译内容 · {name}"
-
-    def _active_variant_name(self) -> str | None:
-        active = getattr(self._ctx, "active_variant_id", None)
-        for value in getattr(self._ctx, "project_variants", ()):
-            if str(value.get("id")) == str(active):
-                return str(value.get("name") or active)
-        return None
+    def _sync_active_collection(self):
+        active = self._ctx.active_key
+        if active is not None and self._collection_combo.currentData() != active:
+            self._collection_combo.setCurrentIndex(self._collection_combo.findData(active))
 
     def _on_collection_switch(self, index: int):
         self._collection_combo.setToolTip(self._collection_combo.currentText())

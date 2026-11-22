@@ -12,7 +12,7 @@ from tests.smart_assistant.tools import test_source_import_authority as source_f
 from transbridge.bootstrap.runtime import UseCaseRegistry
 from transbridge.config.llm import LLMConfig
 from transbridge.smart_assistant.tools.task_manager import TaskManager
-from transbridge.smart_assistant.tools.tool_proofreader import _tool_run_postprocess
+from transbridge.smart_assistant.tools.tool_translator import _tool_start_polish
 from transbridge.smart_assistant.tools.types import ExecutionContext
 from transbridge.ui.shell.task_center import TaskCenterController, TaskCenterPanel
 
@@ -58,14 +58,11 @@ def test_task_center_cancel_preserves_real_variant_and_saved_files(project, mana
             })
 
     monkeypatch.setattr(
-        "transbridge.smart_assistant.tools._common.load_llm_config",
-        lambda: LLMConfig(api_key="fixture", model="fixture"),
+        LLMConfig,
+        "load_from_file",
+        lambda: LLMConfig(api_key="fixture", model="fixture", retrieval_enabled=False, term_priority=[]),
     )
     monkeypatch.setattr("transbridge.infra.llm_client.create_llm_client", lambda *_args: Provider())
-    monkeypatch.setattr(
-        "transbridge.ai_translator.term_database.TermDatabaseManager",
-        lambda **_kwargs: SimpleNamespace(load_all=lambda: None, match_terms=lambda _texts: {}),
-    )
     monkeypatch.setattr("transbridge.paratranz.config_manager.ParatranzConfig.get_data_dir", lambda: str(project.root))
     catalog = SimpleNamespace(list=lambda *_args, **_kwargs: ())
     runtime = SimpleNamespace(
@@ -77,7 +74,7 @@ def test_task_center_cancel_preserves_real_variant_and_saved_files(project, mana
     controller.start()
     handle = None
     try:
-        result = _tool_run_postprocess({"scope": "all"}, ExecutionContext(app_context=project.ctx))
+        result = _tool_start_polish({"scope": "all"}, ExecutionContext(app_context=project.ctx))
         assert result.success, result.message
         task_id = result.data["task_id"]
         handle = manager.get_handle(task_id)

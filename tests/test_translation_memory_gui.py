@@ -70,11 +70,11 @@ def test_dictionary_panel_loads_empty(qapp, tm_tmp_dir):
     assert panel._dict_combo.itemText(0) == "(全部词典)"
 
 
-def test_panel_default_source_path_from_esp(qapp, tm_tmp_dir):
+def test_workbench_dictionary_source_path_from_esp(qapp):
     """有 esp_path 时，面板能从当前解析文件推断 mod 名。"""
+    from transbridge.application.projects.dictionary_apply import dictionary_mod_id, dictionary_source_path
     from transbridge.converter.translation_entry_collection import TranslationEntryCollection
     from transbridge.ui.context import AppContext, CollectionSlot
-    from transbridge.ui.tools.dictionary_panel import DictionaryPanel
 
     ctx = AppContext()
     slot = CollectionSlot(
@@ -84,9 +84,8 @@ def test_panel_default_source_path_from_esp(qapp, tm_tmp_dir):
     )
     ctx.add_slot("D:/mods/LegacyPatch.esp", slot)
 
-    panel = DictionaryPanel(ctx, base_dir=tm_tmp_dir)
-    assert panel._default_source_path() == "D:/mods/LegacyPatch.esp"
-    assert panel._default_mod_id() == "LegacyPatch"
+    assert dictionary_source_path(ctx) == "D:/mods/LegacyPatch.esp"
+    assert dictionary_mod_id(ctx) == "LegacyPatch"
 
 
 def test_dictionary_refresh_reloads_disk_without_quarantining_valid_files(qapp, tmp_path):

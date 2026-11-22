@@ -1,23 +1,17 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""P0 编辑器工具 — 筛选 + 搜索 + 编辑 + 选择 + 批量标记 (editor namespace)。
-
-Story 04 v2: 合并原 Story 04（筛选搜索）和 Story 05（编辑选择），
-新增 set_stage(H3) + _selected_ids(H2) + new_stage参数(H4) + filter_entries复用(H8)。
-Story 03B: 重构为 EditorController 类。
-"""
+"""Expose workbench filters, table selection, entry edits and labels to the assistant."""
 
 from __future__ import annotations
 
-from copy import deepcopy
-from dataclasses import replace
-
 from transbridge.application.translation.entry_alias import ai_entry_key
+from transbridge.application.workbench_filters import FilterState, updated_filter_state
+from transbridge.application.workbench_labels import label_catalog
 
-from .base import ToolResult, filter_entries, require_collection, require_runtime_context, validate_params
+from ._editor_edits import execute_entry_edit
+from ._editor_labels import manage_entry_labels
+from .base import ToolResult, require_collection, require_runtime_context, validate_params
 from .diagnostics import technical_error
 from .input_prerequisites import original_available
-
-_VALID_STAGES = {0, 1, 2, 3, 5, 9, -1}
 
 # M2: _PARAM_SCHEMAS 必须在函数定义之前（供 @validate_params 装饰器使用）
 _PARAM_SCHEMAS = {
@@ -39,7 +33,7 @@ _PARAM_SCHEMAS = {
         "new_stage": {
             "type": "int",
             "required": False,
-            "description": "Optional new translation stage; omitted means unchanged",
+            "description": "Optional stage; otherwise entering text advances an untranslated entry to translated",
         },
     },
     "set_stage": {
@@ -76,7 +70,7 @@ _PARAM_SCHEMAS = {
         "labels": {
             "type": "list",
             "required": False,
-            "description": "Label names; None keeps the current value and [] clears it",
+            "description": "Label IDs or unique names; None keeps the current value and [] clears it",
         },
         "search_query": {
             "type": "str",
@@ -86,7 +80,7 @@ _PARAM_SCHEMAS = {
         "search_field": {
             "type": "str",
             "required": False,
-            "description": "Search field: id/key/original/translation/context/all; default original",
+            "description": "Search field: key/original/translation/all; default original",
         },
         "clear": {
             "type": "bool",
@@ -110,68 +104,57 @@ class EditorController:
     # ── 筛选工具 ──────────────────────────────────────────────────
 
     def set_filters(self, args: dict, ctx) -> ToolResult:
-        """Story 17: 合并 5→1。统一筛选入口，6维度均可选。None=保持/[]=清除/clear=True=先清空再设置。"""
-        clear = args.get("clear", False)
-        stages = args.get("stages")
-        categories = args.get("categories")
-        labels = args.get("labels")
-        search_query = args.get("search_query")
-        search_field = args.get("search_field")
+        """Apply one atomic update to the captured workbench table."""
+        from .types import ExecutionContext
+        from .workbench_rows import current_workbench_source
 
-        if stages is not None and len(stages) > 0:
-            invalid = [s for s in stages if s not in _VALID_STAGES]
-            if invalid:
-                return ToolResult.fail(f"无效的 stage 值: {invalid}，合法值: {sorted(_VALID_STAGES)}")
+        execution = ctx if isinstance(ctx, ExecutionContext) else ExecutionContext(app_context=ctx)
+        app = execution.app_context
 
-        if search_field is not None:
-            VALID_FIELDS = ("id", "key", "original", "translation", "context", "all")
-            if search_field not in VALID_FIELDS and search_field != "":
-                return ToolResult.fail(f"无效的搜索字段: {search_field}，可选: {', '.join(VALID_FIELDS)}")
+        def update():
+            current_workbench_source(execution, execution._target_collection)
+            current = ctx.filter_state
+            state = updated_filter_state(current, args, getattr(ctx, "label_library", None))
+            try:
+                unchanged = state == FilterState.from_mapping(current).to_mapping()
+            except ValueError:
+                # clear=True can replace a saved search whose field has been retired.
+                unchanged = False
 
-        if clear:
-            ctx.clear_filters()
+            app.filter_state = state
+            return state, unchanged
 
-        changes = []
-        if stages is not None:
-            ctx.set_filter(stage=list(stages))
-            changes.append(f"stages={stages}")
-        if categories is not None:
-            ctx.set_filter(category=list(categories))
-            changes.append(f"categories={categories}")
-        if labels is not None:
-            ctx.set_filter(label=list(labels))
-            changes.append(f"labels={labels}")
-        if search_query is not None:
-            ctx.set_filter(search_query=search_query)
-            changes.append(f"search_query='{search_query}'")
-        if search_field is not None:
-            ctx.set_filter(search_field=search_field)
-            changes.append(f"search_field='{search_field}'")
-
-        if not changes:
-            if clear:
-                return ToolResult.ok("已清除全部筛选条件", data=ctx.filter_state)
-            return ToolResult.ok("未修改任何筛选条件", data={"unchanged": True})
-
-        prefix = "已清除并重新设置筛选: " if clear else "已更新筛选: "
-        result = ToolResult.ok(prefix + ", ".join(changes), data=ctx.filter_state)
+        try:
+            gate = execution.assistant_gate
+            commit = update if gate is None else lambda: gate.change_workbench_filter(execution, update)
+            state, unchanged = execution.safe_mutate_wait(commit)
+            if "filter_state" in vars(execution):
+                object.__setattr__(execution, "filter_state", state)
+        except (ValueError, RuntimeError) as exc:
+            return ToolResult.fail(technical_error(exc), error_category="input")
+        result = ToolResult.ok("已应用工作台筛选", data={**state, "unchanged": unchanged})
         result.tool_suggestions = ["get_visible_entries", "get_statistics"]
         return result
 
     # ── 数据查询 ──────────────────────────────────────────────────
 
     def get_visible_entries(self, args: dict, ctx, collection) -> ToolResult:
-        """获取当前筛选条件下可见的条目列表（分页）。H8: 复用 filter_entries。"""
-        limit = min(args.get("limit", 50), 200)
+        """Page through the workbench filter applied to the captured source."""
+        from .workbench_rows import filtered_tool_rows
+
+        limit = max(0, min(args.get("limit", 50), 200))
         offset = max(args.get("offset", 0), 0)
 
         filter_state = ctx.filter_state
-        entry_labels = getattr(ctx, "entry_labels", None)  # M1 联动: 传入 entry_labels
-        # M7: 每次分页从零过滤整个 collection，翻 N 页则扫描 N 次。后续可引入缓存层。
-        results = filter_entries(collection, filter_state, entry_labels=entry_labels)
-        total = len(results)
-
-        page = results[offset : offset + limit]
+        entry_labels = getattr(ctx, "entry_labels", None)
+        total, page = 0, []
+        try:
+            for entry, _, _ in filtered_tool_rows(ctx, collection, filter_state, entry_labels):
+                if offset <= total < offset + limit:
+                    page.append(entry)
+                total += 1
+        except ValueError as exc:
+            return ToolResult.fail(technical_error(exc), error_category="input")
         entries = [
             {
                 "key": ai_entry_key(e),  # 操作标识；冲突项携带原文，源文件 key 不变
@@ -210,23 +193,37 @@ class EditorController:
     # ── 选择 ──────────────────────────────────────────────────────
 
     def select_entries(self, args: dict, ctx) -> ToolResult:
-        """选择/取消选择条目。H2: 操作独立 _selected_ids 集合，与标签系统隔离。"""
+        """Apply selection to the active workbench table on its owning thread."""
+        from .types import ExecutionContext
+        from .workbench_rows import current_workbench_source
+
         entry_ids = args["entry_ids"]
         action = args.get("action", "select")
 
         if action not in ("select", "deselect", "clear"):
             return ToolResult.fail(f"无效操作: {action}，可选: select, deselect, clear")
+        if action != "clear" and not all(isinstance(key, str) and key for key in entry_ids):
+            return ToolResult.fail("请选择含非空词条标识的列表。")
 
-        collection = getattr(ctx, "collection", None)
-        if action != "clear" and collection is not None:
-            ambiguous = {
-                alias for entry in collection if entry.requires_original_match for alias in (entry.id, entry.key)
-            }
-            if ambiguous.intersection(entry_ids):
-                return ToolResult.fail("条目标识对应多条原文，请使用查询结果中的完整 key。")
+        execution = ctx if isinstance(ctx, ExecutionContext) else ExecutionContext(app_context=ctx)
+        app = execution.app_context
 
-        count = ctx.select_entries(entry_ids, action)
-        selected = list(ctx.selected_ids) if hasattr(ctx, "selected_ids") else []
+        def apply():
+            current_workbench_source(execution, execution._target_collection)
+            if FilterState.from_mapping(ctx.filter_state) != FilterState.from_mapping(app.filter_state):
+                raise ValueError("工作台筛选已改变，请核对当前显示范围后重新选择。")
+            captured = getattr(ctx, "selected_entry_ids", ())
+            if captured and action != "clear" and not set(entry_ids).issubset(captured):
+                raise ValueError("所选词条超出本次请求的选区。")
+            count = app.select_entries(entry_ids, action)
+            entries = getattr(app, "selected_entries", None)
+            ids = list(app.selected_ids) if entries is None else [ai_entry_key(entry) for entry in entries]
+            return count, ids
+
+        try:
+            count, selected = execution.safe_mutate_wait(apply)
+        except (ValueError, RuntimeError, TimeoutError) as exc:
+            return ToolResult.fail(technical_error(exc))
         action_names = {"select": "选中", "deselect": "取消选中", "clear": "清空选择"}
         return ToolResult.ok(
             f"{action_names.get(action, action)}完成，当前已选 {count} 条",
@@ -236,244 +233,27 @@ class EditorController:
     # ── 编辑 ──────────────────────────────────────────────────────
 
     def edit_translation(self, args: dict, ctx, collection) -> ToolResult:
-        """编辑单条翻译。H4: 不传 new_stage 时保持现有 stage 不变。"""
-        entry_id = args["entry_id"]
-        new_translation = args["new_translation"]
-        new_stage = args.get("new_stage")
-
-        entry = collection.get(entry_id)
-        if entry is None:
-            return ToolResult.fail(f"条目不存在: {entry_id}")
-
-        from ._project_tool_mutations import ProjectToolTarget
-
-        before = entry.snapshot()
-        old_translation = entry.translation
-        old_stage = entry.stage
-        if new_stage is not None:
-            if new_stage not in _VALID_STAGES:
-                return ToolResult.fail(f"无效的 stage 值: {new_stage}，合法值: {sorted(_VALID_STAGES)}")
-        record = replace(entry, translation=new_translation, stage=old_stage if new_stage is None else int(new_stage))
-        try:
-            warnings = ProjectToolTarget.capture(ctx).commit_records((record,), before=(before,))
-        except (RuntimeError, ValueError, OSError) as exc:
-            return ToolResult.fail(technical_error(exc))
-
-        return ToolResult.ok(
-            f"已更新 {entry_id}",
-            data={
-                "entry_id": entry_id,
-                "old_translation": old_translation[:100] if old_translation else "",
-                "new_translation": new_translation[:100],
-                "stage": record.stage,
-                "stage_changed": old_stage != record.stage,
-            },
-            warnings=warnings or None,
-        )
-
-    # ── 批量标记 ──────────────────────────────────────────────────
+        return execute_entry_edit("edit_translation", args, ctx, collection)
 
     def set_stage(self, args: dict, ctx, collection) -> ToolResult:
-        """批量设置条目翻译阶段。H3: 填补批量标记缺口。
-
-        NOTE(M9): 当前实现逐条遍历 entry_ids 设置 stage，无批处理优化。
-        对于大批量条目（>1000条），逐条循环可能有性能影响。
-        已知限制，后续可优化为批量 update。
-        """
-        entry_ids = args["entry_ids"]
-        stage = args["stage"]
-
-        if stage not in _VALID_STAGES:
-            return ToolResult.fail(f"无效的 stage 值: {stage}，合法值: {sorted(_VALID_STAGES)}")
-        if not entry_ids:
-            return ToolResult.fail("entry_ids 不能为空")
-
-        from ._project_tool_mutations import ProjectToolTarget
-
-        records = []
-        before = []
-        not_found = []
-        for eid in entry_ids:
-            entry = collection.get(eid)
-            if entry is None:
-                not_found.append(eid)
-                continue
-            before.append(entry.snapshot())
-            records.append(replace(entry, stage=int(stage)))
-        try:
-            warnings = ProjectToolTarget.capture(ctx).commit_records(records, before=before)
-        except (RuntimeError, ValueError, OSError) as exc:
-            return ToolResult.fail(technical_error(exc))
-        updated = len(records)
-
-        failed = [{"entry_id": eid, "reason": "条目不存在"} for eid in not_found] if not_found else None
-        if failed:
-            result = ToolResult.partial_ok(
-                f"已将 {updated} 条条目设为 stage={stage}（{len(failed)} 条未找到）",
-                data={"updated_count": updated, "not_found": not_found},
-                failed_items=failed,
-            )
-            result.warnings = warnings or None
-            return result
-        return ToolResult.ok(
-            f"已将 {updated} 条条目设为 stage={stage}",
-            data={"updated_count": updated},
-            warnings=warnings or None,
-        )
+        return execute_entry_edit("set_stage", args, ctx, collection)
 
     # ── 标签管理 (Story 08) ───────────────────────────────────────
 
     def list_labels(self, args: dict, ctx) -> ToolResult:
         """列出所有已定义的标签。"""
-        # m28: 区分"未初始化"和"空标签库"两种情况
-        if not hasattr(ctx, "label_library") or ctx.label_library is None:
-            return ToolResult.ok("标签库未初始化，请先创建标签", data={"labels": []})
-        label_lib = ctx.label_library
-        if not label_lib:
-            return ToolResult.ok("标签库为空，请先创建标签", data={"labels": []})
-        entry_labels = getattr(ctx, "entry_labels", {})
-        labels = []
-        for lid, info in label_lib.items():
-            count = sum(1 for ids in entry_labels.values() if lid in ids)
-            labels.append({"id": lid, "name": info.get("name", lid), "color": info.get("color", ""), "count": count})
+        from .workbench_rows import tool_scope_statistics
+
+        try:
+            library = getattr(ctx, "label_library", None)
+            counts = tool_scope_statistics(ctx).labels
+        except (ValueError, RuntimeError, OSError) as exc:
+            return ToolResult.fail(technical_error(exc))
+        if not library:
+            message = "标签库未初始化" if library is None else "标签库为空"
+            return ToolResult.ok(f"{message}，请先创建标签", data={"labels": []})
+        labels = label_catalog(library, counts)
         return ToolResult.ok(f"共 {len(labels)} 个标签", data={"labels": labels})
-
-    # ── Story 20: 统一标签管理（合并 4→1）─────────────────────────
-
-    def manage_entry_labels(self, args: dict, ctx, collection=None) -> ToolResult:
-        """Story 20: 合并 create_label/assign_label/remove_label/batch_assign_label → 统一入口。action 参数裁决。"""
-        action = args["action"].strip().lower()
-        if action not in ("create", "assign", "unassign", "batch_assign"):
-            return ToolResult.fail(f"无效的 action: {action}，可选: create/assign/unassign/batch_assign")
-        source_identity = (
-            getattr(ctx, "_target_source_key", getattr(ctx, "active_key", None)),
-            frozenset(entry.identity.namespace for entry in collection or ()),
-        )
-        before = _copy_label_state(ctx)
-        entry_labels, label_library = deepcopy(before)
-
-        if action == "create":
-            name = args.get("name", "").strip()
-            if not name:
-                return ToolResult.fail("标签名不能为空")
-            color = args.get("color", "#409EFF")
-            import uuid
-
-            lid = uuid.uuid4().hex[:8]
-            label_library[lid] = {"name": name, "color": color}
-            try:
-                warnings = _commit_label_state(
-                    ctx, entry_labels, label_library, before=before, source_identity=source_identity
-                )
-            except Exception as exc:
-                return ToolResult.fail(f"创建标签失败：{technical_error(exc)}")
-            return ToolResult.ok(
-                f"已创建标签: {name}",
-                data={"label_id": lid, "name": name, "color": color},
-                warnings=warnings or None,
-            )
-
-        # assign / unassign / batch_assign 共用参数校验
-        if collection is None:
-            return ToolResult.fail("需要活跃集合，请先加载翻译数据")
-
-        label_name = args.get("name", "").strip()
-        if not label_name:
-            return ToolResult.fail("请提供标签名 (name)")
-        lid = next((key for key, value in label_library.items() if value.get("name") == label_name), None)
-        if lid is None:
-            return ToolResult.fail(f"标签不存在: {label_name}")
-
-        ambiguous_ids = {
-            alias for entry in collection if entry.requires_original_match for alias in (entry.id, entry.key)
-        }
-        if action in {"assign", "unassign"} and ambiguous_ids.intersection(args.get("entry_ids", ())):
-            return ToolResult.fail("词条 ID 对应多条原文，请使用包含原文的完整 EntryKey 选择条目。")
-
-        if action == "assign":
-            entry_ids = args.get("entry_ids", [])
-            if not entry_ids:
-                return ToolResult.fail("请提供 entry_ids")
-            for eid in entry_ids:
-                entry_labels.setdefault(eid, set()).add(lid)
-            try:
-                warnings = _commit_label_state(
-                    ctx, entry_labels, label_library, before=before, source_identity=source_identity
-                )
-            except Exception as exc:
-                return ToolResult.fail(f"分配标签失败：{technical_error(exc)}")
-            return ToolResult.ok(
-                f"已为 {len(entry_ids)} 条条目分配标签 '{label_name}'",
-                data={"assigned_count": len(entry_ids)},
-                warnings=warnings or None,
-            )
-
-        elif action == "unassign":
-            entry_ids = args.get("entry_ids", [])
-            if not entry_ids:
-                return ToolResult.fail("请提供 entry_ids")
-            entry_labels_read = before[0]
-            removed = sum(1 for eid in entry_ids if eid in entry_labels_read and lid in entry_labels_read[eid])
-            for eid in entry_ids:
-                entry_labels.get(eid, set()).discard(lid)
-            try:
-                warnings = _commit_label_state(
-                    ctx, entry_labels, label_library, before=before, source_identity=source_identity
-                )
-            except Exception as exc:
-                return ToolResult.fail(f"移除标签失败：{technical_error(exc)}")
-            return ToolResult.ok(
-                f"已从 {removed} 条条目移除标签 '{label_name}'",
-                data={"removed_count": removed},
-                warnings=warnings or None,
-            )
-
-        elif action == "batch_assign":
-            filter_state = ctx.filter_state
-            entry_labels_read = before[0]
-            entries = filter_entries(collection, filter_state, entry_labels=entry_labels_read)
-            _filtered_ids = [e.identity.serialize() if e.requires_original_match else e.key for e in entries]
-            for eid in _filtered_ids:
-                entry_labels.setdefault(eid, set()).add(lid)
-            try:
-                warnings = _commit_label_state(
-                    ctx, entry_labels, label_library, before=before, source_identity=source_identity
-                )
-            except Exception as exc:
-                return ToolResult.fail(f"批量分配标签失败：{technical_error(exc)}")
-            return ToolResult.ok(
-                f"已为筛选范围内 {len(entries)} 条条目批量分配标签 '{label_name}'",
-                data={"assigned_count": len(entries), "filter_total": len(entries)},
-                warnings=warnings or None,
-            )
-
-
-def _copy_label_state(ctx) -> tuple[dict[str, set[str]], dict[str, dict]]:
-    entry_labels = {
-        str(entry_id): set(label_ids) for entry_id, label_ids in (getattr(ctx, "entry_labels", None) or {}).items()
-    }
-    label_library = {
-        str(label_id): deepcopy(info) for label_id, info in (getattr(ctx, "label_library", None) or {}).items()
-    }
-    return entry_labels, label_library
-
-
-def _commit_label_state(
-    ctx, entry_labels: dict[str, set[str]], label_library: dict[str, dict], *, before, source_identity
-):
-    warnings = []
-    commit = getattr(ctx, "commit_label_state", None)
-    if callable(commit):
-        commit(entry_labels, label_library, before=before, source_identity=source_identity, warnings=warnings)
-        return warnings
-
-    from .types import ExecutionContext
-
-    execution = ExecutionContext(app_context=ctx)
-    execution.commit_label_state(
-        entry_labels, label_library, before=before, source_identity=source_identity, warnings=warnings
-    )
-    return warnings
 
 
 # ── 无状态 controller + 模块级兼容 wrapper ───────────────────────
@@ -522,9 +302,7 @@ def _tool_list_labels(args: dict, ctx) -> ToolResult:
 @require_runtime_context
 @validate_params(_PARAM_SCHEMAS["manage_entry_labels"])
 def _tool_manage_entry_labels(args: dict, ctx, collection=None) -> ToolResult:
-    return _editor_ctrl.manage_entry_labels(
-        args, ctx, getattr(ctx, "collection", None) if collection is None else collection
-    )
+    return manage_entry_labels(args, ctx, getattr(ctx, "collection", None) if collection is None else collection)
 
 
 # ── 注册 ──────────────────────────────────────────────────────
@@ -543,11 +321,10 @@ def _register_editor_tools():
                     "①Set composable entry-table filters; omitted dimensions remain unchanged. "
                     "②Arguments: optional stages, "
                     "categories, labels, search_query, "
-                    "search_field=id/key/original/translation/context/all, and clear=false. "
+                    "search_field=key/original/translation/all, and clear=false. "
                     "None keeps a value and [] clears it. "
-                    "③Returns {stage,category,label,search_query,search_field}, or "
-                    "{unchanged:true}. Rules: inspect with get_current_filters first; these filters affect "
-                    "get_visible_entries, get_statistics, and batch_assign."
+                    "③Returns the workbench filter fields and unchanged. Inspect with get_current_filters first. "
+                    "These filters control visible entries and batch label assignments."
                 ),
                 "execute": _tool_set_filters,
                 "permission": "read",
@@ -573,8 +350,7 @@ def _register_editor_tools():
                 "name": "select_entries",
                 "display_name": "选择条目",
                 "description": (
-                    "①Select, deselect, or clear entries in temporary selection state, "
-                    "independent of labels. ②Arguments: "
+                    "①Select, deselect, or clear actual workbench table rows, including offscreen rows. ②Arguments: "
                     "action=select/deselect/clear and entry_ids for select/deselect. "
                     "③Returns {selected_count, selected_ids}. "
                     "Rules: selection is not persisted and does not change labels; typical flow is "
@@ -620,7 +396,8 @@ def _register_editor_tools():
                 "name": "list_labels",
                 "display_name": "列出标签",
                 "description": (
-                    "①List defined labels and usage counts; read-only. ②No arguments. ③Returns "
+                    "①List all defined workbench labels, counting usage in the current request source, "
+                    "including offscreen entries. ②No arguments. ③Returns "
                     "{labels:[{id,name,color,count}]}. Rules: an empty or uninitialized "
                     "library returns an empty list; label "
                     "operations use name, while id is internal; create or modify labels with manage_entry_labels."

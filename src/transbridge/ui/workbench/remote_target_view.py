@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from copy import copy
-from datetime import datetime
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -24,7 +23,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from transbridge.application.projects import ParaTranzProjectBinding, normalize_paratranz_endpoint
+from transbridge.application.ports.paratranz import ParaTranzProject
+from transbridge.application.projects import normalize_paratranz_endpoint
+from transbridge.paratranz.project_binding import BindingSelection
 from transbridge.paratranz.project_catalog import (
     ParaTranzCatalogCancellation,
     ParaTranzCatalogKey,
@@ -55,11 +56,14 @@ class ParaTranzTargetDialog(QDialog):
         *,
         explanation: str | None = None,
         confirmation_text: str | None = None,
+        binding_selection: BindingSelection | None = None,
     ) -> None:
         super().__init__(parent)
         self._ctx = ctx
         self._catalog = catalog
         self._config_revision = config_revision
+        self._binding_selection = binding_selection
+        self.verified_project: ParaTranzProject | None = None
         self._config = copy(ctx.config)
         self._endpoint = normalize_paratranz_endpoint(self._config.base_url)
         self._account_id = None
@@ -109,13 +113,51 @@ class ParaTranzTargetDialog(QDialog):
         return self._endpoint, self._account_id, self._config_revision
 
     def accept(self) -> None:
-        if self.selected_project() is None:
+        project = self.selected_project()
+        if project is None or not self._list.isEnabled():
             return
-        super().accept()
+        if self._binding_selection is None:
+            super().accept()
+            return
+        self._list.setEnabled(False)
+        self._search.setEnabled(False)
+        self._ok.setEnabled(False)
+        self._status.setText("正在验证当前账号的项目成员身份…")
+        self._generation += 1
+        generation = self._generation
+        cancellation = ParaTranzCatalogCancellation()
+        self._cancellation = cancellation
+        worker = ApiWorker(
+            self._binding_selection.member_project,
+            self._catalog,
+            project["id"],
+            cancellation=cancellation,
+            route_http_errors=False,
+            cancel_read_on_close=cancellation.cancel,
+        )
+        worker.result.connect(lambda member: self._verified(generation, member))
+        worker.error.connect(lambda error: self._verification_failed(generation, f"无法验证项目成员身份：{error}"))
+        self._start_worker(worker)
+
+    def _verified(self, generation: int, member: ParaTranzProject | None) -> None:
+        if generation != self._generation:
+            return
+        if member is None:
+            self._verification_failed(generation, "当前 ParaTranz 账号不是所选项目的成员。")
+            return
+        self.verified_project = member
+
+    def _verification_failed(self, generation: int, message: str) -> None:
+        if generation == self._generation:
+            self._status.setText(message)
+            self._list.setEnabled(True)
+            self._search.setEnabled(True)
+            self._ok.setEnabled(self.selected_project() is not None)
 
     def reject(self) -> None:
         if self._closing:
             return
+        self.verified_project = None
         self._generation += 1
         if self._cancellation is not None:
             self._cancellation.cancel()
@@ -152,9 +194,12 @@ class ParaTranzTargetDialog(QDialog):
         worker = ApiWorker(fetch)
         worker.result.connect(lambda projects: self._loaded(generation, projects))
         worker.error.connect(lambda error: self._failed(generation, error))
+        self._start_worker(worker)
+
+    def _start_worker(self, worker: ApiWorker) -> None:
         worker.finished.connect(lambda: self._worker_finished(worker))
-        worker.start()
         self._workers.append(worker)
+        worker.start()
 
     def _worker_finished(self, worker: ApiWorker) -> None:
         if worker in self._workers:
@@ -162,6 +207,8 @@ class ParaTranzTargetDialog(QDialog):
         worker.deleteLater()
         if self._closing and not any(item.isRunning() for item in self._workers):
             self._finish_reject()
+        elif self.verified_project is not None and not self._workers:
+            super().accept()
 
     def _finish_reject(self) -> None:
         self._closing = False
@@ -260,16 +307,22 @@ class RemoteTargetView(QWidget):
     def choose_target(self) -> None:
         if not self._can_edit_binding():
             return
-        project_id = self._ctx.active_project_id
+        try:
+            selection = BindingSelection.capture(self._ctx)
+        except ValueError as exc:
+            QMessageBox.warning(self, "无法绑定", str(exc))
+            return
         project_generation = self._project_generation
-        dialog = ParaTranzTargetDialog(self._ctx, self._catalog, self._config_revision, self)
+        dialog = ParaTranzTargetDialog(
+            self._ctx, self._catalog, self._config_revision, self, binding_selection=selection
+        )
         if not dialog.exec():
             return
-        project = dialog.selected_project()
+        project = dialog.verified_project
         if project is None:
             return
         if (
-            self._ctx.active_project_id != project_id
+            self._ctx.active_project_id != selection.local_project_id
             or self._project_generation != project_generation
             or not self._can_edit_binding()
         ):
@@ -286,17 +339,8 @@ class RemoteTargetView(QWidget):
         ):
             QMessageBox.warning(self, "配置已变化", "ParaTranz 账号或服务配置已变化，请重新选择同步目标。")
             return
-        now = datetime.now().astimezone().isoformat()
-        binding = ParaTranzProjectBinding(
-            int(project["id"]),
-            str(project["name"]),
-            self._ctx.config.base_url,
-            user_id,
-            now,
-            now,
-        )
         try:
-            result = self._ctx.set_paratranz_binding(binding)
+            result = selection.bind(self._ctx, project)
         except (RuntimeError, ValueError) as exc:
             QMessageBox.critical(self, "绑定失败", str(exc))
             return

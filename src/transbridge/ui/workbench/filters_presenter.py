@@ -4,58 +4,16 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
 
-from transbridge.converter.context_categories import ALL_DISPLAY_CATEGORIES, context_category
+from transbridge.application.workbench_filters import (
+    FilterState as FilterState,
+    entry_category as entry_category,
+    filter_entries,
+)
+from transbridge.converter.context_categories import ALL_DISPLAY_CATEGORIES
 from transbridge.converter.translation_entry import TranslationEntry
-from transbridge.ui.project_labels import entry_label_key
 
 ALL_CATEGORIES = ALL_DISPLAY_CATEGORIES
-
-
-def entry_category(entry: TranslationEntry) -> str:
-    """Return the stable display category for a translation entry."""
-    return context_category(entry.context or "")
-
-
-@dataclass(frozen=True, slots=True)
-class FilterState:
-    """Immutable filter intent, independent from render generations."""
-
-    categories: frozenset[str] = frozenset()
-    stages: frozenset[int] = frozenset()
-    labels: frozenset[str] = frozenset()
-    search_all: str = ""
-    search_key: str = ""
-    search_original: str = ""
-    search_translation: str = ""
-    focus_labeled: bool = False
-
-    @classmethod
-    def from_mapping(cls, value: Mapping[str, object] | None) -> FilterState:
-        value = value or {}
-        return cls(
-            categories=frozenset(value.get("category", []) or []),
-            stages=frozenset(value.get("stage", []) or []),
-            labels=frozenset(value.get("label", []) or []),
-            search_all=str(value.get("search_all", "") or ""),
-            search_key=str(value.get("search_key", "") or ""),
-            search_original=str(value.get("search_orig", "") or ""),
-            search_translation=str(value.get("search_trans", "") or ""),
-            focus_labeled=bool(value.get("focus_labeled", False)),
-        )
-
-    def to_mapping(self) -> dict[str, object]:
-        return {
-            "category": list(self.categories),
-            "stage": list(self.stages),
-            "label": list(self.labels),
-            "search_all": self.search_all,
-            "search_key": self.search_key,
-            "search_orig": self.search_original,
-            "search_trans": self.search_translation,
-            "focus_labeled": self.focus_labeled,
-        }
 
 
 class FiltersPresenter:
@@ -83,41 +41,4 @@ class FiltersPresenter:
         entries: Iterable[TranslationEntry],
         entry_labels: Mapping[str, set[str]],
     ) -> list[TranslationEntry]:
-        state = self._state
-        if state == FilterState():
-            return list(entries)
-        all_kw = state.search_all.lower()
-        key_kw = state.search_key.lower()
-        original_kw = state.search_original.lower()
-        translation_kw = state.search_translation.lower()
-        result: list[TranslationEntry] = []
-        for entry in entries:
-            if (
-                all_kw
-                and all_kw
-                not in "\n".join((
-                    entry.key or "",
-                    entry.original or "",
-                    entry.translation or "",
-                    entry.context or "",
-                )).lower()
-            ):
-                continue
-            if state.categories and entry_category(entry) not in state.categories:
-                continue
-            if state.stages and entry.stage not in state.stages:
-                continue
-            if key_kw and key_kw not in (entry.key or "").lower():
-                continue
-            if original_kw and original_kw not in (entry.original or "").lower():
-                continue
-            if translation_kw and translation_kw not in (entry.translation or "").lower():
-                continue
-            if state.labels or state.focus_labeled:
-                labels = entry_labels.get(entry_label_key(entry), set()) if entry.id else set()
-                if state.labels and not labels.intersection(state.labels):
-                    continue
-                if state.focus_labeled and not labels:
-                    continue
-            result.append(entry)
-        return result
+        return filter_entries(entries, self._state, entry_labels)

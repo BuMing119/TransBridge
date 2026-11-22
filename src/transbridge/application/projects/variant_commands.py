@@ -59,27 +59,27 @@ def update_entry_by_local_key(
 
 
 def update_entry_by_key(
-    entries: tuple[VariantEntryState, ...],
+    entries: tuple[VariantEntryState, ...] | DeferredVariantRows,
     entry_key: EntryKey,
     *,
     translation: str | None = None,
     stage: int | None = None,
-) -> tuple[VariantEntryState, ...]:
+) -> tuple[VariantEntryState, ...] | DeferredVariantRows:
     """Update one exact EntryKey so equal local keys across sources stay independent."""
 
-    matches = tuple(entry for entry in entries if entry.entry_key == entry_key)
-    if not matches:
+    deferred = isinstance(entries, DeferredVariantRows)
+    target = (
+        entries.get(entry_key) if deferred else next((entry for entry in entries if entry.entry_key == entry_key), None)
+    )
+    if target is None:
         raise ValueError("EntryKey is not present in the active Variant")
-    target = matches[0]
     next_translation = target.translation if translation is None else str(translation)
     next_stage = target.stage if stage is None else Stage(stage)
     if next_translation == target.translation and next_stage is target.stage:
         return entries
-    return tuple(
-        replace(target, translation=next_translation, stage=next_stage, revision=target.revision.next())
-        if entry.entry_key == entry_key
-        else entry
-        for entry in entries
+    changed = replace(target, translation=next_translation, stage=next_stage, revision=target.revision.next())
+    return (
+        entries.patched((changed,)) if deferred else tuple(changed if entry is target else entry for entry in entries)
     )
 
 
@@ -229,31 +229,3 @@ __all__ = [
     "update_entry_by_local_key",
     "update_entry_by_key",
 ]
-
-
-def update_deferred_entry(lifecycle, active, snapshot, key, context, translation, stage):
-    """Commit one field edit without materializing a deferred Variant range."""
-    from transbridge.application.contracts import OperationResult
-    from transbridge.persistence.v2.variant import VariantChangeSet
-
-    try:
-        current = snapshot.entries.get(key)
-        if current is None:
-            raise ValueError("当前版本没有对应词条。")
-        (state,) = update_entry_by_key((current,), key, translation=translation, stage=stage)
-        if state == current:
-            return OperationResult.completed(active.summary(), run_id=context.run_id)
-        change = VariantChangeSet(
-            snapshot.ref,
-            snapshot.revision,
-            snapshot.source_fingerprints,
-            snapshot.entries.patched((state,)),
-            snapshot.label_library,
-            context.run_id or "",
-            sparse_entries=(state,),
-        )
-        return lifecycle.commit_active_variant(
-            change, context, expected_project_revision=active.project.envelope.revision
-        )
-    except Exception as exc:
-        return OperationResult.from_exception(exc, run_id=context.run_id)

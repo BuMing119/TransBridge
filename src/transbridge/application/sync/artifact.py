@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import hashlib
 from io import BytesIO
@@ -34,6 +34,7 @@ from transbridge.application.ports.paratranz import (
     ParaTranzExportJob,
     ParaTranzPort,
 )
+from transbridge.application.tasks import TaskCancelled
 
 from .models import canonical_hash
 
@@ -51,20 +52,11 @@ class ArtifactPublishRequest:
     max_poll_attempts: int = 60
 
     def __post_init__(self) -> None:
-        if isinstance(self.project_id, bool) or not isinstance(self.project_id, int) or self.project_id < 1:
-            raise ValueError("project_id must be a positive integer")
+        _validate_poll(self.project_id, self.poll_interval_seconds, self.max_poll_attempts)
         if not self.target_path.strip() or not self.run_id.strip():
             raise ValueError("artifact target_path and run_id must not be empty")
         if self.expected_sha256 is not None and not _is_sha256(self.expected_sha256):
             raise ValueError("expected artifact hash must be a lowercase SHA-256 digest")
-        if self.poll_interval_seconds < 0:
-            raise ValueError("poll interval must not be negative")
-        if (
-            isinstance(self.max_poll_attempts, bool)
-            or not isinstance(self.max_poll_attempts, int)
-            or self.max_poll_attempts < 1
-        ):
-            raise ValueError("max_poll_attempts must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,7 +112,7 @@ class ParaTranzArtifactPublisher:
         self._remote = remote
         self._filesystem = filesystem or OsPublishFilesystem()
 
-    def publish(self, request: ArtifactPublishRequest) -> OperationResult[dict]:
+    def publish(self, request: ArtifactPublishRequest, *, download_existing: bool = False) -> OperationResult[dict]:
         target = self._filesystem.canonicalize(request.target_path)
         run_hash = hashlib.sha256(request.run_id.encode()).hexdigest()[:16]
         stage = f"{target}.{run_hash}.{secrets.token_hex(8)}.part"
@@ -132,18 +124,18 @@ class ParaTranzArtifactPublisher:
             if request.expected_target is not None and initial != request.expected_target:
                 raise _ArtifactFailure("ARTIFACT_TARGET_CHANGED", "The artifact target changed before execution.")
             _raise_if_cancelled(request.cancellation)
-            baseline = self._remote.get_artifacts(
-                request.project_id,
-                cancellation=request.cancellation,
-            )
-            _raise_if_cancelled(request.cancellation)
-            started = self._remote.trigger_export(
-                request.project_id,
-                cancellation=request.cancellation,
-            )
-            # Custom adapters predating get_job can still check artifact freshness.
-            job = ParaTranzExportJob.from_mapping(started) if hasattr(self._remote, "get_job") else None
-            artifact = self._poll_artifact(request, baseline, job)
+            artifact = None
+            if not download_existing:
+                artifact, _ = self.trigger_and_wait(
+                    request.project_id,
+                    cancellation=request.cancellation,
+                    poll_interval_seconds=request.poll_interval_seconds,
+                    max_poll_attempts=request.max_poll_attempts,
+                )
+                if artifact is None:
+                    raise _ArtifactFailure(
+                        "ARTIFACT_POLL_TIMEOUT", "The exported artifact did not become ready.", retryable=True
+                    )
             _raise_if_cancelled(request.cancellation)
             self._filesystem.exclusive_create(stage, mode=0o600)
             downloaded = self._remote.download_artifact(
@@ -159,7 +151,7 @@ class ParaTranzArtifactPublisher:
             _raise_if_cancelled(request.cancellation)
             self._filesystem.fsync_file(stage)
             fingerprint = self._filesystem.fingerprint(stage)
-            expected_hash = request.expected_sha256 or _metadata_hash(artifact)
+            expected_hash = request.expected_sha256 or _metadata_hash(artifact or {})
             if expected_hash is not None and fingerprint.sha256 != expected_hash:
                 raise _ArtifactFailure("ARTIFACT_HASH_MISMATCH", "The downloaded artifact hash is invalid.")
             members = _validate_zip(self._filesystem.read_bytes(stage))
@@ -175,7 +167,7 @@ class ParaTranzArtifactPublisher:
                 1,
                 request.run_id,
                 request.project_id,
-                _artifact_identity(artifact),
+                _artifact_identity(artifact) if artifact is not None else "download:latest",
                 target,
                 fingerprint.sha256 or "",
                 fingerprint.size_bytes,
@@ -211,7 +203,7 @@ class ParaTranzArtifactPublisher:
                 artifact_refs=(target,),
                 run_id=request.run_id,
             )
-        except _ArtifactCancelled:
+        except TaskCancelled:
             if published and manifest is not None:
                 return _artifact_partial(
                     request.run_id,
@@ -293,40 +285,59 @@ class ParaTranzArtifactPublisher:
                 retryable=True,
             )
 
-    def _poll_artifact(
+    def trigger_and_wait(
         self,
-        request: ArtifactPublishRequest,
-        baseline: Sequence[Mapping[str, Any]],
-        job: ParaTranzExportJob | None,
-    ) -> dict[str, Any]:
+        project_id: int,
+        *,
+        cancellation: CancellationPort | None,
+        poll_interval_seconds: float,
+        max_poll_attempts: int,
+        timeout_seconds: float | None = None,
+        before_submit: Callable[[], None] | None = None,
+    ) -> tuple[dict[str, Any] | None, Mapping[str, Any]]:
+        """Submit once, returning fresh metadata or the last observed job on timeout."""
+        _validate_poll(project_id, poll_interval_seconds, max_poll_attempts)
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        _raise_if_cancelled(cancellation)
+        baseline = self._remote.get_artifacts(project_id, cancellation=cancellation)
+        if before_submit is not None:
+            before_submit()
+        _raise_if_cancelled(cancellation)
+        payload = self._remote.trigger_export(project_id, cancellation=cancellation)
+        deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
+        job = ParaTranzExportJob.from_mapping(payload) if hasattr(self._remote, "get_job") else None
         baseline_states = {_artifact_identity(dict(item)): _artifact_ready(dict(item)) for item in baseline}
         if job is not None:
             job.raise_if_failed()
-        for attempt in range(request.max_poll_attempts):
-            _raise_if_cancelled(request.cancellation)
+        for attempt in range(max_poll_attempts):
+            _raise_if_cancelled(cancellation)
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            artifacts = ()
             try:
                 if job is not None and job.status is ExportJobStatus.PENDING:
-                    payload = self._remote.get_job(request.project_id, job.job_id, cancellation=request.cancellation)
+                    payload = self._remote.get_job(project_id, job.job_id, cancellation=cancellation)
                     job = ParaTranzExportJob.from_mapping(payload, expected_id=job.job_id)
                     job.raise_if_failed()
-                artifacts = ()
                 if job is None or job.status is ExportJobStatus.SUCCEEDED:
-                    artifacts = self._remote.get_artifacts(request.project_id, cancellation=request.cancellation)
+                    artifacts = self._remote.get_artifacts(project_id, cancellation=cancellation)
             except ExternalServiceError as exc:
-                if not _retryable_external(exc) or attempt + 1 >= request.max_poll_attempts:
+                if not _retryable_external(exc) or attempt + 1 >= max_poll_attempts:
                     raise
-                _wait(request.cancellation, request.poll_interval_seconds)
-                continue
-            _raise_if_cancelled(request.cancellation)
+            _raise_if_cancelled(cancellation)
             for artifact in artifacts:
                 value = dict(artifact)
                 identity = _artifact_identity(value)
                 was_ready = baseline_states.get(identity)
                 if _artifact_ready(value) and (was_ready is None or not was_ready):
-                    return value
-            if attempt + 1 < request.max_poll_attempts:
-                _wait(request.cancellation, request.poll_interval_seconds)
-        raise _ArtifactFailure("ARTIFACT_POLL_TIMEOUT", "The exported artifact did not become ready.", retryable=True)
+                    return value, payload
+            if attempt + 1 < max_poll_attempts:
+                delay = poll_interval_seconds
+                if deadline is not None:
+                    delay = min(delay, max(0.0, deadline - time.monotonic()))
+                _wait(cancellation, delay)
+        return None, payload
 
     def _cleanup(self, stage: str) -> None:
         try:
@@ -343,20 +354,25 @@ class _ArtifactFailure(RuntimeError):
         self.retryable = retryable
 
 
-class _ArtifactCancelled(RuntimeError):
-    pass
-
-
 def _raise_if_cancelled(cancellation: CancellationPort | None) -> None:
-    if cancellation is not None and cancellation.is_cancelled:
-        raise _ArtifactCancelled
+    if cancellation is not None:
+        cancellation.raise_if_cancelled()
 
 
 def _wait(cancellation: CancellationPort | None, seconds: float) -> None:
     if cancellation is None:
         time.sleep(seconds)
     elif cancellation.wait(seconds):
-        raise _ArtifactCancelled
+        cancellation.raise_if_cancelled()
+
+
+def _validate_poll(project_id: int, interval: float, attempts: int) -> None:
+    if isinstance(project_id, bool) or not isinstance(project_id, int) or project_id < 1:
+        raise ValueError("project_id must be a positive integer")
+    if interval < 0:
+        raise ValueError("poll interval must not be negative")
+    if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 1:
+        raise ValueError("max_poll_attempts must be a positive integer")
 
 
 def _metadata_hash(artifact: dict[str, Any]) -> str | None:

@@ -4,10 +4,12 @@
 from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget
 
+from transbridge.paratranz.management_queries import HISTORY_LAST_PAGE, HISTORY_PAGE_SIZE
+
 
 class HistoryPager(QWidget):
     page_requested = pyqtSignal(int)
-    PAGE_SIZE = 50
+    PAGE_SIZE = HISTORY_PAGE_SIZE
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -21,7 +23,7 @@ class HistoryPager(QWidget):
         self.previous = QPushButton("上一页", self)
         self.next = QPushButton("下一页", self)
         self.page = QSpinBox(self)
-        self.page.setRange(1, 9999)
+        self.page.setRange(1, HISTORY_LAST_PAGE)
         self.page.setKeyboardTracking(False)
         self.page.setAccessibleName("历史记录页码")
         row.addWidget(self.previous)

@@ -212,6 +212,7 @@ def test_auto_translator_passes_prompt_profile_and_target_language(
         term_database,
     )
     from transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig
+    from transbridge.config.llm import LLMConfig
     from transbridge.infra import llm_client
 
     captured: dict[str, str] = {}
@@ -225,7 +226,7 @@ def test_auto_translator_passes_prompt_profile_and_target_language(
     monkeypatch.setattr(term_database, "TermDatabaseManager", lambda **_kwargs: object())
     monkeypatch.setattr(noun_extractor, "NounExtractor", lambda _client, _builder: object())
     monkeypatch.setattr(batch_planner, "BatchPlanner", lambda **_kwargs: object())
-    config = SimpleNamespace(
+    config = LLMConfig(
         game_profile="fallout4",
         target_lang="ja_JP",
         max_tokens_per_batch=500,

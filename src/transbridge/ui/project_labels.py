@@ -2,11 +2,7 @@
 """Read label membership without rebuilding unchanged sets or serializing identities."""
 
 from transbridge.application.io.identity import EntryKey
-
-
-def entry_label_key(entry) -> str:
-    """Keep legacy label IDs while disambiguating original-matched entries."""
-    return entry.identity.serialize() if getattr(entry, "requires_original_match", False) else entry.id
+from transbridge.application.workbench_filters import entry_label_key as entry_label_key
 
 
 def exact_label_key(identity: EntryKey) -> tuple[str, ...]:

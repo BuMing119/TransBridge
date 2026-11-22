@@ -128,8 +128,10 @@ def test_agent_uses_project_plugin_reference_only_as_input(project, manager, sav
     missing_output = _tool_write_back({"target": "esp"}, context)
     assert missing_output.error_code == "OUTPUT"
     assert manager.list_all() == []
-    destination = project.root / "translated.esp"
-    result = _wait_for_result(manager, _tool_write_back({"target": "esp", "path": str(destination)}, context))
+    destination = project.root / "translated" / source.name
+    result = _wait_for_result(
+        manager, _tool_write_back({"target": "esp", "output_dir": str(destination.parent)}, context)
+    )
 
     assert result["written_count"] == 1
     assert destination.is_file()
@@ -147,11 +149,12 @@ def test_agent_remembers_explicit_match_only_after_preflight(project, manager, w
     replacement = source.rename(relocated / source.name)
     if wrong_content:
         write_plugin(source, [(0x800, "Greeter", "Different plugin content")])
-    destination = project.root / "translated.esp"
-    args = {"target": "esp", "path": str(destination)}
+    destination = project.root / "translated" / source.name
+    args = {"target": "esp", "output_dir": str(destination.parent)}
 
     missing = _tool_write_back(args, context)
     assert missing.error_code == "WRITE_PLUGIN_INPUT_REQUIRED"
+    destination.parent.mkdir()
     destination.write_bytes(b"existing target")
     blocked = _tool_write_back({**args, "input_plugin": str(replacement)}, context)
     assert blocked.error_code == "OVERWRITE_CONFIRMED"
@@ -162,8 +165,8 @@ def test_agent_remembers_explicit_match_only_after_preflight(project, manager, w
     _wait_for_result(manager, _tool_write_back({**args, "input_plugin": str(replacement), "overwrite": True}, context))
     after = store.sources(native_fields=False) if save is True else lifecycle.active.source_additions
     assert after[0].reference_path == str(replacement)
-    second_output = project.root / "translated-again.esp"
-    _wait_for_result(manager, _tool_write_back({**args, "path": str(second_output)}, context))
+    second_output = project.root / "translated-again" / source.name
+    _wait_for_result(manager, _tool_write_back({**args, "output_dir": str(second_output.parent)}, context))
     assert second_output.is_file()
     if save is not True:
         assert not store.sources(native_fields=False)
@@ -184,7 +187,7 @@ def test_agent_rejects_saved_plugin_outside_grant_before_binding(project, manage
         pytest.fail("An unauthorized saved plugin must not reach the parser")
 
     monkeypatch.setattr("transbridge.smart_assistant.tools.write_back_preparation.bind_plugin_write_input", unexpected)
-    result = _tool_write_back({"target": "esp", "path": str(output / source.name)}, context)
+    result = _tool_write_back({"target": "esp", "output_dir": str(output)}, context)
 
     assert result.error_code == "WRITE_PLUGIN_INPUT_REQUIRED"
     assert str(source) not in result.message
@@ -214,26 +217,12 @@ def test_localized_request_preparation_keeps_companions_for_current_operation(lo
     assert all(isinstance(rows, tuple) and companion.content for companion, rows in companions)
 
 
-def test_localized_source_save_retry_keeps_rows_without_plugin_or_companions(project, localized, monkeypatch):
-    from transbridge.persistence.task_store.recovery import RecoveryView
-    from transbridge.smart_assistant.tools.tool_translator import _tool_get_task_result, _tool_merge_task_result
-
-    create = RecoveryView.create
-    monkeypatch.setattr(RecoveryView, "create", lambda *args: (_ for _ in ()).throw(OSError("disk full")))
-    context = ExecutionContext(app_context=project.ctx)
-    result = _tool_parse_esp({"path": str(localized.source)}, context)
-    assert result.partial and not result.success
-    for path in localized.source.parent.rglob("*"):
-        if path.is_file():
-            path.unlink()
-    monkeypatch.setattr(RecoveryView, "create", create)
-    recovered = _tool_merge_task_result({"result_id": result.data["result_id"]}, context)
-    assert not recovered.success and "重新" in recovered.message
-    assert not project.ctx.project_sources
-    viewed = _tool_get_task_result({"result_id": result.data["result_id"]}, context)
-    assert viewed.success and [row["original"] for row in viewed.data["entries"]] == ["Original 1"]
-    assert str(localized.source) not in repr(viewed.data)
-    assert "input_snapshot" not in viewed.data
+def test_localized_source_registration_works_without_assistant_task_storage(project, localized):
+    project.ctx.task_store = None
+    result = _tool_parse_esp({"path": str(localized.source)}, ExecutionContext(app_context=project.ctx))
+    assert result.success and "result_id" not in result.data
+    assert [entry.original for entry in project.ctx.collection] == ["Original 1"]
+    assert len(project.ctx.project_sources) == 1
 
 
 def _read_translation(path, format_id):
@@ -346,10 +335,9 @@ def test_agent_rejects_format_mismatch_and_ungranted_output_root(project, manage
 @pytest.mark.parametrize("target", ["esp", "strings"])
 def test_agent_publishes_localized_bundle_without_precreating_strings_directory(project, localized, manager, target):
     _load_localized_translated(project, localized)
-    destination = localized.target if target == "esp" else localized.output / localized.source.name
+    destination = localized.output / localized.source.name
     args = {
         "target": target,
-        "path": str(destination),
         "output_dir": str(localized.output),
         "input_plugin": str(localized.source),
     }

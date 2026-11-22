@@ -9,7 +9,7 @@ from transbridge.application.io.legacy_migration import prepare_legacy_migration
 from transbridge.application.io.migration_snapshot import detached_entries
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from transbridge.ui.coordinators.migration_coordinator import _Target
+from transbridge.ui.coordinators.migration_coordinator import MigrationTarget
 from transbridge.ui.projection_types import CollectionSlot
 
 
@@ -66,7 +66,7 @@ def test_nested_mutable_metadata_is_detached_and_detected_as_stale(where):
         value = (Provenance("run", "actor", "test", metadata=metadata),)
     object.__setattr__(entry, where, value)
     slot = CollectionSlot("test", TranslationEntryCollection([entry]))
-    target = _Target.capture(slot)
+    target = MigrationTarget.capture(slot)
     context = SimpleNamespace(slots={"test": slot})
     assert target.is_current(context)
     nested["items"].append("after")

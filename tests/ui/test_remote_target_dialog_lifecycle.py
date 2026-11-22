@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from PyQt6.QtWidgets import QApplication
 import pytest
 
+from transbridge.application.ports.paratranz import ParaTranzProject
 from transbridge.application.projects import ParaTranzTargetSource, ParaTranzTargetStatus, ResolvedParaTranzTarget
 import transbridge.ui.workbench.remote_target_view as remote_target_view
 
@@ -30,7 +31,7 @@ class _Signal:
 class _ControlledWorker:
     instances = []
 
-    def __init__(self, _fn) -> None:
+    def __init__(self, _fn, *args, **kwargs) -> None:
         self.result = _Signal()
         self.error = _Signal()
         self.finished = _Signal()
@@ -77,6 +78,37 @@ def test_reject_cancels_catalog_request_and_defers_destruction_until_worker_fini
     assert dialog._closing is False
     assert dialog._workers == []
     assert worker.deleted is True
+    dialog.deleteLater()
+    qapp.processEvents()
+
+
+def test_cancel_during_binding_recheck_discards_late_success(qapp, monkeypatch):
+    monkeypatch.setattr(remote_target_view, "ApiWorker", _ControlledWorker)
+    context = SimpleNamespace(
+        active_project_id="local",
+        config=SimpleNamespace(token="configured", base_url="https://paratranz.cn", user_id=7),
+        current_user={"id": 7},
+    )
+    dialog = remote_target_view.ParaTranzTargetDialog(
+        context,
+        remote_target_view.ParaTranzProjectCatalog(),
+        0,
+        binding_selection=remote_target_view.BindingSelection.capture(context),
+    )
+    worker = _ControlledWorker.instances[-1]
+    project = ParaTranzProject(99, "Candidate")
+    worker.result.emit((project,))
+    worker.finish()
+    dialog._list.setCurrentRow(0)
+    dialog._ok.click()
+    validation = _ControlledWorker.instances[-1]
+    assert validation is not worker and not dialog._ok.isEnabled()
+    dialog.reject()
+    assert dialog._closing and dialog._cancellation.is_cancelled
+    validation.result.emit(project)
+    validation.finish()
+    assert not dialog._workers and not dialog._closing
+    assert not dialog.result() and dialog.verified_project is None
     dialog.deleteLater()
     qapp.processEvents()
 
@@ -134,9 +166,9 @@ def test_picker_does_not_bind_after_local_project_context_changes(binding_view, 
     monkeypatch.setattr(
         remote_target_view,
         "ParaTranzTargetDialog",
-        lambda *_: SimpleNamespace(
+        lambda *_, **kwargs: SimpleNamespace(
             exec=choose,
-            selected_project=lambda: {"id": 99, "name": "选择的项目"},
+            verified_project=ParaTranzProject(99, "选择的项目"),
             target_context=("https://paratranz.cn", 7, 0),
         ),
     )
@@ -163,9 +195,9 @@ def test_picker_preserves_account_and_endpoint_change_guard(binding_view, monkey
     monkeypatch.setattr(
         remote_target_view,
         "ParaTranzTargetDialog",
-        lambda *_: SimpleNamespace(
+        lambda *_, **kwargs: SimpleNamespace(
             exec=choose,
-            selected_project=lambda: {"id": 99, "name": "选择的项目"},
+            verified_project=ParaTranzProject(99, "选择的项目"),
             target_context=("https://paratranz.cn", 7, 0),
         ),
     )
@@ -202,9 +234,9 @@ def test_inline_binding_and_overflow_clear_use_existing_local_commands_once(bind
     monkeypatch.setattr(
         remote_target_view,
         "ParaTranzTargetDialog",
-        lambda *_: SimpleNamespace(
+        lambda *_, **kwargs: SimpleNamespace(
             exec=lambda: 1,
-            selected_project=lambda: {"id": 99, "name": "选择的项目"},
+            verified_project=ParaTranzProject(99, "选择的项目"),
             target_context=("https://paratranz.cn", 7, 0),
         ),
     )

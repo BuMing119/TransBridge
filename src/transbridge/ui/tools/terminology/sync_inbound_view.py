@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from transbridge.application.terminology_sync.inbound import InboundReviewDecision
+from transbridge.application.terminology_sync.inbound import INBOUND_PAGE_SIZE, InboundReviewDecision
 
 from .inbound_review import InboundReviewDrafts, InboundReviewEdit
 from .sync_copy import INBOUND_LABELS, REASON_LABELS, content_text, label
@@ -88,8 +88,8 @@ class SyncInboundReviewPanel(QFrame):
         self.blocked_button = QPushButton("定位首个阻断项", self)
         layout.addWidget(self.blocked_button)
         self.selector.currentIndexChanged.connect(self._select)
-        self.previous_button.clicked.connect(lambda: self.page(-50))
-        self.next_button.clicked.connect(lambda: self.page(50))
+        self.previous_button.clicked.connect(lambda: self.page(-INBOUND_PAGE_SIZE))
+        self.next_button.clicked.connect(lambda: self.page(INBOUND_PAGE_SIZE))
         self.preview_button.clicked.connect(self.preview)
         self.commit_button.clicked.connect(lambda: self._run("commit-inbound", self.presenter.commit_inbound))
         self.preview_details.item_requested.connect(self.locate)
@@ -252,9 +252,10 @@ class SyncInboundReviewPanel(QFrame):
         index = next((index for index, item in enumerate(selected.items) if item.item_id == item_id), None)
         if index is None:
             return
-        self.render(self.presenter.page_inbound(index // 50 * 50))
-        self.table.selectRow(index % 50)
-        widget = self.table.cellWidget(index % 50, 2)
+        page, row = divmod(index, INBOUND_PAGE_SIZE)
+        self.render(self.presenter.page_inbound(page * INBOUND_PAGE_SIZE))
+        self.table.selectRow(row)
+        widget = self.table.cellWidget(row, 2)
         if widget is not None:
             widget.setFocus()
 

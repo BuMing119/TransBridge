@@ -427,7 +427,8 @@ class TranslationMemoryManager:
                     result.text_hits += 1
                 if res.conflicts:
                     for c in res.conflicts:
-                        c["entry_id"] = dictionary_key(e)
+                        c["entry_id"] = e.identity.serialize()
+                        c["entry_label"] = dictionary_key(e)
                         result.conflicts.append(c)
             else:
                 result.misses += 1
@@ -439,6 +440,9 @@ class TranslationMemoryManager:
 
     def _file_for(self, mod_file_id: str) -> str:
         return f"{validate_name(mod_file_id)}{DICT_SUFFIX}"
+
+    def dictionary_path(self, mod_file_id: str) -> Path:
+        return (self._base_dir or self.default_dir()) / self._file_for(mod_file_id)
 
     def save(self, base_dir: Path | None = None) -> list[Path]:
         """持久化全部词典到 base_dir。返回写入的文件路径列表。"""

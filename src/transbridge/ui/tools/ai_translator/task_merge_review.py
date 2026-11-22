@@ -3,15 +3,15 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from uuid import uuid4
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from transbridge.application.tasks.result_application import ResultApplication, prior_merge_plan
 from transbridge.application.tasks.storage_contracts import ApplicationState
-from transbridge.application.translation.result_merge import ResultConflictPolicy, ResultEntryChange, ResultEntryState
-from transbridge.application.translation.task_merge_evidence import TaskMergeEvidenceStore
+from transbridge.application.translation.result_merge import ResultConflictPolicy, ResultEntryChange
+from transbridge.application.translation.saved_candidates import saved_candidate_change
+from transbridge.application.translation.task_merge_evidence import TaskMergeEvidenceStore, load_task_merge_evidence
 from transbridge.application.translation.task_recovery import TaskRecoveryStore
 from transbridge.ui.version_persistence import VersionPersistence
 
@@ -80,9 +80,7 @@ class TaskMergeReview(QObject):
             payload = self.store.load_results(self.task_id)
             if self.applications is not None:
                 self.applications.list(self.task_id)
-            evidence = []
-            for run_id in record.get("execution_runs", (self.task_id,)):
-                evidence.extend(TaskMergeEvidenceStore(self.directory / "ai-task-recovery", run_id).load())
+            evidence = load_task_merge_evidence(self.directory, record)
             return prepare_review(record, payload, evidence, reads, stamp[0])
 
         def ready(value):
@@ -150,16 +148,14 @@ class TaskMergeReview(QObject):
             return
         candidates = []
         for key, row in selected.items():
-            before = row["before"]
-            base = ResultEntryState(key, before["original"], before["translation"], before["stage"], before["context"])
-            incoming = replace(base, translation=row["text"], stage=row["stage"])
+            candidate = saved_candidate_change(row)
             if restore:
                 previous = self.previous.get(key)
                 if not previous or key not in self.current:
                     self._failed("该词条没有可恢复的覆盖前译文。")
                     return
-                base, incoming = self.current[key], previous[0]
-            candidates.append(ResultEntryChange(base, incoming))
+                candidate = ResultEntryChange(self.current[key], previous[0])
+            candidates.append(candidate)
         candidates = tuple(candidates)
         writer = TaskMergeEvidenceStore(self.directory / "ai-task-recovery", self.task_id)
         self.evidence_writer = writer

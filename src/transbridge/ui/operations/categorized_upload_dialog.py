@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from threading import Event
 
 from PyQt6.QtCore import QSignalBlocker, Qt, QTimer
@@ -24,6 +23,12 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from transbridge.paratranz.project_upload import (
+    FileOption as FileOption,
+    Selection,
+    SourceOption as SourceOption,
+    UploadReceipt as UploadReceipt,
+)
 from transbridge.ui.foundation.components import (
     ComponentKind,
     ComponentStyle,
@@ -33,38 +38,6 @@ from transbridge.ui.foundation.components import (
 )
 from transbridge.ui.operations.categorized_upload_progress import LatestProgress
 from transbridge.ui.workers import ApiWorker
-
-
-@dataclass(frozen=True, slots=True)
-class FileOption:
-    file_key: str
-    path: str
-    count: int
-
-
-@dataclass(frozen=True, slots=True)
-class SourceOption:
-    source_id: str
-    label: str
-    files: tuple[FileOption, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class Selection:
-    source_ids: tuple[str, ...]
-    file_keys: tuple[str, ...]
-    migrate_existing: bool = False
-    translation_mode: str = "orig_only"
-
-
-@dataclass(frozen=True, slots=True)
-class UploadReceipt:
-    success_count: int
-    failed_count: int
-    cancelled_count: int = 0
-    details: tuple[str, ...] = ()
-    pending_count: int = 0
-    retry_count: int = 0
 
 
 class CategorizedUploadDialog(QDialog):

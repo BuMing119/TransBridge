@@ -126,10 +126,8 @@ class RunController:
                 run_id=run_id,
                 terminology_snapshot_ref=terminology_snapshot_ref,
             )
-            config_snapshot = prepared.config_snapshot
-            terminology_binding = prepared.terminology_binding
-            request_budget = AiRequestBudget(prepared.max_concurrent)
-            spec = replace(prepared.spec, generation=next(self._ids))
+            request = prepared.execution_request()
+            spec = replace(request.spec, generation=next(self._ids))
         else:
             config_snapshot = FrozenExecutionConfig(config)
             execution_config = config_snapshot.copy()
@@ -159,19 +157,19 @@ class RunController:
                 project_revision=project_revision,
                 terminology_snapshot=terminology_binding.snapshot_ref,
             )
+            request = TranslationRunRequest(
+                spec=spec,
+                config_snapshot=config_snapshot,
+                entries=tuple(entries),
+                request_budget=request_budget,
+                terminology_binding=terminology_binding,
+            )
         from .task_adapter import runtime_job_spec
 
         runtime_ref = self._task_runtime.submit(runtime_job_spec(spec), owner).ref
         spec = replace(spec, run_id=runtime_ref.run_id or runtime_ref.job_id)
         self._task_runtime.start(runtime_ref, owner)
-        request = TranslationRunRequest(
-            spec=spec,
-            config_snapshot=config_snapshot,
-            entries=tuple(entries),
-            request_budget=request_budget,
-            terminology_binding=terminology_binding,
-            runtime_ref=runtime_ref,
-        )
+        request = replace(request, spec=spec, runtime_ref=runtime_ref)
         self._active = _ActiveRun(request)
         return request
 

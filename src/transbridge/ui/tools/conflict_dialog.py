@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -18,6 +19,13 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
+
+
+def review_dictionary_conflicts(choices: list[dict], parent: QWidget | None = None) -> list[tuple[str, str]]:
+    if not isinstance(QApplication.instance(), QApplication):
+        raise RuntimeError("词典有多个候选译文，请在桌面工作台处理冲突。本次未写入。")
+    dialog = DictionaryConflictDialog(choices, parent or QApplication.activeWindow())
+    return dialog.result() if dialog.exec() == QDialog.DialogCode.Accepted else []
 
 
 class DictionaryConflictDialog(QDialog):
@@ -59,6 +67,7 @@ class DictionaryConflictDialog(QDialog):
         form = QFormLayout(content)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         for eid, cands in by_entry.items():
+            entry_label = cands[0].get("entry_label", eid)
             # 候选译文列表（含胜者 + 冲突的其它译文）
             options: list[tuple[str, str]] = []
             seen: set[str] = set()
@@ -75,7 +84,7 @@ class DictionaryConflictDialog(QDialog):
                 continue
             combo = QComboBox()
             ComponentStyle.apply_static(combo, ComponentKind.INPUT)
-            combo.setAccessibleName(f"词条 {eid} 的采纳译文")
+            combo.setAccessibleName(f"词条 {entry_label} 的采纳译文")
             combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             combo.setMinimumContentsLength(24)
             combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -87,7 +96,7 @@ class DictionaryConflictDialog(QDialog):
             combo.setToolTip(combo.currentText())
             combo.currentTextChanged.connect(combo.setToolTip)
             self._combos.append((eid, combo))
-            label = QLabel(f"词条 {eid[:40]}")
+            label = QLabel(f"词条 {entry_label[:40]}")
             label.setTextFormat(Qt.TextFormat.PlainText)
             label.setToolTip(eid)
             form.addRow(label, combo)

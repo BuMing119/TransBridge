@@ -96,6 +96,18 @@ class ParaTranzProjectCatalog:
         with self._lock:
             self._cache.clear()
 
+    def find_member_project(
+        self,
+        service: ParaTranzService,
+        key: ParaTranzCatalogKey,
+        project_id: int,
+        *,
+        cancellation: CancellationPort | None = None,
+    ) -> ParaTranzProject | None:
+        """Revalidate a proposed binding against the current account's complete project list."""
+        snapshot = self.list_my_projects(service, key, refresh=True, cancellation=cancellation)
+        return next((project for project in snapshot.projects if project.project_id == project_id), None)
+
 
 __all__ = [
     "ParaTranzCatalogCancellation",

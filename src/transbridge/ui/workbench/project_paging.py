@@ -3,15 +3,13 @@
 
 from __future__ import annotations
 
-from collections import Counter
-from dataclasses import dataclass
 from threading import Event
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from transbridge.application.dialogue.index import CONTEXT_RECORD_TYPES, record_type
 from transbridge.application.io.contracts import FormatId
-from transbridge.converter.context_categories import context_category
+from transbridge.application.workbench_labels import LabelAliases
 from transbridge.persistence.project_store.paged_reads import WORKBENCH_PAGE_SIZE
 from transbridge.ui.project_rows import ProjectRowsCollection
 from transbridge.ui.workbench.filters_presenter import FilterState
@@ -21,18 +19,7 @@ from transbridge.ui.workbench.resident_rows import (
     patch_resident_rows,
     query_resident_rows,
 )
-from transbridge.ui.workbench.workflow_presenter import StatisticsSummary
 from transbridge.ui.workers import ApiWorker
-
-
-@dataclass(frozen=True)
-class ScopeStatistics:
-    categories: Counter
-    stages: Counter
-    labels: Counter
-    labeled: int
-    summary: StatisticsSummary
-
 
 _DEFAULT_QUERY = FilterState(), (None, False)
 
@@ -172,11 +159,18 @@ class WorkbenchProjectPaging(QObject):
         worker.start()
 
     def when_ready(self, callback) -> bool:
-        if self.collection is None or self._result_key == self._query_key():
+        if self.collection is None or self.query_ready:
             return True
         self._callbacks.append((self._query_key(), callback))
         self.request_query()
         return False
+
+    @property
+    def query_ready(self):
+        return self.collection is not None and self._result_key == self._query_key()
+
+    def ambiguous_row_id(self, entry_id):
+        return self._resident is not None and entry_id in self._resident.rows.ambiguous_ids
 
     def filtered_entries(self):
         return self._completed_query().entries
@@ -191,7 +185,7 @@ class WorkbenchProjectPaging(QObject):
 
     def selected_row_entry_ids(self):
         table = self.host._table
-        if self.collection is not None and self._result_key == self._query_key():
+        if self.query_ready:
             identities = self.result.identities
             return tuple(key for start, end in table.selected_row_spans() for key in identities[start : end + 1])
         return table.selected_entry_ids()
@@ -211,6 +205,29 @@ class WorkbenchProjectPaging(QObject):
         if self.collection is not None and self._result_key == self._query_key():
             return self.result.labels
         return self.host._entry_labels
+
+    def label_target_error(self, targets):
+        if self.collection is not None:
+            if self._resident is None:
+                return "请等待完整的工程标签范围准备完成。"
+            rows = self._resident.rows
+            if len(rows.positions) == len(rows.entries):
+                return ""
+            entries = rows.entries
+        else:
+            entries = self.host._entries
+        from transbridge.application.workbench_filters import entry_label_key
+
+        aliases = LabelAliases()
+        for entry in entries:
+            key = entry_label_key(entry)
+            if key in targets:
+                aliases.observe(entry, key)
+        try:
+            aliases.require_unique(targets)
+        except ValueError as exc:
+            return str(exc)
+        return ""
 
     def open_entry(self, key):
         if self._closed.is_set():
@@ -382,7 +399,7 @@ class WorkbenchProjectPaging(QObject):
         key = self._read_key()
         if key == self._statistics_key:
             return
-        worker = ApiWorker(lambda: _statistics(collection.statistics()), route_http_errors=False)
+        worker = ApiWorker(lambda: self.host._ctx.workbench_statistics(collection), route_http_errors=False)
         self._statistics_worker = worker
         errors = []
 
@@ -476,19 +493,3 @@ class WorkbenchProjectPaging(QObject):
         self._error_key = None
         self.host._project_read_error.clear()
         self.host._project_read_error.hide()
-
-
-def _statistics(facts):
-    categories, stages, labels = Counter(), Counter(), Counter()
-    labeled = 0
-    for (context, stage, _translated, membership), count in facts.items():
-        categories[context_category(context)] += count
-        stages[stage] += count
-        if membership:
-            labeled += count
-            for label in membership:
-                labels[label] += count
-    summary = StatisticsSummary(
-        sum(stages.values()), stages[0], stages[2], sum(stages[stage] for stage in (1, 3, 5, 9)), stages[-1]
-    )
-    return ScopeStatistics(categories, stages, labels, labeled, summary)

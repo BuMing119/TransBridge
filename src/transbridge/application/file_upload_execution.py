@@ -2,12 +2,18 @@
 """A single file's comparison, identity migration and ordered write phases."""
 
 from transbridge.application.categorized_upload.diagnostics import log_failure
-from transbridge.application.file_upload_diff import IncompleteUploadSnapshot, plan_file_changes
+from transbridge.application.file_upload_diff import FileUploadChanges, IncompleteUploadSnapshot, plan_file_changes
 from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError
 
 
 def comparison_plan(project_id, file_id, records, port, mode, archive_reader=None):
     """Archive exports omit some authoritative fields; supplement only that file."""
+    if file_id is None:
+        return FileUploadChanges(
+            source_changed=mode in {"orig_only", "both"}, translations=records if mode == "both" else ()
+        )
+    if mode == "trans_force" and not any(row["translation"].strip() for row in records):
+        return FileUploadChanges()
     if archive_reader is not None:
         try:
             rows = archive_reader(project_id, file_id)
@@ -49,19 +55,8 @@ def upload_one(
             phase = "comparison"
             check_current()
             _check_cancelled(cancelled)
-            plan = (
-                comparison_plan(
-                    project_id,
-                    file_id,
-                    records,
-                    port,
-                    mode,
-                    archive_reader if attempt == 0 else None,
-                )
-                if file_id is not None
-                else None
-            )
-            if plan is not None and plan.renames:
+            plan = comparison_plan(project_id, file_id, records, port, mode, archive_reader if attempt == 0 else None)
+            if plan.renames:
                 if not plan.source_changed and not plan.translations and defer_renames is not None:
                     deferred = defer_renames(plan.renames)
                     if deferred is not None:
@@ -74,7 +69,7 @@ def upload_one(
                 port.rename_keys(project_id, plan.renames)
                 renamed = True
             results = []
-            if mode in {"orig_only", "both"} and (plan is None or plan.source_changed):
+            if plan.source_changed:
                 phase = "source"
                 check_current()
                 _check_cancelled(cancelled)
@@ -91,7 +86,7 @@ def upload_one(
                     _validate_write(result)
                 results.append(result.status)
                 source_applied |= result.status == "applied"
-            translations = plan.translations if plan is not None else records
+            translations = plan.translations
             if mode != "orig_only" and translations:
                 phase = "translation"
                 check_current()

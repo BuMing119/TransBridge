@@ -17,7 +17,7 @@ from pathlib import Path
 import time
 import zipfile
 
-from transbridge.application.contracts import OperationOutcome
+from transbridge.application.contracts import OperationOutcome, OperationResult
 from transbridge.application.io.publish import ImmediateCommitGuard, PublishCommitGuard
 from transbridge.application.ports.paratranz import (
     CancellationPort,
@@ -86,9 +86,27 @@ class ArtifactWorkflow:
                 max_poll_attempts=max(1, math.ceil(timeout / poll_interval)),
             )
         )
+        self._check_download(result, timeout=timeout)
+        notify("导出完成，已通过校验并原子发布。")
+        notify(f"已下载至：{save_path}")
+        return save_path
+
+    def download_existing(self, project_id: int, save_path: str | Path) -> str:
+        """下载现有导出包，不创建新导出任务。"""
+        path = str(save_path)
+        run_id = f"download-{project_id}-{time.monotonic_ns()}"
+        result = ParaTranzArtifactPublisher(_LegacyArtifactPort(self._api)).publish(
+            ArtifactPublishRequest(project_id, path, run_id, ImmediateCommitGuard(run_id)),
+            download_existing=True,
+        )
+        self._check_download(result)
+        return path
+
+    @staticmethod
+    def _check_download(result: OperationResult, *, timeout: float | None = None) -> None:
         diagnostic = result.diagnostics[0] if result.diagnostics else None
         code = diagnostic.code if diagnostic else "ARTIFACT_PUBLISH_FAILED"
-        if result.outcome is OperationOutcome.FAILED and code == "ARTIFACT_POLL_TIMEOUT":
+        if timeout is not None and result.outcome is OperationOutcome.FAILED and code == "ARTIFACT_POLL_TIMEOUT":
             raise TimeoutError(f"导出超时（超过 {timeout:.0f} 秒），请稍后到 ParaTranz 网站手动下载。")
         if diagnostic is not None and code == "ARTIFACT_JOB_FAILED":
             raise RuntimeError(diagnostic.message)
@@ -98,10 +116,6 @@ class ArtifactWorkflow:
             raise RuntimeError(f"{error} · {details}" if details else error)
         if result.outcome not in {OperationOutcome.COMPLETED, OperationOutcome.PARTIAL}:
             raise RuntimeError(f"ParaTranz artifact publication failed ({code})")
-        notify("导出完成，已通过校验并原子发布。")
-        notify(f"已下载至：{save_path}")
-
-        return save_path
 
     def extract(
         self,
