@@ -48,7 +48,7 @@ def upload_one(
             log_failure("file_upload_resolve", exc, path=path, project_id=project_id)
             return FileReceipt(path, "failed", str(exc), source_applied or renamed, translation_applied)
         try:
-            if mode in {"trans_safe", "trans_force"} and file_id is None:
+            if mode in {"trans_safe", "trans_force", "trans_fill_empty"} and file_id is None:
                 return FileReceipt(path, "skipped", "仅导入译文：云端没有此文件，已跳过。")
             if mode == "trans_force" and not any(row["translation"].strip() for row in records):
                 return FileReceipt(path, "unchanged", "没有可强制导入的非空差异译文。")
@@ -99,6 +99,8 @@ def upload_one(
                 translation_applied |= result.status == "applied"
             unchanged = not renamed and all(status in {"hashMatched", "unchanged"} for status in results)
             message = "本地与云端内容一致，无需更新。" if unchanged else "文件操作完成。"
+            if mode == "trans_fill_empty":
+                message = f"已提交填空 {len(translations)} 条，云端已有译文跳过 {plan.skipped_nonblank} 条。"
             if mode in {"both", "trans_safe"} and translations:
                 message += "译文使用安全导入，人工译文等由服务端保留。"
             return FileReceipt(

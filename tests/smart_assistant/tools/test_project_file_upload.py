@@ -89,9 +89,10 @@ def test_selected_entries_cannot_be_widened_to_a_whole_file(bound):
     assert not remote.reads and not remote.writes
 
 
-def test_missing_remote_file_skipped_in_translation_mode_is_incomplete(bound):
+@pytest.mark.parametrize("mode", ["trans_safe", "trans_fill_empty"])
+def test_missing_remote_file_skipped_in_translation_mode_is_incomplete(bound, mode):
     ctx, args, remote = bound
-    args = {**args, "mode": "trans_safe"}
+    args = {**args, "mode": mode}
     preview = ToolRegistry.get("compare_with_remote").execute(args, ctx)
     key = preview.data["files"][0]["file_key"]
     result = ToolRegistry.get("upload_entries").execute({**args, "file_keys": [key]}, ctx)

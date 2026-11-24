@@ -137,6 +137,7 @@ class CategorizedUploadDialog(QDialog):
             ("仅安全导入译文（保留人工译文，不新增文件或词条）", "trans_safe"),
             ("仅强制导入差异译文（跳过空译文）", "trans_force"),
             ("增量更新原文并安全导入译文", "both"),
+            ("仅填补云端空译文", "trans_fill_empty"),
         ):
             self._mode.addItem(label, value)
         self._mode.setAccessibleName("文件上传内容与覆盖策略")

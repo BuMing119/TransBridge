@@ -75,7 +75,7 @@ def test_force_upload_confirms_at_execution_for_all_layouts_and_scopes(qapp, wor
         subject.close()
 
 
-@pytest.mark.parametrize("mode", ["orig_only", "trans_safe", "both"])
+@pytest.mark.parametrize("mode", ["orig_only", "trans_safe", "both", "trans_fill_empty"])
 def test_nonforce_upload_and_retry_do_not_prompt(qapp, worker_queue, monkeypatch, mode):
     monkeypatch.setattr(QMessageBox, "exec", lambda *_args: pytest.fail("Unexpected force confirmation"))
     uploaded, retried = [], []

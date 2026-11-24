@@ -13,12 +13,11 @@ from typing import Protocol
 from transbridge.application.categorized_upload.classification import categorize_sources, source_directory_names
 from transbridge.application.categorized_upload.diagnostics import log_event, log_failure
 from transbridge.application.categorized_upload.models import CategorizedFile, UploadSource
+from transbridge.application.file_upload_diff import UPLOAD_MODES
 from transbridge.application.io.paratranz_context_order import PARATRANZ_CONTEXT_ORDER_METADATA, context_orders
 from transbridge.application.io.paratranz_keys import split_ordered_key
 from transbridge.application.io.paratranz_mapping import paratranz_record_from_entry
 from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError
-
-UPLOAD_MODES = ("orig_only", "trans_safe", "trans_force", "both")
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,7 +200,7 @@ def execute_file_upload(
     with ExitStack() as resources:
         archive_reader = None
         prepare = getattr(port, "force_comparison", None)
-        if prepare is not None:
+        if prepare is not None and mode != "trans_fill_empty":
             selected_ids = _comparison_file_ids(files, inventory, mode)
             status = (lambda message: progress(0, len(files), message)) if progress else None
             try:

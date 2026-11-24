@@ -281,7 +281,10 @@ _FILE_PARAMETERS = {
     "mode": {
         "type": "str",
         "required": True,
-        "description": "Desktop upload mode: orig_only, trans_safe, trans_force or both",
+        "description": (
+            "Desktop upload mode: orig_only, trans_safe, trans_force, both or trans_fill_empty. "
+            "trans_fill_empty safely imports nonblank local text only for matches read as blank on the server."
+        ),
     },
     "source_ids": {
         "type": "list",

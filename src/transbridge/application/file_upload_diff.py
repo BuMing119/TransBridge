@@ -8,7 +8,7 @@ from .io.identity import SourceNamespace
 from .io.paratranz_context_order import parse_ordered_context
 from .io.paratranz_keys import decode_key, split_ordered_key
 
-_MODES = {"orig_only", "trans_safe", "trans_force", "both"}
+UPLOAD_MODES = ("orig_only", "trans_safe", "trans_force", "both", "trans_fill_empty")
 _LITERAL_PREFIX = "__transbridge_key__:v1:k:"
 _QUALIFIED_PREFIX = "__transbridge_key__:v1:o:"
 
@@ -22,6 +22,7 @@ class FileUploadChanges:
     renames: tuple[dict, ...] = ()
     source_changed: bool = False
     translations: tuple[dict, ...] = ()
+    skipped_nonblank: int = 0
 
 
 def plan_file_changes(
@@ -38,7 +39,7 @@ def plan_file_changes(
     imports retain the complete cloud key. Combined imports use the final key
     and also restore translations on rows affected by a source change.
     """
-    if mode not in _MODES:
+    if mode not in UPLOAD_MODES:
         raise ValueError("未知文件上传模式。")
     if type(file_id) is not int or file_id < 1:
         raise ValueError("file_id must be a positive integer")
@@ -48,6 +49,7 @@ def plan_file_changes(
     source_mode = mode in {"orig_only", "both"}
     renames, translations = [], []
     source_changed = False
+    skipped_nonblank = 0
     for index, record in enumerate(local):
         remote = matches.get(index)
         if remote is None:
@@ -59,6 +61,13 @@ def plan_file_changes(
         if transport.startswith(_QUALIFIED_PREFIX):
             _require(remote, ("original",), from_archive)
             decode_key(transport, remote["original"], SourceNamespace.legacy())
+        if mode == "trans_fill_empty":
+            _require(remote, ("translation",), from_archive)
+            if (remote["translation"] or "").strip():
+                skipped_nonblank += 1
+            elif record.get("translation", "").strip():
+                translations.append(_translation(record, remote["key"]))
+            continue
         source_dirty = False
         if source_mode:
             _require(remote, ("original", "context"), from_archive, optional_context=True)
@@ -90,7 +99,7 @@ def plan_file_changes(
         if different or (mode == "both" and source_dirty):
             key = record["key"] if source_mode else remote["key"]
             translations.append(_translation(record, key))
-    return FileUploadChanges(tuple(renames), source_changed, tuple(translations))
+    return FileUploadChanges(tuple(renames), source_changed, tuple(translations), skipped_nonblank)
 
 
 def _translation(record: Mapping, key: str) -> dict:
