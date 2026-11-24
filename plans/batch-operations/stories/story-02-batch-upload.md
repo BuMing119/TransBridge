@@ -1,7 +1,7 @@
 # Story 02: 批量上传
 
 **所属方案**: `plans/batch-operations/plan.md`
-**状态**: ✔️ 已实现
+**状态**为历史实现。现行行为见 [ParaTranz 上传说明](../../../docs/dev/paratranz-categorized-upload.md)。
 
 ## 概述
 

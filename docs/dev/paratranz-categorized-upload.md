@@ -1,10 +1,14 @@
 # ParaTranz 文件上传与分类布局
 
-更新：2026-11-21。当前合同为 [ADR-047](../adr/047-opt-in-categorized-project-upload.md) 与 [ADR-049](../adr/049-task-result-lifecycle.md)；历史词条核验、批次关联保存与旧性能测量见 [S11 历史记录](../changelogs/paratranz-categorized-upload/story-11/2026-10-25-001-direct-upload-and-fixed-paths.md)，不再是常规 GUI 上传流程。
+更新于 2026-11-23。文件上传和任务结果的约定见 [ADR-047](../adr/047-opt-in-categorized-project-upload.md) 与 [ADR-049](../adr/049-task-result-lifecycle.md)。历史词条核验、批次关联保存与性能测量见 [S11 历史记录](../changelogs/paratranz-categorized-upload/story-11/2026-10-25-001-direct-upload-and-fixed-paths.md)。
 
 ## 用户操作
 
-单独和批量上传中选择普通或分类模式，默认普通。普通生成根目录 `插件名.json`；分类生成 `插件名/分类.json`。Quest 对话、未关联对话及合并任务日志位于 `插件/任务/`。插件名保留扩展名，同名来源使用稳定来源摘要消歧，单独与批量命名一致。
+1. 在 ParaTranz 菜单点「上传…」，选择普通或分类上传，再点「下一步」。默认选择普通上传。
+2. 在文件窗口核对目标项目，勾选插件和文件。默认只勾选当前插件。两张列表各有「全选」和「全部不选」，文件按钮只影响当前勾选插件所显示的文件。只有一个插件时直接显示插件名。
+3. 选择原文或译文处理方式，再点「上传所选文件」或「上传所选分类」。之前的预览只读取本地工程，点击最终上传按钮后才读取云端文件并比较。
+
+普通生成根目录 `插件名.json`，分类生成 `插件名/分类.json`。Quest 对话、未关联对话及合并任务日志位于 `插件/任务/`。插件名保留扩展名，同名来源使用稳定来源摘要消歧，单独与批量命名一致。
 
 任务对话按 Quest ID 分组，文件名优先采用同一完整来源中准确 FormID 对应的 `QUST:FULL.original`：`任务/对话_[任务原名].json`。不用任务译名、日志或目标文本。名称缺失、空白或同一 Quest 有不同原名时回退 `对话_[QuestID].json`；无关联使用未关联任务。文件名清理/截断/大小写重名时追加 Quest ID，命名在文件选择前确定。分类与脚本共用唯一核心，不按每个文件重建名称索引。
 
@@ -36,7 +40,7 @@ hashMatched/unchanged 是成功无变更；empty 表示没有导入内容，不�
 
 ## 执行及恢复
 
-后台先获取文件列表，再按完整路径定位。新文件按模式创建或跳过；已有文件先比较，再执行需要的改号、原文更新或译文导入。完整路径精确匹配优先。找不到精确路径时，唯一的大小写变体可沿用其文件 ID。出现多个变体时，本次上传只将该文件标为失败并显示候选路径，其他文件继续处理。
+后台先获取云端文件列表，再按完整路径定位。新文件按模式创建或跳过。已有文件先比较，再执行需要的改号、原文更新或译文导入。进度显示已处理的文件数，结果分别显示「已更新」和「无变化」。重复上传一致内容时，进度仍会推进，结果可以是零更新。完整路径精确匹配优先。找不到精确路径时，唯一的大小写变体可沿用其文件 ID。出现多个变体时，本次上传只将该文件标为失败并显示候选路径，其他文件继续处理。
 
 本轮需要比较的已有文件少于 50 个时按文件读取，达到 50 个时用一份新项目 ZIP 读取所选文件。仅强制译文模式可提前排除本地译文全空白的文件。归档缺少当前操作需要的字段时，仅对该文件补读。补传重新获取云端现状。
 
@@ -97,10 +101,11 @@ uv run python scripts/plugin_eet_to_json.py plugin.esp translations.xml output_d
 - paratranz/download_paths.py：只按插件层级选择根文件、数字分片及目录下全部 JSON，不重算分类路径。
 - paratranz/batch_download_snapshot.py 与 application/sync/batch_download.py：共享文件列表、来源隔离、404 完整重定位、逐来源规划和本地编辑重基。
 - application/sync/reviewed_snapshot.py 与 ui/operations/download_session.py：本轮不可变下载内容及会话复用，授权和执行不重复联网。
-- ui/operations/categorized_upload_bridge.py 和 categorized_upload_dialog.py：工程快照、来源范围、后台任务、内容策略与文件结果；会话保存补传输入，窗口按 retry_count 提供手动补传，诊断用 retry 区分补传操作。
+- `ui/operations/categorized_upload_bridge.py` 先打开 `upload_mode_dialog.py` 选择普通或分类，再打开 `categorized_upload_dialog.py` 勾选插件和文件。后者负责后台预览、进度与回执。
+- `paratranz/project_upload.py` 负责工程快照、来源范围以及文件写入会话。会话保存补传输入，窗口按 `retry_count` 提供手动补传。
 - application/sync/project_download.py、download_merge.py、download_run.py：GUI/助手共享编排、内容合入及本轮清理；UI 和助手分别注入既有执行许可。
 - application/projects/durable_variant.py：下载候选的完整版本事务保存、写后核验和内存发布；普通编辑默认仍沿用原工作状态提交。
-- ui/operations/facade.py 和 production.py：普通生产入口接入文件执行；分类入口共用同一流程。
+- `ui/operations/facade.py` 和 `production.py` 将统一上传入口接到文件窗口，并由主窗口持有操作生命周期。
 
 沿用现有应用日志与 PARATRANZ_CATEGORIZED_UPLOAD 作用域。file_http_response 对每次成功或失败请求记录方法、相对端点、attempt、outcome、HTTP 错误状态/分类及有界业务状态；elapsed_ms 保持实际请求耗时，wait_ms 单独记录账号锁和预算排队，total_ms 是本次排队加请求，不含随后的 429 冷却。尚未发请求就取消时记录 file_request_wait，不计作 HTTP；file_rate_limit_wait 单独记录期望和实际冷却等待及取消结果。file_upload_result 记录文件状态和原文/译文阶段是否提交；operation_failed 保留原操作诊断。
 

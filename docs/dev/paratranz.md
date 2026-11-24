@@ -4,7 +4,7 @@
 
 ParaTranz 平台集成模块，提供 API 客户端、配置管理和文件上传/下载工作流。作为 TransBridge 与 ParaTranz 协作翻译平台之间的桥梁，支持项目同步、译文导入导出等功能。
 
-当前普通/分类、单独/批量 GUI 共用文件 API 流程，普通使用根目录 `<插件名>.json`，分类使用 `<插件名>/<分类>.json`，无额外模式目录，也不跨路径整理。原文限定词条使用可还原的哈希传输 key，保持在正常文件内；本地与插件 key 不变。下载按插件层级读取全部分类文件、在本地匹配，本轮结束清理临时输入。API 语义和排查见[文件上传开发说明](paratranz-categorized-upload.md)。下文 `OrdinaryUploadAdapter`、`ParaTranzUploader` 属于兼容接口。
+普通、分类、单插件和多插件上传共用文件 API。普通使用根目录 `<插件名>.json`，分类使用 `<插件名>/<分类>.json`。原文限定词条在原分类文件中使用可还原的传输 key，本地与插件 key 保持不变。下载按插件层级读取全部分类文件、在本地匹配，本轮结束清理临时输入。操作步骤和 API 语义见[文件上传开发说明](paratranz-categorized-upload.md)。
 
 ---
 
@@ -289,63 +289,9 @@ def _make_file_field(field_name: str, filename: str, data: bytes) -> RequestFiel
 
 ### GUI 文件上传
 
-当前普通/分类 GUI 共用 `application/file_upload.py` 与 `paratranz/file_publication.py`。
-每次读取一次文件列表，按完整路径定位后整文件创建、增量更新原文或批量导入译文/状态；
-强制导入先按文件取云端现译，只提交本地非空且不同的译文。少于 50 个文件逐文件读取，达到 50 个使用与同步下载相同的新项目压缩包。
-API 参数、权限、423/429、取消和下载范围见 [文件上传说明](paratranz-categorized-upload.md)。
+「上传…」先打开上传方式对话框，选定普通或分类后再打开插件和文件选择窗口。窗口先本地预览，用户提交后由 `paratranz/project_upload.py` 的 `CategorizedUploadSession` 捕获所选来源，并将文件交给 `application/file_upload.py` 和 `paratranz/file_publication.py`。
 
-### ParaTranzUploader（兼容调用）
-
-将本地 `TranslationEntryCollection` 上传到 ParaTranz 项目。
-
-**路径**: `src/transbridge/paratranz/workflow/uploader.py`
-
-**上传模式**:
-
-```
-translation_mode:
-  "orig_only"   — 仅更新原文，不碰译文（默认）
-  "trans_safe"  — 仅导入译文，不覆盖已人工编辑的词条；新建文件跳过
-  "trans_force" — 强制导入现有文件中非空且与云端不同的译文
-  "both"        — 更新原文并安全导入译文（不覆盖人工编辑）；新建文件创建后再导入译文
-```
-
-**逻辑矩阵**:
-
-| mode | `reupload_file` | `update_file_translation` | force | 新文件 |
-|------|:-:|:-:|:-:|------|
-| `orig_only` | ✓ | — | — | `upload_file` |
-| `trans_safe` | — | ✓ | False | 跳过 |
-| `trans_force` | — | ✓ | True | 跳过 |
-| `both` | ✓ | ✓ | False | `upload_file` → `update_file_translation` |
-
-**当前兼容入口**：`upload_collection_as_single(collection, project_id, filename, ...)` 将完整集合导出为单个 JSON，按根目录完整路径定位，遇到 413 对半拆分。返回 UploadResult 的 created、updated、skipped、translation_updated 和 files。
-
-分类上传使用 application.file_upload 的文件执行器和共享分类结果；本地分类导出由 export_to_categorized_json_files 写入同一套相对文件。旧分类上传、手动冲突映射及对应 UI 已移除。
-
-**大文件自动拆分**:
-
-`upload_collection_as_single()` 支持大文件自动拆分上传：
-
-普通 GUI 的文件名由稳定插件名生成（保留 `.esm`/`.esp` 等扩展名，同名来源加稳定摘要），单独与批量一致。单文件方法只匹配根目录完整路径，不再按 basename 认领其他目录文件；拆分后的文件同样位于根目录。
-
-```
-_upload_entries_recursive(entries, stem, ext, ..., is_split=False)
-    │
-    ├─► 首次上传（is_split=False）→ 使用原始文件名（如 Plugin.json）
-    │
-    ├─► 尝试上传
-    │       ├─ 成功 → 返回
-    │       └─ 失败 (413/too large) → 对半拆分，递归上传（is_split=True）
-    │
-    └─► 分割后上传（is_split=True）→ 使用序号后缀（如 Plugin_1.json、Plugin_2.json）
-```
-
-**文件命名规则**:
-| 场景 | 文件名 |
-|------|--------|
-| 文件未超过大小限制 | `{filename}` |
-| 文件过大分割为N份 | `{stem}_1.ext`, `{stem}_2.ext`, ..., `{stem}_N.ext` |
+文件执行器按完整路径定位云端文件，比较后执行所需的创建、原文增量更新或译文导入。仅强制导入译文时提交非空差异译文。需要比较的已有文件达到 50 个时使用新的项目 ZIP。上传策略、分片、权限、取消和补传见[文件上传说明](paratranz-categorized-upload.md)。
 
 ---
 
@@ -415,20 +361,7 @@ llm_config.save_to_file()
 
 ### 上传翻译条目
 
-当前 GUI 通过共享文件执行器上传，接口和分类规则见[文件上传说明](paratranz-categorized-upload.md)。程序化使用仍保留的单文件兼容入口：
-
-```python
-from transbridge.paratranz.workflow.uploader import ParaTranzUploader
-
-uploader = ParaTranzUploader(config)
-result = uploader.upload_collection_as_single(
-    collection,
-    project_id=12345,
-    filename="Plugin.esp.json",
-    translation_mode="trans_safe",
-    progress_callback=lambda current, total, name: print(current, total, name),
-)
-```
+工程级调用使用 `CategorizedUploadSession` 和 `Selection`，由应用层 `execute_file_upload()` 执行。操作步骤和代码入口见[文件上传说明](paratranz-categorized-upload.md)。
 
 ### 导出分类 JSON
 

@@ -103,13 +103,10 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | `ParatranzStringsAPI` | `src/transbridge/paratranz/api/paratranz_strings_api.py` | 翻译条目 CRUD API |
 | `ParatranzTermsAPI` | `src/transbridge/paratranz/api/paratranz_terms_api.py` | 术语管理 API |
 | `ParatranzExportAPI` | `src/transbridge/paratranz/api/paratranz_export_api.py` | 导出翻译文件 API |
-| `ParaTranzUploader` | `src/transbridge/paratranz/workflow/uploader.py` | 上传工作流（Collection → ParaTranz），支持 `path_mapping`、`file_id_override`、`prefetched_maps` 参数，两阶段冲突检测（单次 API 调用） |
+| `CategorizedUploadSession` | `src/transbridge/paratranz/project_upload.py` | 普通和分类上传会话，负责本地预览、目标校验和补传 |
 | `ParaTranzDownloader` | `src/transbridge/paratranz/workflow/downloader.py` | 下载工作流（ParaTranz → Collection） |
 | `ArtifactWorkflow` | `src/transbridge/paratranz/workflow/artifact.py` | 导出工作流（触发导出 + 下载） |
-| `UploadResult` | `src/transbridge/paratranz/workflow/uploader.py` | 上传结果摘要（created/updated/skipped/translation_updated/name_conflicts） |
-| `ConflictInfo` | `src/transbridge/paratranz/workflow/uploader.py` | 单个文件同名冲突信息（local_name + candidates 列表）|
-| `FileMaps` | `src/transbridge/paratranz/workflow/uploader.py` | 文件映射数据类（existing/path_based/name_to_files），用于两阶段流程传递 |
-| `detect_conflicts` | `src/transbridge/paratranz/workflow/uploader.py` | 预检冲突，返回 `(conflicts, FileMaps)` 元组，支持 `progress_callback` |
+| `FileUploadReceipt` | `src/transbridge/application/file_upload.py` | 各文件的写入结果及可补传的文件和分片 |
 
 ### UI 核心类
 
@@ -127,14 +124,11 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | `Step3OpsWidget` | `src/transbridge/ui/workbench/step3.py` | 步骤3：操作面板（上传/下载/写回三卡片） |
 | `CollectionStatsPanel` | `src/transbridge/ui/workbench/stats_panel.py` | 左侧集合统计面板（分类树形统计） |
 | `OpCard` | `src/transbridge/ui/workbench/cards/base.py` | 操作卡片基类，含主按钮和可选批量按钮 |
-| `UploadCard` | `src/transbridge/ui/workbench/cards/upload_card.py` | 上传卡片（分类/普通模式 + 批量上传含模式选择） |
+| `UploadCard` | `src/transbridge/ui/workbench/cards/upload_card.py` | 从同一入口发起单插件或多插件上传 |
 | `DownloadCard` | `src/transbridge/ui/workbench/cards/download_card.py` | 下载卡片（单文件/批量下载，支持分割文件自动合并） |
 | `WriteCard` | `src/transbridge/ui/workbench/cards/write_card.py` | 写回卡片（ESP/EET/XT + 批量写回） |
-| `_SlotSelectDialog` | `src/transbridge/ui/workbench/cards/*.py` | 批量操作插件选择对话框（全选/全不选） |
-| `_BatchUploadModeDialog` | `src/transbridge/ui/workbench/cards/upload_card.py` | 批量上传模式选择对话框（已存在文件处理方式） |
-| `_BatchConfirmDialog` | `src/transbridge/ui/workbench/cards/*.py` | 批量操作滚动确认对话框（最大高度 400px） |
-| `_BatchResultDialog` | `src/transbridge/ui/workbench/cards/*.py` | 批量操作滚动结果对话框（最大高度 400px） |
-| `CategorizedUploadDialog` | `src/transbridge/ui/operations/categorized_upload_dialog.py` | 本地分类选择后直接上传；后台核验固定路径，结束后手动补传未完成文件及分片 |
+| `UploadModeDialog` | `src/transbridge/ui/operations/upload_mode_dialog.py` | 打开文件窗口前选择普通或分类上传 |
+| `CategorizedUploadDialog` | `src/transbridge/ui/operations/categorized_upload_dialog.py` | 本地文件预览、插件和文件批量勾选、上传进度、结果及补传 |
 | `AITranslatorWindow` | `src/transbridge/ui/tools/ai_translator/ai_translator_window.py` | AI翻译配置窗口（QTabWidget 三标签页布局：LLM 与模型 / 术语库 / 后处理，窗口高度 520 px） |
 | `AiTaskProgressWindow` | `src/transbridge/ui/tools/ai_translator/task_progress.py` | 统一任务进度与后台控制 |
 | `AiTaskWorker` | `src/transbridge/ui/tools/ai_translator/task_worker.py` | TaskRuntime 使用的统一后台线程 |

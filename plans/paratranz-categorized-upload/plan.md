@@ -1,12 +1,12 @@
 # 项目多插件分类上传
 
-当前进度见 [S32 四种上传模式的本地差异比较](#s32-四种上传模式的本地差异比较)。
+当前进度见 [S04 上传方式、批量勾选与进度](../../docs/changelogs/paratranz-categorized-upload/story-01-to-05/2026-11-23-003-upload-selection-and-progress.md) 和 [S32 四种上传模式的本地差异比较](#s32-四种上传模式的本地差异比较)。统一入口初版见 [S04 历史记录](../../docs/changelogs/paratranz-categorized-upload/story-01-to-05/2026-11-22-002-unified-upload-entry.md)。
 
 状态：S31 达到 50 文件生成新压缩包下载已实现；2026-11-11 按用户要求完成目录优先、按需补齐，真实 ZIP 的 189 文件各读一次，20,162 词条离线快照与逐文件读取一致，相关回归 469 项及全库 Ruff/格式通过，见 [按需补齐增量](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-11-004-directory-priority-reads.md)。历史实现见 [全包检索](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-11-003-archive-member-discovery.md)、[S31 初版](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-03-001-fresh-archive-download.md)及 [后缀兼容补修](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-11-002-raw-json-suffix-compatibility.md)。S30 并发、S29 节奏、S28 阅读布局、S27 共享下载及 S26 补传合同保持。
 
 ## 当前目标与约束
 
-- 普通与分类共用文件级执行器；单独限定当前插件，批量可选登记来源。普通根目录插件名.json，分类插件名/分类.json，Quest 及日志目录不变，命名基于全部来源。
+- 统一上传入口先询问普通或分类，再打开文件选择窗口。默认勾选当前插件，两张列表分别支持全选和全部不选。提交前从本地生成预览，提交后启动所选文件的云端比较。普通与分类共用文件级执行器。普通根目录插件名.json，分类插件名/分类.json，Quest 及日志目录不变，命名基于全部来源。
 - 提供仅原文、仅安全译文、仅强制译文、原文加安全译文，默认原文增量保留云端余项。四种模式先比较已有目标文件，分别跳过无差异的改号、原文和译文操作。
 - 使用官方文件创建、增量更新与按 key 导入 translation/stage；不读取项目词条，不逐条核验/回读，排序码迁移使用批量 strings 编辑并核对 ID，文件上传不生成持久关联。
 - 当前路径决定 file_id；同路径重建不要求审阅，404 最多重新定位一次，超时不自动重发。本轮结束后可手动补传未完成文件，重新读取云端列表，只处理剩余文件及分片。共享用户请求预算，明确 429 尊重 Retry-After，423 报文件忙。

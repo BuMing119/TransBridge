@@ -450,40 +450,11 @@ ESP-ESM Translator XML ──Collection.from_eet_xml()──> TranslationEntryCo
 
 **路径**: `src/transbridge/ui/workbench/step3.py`
 
-**职责**: 操作面板，三个独立操作卡片：上传 ParaTranz、下载合并、写回 ESP。批量操作已集成到各卡片中。
+兼容操作面板包含上传、下载和导出卡片，以及云端目标指示和共享进度。主窗口的 ParaTranz 菜单通过同一上传卡片发起操作。
 
-**结构**:
-```
-Step3OpsWidget
-├── 项目指示条
-├── 警告条（初始隐藏）
-├── 卡片行
-│   ├── UploadCard（含批量按钮，slots > 1 时显示）
-│   ├── DownloadCard（含批量按钮，slots > 1 时显示）
-│   └── WriteCard（含批量按钮，slots > 1 时显示）
-├── 共享进度条
-└── ProjectPromptOverlay（遮罩层，未选项目时显示）
-```
-
-**批量操作功能**（当 `len(ctx.slots) > 1` 时，各卡片显示「批量」按钮）:
-- 批量上传：点击后弹出插件选择对话框 → 上传模式选择对话框 → 确认对话框 → 执行
-- 批量下载：点击后弹出插件选择对话框 → 确认对话框 → 执行
-- 批量导出：打开独立导出窗口 → 选择输出目录及格式 → 导出（自动后台检查）
-
-**按钮状态控制**:
-- 上传/下载：需 `collection` + `current_project` + `is_member`
-- 写回：需完整来源快照、格式信息及 `collection`，统一进入安全写回计划
-- 批量上传/下载按钮：需 `current_project` + `is_member`
-- 批量写回按钮：至少两个来源且存在可写来源；无效来源保留失败回执，其他独立来源继续
-
-**ProjectPromptOverlay 遮罩层**:
-- 触发条件：`has_collection and not has_project`（已加载集合但未选项目）
-- 覆盖范围：**仅覆盖 UploadCard + DownloadCard**，WriteCard 不受遮罩影响，保持可交互
-- 几何计算：`_update_overlay_geometry()` 以 `_card_upload.mapTo` 确定起始 y（跳过 GroupBox 标题和指示条），以 `_card_write.mapTo` 确定右边界，使 overlay 仅覆盖 UploadCard + DownloadCard 所在区域（fallback 宽度为 widget 宽度的 2/3）
-
-**项目切换逻辑**:
-- 切换项目时若已有集合，弹窗确认是否切换
-- 选中非参与项目时显示警告条
+- 上传从「上传…」进入。在普通或分类布局确定后，单插件与多插件共用文件选择窗口。
+- 下载通过统一窗口选择所需插件。导出卡片在有多个来源时提供批量按钮，输出位置和格式由导出窗口负责。
+- 上传按钮在存在当前集合或已加载来源时可用，账号及目标项目由文件上传入口校验。兼容面板的状态更新会隐藏 `ProjectPromptOverlay`。
 
 ---
 
@@ -507,19 +478,9 @@ class OpCard(QGroupBox):
 **子类**:
 | 类 | 路径 | 说明 |
 |----|------|------|
-| `UploadCard` | `cards/upload_card.py` | 上传到 ParaTranz（支持分类/普通模式，4 种原文/译文处理策略，分类模式下支持选择上传的文件） |
+| `UploadCard` | `cards/upload_card.py` | 打开统一上传流程，先选择普通或分类，再选择插件和文件 |
 | `DownloadCard` | `cards/download_card.py` | 从 ParaTranz 下载并合并 |
 | `WriteCard` | `cards/write_card.py` | 打开独立导出窗口，选择格式和位置后自动检查、导出 |
-
-#### 批量操作通用对话框
-
-各卡片均使用以下对话框：
-
-| 类 | 用途 |
-|----|------|
-| `_SlotSelectDialog` | 插件选择对话框，全选/全不选，滚动区域支持大量插件 |
-| `_BatchConfirmDialog` | 批量操作确认对话框，最大高度 400px，支持大量项目滚动查看 |
-| `_BatchResultDialog` | 批量操作结果展示对话框，显示成功/失败/总数及详情 |
 
 #### WriteCard — 导出文件与另存为
 
@@ -560,51 +521,13 @@ BSA 模式禁止覆盖来源依赖的原归档，避免仅包含 STRINGS 的输�
 
 界面和助手共用 `application/io/operation_write_batch.py` 的输出冲突及批量执行逻辑。助手文件撤销凭证按预检确定的实际目标记录插件、BSA、散装资源或 XML，整批一次捕获；撤销可恢复原文件并移除本轮新建输出，不包含未选择的来源。
 
-#### UploadCard — `_BatchUploadModeDialog` 批量上传模式
+#### UploadCard — ParaTranz 上传
 
-批量上传时弹出的模式选择对话框（简化版，无文件名输入）。
+`OperationPlanFacade.begin_upload(..., batch=None)` 进入桌面上传流程。`categorized_upload_bridge.py` 先打开 `UploadModeDialog`，用户选普通或分类并点「下一步」后才创建上传会话和 `CategorizedUploadDialog`。
 
-**说明**:
-- 每个插件将作为单个 JSON 文件上传（不分类）
-- 文件名自动使用插件名（如 `MyPlugin.json`）
-
-**已存在文件处理方式** (`translation_mode`):
-
-| 选项 | `translation_mode` | 操作 |
-|------|-------------------|------|
-| 仅更新原文 | `orig_only` | 不改动已有译文 |
-| 仅导入译文 — 安全 | `trans_safe` | 不覆盖已人工编辑的词条；新文件跳过 |
-| 仅强制导入差异译文 | `trans_force` | 比对当前云端译文，提交不同的非空本地译文 |
-| 更新原文并导入译文 | `both` | 安全模式，不覆盖已人工编辑的词条 |
-
-#### UploadCard — `_UploadModeDialog` 上传模式
-
-**上传格式**（上半区）:
-- **分类上传**（推荐）：按词条类型拆分为多个文件，可选同时导出本地备份。确认后若文件数 > 1，弹出 `_FileSelectionDialog` 供用户选择要上传的分类文件。
-- **普通上传**：全部词条合并为单个 JSON 文件，需填写文件名
-
-#### UploadCard — `_FileSelectionDialog` 文件选择
-
-仅在**分类上传**且文件数 > 1 时弹出，列出所有将生成的分类文件及其条目数（默认全选）。
-
-| 元素 | 说明 |
-|------|------|
-| 全选 / 全不选 按钮 | 快速切换所有复选框 |
-| 文件列表 | 每行显示文件名和条目数，支持逐项勾选 |
-| 确认上传 | 无选中时置灰 |
-
-本地备份（若启用）不受文件选择影响，始终导出完整集合。
-
-**已存在文件处理方式**（下半区，`translation_mode`）:
-
-| 选项 | `translation_mode` | 操作 | 新文件行为 |
-|------|-------------------|------|-----------|
-| 仅更新原文 | `orig_only` | `reupload_file` | `upload_file` |
-| 仅导入译文 — 安全 | `trans_safe` | `update_file_translation(force=False)` | 跳过 |
-| 仅强制导入差异译文 | `trans_force` | 比对后按文件导入非空差异，使用 `force=true` | 跳过 |
-| 更新原文并导入译文 | `both` | `reupload_file` → `update_file_translation(force=False)` | `upload_file` → `update_file_translation` |
-
-"仅导入译文"选中时，子选项（安全/强制）才启用。
+- 文件窗口使用已选布局，显示目标项目、插件、文件和词条数量。当前插件默认勾选。插件和当前显示的文件可分别全选或全部不选。
+- 打开窗口和变更插件勾选时，后台读取本地来源并生成文件预览。点击最终上传按钮后，上传会话才读取 ParaTranz 文件并按所选策略比较和写入。
+- 窗口按已处理文件显示进度，在回执中分别显示已更新和无变化。失败或待核实的文件按现有规则提供详情和补传。四种内容策略及文件布局见[文件上传说明](paratranz-categorized-upload.md)。
 
 ---
 

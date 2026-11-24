@@ -48,7 +48,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-052](adr/052-sst-io-integration.md) | 完整 SST 来源、原格式写回与插件新建 SSU9 | 提议；本地集成完成，实验性，80份 New ANK 扩展语料通过 |
 | [ADR-051](adr/051-self-contained-project-storage.md) | 正式项目自包含存储与单一升级边界 | 历史已接受；插件留存与旧格式升级目标被 [FR32](requirements/project-storage-redesign.md) 取代，新设计见 ADR-054；S01～S03 本地实现与 QA 完成，999 通过、1 项环境跳过；S04 本地实现与相关 QA 完成，广域未全绿，见 [计划](../plans/project-self-contained-storage/plan.md) |
 | [ADR-048](adr/048-ai-project-concurrency-and-terms.md) | AI 多插件并发、共享术语与参考差异综合校对 | S01～S13 本地实现及相关验证完成；术语不再是翻译通过条件，见 [S11～S13 记录](changelogs/ai-project-concurrency/story-11-to-13/2026-10-24-001-terminology-advisory-review.md) |
-| [ADR-047](adr/047-opt-in-categorized-project-upload.md) | 普通与分类上传使用文件 API | 已接受；任务标题命名及手动补传保持。GUI/助手共用无 Qt 应用层下载用例，按插件目录读取并匹配、保存，本轮结束清理，不新增索引或校验。见[使用说明](dev/paratranz-categorized-upload.md) |
+| [ADR-047](adr/047-opt-in-categorized-project-upload.md) | 普通与分类上传使用文件 API | 已接受。统一入口先选上传方式，再选择插件和文件。支持批量勾选和手动补传。GUI 与助手下载共用应用层用例。见[使用说明](dev/paratranz-categorized-upload.md) |
 | [ADR-046](adr/046-purpose-aware-data-projection.md) | 按来源与用途保护凭据，业务数据保持原样 | 已接受（2026-10-07），实施中 |
 | [ADR-041](adr/041-assistant-context-compaction.md) | 助手稳定上下文与按预算压缩；保留目标与计划系统；[实现增量](changelogs/assistant-context-compaction/story-01-to-09-implementation/2026-09-12-001-稳定上下文与不可变摘要链实现.md) | 本地实现与离线验证完成；真实收益待评测 |
 | [ADR-001](adr/001-unified-translation-entry.md) | TranslationEntry 作为统一翻译数据模型 | ✅ 历史与 V2 身份增量已接受 |
