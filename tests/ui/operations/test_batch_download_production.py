@@ -173,7 +173,8 @@ def test_workbench_download_entry_stays_enabled_with_no_current_collection_and_h
         assert widget._card_download.title() == "从paratranz上同步"
         assert widget._card_download.btn.text() == "从paratranz上同步"
         assert widget._card_download.batch_btn.isHidden()
-        assert not widget._card_upload.btn.isEnabled()
+        assert widget._card_upload.btn.isEnabled()
+        assert widget._card_upload.batch_btn.isHidden()
         ctx.collection_changed.emit(None)
         assert widget._card_download.btn.isEnabled()
         assert widget._card_download.batch_btn.isHidden()

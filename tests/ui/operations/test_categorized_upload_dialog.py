@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QEvent, Qt, QTimer
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QCheckBox, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QCheckBox, QComboBox, QLabel, QPushButton, QVBoxLayout, QWidget
 import pytest
 
 from transbridge.ui.operations import categorized_upload_dialog as module
@@ -146,6 +146,92 @@ def test_loading_only_previews_local_files_and_never_uploads(qapp, worker_queue)
     subject.close()
 
 
+@pytest.mark.parametrize("categorized", [False, True])
+def test_upload_window_keeps_chosen_layout_and_allows_multiple_plugins(qapp, worker_queue, categorized):
+    calls = []
+    plain_sources = tuple(
+        SourceOption(
+            source.source_id, source.label, (FileOption(f"{source.source_id}:plain", f"{source.label}.json", 1),)
+        )
+        for source in _sources()
+    )
+
+    sources = _sources() if categorized else plain_sources
+    file_label = "分类文件" if categorized else "文件"
+
+    def preview(_progress, _cancel, *, source_ids):
+        calls.append(("preview", source_ids))
+        return tuple(source for source in sources if source.source_id in source_ids)
+
+    def upload(selection, _progress, _cancel):
+        calls.append(("upload", selection))
+        return UploadReceipt(1, 0)
+
+    subject = _dialog(
+        load_catalog=lambda *_args: (SourceOption("a", "主体.esp", (), False), SourceOption("b", "扩展.esp", (), True)),
+        load_preview=preview,
+        upload=upload,
+        batch=None,
+        categorized=categorized,
+    )
+    subject.show()
+    try:
+        qapp.processEvents()
+        worker_queue[-1].complete()
+        assert subject.selection().source_ids == ("b",)
+        assert subject.windowTitle() == ("分类上传到 ParaTranz" if categorized else "普通上传到 ParaTranz")
+        assert subject.findChildren(QComboBox) == [subject._mode]
+        assert subject._scope.text().endswith("ParaTranz 项目：云端汉化")
+        assert not subject._upload_button.isEnabled()
+        subject._load_sources()
+        worker_queue[-1].complete()
+        assert calls == [("preview", ("b",))]
+        expected = sources[1].files[0]
+        assert subject._files.topLevelItem(0).text(0) == expected.path
+        assert f"1 个插件、1 个{file_label}" in subject._summary.text()
+
+        select_plugins, clear_plugins = subject._source_actions
+        assert select_plugins.isEnabled()
+        select_plugins.click()
+        assert subject.selection().source_ids == ("a", "b")
+        assert not subject._upload_button.isEnabled()
+        subject._load_sources()
+        assert not clear_plugins.isEnabled()
+        worker_queue[-1].complete()
+        assert calls == [("preview", ("b",)), ("preview", ("a", "b"))]
+        assert f"2 个插件、2 个{file_label}" in subject._summary.text()
+        assert not select_plugins.isEnabled()
+        subject._files.topLevelItem(0).setCheckState(0, Qt.CheckState.Unchecked)
+        subject._upload_button.click()
+        assert not subject._mode.isEnabled()
+        worker_queue[-1].complete()
+        assert calls[-1] == ("upload", module.Selection(("b",), (expected.file_key,)))
+
+        clear_plugins.click()
+        assert subject.selection().source_ids == ()
+        assert select_plugins.isEnabled() and not clear_plugins.isEnabled()
+        assert not subject._upload_button.isEnabled()
+        assert not subject._preview_timer.isActive()
+        assert subject.selection().file_keys == ()
+    finally:
+        subject.close()
+
+
+def test_unified_dialog_displays_single_plugin_as_text(qapp, worker_queue):
+    subject = _dialog(load_catalog=lambda *_args: (SourceOption("a", "主体.esp", ()),), batch=None)
+    subject.show()
+    try:
+        qapp.processEvents()
+        worker_queue[-1].complete()
+        assert subject._source_list.isHidden()
+        assert all(button.isHidden() for button in subject._source_actions)
+        assert subject._single_source_label.isVisible()
+        assert subject._single_source_label.text() == "主体.esp"
+        assert subject.selection().source_ids == ("a",)
+    finally:
+        subject.close()
+
+
 @pytest.mark.parametrize("batch", [False, True])
 def test_upload_scope_never_offers_legacy_migration(qapp, worker_queue, batch):
     subject = _dialog(batch=batch)
@@ -168,6 +254,29 @@ def test_unchecking_files_updates_summary_and_empty_selection_blocks_upload(dial
     workers_before = len(worker_queue)
     dialog._request_upload()
     assert len(worker_queue) == workers_before
+
+
+def test_file_bulk_buttons_change_only_files_in_the_displayed_plugin_scope(dialog):
+    select_files, clear_files = dialog._file_actions
+    clear_files.click()
+    assert dialog.selection().source_ids == ("a", "b")
+    assert dialog.selection().file_keys == ()
+    assert not clear_files.isEnabled()
+    assert not dialog._upload_button.isEnabled()
+    assert "0 个分类文件，共 0 条词条" in dialog._summary.text()
+
+    hidden = dialog._source_list.item(1)
+    hidden.setCheckState(Qt.CheckState.Unchecked)
+    select_files.click()
+    assert dialog.selection().file_keys == ("a:people",)
+    assert dialog._upload_button.isEnabled()
+    assert not select_files.isEnabled()
+
+    hidden.setCheckState(Qt.CheckState.Checked)
+    assert dialog.selection().file_keys == ("a:people",)
+    select_files.click()
+    assert dialog.selection().file_keys == ("a:people", "b:items")
+    assert "2 个分类文件，共 8 条词条" in dialog._summary.text()
 
 
 def test_source_selection_is_passed_directly_to_upload_without_migration(dialog, worker_queue):
@@ -232,7 +341,7 @@ def test_cancel_keeps_running_worker_alive_and_preserves_partial_receipt(dialog,
     assert dialog._worker is None
     assert dialog._upload_button.isEnabled()
     assert "已取消" in dialog._status.text()
-    assert "成功 3，失败或待核实 0，取消 5" in dialog._status.text()
+    assert "已更新 3，无变化 0，失败或待核实 0，取消 5" in dialog._status.text()
 
 
 def test_upload_error_restores_direct_retry(dialog, worker_queue):
@@ -251,14 +360,19 @@ def test_upload_error_restores_direct_retry(dialog, worker_queue):
 
 def test_partial_upload_reports_success_failure_and_pending_for_direct_retry(dialog, worker_queue):
     dialog._upload = lambda _selection, _progress, _cancel: UploadReceipt(
-        3, 1, 0, ("主体.esp/人名.json：成功", "扩展.esp/物品.json：请求失败"), pending_count=4
+        3,
+        1,
+        0,
+        ("主体.esp/人名.json：成功", "扩展.esp/物品.json：请求失败"),
+        pending_count=4,
+        unchanged_count=2,
     )
     dialog._upload_button.click()
     assert not dialog._files.isEnabled()
     assert not dialog._upload_button.isEnabled()
     worker_queue[-1].complete()
     assert "未全部完成" in dialog._status.text()
-    assert "成功 3，失败或待核实 1，取消 0，待处理 4" in dialog._status.text()
+    assert "已更新 1，无变化 2，失败或待核实 1，取消 0，待处理 4" in dialog._status.text()
     assert "主体.esp/人名.json：成功" in dialog._details.toPlainText()
     assert "扩展.esp/物品.json：请求失败" in dialog._details.toPlainText()
     assert dialog._upload_button.isEnabled()
@@ -280,7 +394,7 @@ def test_conflicts_are_reported_in_upload_result_with_reason(dialog, worker_queu
     dialog._upload = lambda *_args: UploadReceipt(2, 0, details=("一条归属待确认",), pending_count=1)
     dialog._upload_button.click()
     worker_queue[-1].complete()
-    assert "成功 2，失败或待核实 0，取消 0，待处理 1" in dialog._status.text()
+    assert "已更新 2，无变化 0，失败或待核实 0，取消 0，待处理 1" in dialog._status.text()
     assert "一条归属待确认" in dialog._details.toPlainText()
     assert dialog._upload_button.isEnabled()
 
@@ -320,7 +434,7 @@ def test_all_application_callbacks_run_on_background_workers(qapp):
     settle(subject)
     assert len(observed_threads) == 3
     assert all(thread != main_thread for thread in observed_threads)
-    assert "分类补传完成（按文件计数）：成功 1，失败或待核实 0" in subject._status.text()
+    assert "分类补传完成（按文件计数）：已更新 1，无变化 0，失败或待核实 0" in subject._status.text()
     assert subject._retry_button.isHidden()
     assert subject._upload_button.isEnabled()
     subject.close()
@@ -349,8 +463,8 @@ def test_burst_progress_flushes_once_before_terminal_receipt(dialog, worker_queu
     worker.complete()
     assert rendered == [(20_000, 20_000, "正在保存已确认的关联")]
     assert worker.progress.callbacks == []
-    assert dialog._progress.text() == "已处理 20000/20000（100%）"
-    assert "分类上传完成（按文件计数）：成功 20000" in dialog._status.text()
+    assert dialog._progress.text() == "已处理 20000/20000 个文件（100%）"
+    assert "分类上传完成（按文件计数）：已更新 20000，无变化 0" in dialog._status.text()
     assert not dialog._progress_timer.isActive()
     assert dialog._progress_mailbox is None
     mailbox.publish(1, 20_000, "晚到的旧进度")
@@ -365,9 +479,9 @@ def test_cancel_status_survives_timer_progress_and_preserves_partial_receipt(dia
     cancelling = dialog._status.text()
     dialog._consume_progress()
     assert dialog._status.text() == cancelling
-    assert dialog._progress.text() == "已处理 7/20000（0%）"
+    assert dialog._progress.text() == "已处理 7/20000 个文件（0%）"
     worker_queue[-1].complete()
-    assert "成功 7，失败或待核实 0，取消 19993" in dialog._status.text()
+    assert "已更新 7，无变化 0，失败或待核实 0，取消 19993" in dialog._status.text()
     assert not dialog._progress_timer.isActive()
 
 
@@ -416,7 +530,7 @@ def test_large_receipt_details_have_a_visible_rendering_limit(dialog, details):
     assert len(text) < 32_100
     assert len(text.splitlines()) <= 201
     assert "已截断显示；统计包含全部结果" in text
-    assert "成功 20000" in dialog._status.text()
+    assert "已更新 20000" in dialog._status.text()
 
 
 def test_twenty_thousand_background_updates_keep_gui_heartbeat_responsive(qapp, monkeypatch):
@@ -458,7 +572,7 @@ def test_twenty_thousand_background_updates_keep_gui_heartbeat_responsive(qapp, 
         assert rendered[-1] == 20_000
         assert len(rendered) < 20
         assert len(heartbeat) >= 5
-        assert subject._progress.text() == "已处理 20000/20000（100%）"
+        assert subject._progress.text() == "已处理 20000/20000 个文件（100%）"
         assert subject._worker is not None
     finally:
         release.set()

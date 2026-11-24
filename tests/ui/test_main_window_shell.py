@@ -35,7 +35,6 @@ def _callbacks(calls: list[str]) -> MenuCallbacks:
         prepare_content=callback("prepare_content"),
         migrate=callback("migrate"),
         upload=callback("upload"),
-        batch_upload=callback("batch_upload"),
         download=callback("download"),
         batch_download=callback("batch_download"),
         write=callback("write"),
@@ -79,6 +78,7 @@ def test_menu_builder_connects_each_intent_once() -> None:
     assert calls == ["prepare_content", "upload", "assistant", "history_search", "appearance"]
     assert handles.prepare_content.data() == IntentId.WORKBENCH_CONTENT_PREPARE.value
     assert handles.prepare_content.text() == "添加翻译文件…"
+    assert handles.upload.text() == "上传…"
     assert handles.smart_assistant is handles.view_assistant
     assert handles.smart_assistant.shortcut().toString() == "Ctrl+Shift+I"
     assert handles.smart_assistant.data() == IntentId.VIEW_SMART_ASSISTANT.value
@@ -151,7 +151,6 @@ def test_menu_tree_has_the_approved_six_groups_and_keeps_legacy_handles() -> Non
             ActionSection.SYNC_PUBLISH,
             (
                 IntentId.SYNC_UPLOAD,
-                IntentId.SYNC_UPLOAD_BATCH,
                 IntentId.SYNC_DOWNLOAD,
                 None,
                 IntentId.PROJECT_REFRESH,

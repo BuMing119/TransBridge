@@ -21,7 +21,6 @@ class MenuCallbacks:
     prepare_content: VoidCallback
     migrate: VoidCallback
     upload: VoidCallback
-    batch_upload: VoidCallback
     download: VoidCallback
     batch_download: VoidCallback
     write: VoidCallback
@@ -65,7 +64,6 @@ class MenuHandles:
     prepare_content: QAction
     migrate: QAction
     upload: QAction
-    batch_upload: QAction
     download: QAction
     batch_download: QAction
     write: QAction
@@ -173,7 +171,6 @@ class MenuBuilder:
 
         sync_menu = bar.addMenu(self._gettext("ParaTranz"))
         upload = self._intent_action(sync_menu, IntentId.SYNC_UPLOAD, callbacks.upload)
-        batch_upload = self._intent_action(sync_menu, IntentId.SYNC_UPLOAD_BATCH, callbacks.batch_upload)
         download = self._intent_action(sync_menu, IntentId.SYNC_DOWNLOAD, callbacks.download)
         batch_download = self._intent_action(sync_menu, IntentId.SYNC_DOWNLOAD_BATCH, callbacks.batch_download)
         batch_download.setVisible(False)
@@ -216,7 +213,6 @@ class MenuBuilder:
             prepare_content=prepare_content,
             migrate=migrate,
             upload=upload,
-            batch_upload=batch_upload,
             download=download,
             batch_download=batch_download,
             write=write,

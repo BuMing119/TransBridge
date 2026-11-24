@@ -22,7 +22,7 @@ class CapabilityFacade(Facade):
         return not batch and kind != "write"
 
 
-def test_upload_menu_uses_card_mode_selection_while_other_intents_use_plan_facade() -> None:
+def test_upload_menu_uses_card_while_other_intents_use_plan_facade() -> None:
     legacy = []
     context = SimpleNamespace(
         collection=object(),
@@ -34,16 +34,13 @@ def test_upload_menu_uses_card_mode_selection_while_other_intents_use_plan_facad
         context=context,
         operation_plan_facade=facade,
         workbench=SimpleNamespace(),
-        upload_card=SimpleNamespace(
-            upload=lambda: legacy.append("upload"), batch_upload=lambda: legacy.append("batch")
-        ),
+        upload_card=SimpleNamespace(upload=lambda: legacy.append("upload")),
         download_card=SimpleNamespace(download=lambda: legacy.append("download")),
         write_card=SimpleNamespace(write=lambda: legacy.append("write")),
     )
     coordinator = OperationCoordinator(host)
 
     coordinator.upload()
-    coordinator.batch_upload()
     coordinator.download()
     coordinator.write()
 
@@ -51,7 +48,7 @@ def test_upload_menu_uses_card_mode_selection_while_other_intents_use_plan_facad
         ("download", False),
         ("write", False),
     ]
-    assert legacy == ["upload", "batch"]
+    assert legacy == ["upload"]
 
 
 def test_old_download_alias_uses_single_intent_while_other_unmigrated_actions_keep_their_fallback() -> None:
@@ -65,9 +62,6 @@ def test_old_download_alias_uses_single_intent_while_other_unmigrated_actions_ke
     host = SimpleNamespace(
         context=context,
         operation_plan_facade=facade,
-        upload_card=SimpleNamespace(
-            upload=lambda: legacy.append("upload"), batch_upload=lambda: legacy.append("batch-upload")
-        ),
         download_card=SimpleNamespace(
             download=lambda: legacy.append("download"),
             batch_download=lambda: legacy.append("batch-download"),
@@ -78,10 +72,9 @@ def test_old_download_alias_uses_single_intent_while_other_unmigrated_actions_ke
     )
     coordinator = OperationCoordinator(host)
 
-    coordinator.batch_upload()
     coordinator.batch_download()
     coordinator.write()
     coordinator.batch_write()
 
     assert facade.calls == [("download", context, False)]
-    assert legacy == ["batch-upload", "write", "batch-write"]
+    assert legacy == ["write", "batch-write"]

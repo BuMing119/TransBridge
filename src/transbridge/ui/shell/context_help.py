@@ -181,7 +181,6 @@ DEFAULT_CONTEXT_HELP = ContextHelpCatalog((
         aliases=("上传", "下载", "合并"),
         related_intents=(
             IntentId.SYNC_UPLOAD,
-            IntentId.SYNC_UPLOAD_BATCH,
             IntentId.SYNC_DOWNLOAD,
         ),
     ),

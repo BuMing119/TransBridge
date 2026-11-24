@@ -232,11 +232,22 @@ def test_upload_does_not_change_local_project_or_persist_ids(harness):
     assert harness.services.variants.read_snapshot(active.formal_variant_ref) == disk
 
 
-def test_repeated_upload_reuses_current_files_with_server_noops(harness):
-    assert _upload(harness).success_count == 2
+def test_repeated_upload_checks_unchanged_files_without_writing(harness):
+    first = _upload(harness)
+    assert (first.updated_count, first.unchanged_count) == (2, 0)
     ids = set(harness.remote.files)
-    assert _upload(harness).success_count == 2
+    initial_writes = list(harness.remote.writes)
+    progress = []
+    selection = _selection(harness)
+    receipt = harness.session.upload(selection, lambda *event: progress.append(event), harness.cancel)
+
+    assert (receipt.success_count, receipt.updated_count, receipt.unchanged_count) == (2, 0, 2)
     assert set(harness.remote.files) == ids
+    assert harness.remote.writes == initial_writes
+    assert sum(kind == "translation" for kind, _ in harness.remote.reads) == 2
+    checks = [(current, total) for current, total, message in progress if message.startswith("正在核对文件：")]
+    assert checks == [(0, 2), (1, 2)]
+    assert progress[-1][:2] == (2, 2)
     assert {row.status for row in harness.session.last_receipt.files} == {"unchanged"}
 
 

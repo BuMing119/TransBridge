@@ -142,12 +142,8 @@ msgstr ""
 msgid "查看工程名称，进入重命名和文本编码设置"
 msgstr ""
 
-#: ui/shell/menu_builder.py
-msgid "上传当前内容…"
-msgstr ""
-
-#: ui/shell/menu_builder.py
-msgid "批量上传…"
+#: ui/shell/action_catalog.py
+msgid "上传…"
 msgstr ""
 
 #: ui/shell/menu_builder.py

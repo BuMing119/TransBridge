@@ -67,7 +67,6 @@ def _callbacks(calls: list[str]) -> MenuCallbacks:
         prepare_content=callback("translation.prepare_content"),
         migrate=callback("translation.migrate"),
         upload=callback("sync.upload"),
-        batch_upload=callback("sync.batch_upload"),
         download=callback("sync.download"),
         batch_download=callback("sync.batch_download"),
         write=callback("publish.write"),
@@ -245,10 +244,7 @@ def test_current_operation_guards_are_silent_until_required_context_exists() -> 
     context = SimpleNamespace(collection=None, current_project=None, slots={})
     host = SimpleNamespace(
         context=context,
-        upload_card=SimpleNamespace(
-            upload=lambda: calls.append("upload"),
-            batch_upload=lambda: calls.append("batch_upload"),
-        ),
+        upload_card=SimpleNamespace(upload=lambda: calls.append("upload")),
         download_card=SimpleNamespace(
             download=lambda: calls.append("download"),
             batch_download=lambda: calls.append("batch_download"),
@@ -263,7 +259,6 @@ def test_current_operation_guards_are_silent_until_required_context_exists() -> 
     coordinator.upload()
     coordinator.download()
     coordinator.write()
-    coordinator.batch_upload()
     coordinator.batch_download()
     coordinator.batch_write()
     assert calls == []
@@ -274,14 +269,12 @@ def test_current_operation_guards_are_silent_until_required_context_exists() -> 
     coordinator.upload()
     coordinator.download()
     coordinator.write()
-    coordinator.batch_upload()
     coordinator.batch_download()
     coordinator.batch_write()
     assert calls == [
         "upload",
         "download",
         "write",
-        "batch_upload",
         "download",
         "batch_write",
     ]

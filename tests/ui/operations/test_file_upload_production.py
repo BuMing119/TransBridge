@@ -30,6 +30,27 @@ def test_default_production_uploads_launch_shared_file_ui_and_retain_windows(mon
     assert facade.active_plan_count == 0
 
 
+def test_unified_upload_launches_with_the_project_context_and_window_owner(monkeypatch):
+    calls = []
+
+    def launch(context, *, batch, parent):
+        calls.append((context, batch, parent))
+        return SimpleNamespace(destroyed=_Signal())
+
+    monkeypatch.setattr(production, "open_file_upload", launch)
+    owner = object()
+    facade = production.build_operation_plan_facade(_runtime(), RequestContext("file-upload-test"), parent=owner)
+    context = SimpleNamespace(
+        active_key="current",
+        slots={"current": SimpleNamespace(collection=()), "another": SimpleNamespace(collection=())},
+    )
+    window = facade.begin_upload(context, batch=None)
+    assert calls == [(context, None, owner)]
+    assert facade.active_plan_count == 1
+    window.destroyed.emit()
+    assert facade.active_plan_count == 0
+
+
 @pytest.mark.parametrize("custom_dialog", [False, True])
 @pytest.mark.parametrize("operation", ["upload", "download"])
 def test_explicit_targets_always_use_current_transfer_launcher(monkeypatch, custom_dialog, operation):

@@ -162,7 +162,8 @@ class OperationPlanFacade:
     def active_plan_count(self) -> int:
         return self._coordinator.active_window_count + len(self._upload_windows) + len(self._download_windows)
 
-    def begin_upload(self, context, *, batch: bool = False, **values):
+    def begin_upload(self, context, *, batch: bool | None = False, **values):
+        """Open the source selector for the GUI, or a caller's explicit fixed scope."""
         owner = getattr(context, "context", context)
         keys = tuple(getattr(context, "slots", {})) if batch else (getattr(context, "active_key", None),)
         scope = SourceInputScope(owner, keys) if hasattr(context, "slots") else context
@@ -173,7 +174,7 @@ class OperationPlanFacade:
             resume=lambda: self.begin_upload(scope, batch=batch, **values),
         ):
             return None
-        window = self._upload_launcher(scope, batch=batch, **values)
+        window = self._upload_launcher(owner if batch is None else scope, batch=batch, **values)
         if window is not None:
             key = id(window)
             self._upload_windows[key] = window

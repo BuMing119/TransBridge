@@ -21,22 +21,15 @@ class OperationCoordinator:
 
         slots = self._host.context.slots
         multi = len(slots) > 1
-        menu.batch_upload.setVisible(multi)
-        menu.batch_upload.setEnabled(True)
         menu.batch_download.setVisible(False)
         menu.batch_download.setEnabled(True)
         menu.batch_write.setVisible(multi)
         menu.batch_write.setEnabled(True)
 
     def upload(self):
-        if not self._host.context.collection:
+        if not self._host.context.collection and not self._host.context.slots:
             return
         return self._host.upload_card.upload()
-
-    def batch_upload(self):
-        if len(self._host.context.slots) <= 1:
-            return
-        return self._host.upload_card.batch_upload()
 
     def download(self):
         if not self._host.context.collection and not bool(
@@ -108,7 +101,6 @@ class OperationCoordinator:
         menu = self._host.operation_menu
         ops = [
             menu.upload,
-            menu.batch_upload,
             menu.download,
             menu.batch_download,
             menu.write,

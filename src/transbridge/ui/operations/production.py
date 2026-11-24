@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import partial
 import hashlib
 from pathlib import Path
 from threading import RLock
@@ -190,7 +191,7 @@ def build_operation_plan_facade(
         parent=parent,
         write_encodings=write_encodings,
         execution_result_reader=read_result,
-        upload_launcher=open_file_upload,
+        upload_launcher=open_file_upload if parent is None else partial(open_file_upload, parent=parent),
         download_launcher=(
             lambda context, **values: open_batch_download(context, runtime, **({"values": values} if values else {}))
         ),

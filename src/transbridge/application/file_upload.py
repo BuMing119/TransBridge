@@ -289,7 +289,7 @@ def _publish_files(
             retry_files.append(file)
             continue
         if progress:
-            progress(index, len(files), f"正在上传文件：{file.path}")
+            progress(index, len(files), f"正在核对文件：{file.path}")
         try:
             check_current()
         except Exception as exc:

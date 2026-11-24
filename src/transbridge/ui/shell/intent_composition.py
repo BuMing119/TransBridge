@@ -64,7 +64,6 @@ class ShellIntentComposition:
             prepare_content=callback(IntentId.WORKBENCH_CONTENT_PREPARE),
             migrate=callback(IntentId.SOURCE_MIGRATE),
             upload=callback(IntentId.SYNC_UPLOAD),
-            batch_upload=callback(IntentId.SYNC_UPLOAD_BATCH),
             download=callback(IntentId.SYNC_DOWNLOAD),
             batch_download=callback(IntentId.SYNC_DOWNLOAD_BATCH),
             write=callback(IntentId.PUBLISH_WRITE),
@@ -255,11 +254,6 @@ class ShellIntentComposition:
         )
         register(IntentId.TRANSLATION_REVIEW, self._review, availability=self._has_review)
         register(IntentId.SYNC_UPLOAD, _call(host.operation_coordinator.upload), availability=self._has_cloud_context)
-        register(
-            IntentId.SYNC_UPLOAD_BATCH,
-            _call(host.operation_coordinator.batch_upload),
-            availability=self._has_cloud_context,
-        )
         register(
             IntentId.SYNC_DOWNLOAD, _call(host.operation_coordinator.download), availability=self._has_download_context
         )

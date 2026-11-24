@@ -47,7 +47,7 @@ class OpCard(QGroupBox):
         """Composition hook; cards retain their old public intent facade."""
         self._operation_plan_facade = facade
 
-    def _dispatch_planned(self, intent: str, context, *, batch: bool = False) -> bool:
+    def _dispatch_planned(self, intent: str, context, *, batch: bool | None = False) -> bool:
         facade = self._operation_plan_facade
         if facade is None:
             return False
@@ -55,7 +55,7 @@ class OpCard(QGroupBox):
         if not callable(handler):
             return False
         supports = getattr(facade, "supports", None)
-        if callable(supports) and not supports(intent, context, batch=batch):
+        if callable(supports) and not supports(intent, context, batch=bool(batch)):
             return False
         handler(context, batch=batch)
         return True

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 from threading import Event
 
 from PyQt6.QtCore import QSignalBlocker, Qt, QTimer
@@ -11,6 +12,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -52,8 +54,9 @@ class CategorizedUploadDialog(QDialog):
         load_preview: Callable,
         upload: Callable,
         retry_upload: Callable | None = None,
-        batch: bool = True,
+        batch: bool | None = True,
         categorized: bool = True,
+        load_catalog: Callable | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -62,15 +65,21 @@ class CategorizedUploadDialog(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._kind = "分类" if categorized else "文件"
         self._file_label = "分类文件" if categorized else "文件"
-        self.setWindowTitle(f"{'批量' if batch else '当前插件'}{self._kind}上传到 ParaTranz")
+        title = f"{'分类' if categorized else '普通'}上传到 ParaTranz"
+        if load_catalog is None:
+            title = f"{'批量' if batch else '当前插件'}{self._kind}上传到 ParaTranz"
+        self.setWindowTitle(title)
         self.resize(850, 700)
         self._batch = batch
+        self._load_catalog = load_catalog
         self._load_preview = load_preview
         self._upload = upload
         self._retry_upload = retry_upload
         self._retry_count = 0
         self._retry_mode = "orig_only"
+        self._retry_kind = self._kind
         self._sources: tuple[SourceOption, ...] | None = None
+        self._catalog_loaded = False
         self._file_selected: dict[str, bool] = {}
         self._worker = None
         self._phase = ""
@@ -82,6 +91,10 @@ class CategorizedUploadDialog(QDialog):
         self._progress_timer = QTimer(self)
         self._progress_timer.setInterval(100)
         self._progress_timer.timeout.connect(self._consume_progress)
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(150)
+        self._preview_timer.timeout.connect(self._load_sources)
         self._build_widgets(project_label, variant_label, target_label)
         self._sync_controls()
         QTimer.singleShot(0, self._load_sources)
@@ -91,31 +104,32 @@ class CategorizedUploadDialog(QDialog):
         root.setContentsMargins(20, 18, 20, 18)
         self._scope = WrappingLabel(f"当前工程：{project}  ·  翻译版本：{variant}\nParaTranz 项目：{target}", self)
         root.addWidget(self._scope)
-        root.addWidget(
-            QLabel(
-                "选择文件后整批上传；增量更新保留云端其他词条，安全导入保留人工译文。"
-                if self._batch
-                else "选择文件后整批上传；增量更新保留云端其他词条，安全导入保留人工译文。",
-                self,
-            )
-        )
-        root.addWidget(QLabel("工程中的插件" if self._batch else "当前插件", self))
+        root.addWidget(WrappingLabel("增量更新保留云端其他词条，安全导入保留人工译文。", self))
+        source_label = "工程中的插件" if self._batch or self._load_catalog else "当前插件"
+        self._source_actions = self._add_selection_header(root, source_label, "插件", self._set_all_sources)
         self._source_list = QListWidget(self)
-        self._source_list.setAccessibleName("选择分类上传的插件")
+        self._source_list.setAccessibleName("选择本次上传的插件")
         self._source_list.setMaximumHeight(130)
-        self._source_list.itemChanged.connect(self._sources_changed)
+        self._source_list.itemChanged.connect(self._preview_changed if self._load_catalog else self._sources_changed)
         root.addWidget(self._source_list)
-        root.addWidget(QLabel(f"选择本次上传的{self._file_label}", self))
+        self._single_source_label = WrappingLabel("", self)
+        self._single_source_label.hide()
+        root.addWidget(self._single_source_label)
+        self._file_actions = self._add_selection_header(
+            root, f"选择本次上传的{self._file_label}", self._file_label, self._set_all_files
+        )
         self._files = QTreeWidget(self)
         self._files.setColumnCount(2)
         self._files.setHeaderLabels([self._file_label, "词条数"])
         self._files.setRootIsDecorated(False)
-        self._files.setColumnWidth(0, 300)
-        self._files.setColumnWidth(1, 75)
-        self._files.setAccessibleName("选择分类上传文件")
+        header = self._files.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._files.setAccessibleName("选择本次上传的文件")
         self._files.itemChanged.connect(self._files_changed)
         root.addWidget(self._files, 1)
-        self._summary = WrappingLabel("尚未读取分类", self)
+        self._summary = WrappingLabel("尚未读取文件", self)
         root.addWidget(self._summary)
         self._mode = QComboBox(self)
         for label, value in (
@@ -128,7 +142,7 @@ class CategorizedUploadDialog(QDialog):
         self._mode.setAccessibleName("文件上传内容与覆盖策略")
         self._mode.setToolTip("译文导入需要 ParaTranz 项目管理员以上权限。")
         root.addWidget(self._mode)
-        self._status = WrappingLabel("正在读取当前工程的插件和分类…", self)
+        self._status = WrappingLabel("正在读取当前工程的插件…", self)
         ComponentStyle.apply_static(self._status, ComponentKind.NOTIFICATION)
         root.addWidget(self._status)
         self._details = QPlainTextEdit(self)
@@ -156,6 +170,24 @@ class CategorizedUploadDialog(QDialog):
         ComponentStyle.apply_state(self._upload_button, SemanticState.PRIMARY)
         root.addLayout(footer)
 
+    def _add_selection_header(
+        self, root: QVBoxLayout, title: str, items: str, set_checked: Callable[[bool], None]
+    ) -> tuple[QPushButton, QPushButton]:
+        header = QHBoxLayout()
+        header.addWidget(QLabel(title, self))
+        header.addStretch()
+        select_all = QPushButton("全选", self)
+        select_none = QPushButton("全部不选", self)
+        select_all.clicked.connect(lambda: set_checked(True))
+        select_none.clicked.connect(lambda: set_checked(False))
+        for button in (select_all, select_none):
+            button.setAccessibleName(f"{button.text()}{items}")
+            button.setAutoDefault(False)
+            ComponentStyle.apply_static(button, ComponentKind.BUTTON)
+            header.addWidget(button)
+        root.addLayout(header)
+        return select_all, select_none
+
     def selection(self) -> Selection:
         sources = tuple(
             self._source_list.item(index).data(Qt.ItemDataRole.UserRole)
@@ -170,23 +202,57 @@ class CategorizedUploadDialog(QDialog):
         return Selection(sources, files, translation_mode=self._mode.currentData())
 
     def _load_sources(self) -> None:
-        if self._worker is None:
+        if self._worker is not None:
+            return
+        self._preview_timer.stop()
+        if self._load_catalog is None:
             self._start_worker("load", self._load_preview)
+        elif not self._catalog_loaded:
+            self._start_worker("catalog", self._load_catalog)
+        elif source_ids := self.selection().source_ids:
+            self._start_worker("load", partial(self._load_preview, source_ids=source_ids))
 
     def _render_sources(self, sources: tuple[SourceOption, ...]) -> None:
-        self._sources = sources
         with QSignalBlocker(self._source_list):
             self._source_list.clear()
             for source in sources:
                 item = QListWidgetItem(source.label, self._source_list)
                 item.setData(Qt.ItemDataRole.UserRole, source.source_id)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(Qt.CheckState.Checked)
+                item.setCheckState(Qt.CheckState.Checked if source.selected else Qt.CheckState.Unchecked)
+        if self._load_catalog is None:
+            self._sources = sources
+            self._sources_changed()
+        else:
+            self._catalog_loaded = True
+            self._source_list.setVisible(len(sources) != 1)
+            for button in self._source_actions:
+                button.setVisible(len(sources) != 1)
+            self._single_source_label.setVisible(len(sources) == 1)
+            if len(sources) == 1:
+                self._single_source_label.setText(sources[0].label)
+            self._preview_changed()
+        if not sources:
+            self._set_status("当前工程没有可上传的插件。", SemanticState.INFO)
+
+    def _set_all_sources(self, checked: bool) -> None:
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        with QSignalBlocker(self._source_list):
+            for index in range(self._source_list.count()):
+                self._source_list.item(index).setCheckState(state)
+        if self._load_catalog is None:
+            self._sources_changed()
+        else:
+            self._preview_changed()
+
+    def _preview_changed(self, *_args) -> None:
+        if self._worker is not None:
+            return
+        self._sources = None
+        self._preview_timer.stop()
+        if self.selection().source_ids:
+            self._preview_timer.start()
         self._sources_changed()
-        self._set_status(
-            "选择插件和分类后，点击“上传所选分类”。" if sources else "当前工程没有可分类上传的插件。",
-            SemanticState.INFO,
-        )
 
     def _sources_changed(self, *_args) -> None:
         selected_sources = set(self.selection().source_ids)
@@ -197,6 +263,7 @@ class CategorizedUploadDialog(QDialog):
                     continue
                 for file in source.files:
                     item = QTreeWidgetItem(self._files, [file.path, str(file.count)])
+                    item.setToolTip(0, file.path)
                     item.setData(0, Qt.ItemDataRole.UserRole, file.file_key)
                     item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                     checked = self._file_selected.get(file.file_key, True)
@@ -208,6 +275,15 @@ class CategorizedUploadDialog(QDialog):
             self._file_selected[item.data(0, Qt.ItemDataRole.UserRole)] = item.checkState(0) == Qt.CheckState.Checked
             self._selection_changed()
 
+    def _set_all_files(self, checked: bool) -> None:
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        with QSignalBlocker(self._files):
+            for index in range(self._files.topLevelItemCount()):
+                item = self._files.topLevelItem(index)
+                self._file_selected[item.data(0, Qt.ItemDataRole.UserRole)] = checked
+                item.setCheckState(0, state)
+        self._selection_changed()
+
     def _selection_changed(self, *_args) -> None:
         selection = self.selection()
         selected = set(selection.file_keys)
@@ -217,7 +293,13 @@ class CategorizedUploadDialog(QDialog):
         )
         if self._worker is None:
             self._details.hide()
-            self._set_status("选择至少一个插件和分类文件后即可上传，云端核验将在后台自动完成。", SemanticState.INFO)
+            if self._preview_timer.isActive():
+                message = "正在准备文件预览…"
+            elif self._sources and not any(source.files for source in self._sources):
+                message = "所选插件中没有可上传的文件。"
+            else:
+                message = f"选择至少一个插件和{self._file_label}后即可上传，云端核验将在后台自动完成。"
+            self._set_status(message, SemanticState.INFO)
         self._sync_controls()
 
     def _request_upload(self) -> None:
@@ -228,9 +310,16 @@ class CategorizedUploadDialog(QDialog):
             return
         if not self._confirm_force_upload(selection.translation_mode):
             return
+        if self._load_catalog is not None:
+            file_keys = set(selection.file_keys)
+            source_ids = tuple(
+                source.source_id for source in self._sources if any(file.file_key in file_keys for file in source.files)
+            )
+            selection = Selection(source_ids, selection.file_keys, selection.translation_mode)
         self._retry_count = len(selection.file_keys)
         self._retry_mode = selection.translation_mode
-        self._start_worker("upload", lambda progress, cancel: self._upload(selection, progress, cancel))
+        self._retry_kind = self._kind
+        self._start_worker("upload", partial(self._upload, selection))
 
     def _request_retry(self) -> None:
         if self._worker is None and self._retry_count and self._retry_upload is not None:
@@ -268,8 +357,9 @@ class CategorizedUploadDialog(QDialog):
         self._progress.show()
         self._set_status(
             {
-                "load": "正在读取工程分类…",
-                "upload": "正在读取云端并核验所选分类…",
+                "catalog": "正在读取工程中的插件…",
+                "load": f"正在读取所选插件的{self._file_label}…",
+                "upload": "正在读取云端并核验所选文件…",
                 "retry": "正在重新核验云端并补传未完成文件…",
             }[phase],
             SemanticState.INFO,
@@ -306,13 +396,19 @@ class CategorizedUploadDialog(QDialog):
             self._render_progress(*update)
         self._progress_mailbox = None
         phase, outcome = self._phase, self._outcome
+        reading = phase in {"catalog", "load"}
         self._worker = None
         self._progress.hide()
         if self._error is not None:
-            action = "读取工程分类" if phase == "load" else f"{self._kind}{'补传' if phase == 'retry' else '上传'}"
+            action = {
+                "catalog": "读取插件目录",
+                "load": f"读取{self._file_label}",
+                "retry": "补传",
+                "upload": "上传",
+            }[phase]
             retry = (
                 "请重新加载。"
-                if phase == "load"
+                if reading
                 else (
                     "可点击“补传未完成文件”，补传前会重新核验云端。"
                     if self._retry_upload is not None and self._retry_count
@@ -320,12 +416,16 @@ class CategorizedUploadDialog(QDialog):
                 )
             )
             self._set_status(f"{action}失败：{self._error}。{retry}", SemanticState.ERROR)
-        elif self._cancel_event.is_set() and phase == "load":
-            self._set_status("已取消读取分类，尚未上传内容。可重新加载。", SemanticState.INFO)
+        elif self._cancel_event.is_set() and reading:
+            label = "插件" if phase == "catalog" else self._file_label
+            self._set_status(f"已取消读取{label}，尚未上传内容。可重新加载。", SemanticState.INFO)
         elif outcome is None:
             self._set_status("操作未返回结果，请重试；上传前会重新核验云端。", SemanticState.ERROR)
-        elif phase == "load":
+        elif phase == "catalog" or (phase == "load" and self._load_catalog is None):
             self._render_sources(tuple(outcome))
+        elif phase == "load":
+            self._sources = tuple(outcome)
+            self._sources_changed()
         else:
             self._render_receipt(outcome)
         self._phase = ""
@@ -339,7 +439,8 @@ class CategorizedUploadDialog(QDialog):
         outcome = "已取消" if cancelled else "未全部完成" if unfinished else "完成"
         action = "补传" if self._phase == "retry" else "上传"
         self._set_status(
-            f"{self._kind}{action}{outcome}（按文件计数）：成功 {receipt.success_count}，"
+            f"{self._retry_kind}{action}{outcome}（按文件计数）：已更新 {receipt.updated_count}，"
+            f"无变化 {receipt.unchanged_count}，"
             f"失败或待核实 {receipt.failed_count}，取消 {receipt.cancelled_count}，待处理 {receipt.pending_count}。"
             + (
                 "请查看文件结果；可点击“补传未完成文件”，补传前会重新核验云端。"
@@ -378,7 +479,7 @@ class CategorizedUploadDialog(QDialog):
     def _render_progress(self, current: int, total: int, message: str) -> None:
         self._progress.setRange(0, max(total, 0))
         self._progress.setValue(max(0, min(current, total)))
-        self._progress.setFormat("已处理 %v/%m（%p%）" if total > 0 else "处理中…")
+        self._progress.setFormat("已处理 %v/%m 个文件（%p%）" if total > 0 else "处理中…")
         if message and not self._cancel_event.is_set():
             self._set_status(message, SemanticState.INFO)
 
@@ -387,11 +488,20 @@ class CategorizedUploadDialog(QDialog):
         for widget in (self._source_list, self._files):
             widget.setEnabled(not busy)
         selection = self.selection()
+        for (select_all, select_none), count, selected in (
+            (self._source_actions, self._source_list.count(), len(selection.source_ids)),
+            (self._file_actions, self._files.topLevelItemCount(), len(selection.file_keys)),
+        ):
+            select_all.setEnabled(not busy and selected < count)
+            select_none.setEnabled(not busy and selected > 0)
         has_selection = bool(selection.source_ids and selection.file_keys)
-        self._reload_button.setVisible(self._sources is None and not busy)
+        can_reload = self._load_catalog is None or not self._catalog_loaded or bool(selection.source_ids)
+        self._reload_button.setVisible(
+            self._sources is None and not busy and not self._preview_timer.isActive() and can_reload
+        )
         self._reload_button.setEnabled(not busy)
         self._retry_button.setVisible(not busy and self._retry_upload is not None and self._retry_count > 0)
-        self._retry_button.setEnabled(not busy and self._retry_count > 0)
+        self._retry_button.setEnabled(not busy and not self._preview_timer.isActive() and self._retry_count > 0)
         self._retry_button.setText(f"补传未完成文件（{self._retry_count}）")
         self._upload_button.setEnabled(not busy and self._sources is not None and has_selection)
         self._mode.setEnabled(not busy)
@@ -411,6 +521,7 @@ class CategorizedUploadDialog(QDialog):
             self._set_status("正在取消；等待当前请求结束后将显示已完成和未完成的结果。", SemanticState.INFO)
             self._sync_controls()
         else:
+            self._preview_timer.stop()
             super().done(result)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override

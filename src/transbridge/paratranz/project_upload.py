@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from threading import Event, Lock
 from uuid import uuid4
 
+from transbridge.application.categorized_upload import UploadSource
 from transbridge.application.categorized_upload.diagnostics import diagnostic_scope, log_event
 from transbridge.application.file_upload import (
     UploadInventory,
@@ -35,6 +36,7 @@ class SourceOption:
     source_id: str
     label: str
     files: tuple[FileOption, ...]
+    selected: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +54,11 @@ class UploadReceipt:
     details: tuple[str, ...] = ()
     pending_count: int = 0
     retry_count: int = 0
+    unchanged_count: int = 0
+
+    @property
+    def updated_count(self) -> int:
+        return self.success_count - self.unchanged_count
 
 
 class UploadProgress:
@@ -87,13 +94,15 @@ class CategorizedUploadSession:
         source_namespace=None,
         source_ids=None,
         categorized=True,
+        select_sources=False,
         gateway_factory=None,
         check_allowed=None,
     ) -> None:
         self.context = context
         self.check_allowed = check_allowed
         self.source_namespace = source_namespace
-        slots = tuple(getattr(context, "slots", {}).values())
+        self.select_sources = select_sources
+        slots = () if select_sources else tuple(getattr(context, "slots", {}).values())
         if source_namespace is not None:
             slots = tuple(
                 slot for slot in slots if any(entry.identity.namespace == source_namespace for entry in slot.collection)
@@ -107,7 +116,7 @@ class CategorizedUploadSession:
         )
         registered_namespaces = {source_content_identity(source) for source in getattr(context, "project_sources", ())}
         ids.update(f"namespace:{namespace}" for namespace in namespaces - registered_namespaces)
-        self.source_ids = tuple(sorted(ids)) if hasattr(context, "slots") else None
+        self.source_ids = tuple(sorted(ids)) if not select_sources and hasattr(context, "slots") else None
         if source_ids is not None:
             if self.source_ids is not None and not set(source_ids) <= ids:
                 raise ValueError("所选来源不在当前上传范围内。")
@@ -131,7 +140,30 @@ class CategorizedUploadSession:
         self.snapshot = None
         self._retry_selection = None
         self._retry_files = None
+        self._retry_categorized = categorized
         self.session_id = uuid4().hex
+
+    def load_source_catalog(self, progress, cancel: Event):
+        self._check_target()
+        if cancel.is_set():
+            return ()
+        progress(0, 0, "正在读取当前版本的插件目录…")
+        catalog = _value(self.commands.file_sources_catalog(self.request_context))
+        slot = getattr(self.context, "active_slot", None)
+        active_id = getattr(slot, "source_id", None)
+        namespace = getattr(slot, "source_namespace", None)
+        if not active_id and not namespace:
+            namespaces = {entry.identity.namespace.value for entry in getattr(self.context, "collection", None) or ()}
+            namespace = next(iter(namespaces)) if len(namespaces) == 1 else None
+        selected = next((item.source_id for item in catalog if item.source_id == active_id), None)
+        if selected is None and namespace:
+            selected = next(
+                (item.source_id for item in catalog if getattr(item.namespace, "value", None) == namespace), None
+            )
+        return tuple(
+            SourceOption(item.source_id, item.label, (), len(catalog) == 1 or item.source_id == selected)
+            for item in catalog
+        )
 
     def _diagnostic_scope(self, phase, **fields):
         return diagnostic_scope(
@@ -145,9 +177,10 @@ class CategorizedUploadSession:
             **fields,
         )
 
-    def load_preview(self, progress, cancel: Event):
+    def load_preview(self, progress, cancel: Event, *, source_ids=None, categorized=None):
+        categorized = self.categorized if categorized is None else categorized
         with self._diagnostic_scope("preview"):
-            sources = self._load_preview(progress, cancel)
+            sources = self._load_preview(progress, cancel, source_ids, categorized)
             log_event(
                 "preview_summary",
                 sources=len(sources),
@@ -157,14 +190,14 @@ class CategorizedUploadSession:
             )
             return sources
 
-    def _load_preview(self, progress, cancel: Event):
+    def _load_preview(self, progress, cancel: Event, source_ids, categorized):
         self._check_target()
         if cancel.is_set():
             return ()
         progress(0, 0, "正在读取当前版本的工程来源…")
-        snapshot = self._capture(cancel)
+        snapshot = self._capture(cancel, source_ids=source_ids, categorized=categorized)
         sources = self._sources_in_scope(snapshot)
-        files = upload_files(snapshot.sources, categorized=self.categorized)
+        files = self._files_for_snapshot(snapshot, categorized)
         return tuple(
             SourceOption(
                 source.source_id,
@@ -178,21 +211,25 @@ class CategorizedUploadSession:
             for source in sources
         )
 
-    def upload(self, selection, progress, cancel: Event):
-        return self._run_upload(selection, progress, cancel, retry=False)
+    def upload(self, selection, progress, cancel: Event, *, categorized=None):
+        categorized = self.categorized if categorized is None else categorized
+        return self._run_upload(selection, progress, cancel, retry=False, categorized=categorized)
 
     def retry_upload(self, progress, cancel: Event):
-        return self._run_upload(self._retry_selection, progress, cancel, retry=True)
+        return self._run_upload(None, progress, cancel, retry=True, categorized=None)
 
-    def _run_upload(self, selection, progress, cancel, *, retry):
+    def _run_upload(self, selection, progress, cancel, *, retry, categorized):
         if not self._upload_lock.acquire(blocking=False):
             raise RuntimeError("已有分类上传正在执行，请等待完成或取消。")
         try:
+            if retry:
+                selection, categorized = self._retry_selection, self._retry_categorized
             if selection is None or retry and self._retry_files == ():
                 raise ValueError("没有可补传的未完成文件。")
             if not retry:
                 self._retry_selection = selection
                 self._retry_files = None
+                self._retry_categorized = categorized
             file_count = len(self._retry_files) if retry and self._retry_files is not None else len(selection.file_keys)
             source_ids, file_keys = selection.source_ids, selection.file_keys
             if retry and self._retry_files is not None:
@@ -209,29 +246,29 @@ class CategorizedUploadSession:
                 if retry and self._retry_files is not None:
                     self._check_current()
                     return self._execute_upload(self._retry_files, selection.translation_mode, progress, cancel)
-                return self._upload(selection, progress, cancel)
+                return self._upload(selection, progress, cancel, categorized)
         finally:
             self._upload_lock.release()
 
-    def _upload(self, selection, progress, cancel: Event):
+    def _upload(self, selection, progress, cancel: Event, categorized):
         self._check_target()
         if cancel.is_set():
             return UploadReceipt(
                 0, 0, details=("已取消，尚未读取云端或上传内容。",), retry_count=len(selection.file_keys)
             )
-        progress(0, 0, "正在读取本次上传的工程来源和分类…")
-        self._retry_files = self._selected_files(selection, cancel)
+        progress(0, 0, "正在读取本次上传的工程来源和文件…")
+        self._retry_files = self._selected_files(selection, cancel, categorized=categorized)
         return self._execute_upload(self._retry_files, selection.translation_mode, progress, cancel)
 
-    def _selected_files(self, selection, cancel):
-        snapshot = self._capture(cancel)
-        files = upload_files(snapshot.sources, categorized=self.categorized)
-        available = {file_key(file): file for file in files}
+    def _selected_files(self, selection, cancel, *, categorized=None):
+        categorized = self.categorized if categorized is None else categorized
         source_ids = set(selection.source_ids)
         if not source_ids or not selection.file_keys:
-            raise ValueError("请至少选择一个插件及一个分类文件。")
+            raise ValueError("请至少选择一个插件及一个文件。")
+        snapshot = self._capture(cancel, source_ids=selection.source_ids, categorized=categorized)
         if not source_ids <= {source.source_id for source in self._sources_in_scope(snapshot)}:
             raise ValueError("所选插件不属于本次上传范围，请重新选择。")
+        available = {file_key(file): file for file in self._files_for_snapshot(snapshot, categorized)}
         if any(key not in available or available[key].source_id not in source_ids for key in selection.file_keys):
             raise ValueError("工程来源或分类已变化，请重新打开分类上传。")
         self.snapshot = snapshot
@@ -289,6 +326,7 @@ class CategorizedUploadSession:
             tuple(f"{item.path}：{item.message}" for item in receipt.files),
             sum(item.status == "skipped" for item in receipt.files),
             retry_count=len(receipt.retry_files),
+            unchanged_count=sum(item.status == "unchanged" for item in receipt.files),
         )
 
     def _sources_in_scope(self, snapshot):
@@ -303,14 +341,29 @@ class CategorizedUploadSession:
             raise ValueError("无法唯一定位当前插件的工程来源，请重新打开分类上传。")
         return sources
 
-    def _capture(self, cancel=None):
+    def _files_for_snapshot(self, snapshot, categorized):
+        sources = snapshot.sources
+        if self.select_sources:
+            captured = {source.source_id for source in sources}
+            # Include unselected names when resolving path collisions without loading their contents.
+            sources = (
+                *sources,
+                *(
+                    UploadSource(source_id, label, ())
+                    for source_id, label in snapshot.source_names
+                    if source_id not in captured
+                ),
+            )
+        return upload_files(sources, categorized=categorized)
+
+    def _capture(self, cancel=None, *, source_ids=None, categorized=None):
         return _value(
             self.commands.categorized_upload_snapshot(
                 self.request_context,
                 endpoint=self.target.endpoint,
                 remote_project_id=self.target.project_id,
-                source_ids=self.source_ids,
-                include_dialogue_order=self.categorized,
+                source_ids=source_ids if self.select_sources else self.source_ids,
+                include_dialogue_order=self.categorized if categorized is None else categorized,
                 cancellation=UploadCancellation(cancel) if cancel is not None else None,
             )
         )

@@ -136,13 +136,7 @@ class Step3OpsWidget(QWidget):
 
     def _update_button_states(self):
         has_collection = self._ctx.collection is not None
-        from transbridge.ui.paratranz.target_context import bound_paratranz_project
-
-        project = bound_paratranz_project(self._ctx)
-        has_project = project is not None
-
-        # 未绑定时仍允许进入操作窗口，再选择本次云端项目。
-        self._card_upload.btn.setEnabled(has_collection)
+        self._card_upload.btn.setEnabled(has_collection or bool(self._ctx.slots))
         self._card_download.btn.setEnabled(
             has_collection
             or bool(
@@ -153,14 +147,10 @@ class Step3OpsWidget(QWidget):
         self._card_write.btn.setEnabled(has_collection)
 
         # 更新批量按钮可见性
-        self._card_upload.update_batch_visibility()
         self._card_download.update_batch_visibility()
         self._card_write.update_batch_visibility()
 
-        # 批量按钮也需要根据项目状态启用/禁用
-        slots = self._ctx.slots
-        if len(slots) > 1:
-            self._card_upload.batch_btn.setEnabled(has_project)
+        if len(self._ctx.slots) > 1:
             self._card_write.batch_btn.setEnabled(True)
 
         self._overlay.hide()

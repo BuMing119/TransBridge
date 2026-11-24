@@ -64,7 +64,6 @@ class IntentId(StrEnum):
     WORKBENCH_MANAGE = "workbench.manage"
     WORKBENCH_CONTENT_PREPARE = "workbench.content.prepare"
     SYNC_UPLOAD = "sync.upload"
-    SYNC_UPLOAD_BATCH = "sync.upload-batch"
     SYNC_DOWNLOAD = "sync.download"
     SYNC_DOWNLOAD_BATCH = "sync.download-batch"
     PUBLISH_WRITE = "publish.write"
@@ -288,17 +287,10 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ),
     ActionDescriptor(
         IntentId.SYNC_UPLOAD,
-        "上传当前内容…",
+        "上传…",
         ActionSection.SYNC_PUBLISH,
         danger=DangerLevel.CAUTION,
-        aliases=("上传当前内容至 ParaTranz",),
-    ),
-    ActionDescriptor(
-        IntentId.SYNC_UPLOAD_BATCH,
-        "批量上传…",
-        ActionSection.SYNC_PUBLISH,
-        danger=DangerLevel.CAUTION,
-        aliases=("批量上传至 ParaTranz",),
+        aliases=("上传当前内容", "上传当前内容至 ParaTranz", "批量上传", "批量上传至 ParaTranz"),
     ),
     ActionDescriptor(
         IntentId.SYNC_DOWNLOAD,
