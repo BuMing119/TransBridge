@@ -1,22 +1,22 @@
 # 项目多插件分类上传
 
-当前进度见 [S04 上传方式、批量勾选与进度](../../docs/changelogs/paratranz-categorized-upload/story-01-to-05/2026-11-23-003-upload-selection-and-progress.md) 和 [S32 四种上传模式的本地差异比较](#s32-四种上传模式的本地差异比较)。统一入口初版见 [S04 历史记录](../../docs/changelogs/paratranz-categorized-upload/story-01-to-05/2026-11-22-002-unified-upload-entry.md)。
+当前进度见 [S04 上传方式、批量勾选与进度](../../docs/changelogs/paratranz-categorized-upload/story-01-to-05/2026-11-23-003-upload-selection-and-progress.md) 和 [S32 上传模式的差异比较](#s32-上传模式的差异比较)。统一入口初版见 [S04 历史记录](../../docs/changelogs/paratranz-categorized-upload/story-01-to-05/2026-11-22-002-unified-upload-entry.md)。
 
 状态：S31 达到 50 文件生成新压缩包下载已实现；2026-11-11 按用户要求完成目录优先、按需补齐，真实 ZIP 的 189 文件各读一次，20,162 词条离线快照与逐文件读取一致，相关回归 469 项及全库 Ruff/格式通过，见 [按需补齐增量](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-11-004-directory-priority-reads.md)。历史实现见 [全包检索](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-11-003-archive-member-discovery.md)、[S31 初版](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-03-001-fresh-archive-download.md)及 [后缀兼容补修](../../docs/changelogs/paratranz-categorized-upload/story-31/2026-11-11-002-raw-json-suffix-compatibility.md)。S30 并发、S29 节奏、S28 阅读布局、S27 共享下载及 S26 补传合同保持。
 
 ## 当前目标与约束
 
 - 统一上传入口先询问普通或分类，再打开文件选择窗口。默认勾选当前插件，两张列表分别支持全选和全部不选。提交前从本地生成预览，提交后启动所选文件的云端比较。普通与分类共用文件级执行器。普通根目录插件名.json，分类插件名/分类.json，Quest 及日志目录不变，命名基于全部来源。
-- 提供仅原文、仅安全译文、仅强制译文、原文加安全译文，默认原文增量保留云端余项。四种模式先比较已有目标文件，分别跳过无差异的改号、原文和译文操作。
+- 提供仅原文、仅安全译文、仅强制译文、仅填补云端空译文、原文加安全译文，默认原文增量保留云端余项。各模式先比较已有目标文件，分别跳过无差异的改号、原文和译文操作。
 - 使用官方文件创建、增量更新与按 key 导入 translation/stage；不读取项目词条，不逐条核验/回读，排序码迁移使用批量 strings 编辑并核对 ID，文件上传不生成持久关联。
 - 当前路径决定 file_id；同路径重建不要求审阅，404 最多重新定位一次，超时不自动重发。本轮结束后可手动补传未完成文件，重新读取云端列表，只处理剩余文件及分片。共享用户请求预算，明确 429 尊重 Retry-After，423 报文件忙。
 - 413 保留确定性原文拆文件；译文过大仅在同文件内拆批。部分阶段成功如实记录。下载按登记插件层级读取目录下全部分类文件，不依赖上传绑定。
 - 保留本地身份、key、精确原文匹配和持久化来源顺序。软件内部默认显示、对话树和分类导出按 S28 共用阅读布局；内部只调整显示索引，导出独立生成显示编号，不改变任何本地词条字段、基础 context 或 source_order。工程/版本/账号/修订保护、后台取消和有界进度保持。同步优先当前布局，缺失时只读兼容省略插件后缀的旧布局；不读取旧分类绑定、历史词条关联或其他插件路径的同 key 内容，独立上传与双向同步合同按真实调用保留。
 - 不提交、不发布、不改 lockfile/schema，本轮验证不写真实云端。保留工作区原有 AI、同步及项目相关改动。
 
-## S32 四种上传模式的本地差异比较
+## S32 上传模式的差异比较
 
-普通及分类上传复用第一阶段的完整来源编号。四种模式先读取所选已有文件，在本地比较同一文件内的传输身份。原文上传负责迁移 key，两个纯译文模式均用云端实际 key 提交。每个阶段独立决定是否写入，部分成功按文件处理，补传重读云端。实现和回归见 [S32 增量记录](../../docs/changelogs/paratranz-categorized-upload/story-32/2026-11-20-001-file-upload-differences.md)。
+普通及分类上传复用第一阶段的完整来源编号。各模式先读取所选已有文件，在本地比较同一文件内的传输身份。原文上传负责迁移 key，纯译文模式均用云端实际 key 提交。每个阶段独立决定是否写入，部分成功按文件处理，补传重读云端。填空模式在执行和补传时逐文件直接读取云端译文。实现和回归见 [填空模式记录](../../docs/changelogs/paratranz-categorized-upload/story-32/2026-11-24-002-fill-empty-translations.md) 和 [S32 初版记录](../../docs/changelogs/paratranz-categorized-upload/story-32/2026-11-20-001-file-upload-differences.md)。
 
 ## S31 大批量下载使用新生成的压缩包
 

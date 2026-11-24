@@ -1,5 +1,7 @@
 # 变更日志索引
 
+- 2026-11-24：[ParaTranz 仅填补云端空译文](paratranz-categorized-upload/story-32/2026-11-24-002-fill-empty-translations.md)。工作台与助手共用逐文件填空策略，补传时重新核对云端译文。
+
 - 2026-11-22：[启动时按本地日期提醒可用更新](app-update/story-02/2026-11-22-001-daily-update-reminder.md)。
 
 - 2026-11-22：[项目术语页按需检查来源并释放窗口](project-terminology-build-versioning-reporting/story-16/2026-11-22-004-defer-source-capture.md)。

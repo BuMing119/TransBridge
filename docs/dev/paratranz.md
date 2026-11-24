@@ -291,7 +291,7 @@ def _make_file_field(field_name: str, filename: str, data: bytes) -> RequestFiel
 
 「上传…」先打开上传方式对话框，选定普通或分类后再打开插件和文件选择窗口。窗口先本地预览，用户提交后由 `paratranz/project_upload.py` 的 `CategorizedUploadSession` 捕获所选来源，并将文件交给 `application/file_upload.py` 和 `paratranz/file_publication.py`。
 
-文件执行器按完整路径定位云端文件，比较后执行所需的创建、原文增量更新或译文导入。仅强制导入译文时提交非空差异译文。需要比较的已有文件达到 50 个时使用新的项目 ZIP。上传策略、分片、权限、取消和补传见[文件上传说明](paratranz-categorized-upload.md)。
+文件执行器按完整路径定位云端文件，比较后执行所需的创建、原文增量更新或译文导入。仅强制导入译文时提交非空差异译文。仅填空模式逐文件直接读取云端当前译文并安全导入。其他模式需要比较的已有文件达到 50 个时使用新的项目 ZIP。上传策略、分片、权限、取消和补传见[文件上传说明](paratranz-categorized-upload.md)。
 
 ---
 
