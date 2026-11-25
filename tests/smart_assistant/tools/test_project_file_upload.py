@@ -22,7 +22,7 @@ project_fixture = upload_project
 def bound(harness, monkeypatch):
     if ToolRegistry.get("upload_entries") is None:
         _register_paratranz_tools()
-    monkeypatch.setattr("transbridge.paratranz.project_upload.FilePublicationGateway", harness.remote.gateway)
+    monkeypatch.setattr("transbridge.paratranz.project_upload.ProjectUploadGateway", harness.remote.gateway)
     app = harness.context
     app.active_version_identity = (app.active_project_id, app.active_variant_id)
     snapshot = harness.session._capture()

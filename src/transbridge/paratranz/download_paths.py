@@ -6,9 +6,11 @@ from collections.abc import Mapping
 from pathlib import PurePosixPath
 import re
 
+from transbridge.application.upload_policy import POLICY_FILENAME
+
 
 def _path_families(path):
-    if not path.endswith(".json"):
+    if not path.endswith(".json") or path.casefold() == POLICY_FILENAME:
         return ()
     first, separator, _ = path.partition("/")
     if separator:

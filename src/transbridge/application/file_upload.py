@@ -175,6 +175,7 @@ def execute_file_upload(
     mode: str = "orig_only",
     cancelled: Callable[[], bool] = lambda: False,
     check_current: Callable[[], None] = lambda: None,
+    check_inventory: Callable[[Mapping[str, int]], None] | None = None,
     progress: Callable[[int, int, str], None] | None = None,
 ) -> FileUploadReceipt:
     """Compare existing files, migrate keys, then apply independent write phases.
@@ -196,6 +197,9 @@ def execute_file_upload(
     if progress:
         progress(0, len(files), "正在获取云端文件列表…")
     paths = port.inventory(project_id)
+    if check_inventory is not None:
+        check_inventory(paths)
+        check_current()
     inventory = UploadInventory(paths)
     with ExitStack() as resources:
         archive_reader = None

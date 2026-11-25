@@ -20,8 +20,9 @@ from transbridge.application.file_upload import (
 from transbridge.application.file_upload_execution import comparison_plan
 from transbridge.application.projects.remote_binding import normalize_paratranz_endpoint
 from transbridge.application.projects.source_content import source_content_identity
-from transbridge.paratranz.file_publication import FilePublicationGateway
+from transbridge.application.upload_policy import POLICY_FILENAME
 from transbridge.paratranz.file_transport import UploadCancellation
+from transbridge.paratranz.project_policy import ProjectUploadGateway, publish_policy, read_access
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +135,7 @@ class CategorizedUploadSession:
         if self.target.account_user_id is None:
             raise ValueError("请先登录并验证 ParaTranz 账号。")
         self.config = copy(context.config)
-        self.gateway_factory = gateway_factory or FilePublicationGateway
+        self.gateway_factory = gateway_factory or ProjectUploadGateway
         self.stamp = upload_target_identity(context, self.target)
         self._upload_lock = Lock()
         self.snapshot = None
@@ -142,6 +143,23 @@ class CategorizedUploadSession:
         self._retry_files = None
         self._retry_categorized = categorized
         self.session_id = uuid4().hex
+
+    def policy_access(self, cancel, *, previous=None, policy=None):
+        self._check_target()
+        gateway = self.gateway_factory(self.config, cancel=cancel)
+        try:
+            pid = self.target.project_id
+            if policy is None:
+                access = read_access(gateway, pid, self.target.account_user_id, gateway.inventory(pid), for_window=True)
+            else:
+                access = publish_policy(gateway, pid, previous, policy, self._check_target)
+            self._check_target()
+            return access
+        finally:
+            gateway.close()
+
+    def check_policy_target(self):
+        self._check_target()
 
     def load_source_catalog(self, progress, cancel: Event):
         self._check_target()
@@ -306,6 +324,12 @@ class CategorizedUploadSession:
         progress = UploadProgress(progress)
         gateway = self.gateway_factory(self.config, cancel=cancel, status=progress.status)
         try:
+
+            def check_policy(paths):
+                access = read_access(gateway, self.target.project_id, self.target.account_user_id, paths)
+                if not access.allows_layout(self._retry_categorized) or not access.allows(mode):
+                    raise PermissionError("项目上传政策未允许当前账号使用所选布局或操作。")
+
             receipt = execute_file_upload(
                 self.target.project_id,
                 files,
@@ -314,6 +338,7 @@ class CategorizedUploadSession:
                 cancelled=cancel.is_set,
                 progress=progress,
                 check_current=self._check_current,
+                check_inventory=check_policy,
             )
         finally:
             gateway.close()
@@ -354,7 +379,9 @@ class CategorizedUploadSession:
                     if source_id not in captured
                 ),
             )
-        return upload_files(sources, categorized=categorized)
+        return tuple(
+            file for file in upload_files(sources, categorized=categorized) if file.path.casefold() != POLICY_FILENAME
+        )
 
     def _capture(self, cancel=None, *, source_ids=None, categorized=None):
         return _value(
