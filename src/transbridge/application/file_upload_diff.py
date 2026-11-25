@@ -4,11 +4,11 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from .file_upload_modes import UPLOAD_MODES
 from .io.identity import SourceNamespace
 from .io.paratranz_context_order import parse_ordered_context
 from .io.paratranz_keys import decode_key, split_ordered_key
 
-UPLOAD_MODES = ("orig_only", "trans_safe", "trans_force", "both", "trans_fill_empty")
 _LITERAL_PREFIX = "__transbridge_key__:v1:k:"
 _QUALIFIED_PREFIX = "__transbridge_key__:v1:o:"
 
