@@ -39,6 +39,7 @@ from transbridge.ui.foundation.components import (
     configure_dialog,
 )
 from transbridge.ui.operations.categorized_upload_progress import LatestProgress
+from transbridge.ui.operations.upload_mode_dialog import apply_operation_access
 from transbridge.ui.workers import ApiWorker
 
 
@@ -57,6 +58,7 @@ class CategorizedUploadDialog(QDialog):
         batch: bool | None = True,
         categorized: bool = True,
         load_catalog: Callable | None = None,
+        policy_access=None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -96,6 +98,10 @@ class CategorizedUploadDialog(QDialog):
         self._preview_timer.setInterval(150)
         self._preview_timer.timeout.connect(self._load_sources)
         self._build_widgets(project_label, variant_label, target_label)
+        if policy_access is not None:
+            apply_operation_access(self._mode, policy_access)
+            if self._mode.currentIndex() < 0:
+                self.layout().insertWidget(1, WrappingLabel("项目政策未给当前账号开放任何上传操作。", self))
         self._sync_controls()
         QTimer.singleShot(0, self._load_sources)
 
@@ -307,7 +313,7 @@ class CategorizedUploadDialog(QDialog):
         if self._worker is not None or self._sources is None:
             return
         selection = self.selection()
-        if not selection.source_ids or not selection.file_keys:
+        if not selection.source_ids or not selection.file_keys or not selection.translation_mode:
             return
         if not self._confirm_force_upload(selection.translation_mode):
             return
@@ -504,7 +510,9 @@ class CategorizedUploadDialog(QDialog):
         self._retry_button.setVisible(not busy and self._retry_upload is not None and self._retry_count > 0)
         self._retry_button.setEnabled(not busy and not self._preview_timer.isActive() and self._retry_count > 0)
         self._retry_button.setText(f"补传未完成文件（{self._retry_count}）")
-        self._upload_button.setEnabled(not busy and self._sources is not None and has_selection)
+        self._upload_button.setEnabled(
+            not busy and self._sources is not None and has_selection and self._mode.currentIndex() >= 0
+        )
         self._mode.setEnabled(not busy)
         self._cancel.setText("取消任务" if busy else "关闭")
         self._cancel.setEnabled(not busy or not self._cancel_event.is_set())

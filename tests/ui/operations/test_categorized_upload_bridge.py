@@ -214,6 +214,29 @@ def test_local_selection_does_not_read_cloud_and_upload_is_file_scoped(harness):
     assert len(harness.remote.files) == 2
 
 
+def test_upload_and_retry_recheck_current_cloud_policy_before_writing(harness, monkeypatch):
+    from transbridge.application.upload_policy import POLICY_FILENAME, OperationRule
+    from transbridge.application.upload_policy_codec import upload_policy_entries
+    from transbridge.paratranz.project_policy import default_upload_policy
+
+    remote = harness.remote
+    inventory = remote.inventory
+    monkeypatch.setattr(remote, "inventory", lambda pid: {**inventory(pid), POLICY_FILENAME: 999})
+    policy = replace(default_upload_policy(), rules=dict.fromkeys(default_upload_policy().rules, OperationRule()))
+    monkeypatch.setattr(
+        remote, "get_file_content", lambda *a, **kw: json.dumps(upload_policy_entries(policy)).encode(), raising=False
+    )
+    monkeypatch.setattr(remote, "get_my_user", lambda: {"id": 7}, raising=False)
+    monkeypatch.setattr(remote, "get_project", lambda pid: {"id": pid, "uid": 7}, raising=False)
+    with pytest.raises(PermissionError, match="政策"):
+        _upload(harness)
+    with pytest.raises(PermissionError, match="政策"):
+        harness.session.retry_upload(_progress, harness.cancel)
+    assert not remote.writes
+    policy = default_upload_policy()
+    assert harness.session.retry_upload(_progress, harness.cancel).success_count == 2
+
+
 @pytest.mark.parametrize("categorized", [False, True])
 def test_both_layouts_share_executor(harness, categorized):
     harness.session.categorized = categorized

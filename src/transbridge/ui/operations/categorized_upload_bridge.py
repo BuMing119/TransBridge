@@ -9,6 +9,7 @@ from transbridge.paratranz.project_upload import CategorizedUploadSession
 
 from .categorized_upload_dialog import CategorizedUploadDialog
 from .upload_mode_dialog import UploadModeDialog
+from .upload_policy_flow import edit_policy, initial_policy
 
 
 def open_categorized_upload(context, parent=None, *, batch: bool = False):
@@ -16,16 +17,6 @@ def open_categorized_upload(context, parent=None, *, batch: bool = False):
 
 
 def open_file_upload(context, parent=None, *, batch=False, categorized: bool | None = None, **values):
-    if batch is None and categorized is None:
-        choice = UploadModeDialog(parent)
-        try:
-            if choice.exec() != QDialog.DialogCode.Accepted:
-                return None
-            categorized = choice.categorized
-        finally:
-            choice.deleteLater()
-    categorized = bool(categorized)
-
     try:
         if values:
             from .download_context import DownloadContext
@@ -38,9 +29,26 @@ def open_file_upload(context, parent=None, *, batch=False, categorized: bool | N
                 raise ValueError("单独分类上传需要当前插件的唯一来源，请先选择一个插件。")
             namespace = namespaces.pop()
         if batch is None:
-            session = CategorizedUploadSession(context, categorized=categorized, select_sources=True)
+            session = CategorizedUploadSession(context, categorized=bool(categorized), select_sources=True)
         else:
-            session = CategorizedUploadSession(context, source_namespace=namespace, categorized=categorized)
+            session = CategorizedUploadSession(context, source_namespace=namespace, categorized=bool(categorized))
+        access = initial_policy(session, parent)
+        if access is None:
+            return None
+        if batch is None and categorized is None:
+            choice = UploadModeDialog(
+                parent, access=access, edit=lambda current, owner: edit_policy(session, current, owner)
+            )
+            try:
+                if choice.exec() != QDialog.DialogCode.Accepted:
+                    return None
+                categorized, access = choice.categorized, choice.access
+            finally:
+                choice.deleteLater()
+        elif not access.allows_layout(bool(categorized)):
+            raise ValueError("项目政策未开放所选上传布局。")
+        session.check_policy_target()
+        session.categorized = bool(categorized)
     except (ValueError, RuntimeError, AttributeError) as exc:
         QMessageBox.warning(parent, "无法上传", str(exc))
         return None
@@ -54,6 +62,7 @@ def open_file_upload(context, parent=None, *, batch=False, categorized: bool | N
         load_catalog=session.load_source_catalog if batch is None else None,
         batch=batch,
         categorized=categorized,
+        policy_access=access,
         parent=parent,
     )
     dialog.show()

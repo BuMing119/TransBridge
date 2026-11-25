@@ -9,6 +9,7 @@ from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QMessageBox
 import pytest
 
+from transbridge.paratranz.project_policy import PolicyAccess
 from transbridge.ui.coordinators.operation_coordinator import OperationCoordinator
 from transbridge.ui.operations import categorized_upload_bridge
 from transbridge.ui.operations.upload_mode_dialog import UploadModeDialog
@@ -35,6 +36,7 @@ def test_upload_entry_asks_for_mode_before_opening_the_file_window(qapp, monkeyp
         load_preview=object(),
         upload=object(),
         retry_upload=object(),
+        check_policy_target=lambda: None,
     )
 
     def create_session(owner, *, categorized, select_sources):
@@ -59,6 +61,7 @@ def test_upload_entry_asks_for_mode_before_opening_the_file_window(qapp, monkeyp
             buttons.button(QDialogButtonBox.StandardButton.Ok).click()
 
     monkeypatch.setattr(categorized_upload_bridge, "CategorizedUploadSession", create_session)
+    monkeypatch.setattr(categorized_upload_bridge, "initial_policy", lambda *_: PolicyAccess(None, None, 1, None, ()))
     monkeypatch.setattr(categorized_upload_bridge, "CategorizedUploadDialog", open_dialog)
     facade = SimpleNamespace(begin_upload=categorized_upload_bridge.open_file_upload)
     card = UploadCard(context, lambda **_kwargs: pytest.fail("Unexpected legacy upload"))
@@ -73,12 +76,13 @@ def test_upload_entry_asks_for_mode_before_opening_the_file_window(qapp, monkeyp
             OperationCoordinator(host).upload()
         else:
             card.btn.click()
-        assert choices == [(False, 0)]
+        assert choices == [(False, 1)]
+        assert sessions == [(context, False, True)]
         if mode == "cancel":
-            assert sessions == dialogs == []
+            assert dialogs == []
         else:
             categorized = mode == "categorized"
-            assert sessions == [(context, categorized, True)]
+            assert session.categorized == categorized
             [(project, version, target, options)] = dialogs
             assert (project, version, target) == ("Project", "Variant", "Remote")
             assert options["categorized"] is categorized
