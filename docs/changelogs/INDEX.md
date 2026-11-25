@@ -1,5 +1,9 @@
 # 变更日志索引
 
+- 2026-11-25：[Owner 后台保存云端上传政策](unplanned/paratranz-upload-policy/2026-11-25-002-cloud-policy-editor.md)。首次设置与后续编辑共用云端文件，上传及补传重新核对项目权限。
+
+- 2026-11-24：[ParaTranz 项目上传政策 v1 数据契约](unplanned/paratranz-upload-policy/2026-11-24-001-policy-contract.md)。定义五种操作的独立名单、项目规则和原文词条格式，完成离线验证。
+
 - 2026-11-24：[ParaTranz 仅填补云端空译文](paratranz-categorized-upload/story-32/2026-11-24-002-fill-empty-translations.md)。工作台与助手共用逐文件填空策略，补传时重新核对云端译文。
 
 - 2026-11-22：[启动时按本地日期提醒可用更新](app-update/story-02/2026-11-22-001-daily-update-reminder.md)。
