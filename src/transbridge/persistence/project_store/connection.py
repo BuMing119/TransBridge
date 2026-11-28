@@ -7,8 +7,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import sqlite3
+from threading import Lock, RLock
+from weakref import WeakValueDictionary
 
-from transbridge.filesystem_paths import native_path, sqlite_uri
+from transbridge.filesystem_paths import extended_path, native_path, sqlite_uri
 from transbridge.persistence.v2.filesystem import OsPersistenceFilesystem
 from transbridge.persistence.v2.session_write_lease import persistence_write_lease
 
@@ -25,6 +27,9 @@ from .format import (
 from .schema import SCHEMA
 from .source_references import SCHEMA as SOURCE_REFERENCE_SCHEMA
 
+_project_writers: WeakValueDictionary[Path, RLock] = WeakValueDictionary()
+_writers_guard = Lock()
+
 
 @contextmanager
 def project_connection(
@@ -36,11 +41,18 @@ def project_connection(
         yield connection
 
 
-def project_mutation_lease(path: Path):
+@contextmanager
+def project_mutation_lease(path: Path) -> Iterator[None]:
+    path = extended_path(native_path(path), force=True)
     root = path.parent.parent
     if path.name != PROJECT_FILENAME or not path.parent.name.startswith("id-") or root.name != PROJECT_ROOT:
-        return nullcontext()
-    return persistence_write_lease(str(root), path.parent.name, OsPersistenceFilesystem(), "PROJECT_WRITER_BUSY")
+        yield
+        return
+    # Queue this process's writers before testing the nonblocking interprocess lease.
+    with _writers_guard:
+        writer = _project_writers.setdefault(path, RLock())
+    with writer, persistence_write_lease(str(root), path.parent.name, OsPersistenceFilesystem(), "PROJECT_WRITER_BUSY"):
+        yield
 
 
 @contextmanager
