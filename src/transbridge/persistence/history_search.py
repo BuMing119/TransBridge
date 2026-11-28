@@ -27,7 +27,7 @@ from transbridge.application.history_search.models import (
     normalize_search_text,
 )
 
-_SCHEMA_VERSION = "2"
+_SCHEMA_VERSION = "3"  # Rebuild projections that may include retired dictionary sources.
 _FETCH_LIMIT = 5000
 
 
@@ -108,6 +108,8 @@ class SqliteHistorySearchIndex:
         )
         parameters.append(_FETCH_LIMIT)
         with self._lock, closing(sqlite3.connect(self.path)) as connection:
+            if _read_metadata(connection) is None:
+                return HistorySearchPage((), 0)
             rows = connection.execute(sql, parameters).fetchall()
         hits = _merge_rows(rows)
         page_items = hits[request.offset : request.offset + request.limit]
@@ -118,6 +120,8 @@ class SqliteHistorySearchIndex:
             return ()
         try:
             with self._lock, closing(sqlite3.connect(self.path)) as connection:
+                if _read_metadata(connection) is None:
+                    return ()
                 rows = connection.execute(
                     "SELECT kind, scope_id, label FROM search_scopes ORDER BY kind DESC, label COLLATE NOCASE, scope_id"
                 ).fetchall()
@@ -132,15 +136,15 @@ class SqliteHistorySearchIndex:
             return IndexStatus(False)
         try:
             with self._lock, closing(sqlite3.connect(self.path)) as connection:
-                metadata = dict(connection.execute("SELECT key, value FROM metadata").fetchall())
+                metadata = _read_metadata(connection)
+                if metadata is None:
+                    return IndexStatus(False)
                 diagnostics = tuple(
                     HistoryDiagnostic(str(code), str(message), str(source))
                     for code, message, source in connection.execute(
                         "SELECT code, message, source FROM diagnostics ORDER BY rowid"
                     )
                 )
-            if metadata.get("schema_version") != _SCHEMA_VERSION:
-                return IndexStatus(False)
             return IndexStatus(
                 True,
                 int(metadata.get("record_count", "0")),
@@ -205,6 +209,11 @@ class SqliteHistorySearchIndex:
     @staticmethod
     def _insert_records(connection: sqlite3.Connection, rows: list[tuple[str, ...]]) -> None:
         connection.executemany("INSERT INTO records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+
+
+def _read_metadata(connection: sqlite3.Connection) -> dict[str, str] | None:
+    metadata = dict(connection.execute("SELECT key, value FROM metadata"))
+    return metadata if metadata.get("schema_version") == _SCHEMA_VERSION else None
 
 
 def _scope_rows(records: tuple[SourceRecord, ...]) -> tuple[tuple[str, str, str], ...]:

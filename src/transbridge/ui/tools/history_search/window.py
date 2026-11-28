@@ -217,7 +217,7 @@ class HistorySearchWindow(QDialog):
             return
         self._active_ref = deferred.ref
         self.refresh_button.setText("取消刷新")
-        self.status_label.setText("正在后台读取已保存的 Project/Variant、.tbdict 和生效术语…")
+        self.status_label.setText("正在读取已保存的译文、词典和术语…")
         snapshot = self._tasks.runtime.get(deferred.ref, self._owner)
         if snapshot.is_terminal:
             self._finish_snapshot(snapshot)

@@ -25,7 +25,7 @@ from transbridge.persistence.history_search import SqliteHistorySearchIndex
 from transbridge.persistence.project_store.format import ProjectStorageConflict
 from transbridge.persistence.terminology import SqliteTerminologyRepository, TerminologyPaths
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantId
-from transbridge.translation_memory.model import Dictionary
+from transbridge.translation_memory.library import DictionaryLibraryError, iter_library_history
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,44 +127,37 @@ class ProjectVariantHistoryProvider:
 
 
 class DictionaryHistoryProvider:
-    name = ".tbdict"
+    name = "翻译词典"
 
     def __init__(self, root: str | Path) -> None:
         self._root = Path(root)
 
     def collect(self, cancellation) -> ProviderResult:
-        if not self._root.exists():
-            return ProviderResult()
         records: list[SourceRecord] = []
         diagnostics: list[HistoryDiagnostic] = []
-        for path in sorted(self._root.glob("*.tbdict")):
-            _raise_if_cancelled(cancellation)
-            try:
-                dictionary = Dictionary.from_dict(json.loads(path.read_text(encoding="utf-8")))
-                for entry_id, entry in dictionary.entries.items():
-                    if not entry.original.strip() or not entry.translation.strip():
-                        continue
-                    enabled_status = "" if entry.enabled else " / disabled"
-                    records.append(
-                        SourceRecord(
-                            HistoryEntryKind.TRANSLATION,
-                            entry.original,
-                            entry.translation,
-                            HistorySourceRef(
-                                HistorySourceType.DICTIONARY,
-                                f"{dictionary.dictionary_id}:{entry_id}",
-                                f"词典 {dictionary.mod_file_id}",
-                                plugin_id=entry.source_mod or dictionary.mod_file_id,
-                                dictionary_id=dictionary.dictionary_id,
-                                details=(("file", path.name), ("scope", dictionary.scope)),
-                            ),
-                            source_locale=entry.source_locale,
-                            target_locale=entry.target_locale,
-                            status=f"{dictionary.scope} / stage {entry.stage}{enabled_status}",
-                        )
+        try:
+            for game, src, dst, name, record_id, mod, original, translation in iter_library_history(self._root):
+                _raise_if_cancelled(cancellation)
+                library_id = json.dumps([game, src, dst, name], ensure_ascii=False)
+                records.append(
+                    SourceRecord(
+                        HistoryEntryKind.TRANSLATION,
+                        original,
+                        translation,
+                        HistorySourceRef(
+                            HistorySourceType.DICTIONARY,
+                            f"library:{library_id}:{record_id}",
+                            name or "个人库",
+                            plugin_id=mod,
+                            dictionary_id=library_id,
+                            details=(("game", game), ("library", name or "个人库")),
+                        ),
+                        source_locale=src,
+                        target_locale=dst,
                     )
-            except Exception as exc:  # noqa: BLE001 - corrupt dictionaries remain untouched
-                diagnostics.append(HistoryDiagnostic("HISTORY_DICTIONARY_INVALID", f"词典格式无效：{exc}", path.name))
+                )
+        except (DictionaryLibraryError, OSError, ValueError) as exc:
+            diagnostics.append(HistoryDiagnostic("HISTORY_DICTIONARY_INVALID", f"词典读取失败：{exc}", self.name))
         return ProviderResult(tuple(records), tuple(diagnostics))
 
 

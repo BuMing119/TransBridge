@@ -28,49 +28,60 @@ from transbridge.bootstrap.history_search import (
     TerminologyHistoryProvider,
 )
 from transbridge.bootstrap.persistence import build_persistence_v2_services
+from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.persistence.terminology import TerminologyPaths
 from transbridge.persistence.v2.ids import EntityKind
 from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
+from transbridge.translation_memory.library import DictionaryLibrary
 
 
-def test_dictionary_provider_reads_valid_files_and_does_not_mutate_corrupt_files(tmp_path) -> None:
+def test_dictionary_history_includes_personal_and_inactive_main_libraries(tmp_path) -> None:
+    library = DictionaryLibrary(tmp_path)
+    row = TranslationEntry("first", "first", "Open", "营业", 1, "MESG:FULL")
+    library.save([row], "Shops")
+    library.save([row], "Shops", main="A")
+    result = DictionaryHistoryProvider(tmp_path).collect(None)
+    assert not result.diagnostics
+    assert {(item.source.label, item.source.plugin_id) for item in result.records} == {
+        ("个人库", "Shops"),
+        ("A", "Shops"),
+    }
+    assert len({item.source.source_id for item in result.records}) == 2
+    assert library.active_main() == ""
+
+
+def test_dictionary_provider_ignores_legacy_dictionary_files(tmp_path) -> None:
     valid = tmp_path / "Skyrim.tbdict"
-    valid.write_text(
-        json.dumps({
-            "schema_version": 2,
-            "mod_file_id": "Skyrim",
-            "scope": "global",
-            "entries": {
-                "entry": {
-                    "original": "Dragon",
-                    "translation": "龙",
-                    "source_locale": "en",
-                    "target_locale": "zh-CN",
-                    "enabled": True,
-                },
-                "legacy": {
-                    "original": "Legacy",
-                    "translation": "旧译文",
-                    "enabled": False,
-                },
-            },
-        }),
-        encoding="utf-8",
-    )
+    original_valid = json.dumps({
+        "schema_version": 2,
+        "mod_file_id": "Skyrim",
+        "scope": "global",
+        "entries": {"entry": {"original": "Dragon", "translation": "龙", "enabled": True}},
+    })
+    valid.write_text(original_valid, encoding="utf-8")
     corrupt = tmp_path / "Broken.tbdict"
     original_corrupt = "{broken"
     corrupt.write_text(original_corrupt, encoding="utf-8")
 
     result = DictionaryHistoryProvider(tmp_path).collect(None)
 
-    assert [(item.original, item.translation) for item in result.records] == [
-        ("Dragon", "龙"),
-        ("Legacy", "旧译文"),
-    ]
-    assert result.records[1].status.endswith("disabled")
-    assert result.diagnostics[0].code == "HISTORY_DICTIONARY_INVALID"
+    assert not result.records
+    assert not result.diagnostics
+    assert valid.read_text(encoding="utf-8") == original_valid
     assert corrupt.read_text(encoding="utf-8") == original_corrupt
     assert sorted(path.name for path in tmp_path.iterdir()) == ["Broken.tbdict", "Skyrim.tbdict"]
+
+
+def test_dictionary_provider_reports_invalid_sqlite_library(tmp_path) -> None:
+    library = tmp_path / "libraries.sqlite3"
+    invalid_contents = b"invalid SQLite library"
+    library.write_bytes(invalid_contents)
+
+    result = DictionaryHistoryProvider(tmp_path).collect(None)
+
+    assert not result.records
+    assert [item.code for item in result.diagnostics] == ["HISTORY_DICTIONARY_INVALID"]
+    assert library.read_bytes() == invalid_contents
 
 
 class _Catalog:
