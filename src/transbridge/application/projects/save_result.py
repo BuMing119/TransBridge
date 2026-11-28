@@ -1,13 +1,20 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Describe incremental saves without claiming missing source content was captured."""
 
+from typing import Any
+
 from transbridge.application.contracts import (
     Diagnostic,
     ErrorCategory,
     OperationCounts,
     OperationOutcome,
     OperationResult,
+    RequestContext,
 )
+
+from .models import ActiveProject, LifecycleSave
+
+MAX_SAVE_ENTRY_DELTA_KEYS = 100_000
 
 
 def translations_were_saved(result):
@@ -21,7 +28,13 @@ def translations_were_saved(result):
     )
 
 
-def active_save_result(active, context):
+def active_save_result(
+    active: ActiveProject | None,
+    context: RequestContext,
+    *,
+    save: LifecycleSave | None = None,
+    include_entry_delta: bool = False,
+) -> OperationResult[dict[str, Any] | None]:
     if active is None:
         return OperationResult.completed(None, run_id=context.run_id)
     missing_inputs = [item.to_dict() for item in active.missing_inputs]
@@ -34,7 +47,12 @@ def active_save_result(active, context):
         if source["content_state"] == "missing" and source["source_id"] not in known
     )
     if not missing_inputs:
-        return OperationResult.completed(active.summary(), run_id=context.run_id)
+        summary = active.summary()
+        if include_entry_delta:
+            delta = _entry_delta(active, save)
+            if delta is not None:
+                summary["entry_delta"] = delta
+        return OperationResult.completed(summary, run_id=context.run_id)
     summary = {**active.summary(), "source_content_complete": False}
     return OperationResult.partial(
         summary,
@@ -49,3 +67,40 @@ def active_save_result(active, context):
         ),
         run_id=context.run_id,
     )
+
+
+def _entry_delta(active: ActiveProject, save: LifecycleSave | None) -> dict[str, Any] | None:
+    """Report only row changes covered by the successfully persisted revision range."""
+    ref = active.formal_variant_ref
+    target_revision = active.persisted_variant_revision
+    if ref is None or target_revision is None:
+        return None
+
+    if save is None:
+        previous_revision, entries = target_revision, ()
+    else:
+        previous_revision, entries = save.expected_persisted_revision, save.entry_changes
+        if (
+            save.variant is None
+            or save.variant.ref != ref
+            or save.variant.revision != target_revision
+            or save.project.envelope.revision != save.expected_persisted_project_revision
+            or active.persisted_project_revision != save.expected_persisted_project_revision
+            or save.source_additions
+        ):
+            return None
+    if (
+        previous_revision is None
+        or previous_revision > target_revision
+        or entries is None
+        or len(entries) > MAX_SAVE_ENTRY_DELTA_KEYS
+    ):
+        return None
+
+    return {
+        "project_id": ref.project_id.value,
+        "variant_id": ref.identity.value,
+        "previous_variant_revision": previous_revision,
+        "variant_revision": target_revision,
+        "entry_keys": [entry.entry_key.to_dict() for entry in entries],
+    }

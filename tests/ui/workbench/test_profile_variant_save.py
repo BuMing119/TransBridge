@@ -22,12 +22,14 @@ def _host(*, dirty=False, preview=True, targets=()):
     )
     context = SimpleNamespace(
         active_version_identity=("project", "A"),
+        active_key="selected-plugin",
+        slots={"selected-plugin": object()},
         dirty=dirty,
         project_variants=(),
         project_revision=2,
         variant_revision=3,
     )
-    success = SimpleNamespace(is_success=True)
+    success = SimpleNamespace(is_success=True, value={"id": "saved-b"})
 
     def save(name, request, **kwargs):
         calls.append(("save", name, request, kwargs))
@@ -41,9 +43,17 @@ def _host(*, dirty=False, preview=True, targets=()):
         calls.append(("worker", kwargs["message"]))
         kwargs["on_result"](operation())
 
-    def save_source(*, on_finished):
-        calls.append(("save-source",))
-        on_finished(True)
+    def save_source(*, on_finished=None, **options):
+        if on_finished is None:
+            calls.append(("publish", options))
+        else:
+            calls.append(("save-source",))
+            on_finished(True)
+
+    def restore(*, on_restored):
+        calls.append(("reload",))
+        context.active_version_identity = ("project", "saved-b")
+        on_restored()
 
     host = SimpleNamespace(
         workbench=SimpleNamespace(terminology_profile_controller=controller),
@@ -53,7 +63,7 @@ def _host(*, dirty=False, preview=True, targets=()):
         start_foreground_task=run,
         save_current_project_async=save_source,
         show_message=messages.append,
-        project_coordinator=SimpleNamespace(restore_active_sources=lambda: calls.append(("reload",))),
+        project_coordinator=SimpleNamespace(restore_active_sources=restore),
     )
     return host, calls, messages, projection
 
@@ -85,7 +95,10 @@ def test_new_preview_save_first_saves_dirty_source_then_commits_source_and_targe
         expected_project_revision=2,
         expected_variant_revision=3,
     )
-    assert calls[-1] == ("reload",)
+    assert calls[-2:] == [
+        ("reload",),
+        ("publish", {"automatic": True, "include_dictionary": True, "dictionary_source_key": "selected-plugin"}),
+    ]
     assert "独立编辑" in messages[-1]
 
 

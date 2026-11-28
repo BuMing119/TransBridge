@@ -13,6 +13,7 @@ from transbridge.application.io.identity import ExternalEntryRef
 from transbridge.application.io.publish import CommitDecision
 from transbridge.application.projects import EntryStatePatch
 from transbridge.application.projects.assistant_undo import VariantUndoReceipt, build_variant_inverse
+from transbridge.application.projects.dictionary_apply import dictionary_library, dictionary_mod_id
 from transbridge.application.projects.gui_facade import GuiProjectCommandFacade
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -26,7 +27,6 @@ from transbridge.smart_assistant.tools.tool_editor import (
 from transbridge.smart_assistant.tools.tool_migrator import _tool_apply_dictionary
 from transbridge.smart_assistant.tools.types import ExecutionContext
 from transbridge.smart_assistant.tools.undo_capture import capture_variant_command
-from transbridge.translation_memory.manager import TranslationMemoryManager
 from transbridge.ui.entry_projection import EntryProjectionUpdate
 
 pytest_plugins = ["tests.application.assistant_requests.test_request_repository"]
@@ -189,11 +189,12 @@ def test_dictionary_round_undo_restores_only_newly_filled_entries(
     case, context, project = _project_adapter(composed, current_project_factory)
     _, requests, request_context, _, _, _, execution, undo = case
     first, second = project.context.collection
-    monkeypatch.setattr(TranslationMemoryManager, "default_dir", lambda self: tmp_path)
-    manager = TranslationMemoryManager()
-    for entry in (first, second):
-        manager.add(entry.key, entry.original, "From dictionary", mod_file_id="Terms")
-    manager.save()
+    monkeypatch.setattr("transbridge.translation_memory.library.default_library_dir", lambda: tmp_path)
+    library = dictionary_library(project.context)
+    library.save(
+        (replace(entry, translation="From dictionary", stage=1) for entry in (first, second)),
+        dictionary_mod_id(project.context),
+    )
     before = project.aggregate.snapshot()
 
     result = _tool_apply_dictionary({}, context)

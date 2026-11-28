@@ -162,6 +162,7 @@ class MainWindow(QMainWindow):
             self._intent_composition.menu_callbacks(),
         )
         self._menu = self._menu_builder.build()
+        self._intent_composition.bind_dictionary_menu(self._menu)
         ComponentStyle.apply_static(progressive_menu, ComponentKind.MENU)
         progressive_menu.bind_existing_menus()
         self._init_central()
@@ -314,6 +315,9 @@ class MainWindow(QMainWindow):
             self._workbench.preview,
             self._workers,
             projection=(self._app_runtime.use_cases.resolve("project_projection") if self._app_runtime else None),
+        )
+        self._dialogue_editor.view.dictionary_lookup_requested.connect(
+            lambda query: self._intent_composition.dispatch(IntentId.TRANSLATION_DICTIONARY, {"query": query})
         )
         # Compatibility port for callers that still need the underlying page
         # stack; WorkspaceShell remains the one visible application shell.
@@ -480,17 +484,25 @@ class MainWindow(QMainWindow):
                 run_id=None if self._runtime_context is None else self._runtime_context.run_id,
             )
         if self._project_commands is not None and self._runtime_context is not None:
-            return self._project_commands.save(self._runtime_context)
+            return self._project_commands.save(self._runtime_context, include_entry_delta=True)
         return None
 
-    def save_current_project_async(self, *, automatic: bool = False, on_finished=None) -> bool:
+    def save_current_project_async(
+        self, *, automatic: bool = False, on_finished=None, include_dictionary=False, dictionary_source_key=None
+    ) -> bool:
         """Queue one Project save and coalesce callers while it is active."""
         from .shell.project_save import ProjectSaveCoordinator
 
         coordinator = getattr(self, "_project_save_coordinator", None)
         if coordinator is None:
             coordinator = self._project_save_coordinator = ProjectSaveCoordinator(self)
-        return coordinator.request(automatic=automatic, on_finished=on_finished, worker_factory=ApiWorker)
+        return coordinator.request(
+            automatic=automatic,
+            on_finished=on_finished,
+            worker_factory=ApiWorker,
+            include_dictionary=include_dictionary,
+            dictionary_source_key=dictionary_source_key,
+        )
 
     def show_about(self):
         QMessageBox.about(

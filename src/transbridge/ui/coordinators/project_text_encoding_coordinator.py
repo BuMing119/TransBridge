@@ -95,6 +95,8 @@ class ProjectTextEncodingCoordinator:
             self._discard(service, preview.token, request, error=None if cancelled else self._diagnostics(result))
             return
         self._busy = False
+        if (changed := getattr(self._host.context, "text_encodings_changed", None)) is not None:
+            changed.emit()
         self._host.show_message("项目语言和编码设置已保存。已有原文保持不变，可通过“更新来源”应用新的读取规则。")
 
     def _discard(self, service, token, request, *, error=None) -> None:

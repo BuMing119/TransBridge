@@ -15,6 +15,7 @@ from transbridge.application.capabilities import (
     CapabilityState,
 )
 from transbridge.application.ports import ClosablePort, closeables
+from transbridge.application.projects.dictionary_apply import automatic_dictionary_library
 from transbridge.application.projects.source_references import ProjectSourceReferences
 from transbridge.application.tasks import (
     BoundedThreadPoolBackend,
@@ -38,6 +39,7 @@ from transbridge.application.terminology.runtime import (
 )
 from transbridge.application.use_cases import ValidateContextUseCase
 from transbridge.config import ConfigRepository, UiPreferenceRepository, default_config_repository
+from transbridge.config.dictionary_preferences import DictionaryPreferences
 from transbridge.config.paths import get_data_dir, translation_progress_root
 from transbridge.config.task_results import TaskResultPreferenceRepository
 from transbridge.config.text_encoding import TextEncodingDefaults
@@ -94,7 +96,7 @@ def build_runtime(
     runtime_settings = dict(settings or {})
     if any(
         name not in runtime_use_cases.names()
-        for name in ("ui_preferences", "task_result_preferences", "text_encoding_defaults")
+        for name in ("ui_preferences", "task_result_preferences", "text_encoding_defaults", "dictionary_preferences")
     ):
         ui_config_path = runtime_settings.get("ui_config_path")
         config_repository = (
@@ -107,6 +109,8 @@ def build_runtime(
         )
         if "ui_preferences" not in runtime_use_cases.names():
             runtime_use_cases.register("ui_preferences", UiPreferenceRepository(config_repository))
+        if "dictionary_preferences" not in runtime_use_cases.names():
+            runtime_use_cases.register("dictionary_preferences", DictionaryPreferences(config_repository))
         if "task_result_preferences" not in runtime_use_cases.names():
             runtime_use_cases.register("task_result_preferences", TaskResultPreferenceRepository(config_repository))
         if "text_encoding_defaults" not in runtime_use_cases.names():
@@ -114,11 +118,16 @@ def build_runtime(
     persistence_root = runtime_settings.get("persistence_v2_root")
     if persistence_root is None:
         persistence_root = Path(get_data_dir())
+    translation_memory_root = runtime_settings.get("translation_memory_root")
+    dictionary_preferences = runtime_use_cases.resolve("dictionary_preferences")
     persistence = build_persistence_v2_services(
         persistence_root,
         id_factory=runtime_ports.ids.new_id,
         timestamp_factory=lambda: runtime_ports.clock.now().isoformat(),
         text_encoding_defaults=runtime_use_cases.resolve("text_encoding_defaults"),
+        initial_dictionary=lambda encodings: automatic_dictionary_library(
+            None, encodings=encodings, base_dir=translation_memory_root, preferences=dictionary_preferences
+        ),
     )
     if "task_store" in runtime_use_cases.names():
         task_store = runtime_use_cases.resolve("task_store")
@@ -292,13 +301,12 @@ def build_runtime(
                 TerminologyTaskEntrypoint(tasks, runtime_use_cases.resolve("terminology_workloads"), commit_port),
             )
     if "history_search" not in runtime_use_cases.names():
-        from transbridge.translation_memory.manager import TranslationMemoryManager
+        from transbridge.translation_memory.library import default_library_dir
 
         from .history_search import build_production_history_search
 
-        translation_memory_root = runtime_settings.get("translation_memory_root")
         if translation_memory_root is None:
-            translation_memory_root = TranslationMemoryManager().default_dir()
+            translation_memory_root = default_library_dir()
         history_search = build_production_history_search(
             persistence=persistence,
             task_runtime=tasks,

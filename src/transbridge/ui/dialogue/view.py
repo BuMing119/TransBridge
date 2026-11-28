@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
-from PyQt6.QtGui import QKeySequence, QShortcut
+from PyQt6.QtGui import QContextMenuEvent, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -34,6 +34,24 @@ def _label(text: str, parent: QWidget) -> QLabel:
     return label
 
 
+class _LookupTextEdit(QPlainTextEdit):
+    lookup_requested = pyqtSignal(str)
+
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802 - Qt override
+        query = self.textCursor().selectedText().replace("\u2029", "\n").strip()
+        if not query:
+            super().contextMenuEvent(event)
+            return
+        menu = self.createStandardContextMenu(event.pos())
+        menu.addSeparator()
+        action = menu.addAction("查询词典…")
+        event.accept()
+        chosen = menu.exec(event.globalPos())
+        menu.deleteLater()
+        if chosen is action:
+            self.lookup_requested.emit(query)
+
+
 class DialogueEditorView(QWidget):
     quest_selected = pyqtSignal(int, int)
     topic_selected = pyqtSignal(int)
@@ -41,6 +59,7 @@ class DialogueEditorView(QWidget):
     record_entry_selected = pyqtSignal(int)
     browse_mode_changed = pyqtSignal(str)
     draft_changed = pyqtSignal(str)
+    dictionary_lookup_requested = pyqtSignal(str)
     apply_requested = pyqtSignal(bool)
     discard_requested = pyqtSignal()
     move_requested = pyqtSignal(int)
@@ -139,15 +158,16 @@ class DialogueEditorView(QWidget):
         self.entry_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         editor_layout.addWidget(self.entry_label)
         fields = QSplitter(Qt.Orientation.Horizontal, self)
-        self.original = QPlainTextEdit(self)
+        self.original = _LookupTextEdit(self)
         self.original.setReadOnly(True)
         self.original.setAccessibleName("完整原文（只读）")
         self.original.setPlaceholderText("原文（只读）")
-        self.translation = QPlainTextEdit(self)
+        self.translation = _LookupTextEdit(self)
         self.translation.setAccessibleName("译文草稿")
         self.original_label = _label("原文（只读）", self)
         self.translation_label = _label("译文草稿", self)
         for label, field in ((self.original_label, self.original), (self.translation_label, self.translation)):
+            field.lookup_requested.connect(self.dictionary_lookup_requested.emit)
             panel = QWidget(fields)
             field_layout = QVBoxLayout(panel)
             field_layout.setContentsMargins(0, 0, 0, 0)

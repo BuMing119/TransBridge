@@ -312,7 +312,7 @@ class ExecutionContext:
     _target_version_identity: tuple[str, str] | None = field(default=None, init=False, repr=False)
     _target_project_revision: int | None = field(default=None, init=False, repr=False)
     _target_variant_revision: int | None = field(default=None, init=False, repr=False)
-    _target_dictionary_mod_id: str = field(default="", init=False, repr=False)
+    _target_dictionary_source_path: str = field(default="", init=False, repr=False)
     _target_source_key: str | None = field(default=None, init=False, repr=False)
     _target_workbench_source: dict | None = field(default=None, init=False, repr=False)
 
@@ -325,11 +325,11 @@ class ExecutionContext:
         object.__setattr__(self, "_target_version_identity", getattr(app_ctx, "active_version_identity", None))
         object.__setattr__(self, "_target_project_revision", getattr(app_ctx, "project_revision", None))
         object.__setattr__(self, "_target_variant_revision", getattr(app_ctx, "variant_revision", None))
-        from transbridge.application.projects.dictionary_apply import dictionary_mod_id
+        from transbridge.application.projects.dictionary_apply import dictionary_source_path
 
         from .workbench_rows import workbench_source_identity
 
-        object.__setattr__(self, "_target_dictionary_mod_id", dictionary_mod_id(app_ctx))
+        object.__setattr__(self, "_target_dictionary_source_path", dictionary_source_path(app_ctx))
         object.__setattr__(self, "_target_source_key", getattr(app_ctx, "active_key", None))
         object.__setattr__(self, "_target_workbench_source", workbench_source_identity(app_ctx))
 
@@ -372,9 +372,13 @@ class ExecutionContext:
         compatibility behaviour.
         """
 
-        app_ctx = self.__dict__.get("app_context")
+        return self.call_on_app_thread(self.app_context, lambda: self._run_dispatched(fn), timeout=timeout)
+
+    @staticmethod
+    def call_on_app_thread(app_ctx: Any, fn: Callable[[], Any], *, timeout: float = 30.0) -> Any:
+        """Dispatch a callback to the workbench thread with the caller's admission policy."""
         if app_ctx is None or not hasattr(app_ctx, "safe_mutate") or _owns_current_qt_thread(app_ctx):
-            return self._run_dispatched(fn)
+            return fn()
 
         completed = threading.Event()
         state_lock = threading.Lock()
@@ -387,7 +391,7 @@ class ExecutionContext:
                     return
                 state["phase"] = "running"
             try:
-                state["result"] = self._run_dispatched(fn)
+                state["result"] = fn()
             except BaseException as exc:  # propagate the original queued failure to the tool caller
                 state["error"] = exc
             finally:
@@ -402,7 +406,7 @@ class ExecutionContext:
                 if phase == "queued":
                     state["phase"] = "cancelled"
             if phase == "queued":
-                raise TimeoutError("等待主线程提交助手修改超时，排队操作已取消。")
+                raise TimeoutError("等待工作台主线程超时，排队操作已取消。")
             # Once execution has started it is unsafe to return an unconfirmed result.
             completed.wait()
         error = state["error"]

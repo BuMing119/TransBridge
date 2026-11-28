@@ -11,11 +11,12 @@ def _source(relative: str) -> str:
 
 
 _MUTATION_FILES = (
+    "smart_assistant/tools/_dictionary_application.py",
     "smart_assistant/tools/tool_editor.py",
     "smart_assistant/tools/types.py",
     "application/sync/download_merge.py",
     "ui/tools/ai_translator/task_session.py",
-    "ui/tools/dictionary_panel.py",
+    "ui/tools/dictionary_lookup.py",
     "ui/workbench/step2.py",
     "ui/workbench/inline_edit.py",
     "ui/workbench/translation_reset.py",
@@ -23,7 +24,6 @@ _MUTATION_FILES = (
 )
 
 _ALLOWED_PROJECTION_WRITES = {
-    ("ui/tools/dictionary_panel.py", "_on_apply_dict", "translation"),
     ("ui/workbench/inline_edit.py", "_commit", "translation"),
     ("ui/workbench/inline_edit.py", "_commit", "stage"),
     ("ui/workbench/translation_reset.py", "run", "translation"),
@@ -69,7 +69,8 @@ class _ProjectionWriteVisitor(ast.NodeVisitor):
 
 
 def test_known_translation_adapters_commit_or_fail_closed_for_v2_projects() -> None:
-    assert "commands.replace_entry_states(" in _source("ui/tools/dictionary_panel.py")
+    assert "lambda: plan.commit(" in _source("smart_assistant/tools/_dictionary_application.py")
+    assert "commands.replace_entry_states(" in _source("application/projects/dictionary_apply.py")
     assert "return merge_saved_results(" in _source("smart_assistant/tools/translation_task_results.py")
     assert "commands.merge_entry_states(" in _source("smart_assistant/tools/translation_task_merge.py")
     assert "commands.merge_entry_states(" in _source("application/sync/download_merge.py")

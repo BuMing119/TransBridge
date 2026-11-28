@@ -56,6 +56,8 @@ from transbridge.config import ParatranzConfig
 from transbridge.persistence.terminology import SqliteEffectiveTerminologySnapshotPort
 
 if TYPE_CHECKING:
+    from transbridge.application.terminology.effective import EffectiveTerminologySnapshot
+    from transbridge.application.terminology_profiles.models import PublishedTerminologyProfile
     from transbridge.application.translation.terminology_run_snapshot import TerminologyRunSnapshotRef
     from transbridge.paratranz.terms_service import ParaTranzTermsService
 
@@ -181,6 +183,18 @@ class ProductionTerminologyComposition:
 
         repository = self.repositories.for_project(project_id)
         return SqliteEffectiveTerminologySnapshotPort(repository).snapshot(project_id, variant_id)
+
+    def dictionary_terminology(
+        self, project_id: str, variant_id: str
+    ) -> tuple[PublishedTerminologyProfile, EffectiveTerminologySnapshot] | None:
+        """Use the persisted association of the body being read or written."""
+        selection = self.repositories.formal_profile_selection(project_id, variant_id)
+        if selection is None:
+            return None
+        profile = self.profile_service_for(project_id).published_revision(selection.profile_id, selection.revision)
+        if profile is None or profile.project_id != project_id:
+            raise ValueError("工程关联的已发布正文译名方案不可用。")
+        return profile, self.base_terminology_snapshot(project_id, variant_id)
 
     def alignment_cache_for(self, project_id: str, variant_id: str):
         return self._alignment_caches.for_variant(self.repositories, self.lifecycle, project_id, variant_id)

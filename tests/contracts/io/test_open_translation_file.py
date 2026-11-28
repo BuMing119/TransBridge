@@ -1,6 +1,7 @@
 """Opening files preserves native snapshots and applies optional translation policy."""
 
 from dataclasses import replace
+from functools import partial
 
 import pytest
 
@@ -8,9 +9,31 @@ from tests.contracts.io.test_translation_import_policy import target_and_source
 from tests.plugin_fixtures import write_plugin
 from transbridge.application.contracts import RequestContext
 from transbridge.application.io.open_file_options import OpenFileOptions
-from transbridge.application.io.open_translation_file import prepare_open_file
+from transbridge.application.io.open_translation_file import apply_open_file_dictionary, prepare_open_file
+from transbridge.translation_memory.library import DictionaryLibrary
+from transbridge.ui.source_hydration import collection_from_hydration
 
 FORMATS = ("plugin.sse", "binary.eet", "xml.eet", "xml.xt", "sst.ssu8", "sst.ssu9", "json.dsd", "json.paratranz")
+
+
+def test_open_patch_recovers_the_corresponding_master_record_after_hydration(tmp_path):
+    master = write_plugin(tmp_path / "Base.esm", [(0x801, "First", "Light"), (0x802, "Second", "Light")])
+    patch = write_plugin(tmp_path / "Patch.esp", [(0x802, "Second", "Light")], masters=("Base.esm",))
+    request = RequestContext("test")
+    opened = prepare_open_file(str(master), OpenFileOptions(), request)
+    rows = collection_from_hydration(opened.source.hydration)
+    library = DictionaryLibrary(tmp_path / "dictionaries")
+    library.save(
+        [replace(row, translation=text, stage=1) for row, text in zip(rows, ("甲", "乙"), strict=True)],
+        master.stem,
+    )
+    result = prepare_open_file(
+        str(patch),
+        OpenFileOptions(),
+        request,
+        apply_dictionary=partial(apply_open_file_dictionary, library=library, mod_file_id=patch.stem),
+    )
+    assert [(row.translation, row.stage) for row in result.source.hydration.entries] == [("乙", 0)]
 
 
 def source_file(tmp_path, kind):

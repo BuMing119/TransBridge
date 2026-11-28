@@ -11,6 +11,7 @@ from transbridge.application.tasks.controls import CancellationToken
 from transbridge.smart_assistant.guardrails.input_validator import InputValidationGuard
 from transbridge.smart_assistant.tools import _source_import, tool_parser
 from transbridge.smart_assistant.tools.types import ExecutionContext
+from transbridge.translation_memory.library import DictionaryLibrary
 from transbridge.ui.coordinators.migration_coordinator import run_migration
 from transbridge.ui.workbench.translation_import_dialog import TranslationImportConfig
 
@@ -255,47 +256,56 @@ def test_import_saved_only_project_uses_retained_original_or_desktop_repair(tmp_
 def test_registered_source_updates_dictionary_scope_for_the_next_tool(project, monkeypatch):
     from tests.smart_assistant.tools.test_source_import_authority import load_source
     from transbridge.smart_assistant.tools.tool_migrator import _tool_apply_dictionary
-    from transbridge.translation_memory.manager import TranslationMemoryManager
 
     load_source(project)
     project.ctx.eet_path = str(project.source)
     execution = ExecutionContext(app_context=project.ctx)
-    assert execution._target_dictionary_mod_id == project.source.stem
-    monkeypatch.setattr(TranslationMemoryManager, "default_dir", lambda self: project.root / "terms")
+    assert execution._target_dictionary_source_path == str(project.source)
+    monkeypatch.setattr("transbridge.translation_memory.library.default_library_dir", lambda: project.root / "terms")
     path = source_file(project.root, "plugin.sse")
     result = tool_parser._tool_parse_esp({"path": str(path)}, execution)
     assert result.success and result.data["activated"]
     entry = next(iter(project.ctx.collection))
-    manager = TranslationMemoryManager()
-    manager.add(entry.key, entry.original, "Applied after registration", mod_file_id="Terms", scope="global")
-    manager.save()
+    DictionaryLibrary().save([replace(entry, translation="Applied after registration", stage=1)], "Terms")
     result = _tool_apply_dictionary({}, execution)
     assert result.success and result.data["applied"] == 1, result.message
     assert project.ctx.collection.get(entry.identity).translation == "Applied after registration"
 
 
-def test_open_plugin_uses_desktop_empty_original_choice_and_dictionary(project, host, assistant, monkeypatch):
+@pytest.mark.parametrize("auto_apply", [True, False])
+def test_open_plugin_uses_desktop_empty_original_choice_and_dictionary(
+    project, host, assistant, monkeypatch, auto_apply
+):
     from tests.plugin_fixtures import write_plugin
     from transbridge.application.io.open_translation_file import apply_open_file_dictionary
+    from transbridge.config.dictionary_preferences import DictionaryPreferences
+    from transbridge.config.repository import ConfigRepository
     from transbridge.parser.plugin_parser import PluginParser
-    from transbridge.translation_memory.manager import TranslationMemoryManager
+    from transbridge.smart_assistant.tools.tool_migrator import _tool_apply_dictionary
 
     other, execution = assistant
+    config = project.root / "preferences.ini"
+    preferences = DictionaryPreferences(ConfigRepository(config, legacy_path=config))
+    preferences.set_apply_on_plugin_open(auto_apply)
+    project.ctx.dictionary_preferences = other.ctx.dictionary_preferences = preferences
     path = write_plugin(project.root / "empty.esp", [(0x800, "Empty", ""), (0x801, "Named", "Greeting")])
     entry = next(item for item in PluginParser().parse_plugin(path) if item.original == "Greeting")
-    monkeypatch.setattr(TranslationMemoryManager, "default_dir", lambda self: project.root / "terms")
+    monkeypatch.setattr("transbridge.translation_memory.library.default_library_dir", lambda: project.root / "terms")
     monkeypatch.setattr(
         "transbridge.ui.coordinators.parse_coordinator._apply_dictionary_to_collection", apply_open_file_dictionary
     )
-    manager = TranslationMemoryManager()
-    manager.add(entry.key, entry.original, "From dictionary", mod_file_id="Terms", scope="global")
-    manager.save()
+    DictionaryLibrary().save([replace(entry, translation="From dictionary", stage=1)], "Terms")
     start(project, host, [path], skip_empty=False)
     wait(project, lambda: not host.opener._running)
     result = tool_parser._tool_parse_esp({"path": str(path), "skip_empty": False}, execution)
     assert result.success and result.data["entry_count"] == 2, result.message
     assert _rows(other.ctx) == _rows(project.ctx)
-    assert [item.translation for item in project.ctx.collection if item.original] == ["From dictionary"]
+    assert [item.translation for item in project.ctx.collection if item.original] == [
+        "From dictionary" if auto_apply else ""
+    ]
+    if not auto_apply:
+        assert _tool_apply_dictionary({}, execution).data["applied"] == 1
+        assert [item.translation for item in other.ctx.collection if item.original] == ["From dictionary"]
 
 
 @pytest.mark.parametrize("admission", ["allowed", "refused", "receipt_failed", "cancelled_before_commit"])

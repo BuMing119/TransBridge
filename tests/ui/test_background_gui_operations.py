@@ -129,7 +129,8 @@ def test_authoritative_save_runs_off_gui_thread_and_reports_completion() -> None
             self.enabled = enabled
 
     class Commands:
-        def save(self, _context):
+        def save(self, _context, *, include_entry_delta):
+            assert include_entry_delta
             started.set()
             release.wait(1)
             return SimpleNamespace(is_success=True)
@@ -452,7 +453,8 @@ def test_automatic_save_is_silent_and_does_not_disable_workbench() -> None:
             self.enabled = enabled
 
     class Commands:
-        def save(self, _context):
+        def save(self, _context, *, include_entry_delta):
+            assert include_entry_delta
             started.set()
             release.wait(1)
             return SimpleNamespace(is_success=True)
@@ -576,7 +578,8 @@ def test_authoritative_save_does_not_report_current_when_new_changes_remain() ->
             pass
 
     class Commands:
-        def save(self, _context):
+        def save(self, _context, *, include_entry_delta):
+            assert include_entry_delta
             return SimpleNamespace(is_success=True)
 
     harness = SimpleNamespace(

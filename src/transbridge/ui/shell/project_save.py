@@ -7,6 +7,8 @@ from PyQt6.QtCore import QObject, QTimer
 
 from transbridge.application.projects.save_result import translations_were_saved
 
+from .saved_dictionary import SavedDictionarySource, SavedDictionaryWriter
+
 _logger = logging.getLogger(__name__)
 
 
@@ -22,13 +24,20 @@ class ProjectSaveCoordinator(QObject):
         self._automatic = True
         self._target = None
         self._worker_factory = None
+        self._dictionary_sources = {}
+        self._dictionary_writer = SavedDictionaryWriter(self)
+        self._dictionary_writer.changed.connect(self._refresh_dictionary)
         if isinstance(host, QObject):
             host.destroyed.connect(self.close)
 
     def _identity(self):
         return self._host._ctx.active_version_identity
 
-    def request(self, *, automatic, on_finished, worker_factory):
+    def _refresh_dictionary(self):
+        if not self._closed:
+            self._host.tool_windows.refresh_open_dictionary()
+
+    def request(self, *, automatic, on_finished, worker_factory, include_dictionary=False, dictionary_source_key=None):
         host, context = self._host, self._host._ctx
         if self._closed:
             if on_finished is not None:
@@ -51,6 +60,13 @@ class ProjectSaveCoordinator(QObject):
             return False
         if self._waiting and self._identity() != self._target:
             self._finish(False, context, self._automatic, cancelled=True)
+        if include_dictionary:
+            try:
+                source = SavedDictionarySource.capture(context, source_key=dictionary_source_key)
+                if source is not None:
+                    self._dictionary_sources[(source.identity, dictionary_source_key or context.active_key)] = source
+            except Exception:
+                _logger.exception("无法准备当前来源的词典条目")
         if on_finished is not None:
             host._save_callbacks.append(on_finished)
         if host._save_worker is not None:
@@ -83,7 +99,8 @@ class ProjectSaveCoordinator(QObject):
             self._finish(False, context, self._automatic, cancelled=True)
             return
         if (
-            host._project_open_worker is not None
+            self._dictionary_writer.busy
+            or host._project_open_worker is not None
             or getattr(context, "project_opening", False)
             or (host._foreground_worker is not None and host._foreground_worker.isRunning())
         ):
@@ -94,9 +111,10 @@ class ProjectSaveCoordinator(QObject):
 
     def _launch(self, operation, context, automatic):
         host, worker, succeeded, incomplete = self._host, None, False, None
+        receipt = None
 
         def saved(result):
-            nonlocal succeeded, incomplete
+            nonlocal succeeded, incomplete, receipt
             if hasattr(result, "is_success") and not result.is_success:
                 if translations_were_saved(result):
                     succeeded = True
@@ -106,10 +124,13 @@ class ProjectSaveCoordinator(QObject):
                 self._error(f"{diagnostic.code}: {diagnostic.message}", display=diagnostic.message)
                 return
             succeeded = True
+            receipt = getattr(result, "value", None)
 
         def finished():
             if host._save_worker is worker:
                 host._save_worker = None
+            if receipt:
+                self._dictionary_writer.submit(self._dictionary_sources.values(), receipt)
             self._finish(succeeded, context, automatic, incomplete=incomplete)
 
         try:
@@ -138,6 +159,7 @@ class ProjectSaveCoordinator(QObject):
 
     def _finish(self, succeeded, context, automatic, *, cancelled=False, incomplete=None):
         self._waiting = False
+        self._dictionary_sources.clear()
         if not self._closed:
             self._timer.stop()
         host = self._host

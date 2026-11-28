@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from transbridge.application.projections import (
     ProjectionStore,
@@ -54,6 +56,10 @@ from transbridge.persistence.v2.baselines import BaselineRegistry
 from transbridge.persistence.v2.lifecycle_transactions import SessionLifecycleTransactionStore
 from transbridge.persistence.v2.session_catalog import SessionCatalogRepository
 
+if TYPE_CHECKING:
+    from transbridge.config.text_encoding import TextEncodings
+    from transbridge.translation_memory.library import DictionaryLibrary
+
 
 @dataclass(slots=True)
 class PersistenceV2Services:
@@ -96,6 +102,7 @@ def build_persistence_v2_services(
     filesystem: PersistenceFilesystemPort | None = None,
     source_preparer: ProjectSourcePreparationPort | None = None,
     text_encoding_defaults: TextEncodingDefaults | None = None,
+    initial_dictionary: Callable[[TextEncodings], DictionaryLibrary | None] | None = None,
 ) -> PersistenceV2Services:
     resolved_root = str(Path(root).resolve(strict=False))
     adapter = filesystem or OsPersistenceFilesystem()
@@ -137,6 +144,7 @@ def build_persistence_v2_services(
         id_factory=id_factory,
         token_factory=id_factory,
         text_encoding_defaults=(text_encoding_defaults or TextEncodingDefaults()).load,
+        initial_dictionary=initial_dictionary,
     )
     project_source_mutations = ProjectSourceMutationService(
         project_lifecycle,

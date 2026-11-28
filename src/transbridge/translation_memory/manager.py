@@ -1,24 +1,22 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
-"""翻译记忆管理器：多词典定位、组合查询、写入与持久化。
+"""内存翻译记忆管理器：多词典定位、组合查询与写入。
 
-一文件一 mod（见 ADR-014 更新节 2026-08-14）：词典以 mod 文件为粒度，
-定位键为 mod_file_id，scope 为单值属性标签。查询按「同名 mod → 其余 project
+词典以 mod 为粒度，定位键为 mod_file_id，scope 为单值属性标签。
+查询按「同名 mod → 其余 project
 → 其余 global」全查兜底，键索引优先，多词典命中收集候选后仲裁，conflicts 真正填充。
 """
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import json
-from pathlib import Path
 import threading
 
 from transbridge.application.io.identity import Provenance
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
-from transbridge.config.paths import get_data_dir
 from transbridge.converter.translation_entry import _normalize_text
-from transbridge.persistence._utils import atomic_write_json, validate_name
 from transbridge.translation_memory.model import (
     SCOPE_GLOBAL,
     SCOPE_RANK,
@@ -32,9 +30,6 @@ from transbridge.translation_memory.original_matching import (
     exact_dictionary_candidates,
     qualified_identity,
 )
-
-# 词典文件后缀（内容为 JSON）
-DICT_SUFFIX = ".tbdict"
 
 # 规范化缓存：原文 -> 规范化文本（长文本替换/剥离只做一次）
 _normalize_cache: dict[str, str] = {}
@@ -89,20 +84,11 @@ class ApplyResult:
 
 
 class TranslationMemoryManager:
-    """管理多本词典：定位、查询、写入、持久化。"""
+    """定位、查询和写入内存词典。"""
 
-    def __init__(self, base_dir: Path | None = None) -> None:
-        self._base_dir: Path | None = base_dir
+    def __init__(self) -> None:
         self._dicts: dict[str, Dictionary] = {}  # mod_file_id -> Dictionary
         self._lock = threading.Lock()  # 保护 _dicts 与词典内容（命中计数、写入）
-
-    # ------------------------------------------------------------------
-    # 默认目录
-    # ------------------------------------------------------------------
-
-    def default_dir(self) -> Path:
-        """默认词典目录：data/translation_memory/。"""
-        return Path(get_data_dir()) / "translation_memory"
 
     # ------------------------------------------------------------------
     # 定位
@@ -127,9 +113,9 @@ class TranslationMemoryManager:
         return self._dicts
 
     def snapshot_dictionaries(self) -> tuple[Dictionary, ...]:
-        """Return detached dictionaries for V2 read-only planning."""
+        """Return detached dictionaries for read-only planning."""
         with self._lock:
-            return tuple(Dictionary.from_dict(item.to_dict()) for item in self._dicts.values())
+            return deepcopy(tuple(self._dicts.values()))
 
     # ------------------------------------------------------------------
     # 写入
@@ -337,7 +323,7 @@ class TranslationMemoryManager:
         return result
 
     # ------------------------------------------------------------------
-    # 存为词典（从集合落地）
+    # 从集合写入词典
     # ------------------------------------------------------------------
 
     def save_from_collection(
@@ -435,82 +421,8 @@ class TranslationMemoryManager:
         return result
 
     # ------------------------------------------------------------------
-    # 持久化
+    # 合并
     # ------------------------------------------------------------------
-
-    def _file_for(self, mod_file_id: str) -> str:
-        return f"{validate_name(mod_file_id)}{DICT_SUFFIX}"
-
-    def dictionary_path(self, mod_file_id: str) -> Path:
-        return (self._base_dir or self.default_dir()) / self._file_for(mod_file_id)
-
-    def save(self, base_dir: Path | None = None) -> list[Path]:
-        """持久化全部词典到 base_dir。返回写入的文件路径列表。"""
-        target = base_dir or self._base_dir or self.default_dir()
-        target.mkdir(parents=True, exist_ok=True)
-        written: list[Path] = []
-        with self._lock:
-            for key, d in self._dicts.items():
-                fname = self._file_for(key)
-                atomic_write_json(target / fname, d.to_dict())
-                written.append(target / fname)
-        return written
-
-    def load(self, base_dir: Path | None = None) -> int:
-        """从 base_dir 扫描并加载 .tbdict 词典文件。返回加载的词典数。"""
-        target = base_dir or self._base_dir or self.default_dir()
-        loaded: dict[str, Dictionary] = {}
-        for f in sorted(target.glob(f"*{DICT_SUFFIX}")):
-            try:
-                data = json.loads(f.read_text(encoding="utf-8"))
-                d = Dictionary.from_dict(data)
-            except OSError as exc:
-                raise RuntimeError(f"词典读取失败: {f}（{exc}）") from exc
-            except Exception as exc:  # noqa: BLE001 - 损坏文件保留现场不静默吞
-                corrupt = f.with_suffix(f".corrupt-{int(datetime.now().timestamp())}")
-                f.replace(corrupt)
-                raise RuntimeError(f"词典文件损坏，已保留现场: {corrupt}（{exc}）") from exc
-            if d.mod_file_id in loaded:
-                raise RuntimeError(f"词典 mod_file_id 重复: {d.mod_file_id}（{f}）")
-            loaded[d.mod_file_id] = d
-        with self._lock:
-            self._dicts = loaded
-        return len(loaded)
-
-    def import_dict(self, src_path: str | Path, overwrite: bool = False) -> bool:
-        """导入外部 .tbdict 词典，同步名校验。返回是否成功（同名且不覆盖返回 False）。"""
-        import shutil
-
-        src = Path(src_path)
-        if src.suffix.lower() != DICT_SUFFIX:
-            raise ValueError(f"仅支持 {DICT_SUFFIX} 词典文件")
-        data = json.loads(src.read_text(encoding="utf-8"))
-        d = Dictionary.from_dict(data)  # 损坏则抛
-        target_dir = self._base_dir or self.default_dir()
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / self._file_for(d.mod_file_id)
-        if target.exists() and not overwrite:
-            return False
-        shutil.copy2(src, target)
-        with self._lock:
-            self._dicts[d.mod_file_id] = d
-        return True
-
-    def export_dict(self, mod_file_id: str, dest_dir: str | Path) -> Path:
-        """导出词典到目标目录，返回目标路径。"""
-        import shutil
-
-        key = self._key(mod_file_id)
-        target_dir = Path(dest_dir)
-        target_dir.mkdir(parents=True, exist_ok=True)
-        src = (self._base_dir or self.default_dir()) / self._file_for(key)
-        if not src.exists():
-            # 内存中可能未落盘，先保存
-            self.save()
-            src = (self._base_dir or self.default_dir()) / self._file_for(key)
-        dest = target_dir / self._file_for(key)
-        shutil.copy2(src, dest)
-        return dest
 
     def merge(self, other: TranslationMemoryManager) -> int:
         """合并另一个 manager 的全部词典。返回新增 entry_id 数。"""

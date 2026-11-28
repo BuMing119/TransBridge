@@ -14,13 +14,13 @@ from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
 from transbridge.application.translation.entry_alias import ai_entry_key
 from transbridge.application.workbench_filters import FilterState
 from transbridge.application.workbench_statistics import scope_statistics
+from transbridge.config.dictionary_preferences import DictionaryPreferences
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.config_manager import ParatranzConfig
 from transbridge.ui.project_labels import entry_label_key, exact_label_key
 from transbridge.ui.project_rows import ProjectRowsCollection
 from transbridge.ui.project_view_binding import ProjectViewBinding
 from transbridge.ui.projection_types import CollectionSlot, projected_variant_name
-from transbridge.ui.tools.conflict_dialog import review_dictionary_conflicts
 from transbridge.ui.translation_task_execution import execute_translation_sources
 
 __all__ = ["AppContext", "CollectionSlot"]
@@ -43,6 +43,7 @@ class AppContext(QObject):
     workspace_changed = pyqtSignal()  # 持久化项目列表变动
     project_installed = pyqtSignal()  # Complete project view installed
     project_changed = pyqtSignal()  # 翻译项目/Variant 目录投影变动
+    text_encodings_changed = pyqtSignal()  # 当前工程文本语言与编码变动
     paratranz_binding_changed = pyqtSignal(object)  # 当前本地工程的 ParaTranz 绑定投影
     variant_changed = pyqtSignal(str)  # 旧模式为名称，V2 模式为稳定 Variant ID
     dirty_changed = pyqtSignal()  # 版本数据被修改（触发自动保存防抖）
@@ -59,6 +60,8 @@ class AppContext(QObject):
         project_source_references=None,
         project_text_encodings=None,
         text_encoding_defaults=None,
+        dictionary_preferences=None,
+        dictionary_base_dir=None,
         project_remote_bindings=None,
         runtime_context=None,
         effective_terminology_factory=None,
@@ -99,6 +102,10 @@ class AppContext(QObject):
         self.project_source_references = project_source_references
         self.project_text_encodings = project_text_encodings
         self.text_encoding_defaults = text_encoding_defaults
+        self.dictionary_preferences = (
+            dictionary_preferences if dictionary_preferences is not None else DictionaryPreferences()
+        )
+        self.dictionary_base_dir = dictionary_base_dir
         self._project_remote_bindings = project_remote_bindings
         self._runtime_context = runtime_context
         self._effective_terminology_factory = effective_terminology_factory
@@ -106,7 +113,6 @@ class AppContext(QObject):
         self.terminology_sync_service_factory = terminology_sync_service_factory
         self.task_result_preferences_provider = task_result_preferences_provider
         self.translation_task_executor = execute_translation_sources
-        self.review_dictionary_conflicts = review_dictionary_conflicts
         self.project_catalog = project_catalog
         self.task_store = task_store
         self.__init_safe_mutate()
@@ -627,7 +633,7 @@ class AppContext(QObject):
 
     @property
     def terminology_profile_service_factory(self):
-        """Return the profile composition used by explicit export boundaries."""
+        """Return the composition for formal profile operations and preview."""
 
         return self._terminology_profile_service_factory
 

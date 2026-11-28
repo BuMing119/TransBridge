@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 import hashlib
 import secrets
 from threading import RLock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from transbridge.application.contracts import (
     Diagnostic,
@@ -50,6 +50,9 @@ from .source_extraction import extract_source, hydrate_extracted
 from .source_fields import source_name
 from .source_registry import SourceRegistrySnapshot
 
+if TYPE_CHECKING:
+    from transbridge.translation_memory.library import DictionaryLibrary
+
 
 @dataclass(frozen=True, slots=True)
 class _PreparedProvisioning:
@@ -79,6 +82,7 @@ class ProjectProvisioningService:
         id_factory: Callable[[], str],
         token_factory: Callable[[], str] | None = None,
         text_encoding_defaults: Callable[[], TextEncodings] | None = None,
+        initial_dictionary: Callable[[TextEncodings], DictionaryLibrary | None] | None = None,
     ) -> None:
         self._lifecycle = lifecycle
         self._sources = sources
@@ -86,6 +90,7 @@ class ProjectProvisioningService:
         self._id_factory = id_factory
         self._token_factory = token_factory or (lambda: secrets.token_urlsafe(24))
         self._text_encoding_defaults = text_encoding_defaults or TextEncodings
+        self._initial_dictionary = initial_dictionary
         self._prepared: dict[str, _PreparedProvisioning] = {}
         self._hydrations: dict[str, _OwnedProvisioningHydration] = {}
         self._issued_tokens: set[str] = set()
@@ -107,7 +112,9 @@ class ProjectProvisioningService:
                     raise DomainError(ErrorCategory.CONFLICT, "PROJECT_NAME_EXISTS", "已存在同名工程。")
                 project_ref, variant_ref = self._allocate_refs()
                 encodings = self._text_encoding_defaults()
-                prepared_sources = prepare_project_sources(self._sources, request, context, encodings)
+                prepared_sources = prepare_project_sources(
+                    self._sources, request, context, encodings, initial_dictionary=self._initial_dictionary
+                )
                 baselines = prepared_sources.baselines
                 registry = prepared_sources.registry(project_ref.identity.value)
                 extracted_sources = ()

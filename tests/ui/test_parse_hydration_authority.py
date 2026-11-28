@@ -59,7 +59,7 @@ def _plugin(path: Path, index: int) -> None:
 def parsing(project, monkeypatch):
     TaskManager.reset()
     # Translation-memory files are external user input and irrelevant to source hydration.
-    monkeypatch.setattr(parse_module, "_apply_dictionary_to_collection", lambda _collection: 0)
+    monkeypatch.setattr(parse_module, "_apply_dictionary_to_collection", lambda collection, *a, **kw: (collection, 0))
     messages = []
     state = {"parsing": False}
     host = SimpleNamespace(

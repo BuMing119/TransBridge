@@ -17,9 +17,9 @@ def entry(original, translation="", *, key="same", flagged=True):
 
 
 @pytest.mark.parametrize("originals", [("First", "Second"), ("First", "First "), ("A\nB", "A\r\nB")])
-def test_dictionary_roundtrip_retains_exact_originals_and_both_apply_paths(tmp_path, originals):
+def test_memory_dictionary_retains_exact_originals_and_both_apply_paths(originals):
     rows = [entry(originals[0], "T1"), entry(originals[1], "T2")]
-    manager = TranslationMemoryManager(tmp_path)
+    manager = TranslationMemoryManager()
     assert (
         manager.save_from_collection(
             TranslationEntryCollection(rows),
@@ -31,17 +31,14 @@ def test_dictionary_roundtrip_retains_exact_originals_and_both_apply_paths(tmp_p
         )
         == 2
     )
-    manager.save()
-    restored = TranslationMemoryManager(tmp_path)
-    restored.load()
-    dictionary = restored.snapshot_dictionaries()[0]
+    dictionary = manager.snapshot_dictionaries()[0]
     assert len(dictionary.entries) == 2
     assert not dictionary.text_index  # Qualified records cannot pollute normalized fallback.
     targets = TranslationEntryCollection(replace(row, translation="", stage=0) for row in rows)
-    assert restored.apply_to_collection(targets, QueryContext("mod")).applied == 2
+    assert manager.apply_to_collection(targets, QueryContext("mod")).applied == 2
     assert [row.translation for row in targets] == ["T1", "T2"]
     for row in rows:
-        result = TranslationMemoryQueryService(restored).query(
+        result = TranslationMemoryQueryService(manager).query(
             TranslationMemoryQuery(row.identity, row.original, "en_US", "zh_CN", 0, "fingerprint")
         )
         assert result.selected.translation == row.translation
@@ -49,7 +46,7 @@ def test_dictionary_roundtrip_retains_exact_originals_and_both_apply_paths(tmp_p
 
 
 @pytest.mark.parametrize("preferred", ["mod", "other"])
-def test_legacy_dictionary_cannot_fill_other_original_or_key(preferred, caplog):
+def test_unqualified_dictionary_entry_cannot_fill_other_original_or_key(preferred, caplog):
     manager = TranslationMemoryManager()
     manager.add("same", "First", "T1", mod_file_id="mod")
     targets = TranslationEntryCollection([
@@ -64,7 +61,7 @@ def test_legacy_dictionary_cannot_fill_other_original_or_key(preferred, caplog):
     assert "SOURCE_ORIGINAL_MATCH_REQUIRED" in caplog.text
 
 
-def test_v2_dictionary_does_not_accept_normalized_or_text_fallback():
+def test_qualified_query_does_not_accept_normalized_or_text_fallback():
     manager = TranslationMemoryManager()
     manager.add(
         "same",

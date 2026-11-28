@@ -91,6 +91,21 @@ class ProjectRowsCollection:
 
         return read
 
+    def saved_entries(self, project_revision, variant_revision, keys=None):
+        """Read committed dictionary input, retaining removed rows only as possible record locators."""
+        token = replace(self.token, project_revision=project_revision, variant_revision=variant_revision)
+        namespace = self.source.info.namespace
+        if keys is None:
+            rows = self.reader.full_rows(namespace=namespace, token=token, include_removed=True)
+        else:
+            selected = tuple(key for key in keys if key.namespace == namespace)
+            if not selected:
+                return
+            rows = self.reader.store.read_entries(token.variant_id, selected, token=token)
+        for row in rows:
+            state = replace(row.state, translation="") if row.state.tombstone else row.state
+            yield _translation_entry(row.snapshot, state)
+
     def record_entries(self, selected_entry):
         """Read one complete plugin record, including fields outside loaded pages."""
         token, authority, states = self.token, self._authority, self._states

@@ -321,15 +321,20 @@ class GuiProjectCommandFacade:
         *,
         expected_active_signature: ActiveSignature | EllipsisType = ...,
         expected_active_identity: tuple[str, str | None] | EllipsisType = ...,
+        include_entry_delta: bool = False,
     ) -> OperationResult[dict | None]:
         options = {"expected_active_signature": expected_active_signature}
         if expected_active_identity is not ...:
             options["expected_active_identity"] = expected_active_identity
+        if include_entry_delta:
+            options["include_entry_delta"] = True
         active = self._lifecycle.active
         previous_summary = None if active is None else active.summary()
         result = self._lifecycle.save_active(context, **options)
-        if result.value is not None and self._projection_rebuild is not None and result.value != previous_summary:
-            self._projection_rebuild()
+        if result.value is not None and self._projection_rebuild is not None:
+            summary = {key: value for key, value in result.value.items() if key != "entry_delta"}
+            if summary != previous_summary:
+                self._projection_rebuild()
         return result
 
     def save_snapshot(self, name: str, context: RequestContext) -> OperationResult[dict[str, Any]]:

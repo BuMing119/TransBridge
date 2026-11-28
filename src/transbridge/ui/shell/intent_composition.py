@@ -26,9 +26,10 @@ from .command_palette import (
 from .command_palette_qt import CommandPaletteDialog
 from .context_help import DEFAULT_CONTEXT_HELP, ContextHelpController
 from .context_help_qt import ContextHelpPanel
+from .dictionary_commands import DictionaryCommands
 from .drop_controller import ShellDropController
 from .intent_router import IntentDispatchResult, IntentRouter
-from .menu_builder import MenuCallbacks
+from .menu_builder import MenuCallbacks, MenuHandles
 from .overlay_geometry import workspace_overlay_rect
 from .task_center import TaskCenterController, TaskCenterPanel
 
@@ -54,6 +55,7 @@ class ShellIntentComposition:
         self._task_overlay_host_geometry: QRect | None = None
         self._drop_controller: ShellDropController | None = None
         self._project_dialogs = ProjectDialogs(host, dispatch=self.dispatch, availability=self.router.availability)
+        self._dictionary_commands = DictionaryCommands(host)
         self._register_handlers()
 
     def menu_callbacks(self) -> MenuCallbacks:
@@ -83,6 +85,8 @@ class ShellIntentComposition:
             open_ai_translator=callback(IntentId.TRANSLATION_AI),
             toggle_smart_assistant=callback(IntentId.VIEW_SMART_ASSISTANT),
             open_dictionary=callback(IntentId.TRANSLATION_DICTIONARY),
+            save_dictionary=callback(IntentId.TRANSLATION_DICTIONARY_SAVE),
+            apply_dictionary=callback(IntentId.TRANSLATION_DICTIONARY_APPLY),
             open_history_search=callback(IntentId.TRANSLATION_HISTORY_SEARCH),
             open_terminology=callback(IntentId.TERMINOLOGY_WORKBENCH),
             open_fomod=callback(IntentId.PUBLISH_FOMOD),
@@ -101,6 +105,17 @@ class ShellIntentComposition:
             open_project_properties=callback(IntentId.PROJECT_PROPERTIES),
             exit_app=callback(IntentId.APP_EXIT),
         )
+
+    def bind_dictionary_menu(self, menu: MenuHandles) -> None:
+        menu.dictionary_settings.bind_context(self._host.context)
+
+        def update() -> None:
+            for action in (menu.save_dictionary, menu.apply_dictionary):
+                action.setEnabled(self.router.availability(IntentId(action.data())).enabled)
+
+        self._host.context.collection_changed.connect(update)
+        self._dictionary_commands.busy_changed.connect(update)
+        update()
 
     def start(self) -> None:
         self._host.workbench.intent_requested.connect(self.dispatch)
@@ -146,7 +161,10 @@ class ShellIntentComposition:
         failed = getattr(self._host.context, "project_view_failed", False)
         if opening or failed:
             resolved = IntentId(intent_id)
-            allowed = resolved.value.startswith(("settings.", "help.")) or resolved is IntentId.APP_EXIT
+            allowed = resolved.value.startswith(("settings.", "help.")) or resolved in (
+                IntentId.APP_EXIT,
+                IntentId.TRANSLATION_DICTIONARY,
+            )
             if failed and not opening and resolved is IntentId.PROJECT_OPEN:
                 allowed = True
             if not allowed:
@@ -181,6 +199,7 @@ class ShellIntentComposition:
             self._task_overlay_host_geometry = None
         if self._drop_controller is not None:
             self._drop_controller.close()
+        self._dictionary_commands.close()
         self._project_dialogs.close()
         self.router.close()
 
@@ -245,7 +264,20 @@ class ShellIntentComposition:
         register(
             IntentId.TRANSLATION_AI, _call(host.tool_windows.open_ai_translator), availability=self._has_ai_content
         )
-        register(IntentId.TRANSLATION_DICTIONARY, _call(host.tool_windows.open_dictionary))
+        register(
+            IntentId.TRANSLATION_DICTIONARY,
+            lambda payload: host.tool_windows.open_dictionary(payload.get("query")),
+        )
+        register(
+            IntentId.TRANSLATION_DICTIONARY_SAVE,
+            _call(self._dictionary_commands.save),
+            availability=self._has_dictionary_content,
+        )
+        register(
+            IntentId.TRANSLATION_DICTIONARY_APPLY,
+            _call(self._dictionary_commands.apply),
+            availability=self._has_dictionary_content,
+        )
         register(IntentId.TRANSLATION_HISTORY_SEARCH, _call(host.tool_windows.open_history_search))
         register(
             IntentId.TERMINOLOGY_WORKBENCH,
@@ -354,6 +386,11 @@ class ShellIntentComposition:
     def _has_collection(self) -> tuple[bool, str | None]:
         enabled = self._host.context.collection is not None
         return enabled, None if enabled else "请先选择可编辑的翻译内容"
+
+    def _has_dictionary_content(self) -> tuple[bool, str | None]:
+        if self._dictionary_commands.busy:
+            return False, "词典操作正在进行，请稍候"
+        return self._has_collection()
 
     def _has_ai_content(self) -> tuple[bool, str | None]:
         context = self._host.context

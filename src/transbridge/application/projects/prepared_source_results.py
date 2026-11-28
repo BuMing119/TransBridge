@@ -2,10 +2,11 @@
 """Serializable, already parsed source candidates; recovery never reopens the input."""
 
 from base64 import b64decode, b64encode
+from collections.abc import Mapping
 from dataclasses import asdict, replace
 
 from transbridge.application.io import FormatId, SourceDescriptor, SourceSnapshot, Stage
-from transbridge.application.io.identity import SourceNamespace
+from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.io.strings_adapter import LocalizedStringRecord
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.persistence.v2.variant import SourceBaseline, SourceFingerprint, VariantEntryState
@@ -91,6 +92,30 @@ def prepare_parsed_source(path, entries, snapshot, format_id, options=(), *, rol
         diagnostics=diagnostics,
         hydration=hydration,
     )
+
+
+def with_initial_entry_states(prepared, states: Mapping[EntryKey | str, tuple[str, int]]):
+    """Keep both the prepared baseline and its detached read model in sync."""
+    if not states:
+        return prepared
+
+    def apply(entry):
+        state = states.get(entry.entry_key)
+        if state is None:
+            # Some GUI parsers provide a source-local identity before a verified namespace is assigned.
+            state = states.get(replace(entry.entry_key, namespace=SourceNamespace.legacy()))
+        if state is None and entry.entry_key.original is None:
+            state = states.get(entry.entry_key.local_key)
+        current_stage = entry.stage.value if isinstance(entry.stage, Stage) else int(entry.stage)
+        if state is None or state == (entry.translation, current_stage):
+            return entry
+        return replace(entry, translation=state[0], stage=state[1], revision=entry.revision.next())
+
+    baseline = SourceBaseline(prepared.baseline.fingerprint, tuple(map(apply, prepared.baseline.entries)))
+    hydration = prepared.hydration
+    if hydration is not None:
+        hydration = replace(hydration, entries=tuple(map(apply, hydration.entries)))
+    return replace(prepared, baseline=baseline, hydration=hydration)
 
 
 def encode_prepared_source(prepared, entries):

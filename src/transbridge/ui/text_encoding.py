@@ -1,44 +1,24 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Resolve the project's effective encoding for new GUI operations."""
 
-from dataclasses import replace
+from transbridge.application.projects.source_encoding import (
+    TEXT_ENCODING_FORMATS as TEXT_FORMATS,
+    context_text_encodings,
+    effective_text_encodings,
+    request_for_project,
+)
+from transbridge.config.text_encoding import TEXT_ENCODINGS, TEXT_LANGUAGES, TextEncodings
 
-from transbridge.application.contracts import DomainError
-from transbridge.application.projects.source_encoding import TEXT_ENCODING_FORMATS as TEXT_FORMATS
-from transbridge.config.text_encoding import TEXT_ENCODINGS, TEXT_LANGUAGES, TextEncodingDefaults, TextEncodings
+__all__ = [
+    "context_text_encodings",
+    "effective_text_encodings",
+    "request_for_project",
+    "text_encoding_label",
+    "text_encoding_summary",
+    "export_encoding_summary",
+]
 
 _LABELS = dict(TEXT_ENCODINGS)
-
-
-def request_for_project(context, request):
-    return replace(
-        request,
-        project_id=getattr(context, "active_project_id", request.project_id),
-        variant_id=getattr(context, "active_variant_id", request.variant_id),
-    )
-
-
-def effective_text_encodings(request, service=None, defaults=None):
-    if request is None or request.project_id is None:
-        return (defaults or TextEncodingDefaults()).load()
-    if service is None:
-        return TextEncodings()
-    try:
-        encodings = service.active_encodings(request)
-    except (DomainError, ValueError) as exc:
-        raise RuntimeError(f"无法读取项目文本编码：{exc}") from exc
-    if encodings is None:
-        raise RuntimeError("当前项目已变化，请重新发起操作。")
-    return encodings
-
-
-def context_text_encodings(context, request=None):
-    request = getattr(context, "runtime_context", None) if request is None else request
-    return effective_text_encodings(
-        None if request is None else request_for_project(context, request),
-        getattr(context, "project_text_encodings", None),
-        getattr(context, "text_encoding_defaults", None),
-    )
 
 
 def text_encoding_label(codec):

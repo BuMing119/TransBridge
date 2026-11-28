@@ -145,7 +145,7 @@ class VariantCoordinator:
 
         if ProfileVariantSaveCoordinator(self._host).request():
             return
-        self._host.save_current_project_async()
+        self._host.save_current_project_async(include_dictionary=True)
 
     def delete_variant(self, name: str):
         """删除指定版本（至少保留一个）。"""

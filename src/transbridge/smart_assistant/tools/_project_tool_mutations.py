@@ -89,9 +89,9 @@ class ProjectToolTarget:
                     current for entry in scoped if (current := self.collection.get(entry.identity)) is not None
                 )
             if self.context._target_source_key != current_key or self.context._target_workbench_source != source:
-                from transbridge.application.projects.dictionary_apply import dictionary_mod_id
+                from transbridge.application.projects.dictionary_apply import dictionary_source_path
 
-                object.__setattr__(self.context, "_target_dictionary_mod_id", dictionary_mod_id(self.app))
+                object.__setattr__(self.context, "_target_dictionary_source_path", dictionary_source_path(self.app))
             object.__setattr__(self.context, "_target_collection", self.collection)
             object.__setattr__(self.context, "_target_source_key", current_key)
             object.__setattr__(self.context, "_target_workbench_source", source)

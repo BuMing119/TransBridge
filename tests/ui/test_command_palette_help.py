@@ -52,14 +52,16 @@ def test_search_consumes_catalog_user_language_aliases_and_has_stable_order() ->
     repeated = [item.label for item in model.search("翻译").results]
     plugin_alias = model.search("ESP").results
     assistant_alias = model.search("聊天").results
+    dictionary_alias = model.search("翻译词典").results
 
     assert labels == repeated
-    assert labels[0] == "翻译词典…"
     assert "AI 翻译…" in labels
     assert "批量 AI 翻译…" not in labels
     assert [item.intent_id for item in model.search("批量翻译插件").results] == [IntentId.TRANSLATION_AI]
     assert plugin_alias[0].intent_id is IntentId.PROJECT_CREATE
     assert assistant_alias[0].intent_id is IntentId.VIEW_SMART_ASSISTANT
+    assert dictionary_alias[0].intent_id is IntentId.TRANSLATION_DICTIONARY
+    assert dictionary_alias[0].label == "词典查询…"
 
 
 def test_search_result_preserves_authoritative_disabled_reason() -> None:

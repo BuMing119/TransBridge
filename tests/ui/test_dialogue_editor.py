@@ -8,8 +8,9 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QContextMenuEvent, QTextCursor
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QLineEdit, QMessageBox, QWidget
+from PyQt6.QtWidgets import QApplication, QLineEdit, QMenu, QMessageBox, QWidget
 import pytest
 
 from tests.dialogue_support import dialogue_entries, dialogue_entry
@@ -100,6 +101,36 @@ def test_double_click_opens_correct_response_after_main_table_sorting(editor):
     assert editor.view.table_model.rowCount() == 3
     assert editor.view.original.toPlainText() == target.original
     assert not table.findChildren(QLineEdit)
+
+
+@pytest.mark.parametrize(("field_name", "query"), [("original", "text"), ("translation", "译文")])
+def test_entry_editor_looks_up_selected_text_without_applying_draft(editor, monkeypatch, field_name, query):
+    target = dialogue_entries()[2].identity
+    editor.open_entry(target)
+    editor.view.translation.setPlainText("全新译文草稿")
+    field = getattr(editor.view, field_name)
+    start = field.toPlainText().index(query)
+    cursor = field.textCursor()
+    cursor.setPosition(start)
+    cursor.setPosition(start + len(query), QTextCursor.MoveMode.KeepAnchor)
+    field.setTextCursor(cursor)
+    requested = []
+    editor.view.dictionary_lookup_requested.connect(requested.append)
+
+    def choose_lookup(menu, _position):
+        assert len(menu.actions()) > 1
+        return next(action for action in menu.actions() if action.text() == "查询词典…")
+
+    monkeypatch.setattr(QMenu, "exec", choose_lookup)
+    point = field.cursorRect().center()
+    event = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, point, field.viewport().mapToGlobal(point))
+    _APP.sendEvent(field.viewport(), event)
+
+    assert requested == [query]
+    assert field.textCursor().selectedText() == query
+    assert editor.view.translation.toPlainText() == "全新译文草稿"
+    assert editor.context.collection.get(target).translation == ""
+    editor.discard()
 
 
 @pytest.mark.parametrize("column", [COL_INDEX, COL_MARK, COL_KEY, COL_ORIGINAL, COL_TRANSLATION, COL_CONTEXT])

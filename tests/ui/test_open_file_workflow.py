@@ -22,7 +22,10 @@ _APP = QApplication.instance() or QApplication([])
 
 @pytest.fixture
 def host(project, monkeypatch):
-    monkeypatch.setattr("transbridge.ui.coordinators.parse_coordinator._apply_dictionary_to_collection", lambda _: 0)
+    monkeypatch.setattr(
+        "transbridge.ui.coordinators.parse_coordinator._apply_dictionary_to_collection",
+        lambda collection, *a, **kw: (collection, 0),
+    )
     widget = QWidget()
     widget.context = project.ctx
     widget.workers = []

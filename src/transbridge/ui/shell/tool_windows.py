@@ -6,11 +6,11 @@ from __future__ import annotations
 import logging
 from os import getpid
 
-from PyQt6.QtCore import QRect
+from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtWidgets import QApplication
 
 from transbridge.paratranz.api.paratranz_user_api import ParatranzUserAPI
-from transbridge.ui.source_input_state import ensure_source_input
+from transbridge.ui.windowing import show_and_activate
 from transbridge.ui.workers import ApiWorker
 
 from .overlay_geometry import workspace_overlay_rect
@@ -37,6 +37,7 @@ class ToolWindows:
         self.assistant_panel = None
         self._assistant_overlay_host_geometry: QRect | None = None
         self._terminology_launcher = None
+        self._dictionary_window = None
         self._history_search_windows: dict[int, object] = {}
         self._next_history_search_window_id = 1
 
@@ -114,6 +115,8 @@ class ToolWindows:
             self._host.storage_migration_destination = destination
             self._host.close()
             return
+        if not getattr(context, "active_project_id", None):
+            self.refresh_open_dictionary()
         if context is not None and context.config.token and not context.current_user:
             self.load_current_user()
 
@@ -170,18 +173,26 @@ class ToolWindows:
         """Route legacy callers to the unified AI task entry."""
         self.open_ai_translator()
 
-    def open_dictionary(self) -> None:
-        if not ensure_source_input(
-            self._host.context,
-            "originals",
-            resume=self.open_dictionary,
-            source_keys=(self._host.context.active_key,),
-            parent=self._host,
-        ):
-            return
-        from transbridge.ui.tools.dictionary_panel import DictionaryPanel
+    def open_dictionary(self, query: str | None = None) -> None:
+        window = self._dictionary_window
+        if window is None:
+            from transbridge.ui.tools.dictionary_lookup import DictionaryLookupDialog
 
-        DictionaryPanel(self._host.context, self._host).exec()
+            window = DictionaryLookupDialog(self._host.context)
+            self._dictionary_window = window
+            window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            window.finished.connect(self._clear_dictionary_window)
+        else:
+            window.refresh_scope()
+        show_and_activate(window)
+        window.focus_query(query)
+
+    def _clear_dictionary_window(self) -> None:
+        self._dictionary_window = None
+
+    def refresh_open_dictionary(self) -> None:
+        if self._dictionary_window is not None:
+            self._dictionary_window.refresh_scope()
 
     def open_history_search(self) -> None:
         runtime = getattr(self._host, "app_runtime", None)
@@ -284,6 +295,8 @@ class ToolWindows:
             self._assistant_overlay_host_geometry = None
 
     def dispose(self, *, wait_for_worker: bool = True) -> None:
+        if self._dictionary_window is not None:
+            self._dictionary_window.close()
         history_windows = tuple(self._history_search_windows.values())
         self._history_search_windows.clear()
         for window in history_windows:

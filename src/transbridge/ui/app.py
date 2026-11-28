@@ -97,6 +97,8 @@ def create_workbench_context(runtime: AppRuntime, context) -> AppContext:
         project_source_references=use_cases.resolve("project_source_references"),
         project_text_encodings=use_cases.resolve("project_text_encodings"),
         text_encoding_defaults=use_cases.resolve("text_encoding_defaults"),
+        dictionary_preferences=optional("dictionary_preferences"),
+        dictionary_base_dir=runtime.settings.get("translation_memory_root"),
         project_catalog=use_cases.resolve("project_catalog"),
         project_remote_bindings=use_cases.resolve("project_remote_bindings"),
         runtime_context=context,

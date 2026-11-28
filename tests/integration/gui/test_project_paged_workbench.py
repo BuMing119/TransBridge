@@ -20,7 +20,7 @@ import pytest
 
 from tests.plugin_fixtures import write_plugin
 from transbridge.application.contracts import RequestContext
-from transbridge.application.io import ExternalEntryRef
+from transbridge.application.io import EntryKey, ExternalEntryRef
 from transbridge.application.projects import EntryStatePatch, ProjectProvisioningRequest, ProjectSourceRequest
 from transbridge.application.terminology_profiles import (
     InMemoryTerminologyProfileRepository,
@@ -951,8 +951,16 @@ def test_workbench_batch_replace_and_save_only_read_selected_keys(tmp_path, monk
             edited = commands.update_entry(last_key, _CONTEXT, translation="Later manual edit", stage=5)
             assert edited.is_success, edited.diagnostics
             selected[last_key] = ("Later manual edit", 5)
-            saved = commands.save(_CONTEXT)
+            saved = commands.save(_CONTEXT, include_entry_delta=True)
             assert saved.is_success, saved.diagnostics
+            delta = saved.value["entry_delta"]
+            token = ProjectStore(database).read_token(variant)
+            assert saved.value["persisted_project_revision"] == active.persisted_project_revision
+            assert token.project_revision == active.persisted_project_revision
+            assert (delta["project_id"], delta["variant_id"]) == (token.project_id.value, token.variant_id.value)
+            assert delta["previous_variant_revision"] == active.persisted_variant_revision
+            assert delta["variant_revision"] == saved.value["persisted_variant_revision"] == token.variant_revision
+            assert {EntryKey.from_dict(key) for key in delta["entry_keys"]} == selected.keys()
             assert not host.context.dirty
             saved_rows = lifecycle.active.variant.snapshot().entries
             assert isinstance(saved_rows, DeferredVariantRows)

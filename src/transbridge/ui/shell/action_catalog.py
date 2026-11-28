@@ -58,6 +58,8 @@ class IntentId(StrEnum):
     TRANSLATION_AI = "translation.ai-run"
     TRANSLATION_AI_BATCH = "translation.ai-batch"
     TRANSLATION_DICTIONARY = "translation.dictionary"
+    TRANSLATION_DICTIONARY_SAVE = "translation.dictionary.save"
+    TRANSLATION_DICTIONARY_APPLY = "translation.dictionary.apply"
     TRANSLATION_HISTORY_SEARCH = "translation.history-search"
     TRANSLATION_REVIEW = "translation.review"
     TERMINOLOGY_WORKBENCH = "terminology.workbench"
@@ -235,9 +237,22 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ),
     ActionDescriptor(
         IntentId.TRANSLATION_DICTIONARY,
-        "翻译词典…",
+        "词典查询…",
         ActionSection.TRANSLATION,
-        aliases=("术语", "词库"),
+        aliases=("翻译词典", "查词", "术语", "词库"),
+    ),
+    ActionDescriptor(
+        IntentId.TRANSLATION_DICTIONARY_SAVE,
+        "存入词典",
+        ActionSection.TRANSLATION,
+        aliases=("存为词典",),
+        status_tip="将当前文件的双语词条存入词典",
+    ),
+    ActionDescriptor(
+        IntentId.TRANSLATION_DICTIONARY_APPLY,
+        "套用词典",
+        ActionSection.TRANSLATION,
+        status_tip="用词典补全当前文件的空白译文",
     ),
     ActionDescriptor(
         IntentId.TRANSLATION_HISTORY_SEARCH,

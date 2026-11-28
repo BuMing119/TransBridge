@@ -485,6 +485,7 @@ class ProjectLifecycleService:
         *,
         expected_active_signature: ActiveSignature | EllipsisType = ...,
         expected_active_identity: tuple[str, str | None] | EllipsisType = ...,
+        include_entry_delta: bool = False,
     ) -> OperationResult[dict[str, Any] | None]:
         with self._lock:
             active = self._active
@@ -516,7 +517,7 @@ class ProjectLifecycleService:
                     return checked
                 active = self._active
             if active is None or (not active.dirty and not project_needs_encoding_defaults(active.project)):
-                return active_save_result(active, context)
+                return active_save_result(active, context, include_entry_delta=include_entry_delta)
             if self._save_in_flight:
                 return _failed(
                     "ACTIVE_SAVE_IN_PROGRESS", "A save is already in progress.", ErrorCategory.CONFLICT, context
@@ -551,8 +552,9 @@ class ProjectLifecycleService:
                         )
                     except Exception:
                         logging.getLogger(__name__).exception("The project saved, but its projection update failed")
-                return active_save_result(saved, context)
-            return active_save_result(acknowledge_saved_changes(active, save), context)
+            else:
+                saved = acknowledge_saved_changes(active, save)
+            return active_save_result(saved, context, save=save, include_entry_delta=include_entry_delta)
 
     def commit_active_variant(
         self,

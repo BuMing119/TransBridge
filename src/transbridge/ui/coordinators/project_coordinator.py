@@ -301,13 +301,14 @@ class ProjectCoordinator:
             self.restore_parse_esp(location)
         return None
 
-    def restore_active_sources(self) -> None:
+    def restore_active_sources(self, *, on_restored=None) -> None:
         """Rebuild the source view after an explicit saved version operation."""
         if getattr(self._host.current_project_opener, "supports_paged_workbench", False):
             self._start_current_project_open(
                 lambda: self._prepare("prepare_active", self._host.runtime_context),
                 dirty_decision=None,
                 success_verb="来源视图已更新",
+                on_success=None if on_restored is None else lambda _opened: on_restored(),
             )
             return
         projection = self._host.app_runtime.use_cases.resolve("project_projection")
@@ -328,7 +329,9 @@ class ProjectCoordinator:
             if value.recovery is not None:
                 self._host.show_message("工程来源不可用，工作台已清空。请重新打开工程进入恢复视图。")
                 return
-            self._restore_plugin_sources(value.sources, value.hydrations)
+            error = self._restore_plugin_sources(value.sources, value.hydrations)
+            if error is None and on_restored is not None:
+                on_restored()
 
         started = self._host.start_foreground_task(
             lambda: self._host.current_project_opener.prepare_active(self._host.runtime_context),

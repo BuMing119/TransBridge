@@ -12,15 +12,16 @@ from tests.integration.publish.test_plugin_fidelity import _localized_quest, _te
 from tests.parser.test_original_match_plugin import quest_plugin
 from tests.plugin_fixtures import write_plugin
 from transbridge.application.contracts import OperationOutcome
-from transbridge.application.io import EntryKey, SourceNamespace, SsePluginAdapter
+from transbridge.application.io import EntryKey, Provenance, SourceNamespace, SsePluginAdapter
 from transbridge.application.io.publish import ImmediateCommitGuard, OsPublishFilesystem
 from transbridge.application.tasks import TaskCancelled
 from transbridge.config.text_encoding import TextEncodings
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from transbridge.fomod.pipeline import FomodPipeline
+from transbridge.fomod.pipeline import FomodPipeline, PipelineResult, _plugin_namespace
 from transbridge.fomod.plugin_publishing import prepare_plugin_source, publish_plugin_collection
 from transbridge.parser.plugin_parser import PluginParser
 from transbridge.translation_memory import TranslationMemoryManager
+from transbridge.translation_memory.library import DictionaryLibrary
 from transbridge.writer.plugin_writer import PluginWriter
 
 
@@ -190,7 +191,7 @@ def test_full_pipeline_archive_contains_no_publication_backups_or_staging(tmp_pa
             if path.is_file():
                 bundle.write(path, path.relative_to(inputs).as_posix())
     output = tmp_path / "translated.zip"
-    pipeline = FomodPipeline(tm_manager=TranslationMemoryManager(tmp_path / "empty-dictionary"))
+    pipeline = FomodPipeline()
     result = pipeline.run(
         str(archive), str(output), work_dir=str(tmp_path / "work"), target_lang="zh_CN", ai_enabled=False
     )
@@ -215,13 +216,53 @@ def test_failed_plugin_publication_prevents_final_archive(tmp_path, monkeypatch)
         raise ValueError("injected renderer failure")
 
     monkeypatch.setattr(PluginWriter, "write", broken_write)
-    pipeline = FomodPipeline(tm_manager=TranslationMemoryManager(tmp_path / "empty-dictionary"))
+    pipeline = FomodPipeline()
     with pytest.raises(RuntimeError, match="FOMOD_PIPELINE_FAILED"):
         pipeline.run(str(archive), str(output), work_dir=str(tmp_path / "work"), target_lang="zh_CN", ai_enabled=False)
     assert not output.exists()
     assert archive.read_bytes() == original_archive
     extracted = next((tmp_path / "work").rglob("source.esp"))
     assert extracted.read_bytes() == source.read_bytes()
+
+
+@pytest.mark.parametrize("inject_memory", [False, True])
+def test_fomod_only_applies_proven_memory_candidates(tmp_path, monkeypatch, inject_memory):
+    monkeypatch.setattr("transbridge.config.paths.active_storage_root", lambda: tmp_path)
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    plugin = write_plugin(inputs / "source.esp", [(0x800, "Npc", "First")])
+    source = prepare_plugin_source(plugin, namespace=_plugin_namespace(Path(plugin.name)))
+    (entry,) = source.collection_entries()
+    libraries = tmp_path / "data" / "translation_memory"
+    library = DictionaryLibrary(libraries, source_locale="en_US", target_locale="zh_CN")
+    assert library.save([replace(entry, translation="Workbench translation", stage=1)], plugin.name) == 1
+    retired = libraries / "Retired.tbdict"
+    retired.write_bytes(b"{ invalid JSON")
+
+    memory = None
+    if inject_memory:
+        memory = TranslationMemoryManager()
+        memory.add(
+            entry.identity.serialize(),
+            entry.original,
+            "FOMOD translation",
+            mod_file_id=plugin.name,
+            source_locale="en_US",
+            target_locale="zh_CN",
+            stage=1,
+            provenance=(Provenance("seed", "test", "trusted-memory"),),
+            source_namespace=entry.identity.namespace.value,
+            source_fingerprint=source.snapshot.sha256,
+        )
+    result = PipelineResult()
+    FomodPipeline(tm_manager=memory)._translate_plugins(
+        inputs, None, result, None, None, ai_enabled=False, target_locale="zh_CN", run_id="fomod"
+    )
+
+    assert _texts(plugin) == ["FOMOD translation" if inject_memory else "First"]
+    assert result.dict_applied == int(inject_memory)
+    assert result.provenance_sources == ({"trusted-memory": 1} if inject_memory else {})
+    assert retired.read_bytes() == b"{ invalid JSON"
 
 
 def test_empty_original_is_kept_in_the_strict_collection(tmp_path):

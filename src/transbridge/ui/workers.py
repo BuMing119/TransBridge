@@ -113,6 +113,7 @@ class ApiWorker(QThread):
         fn: Callable,
         *args,
         route_http_errors: bool = True,
+        report_api_status: bool = True,
         cancel_read_on_close: Callable[[], None] | None = None,
         **kwargs,
     ):
@@ -125,7 +126,7 @@ class ApiWorker(QThread):
         # Resolve both buses on the owning GUI thread.  Module-level QObjects
         # created before QApplication are destroyed too late during interpreter
         # shutdown and can leave SIP wrapping an already torn-down Qt object.
-        self._api_status_bus = get_api_status_bus()
+        self._api_status_bus = get_api_status_bus() if report_api_status else None
         self._http_error_bus = get_http_error_bus()
         self._registry = get_api_worker_registry()
 
@@ -146,10 +147,12 @@ class ApiWorker(QThread):
         return _cb
 
     def run(self) -> None:
-        self._api_status_bus.request_started.emit()
+        if self._api_status_bus is not None:
+            self._api_status_bus.request_started.emit()
         try:
             self.result.emit(self._fn(*self._args, **self._kwargs))
-            self._api_status_bus.request_finished.emit(True)
+            if self._api_status_bus is not None:
+                self._api_status_bus.request_finished.emit(True)
         except Exception as exc:
             err_str = str(exc)
             # 记录完整错误到日志
@@ -160,4 +163,5 @@ class ApiWorker(QThread):
                 self._http_error_bus.http_error.emit(status, err_str)
             else:
                 self.error.emit(err_str)
-            self._api_status_bus.request_finished.emit(False)
+            if self._api_status_bus is not None:
+                self._api_status_bus.request_finished.emit(False)

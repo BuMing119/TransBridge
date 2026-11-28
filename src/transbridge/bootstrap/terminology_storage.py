@@ -33,6 +33,7 @@ from .terminology_sources import lightweight_build_snapshot
 
 if TYPE_CHECKING:
     from transbridge.application.terminology.publish import PublishTerminologyRequest
+    from transbridge.application.terminology_profiles.models import TerminologyProfileSelection
 
 _SOURCE_HASH_CHUNK_BYTES = 1024 * 1024
 
@@ -85,6 +86,10 @@ class ProjectTerminologyRepositories:
                     "工程正在删除或已经删除，无法访问项目定位缓存。",
                 )
         return self._projects.store_for(ProjectId(project_id)).path
+
+    def formal_profile_selection(self, project_id: str, variant_id: str) -> TerminologyProfileSelection | None:
+        """Read Project-owned association metadata without opening a terminology database."""
+        return self._selections.selection(project_id, variant_id, require_variant=True)
 
     @contextmanager
     def deletion_scope(self, project_id: str):

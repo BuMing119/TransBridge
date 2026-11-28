@@ -1,17 +1,19 @@
 # See LICENSE and NOTICE for TransBridge licensing and attribution terms.
 """Owned open-file dialog and worker, with immutable source publication."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import partial
 import logging
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
 
 from transbridge.application.io.open_translation_file import prepare_open_file, register_opened_source
+from transbridge.application.projects.dictionary_apply import automatic_dictionary_library
 from transbridge.application.projects.provisioning_models import PreparedSourceHydration
 from transbridge.ui.projection_types import CollectionSlot
 from transbridge.ui.source_hydration import slot_from_hydration, source_slot_key
-from transbridge.ui.text_encoding import context_text_encodings
+from transbridge.ui.text_encoding import effective_text_encodings
 from transbridge.ui.workers import ApiWorker
 
 logger = logging.getLogger(__name__)
@@ -97,12 +99,20 @@ class OpenFileCoordinator:
         self._host.workbench.show_step2_progress(0, "正在打开翻译文件…")
         self._host.workbench.set_step2_parsing(True)
         runtime_context = context.runtime_context
+        identity = None if authority is None else authority[0]
+        if runtime_context is not None:
+            project_id, variant_id = identity or (None, None)
+            runtime_context = replace(runtime_context, project_id=project_id, variant_id=variant_id)
         commands = context.project_commands
 
         def prepare():
             from .parse_coordinator import _apply_dictionary_to_collection
 
-            read_options = context_text_encodings(context).read_options()
+            encodings = effective_text_encodings(
+                runtime_context, context.project_text_encodings, context.text_encoding_defaults
+            )
+            read_options = encodings.read_options()
+            library = automatic_dictionary_library(context, encodings=encodings, variant_identity=identity)
             sources, failures = [], []
             expected = authority
             seen = set()
@@ -119,7 +129,12 @@ class OpenFileCoordinator:
                         path,
                         options,
                         runtime_context,
-                        apply_dictionary=_apply_dictionary_to_collection,
+                        apply_dictionary=partial(
+                            _apply_dictionary_to_collection,
+                            library=library,
+                            mod_file_id=Path(path).stem,
+                            plugin_scope=Path(path).name,
+                        ),
                         **read_options,
                     )
                     if self._host.context is not context:

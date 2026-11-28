@@ -12,19 +12,18 @@ def scoped_source_entries(entries, format_id, location, *, plugin_scope=None):
     if format_id is not FormatId.PLUGIN_SSE:
         return tuple(entries)
     fallback = plugin_scope or PureWindowsPath(location).name
-    output = []
-    for entry in entries:
-        metadata = dict(entry.metadata)
-        configured = metadata.get("terminology_plugin_id")
-        if isinstance(configured, str) and configured.strip():
-            output.append(entry)
-            continue
-        qualified = getattr(entry, "form_id_with_plugin", None)
-        owner = qualified.rsplit("|", 1)[1].strip() if isinstance(qualified, str) and "|" in qualified else None
-        owner = owner or fallback
-        if owner:
-            metadata["terminology_plugin_id"] = owner
-            output.append(replace(entry, metadata=tuple(metadata.items())))
-        else:
-            output.append(entry)
-    return tuple(output)
+    return tuple(scoped_source_entry(entry, fallback) for entry in entries)
+
+
+def scoped_source_entry(entry, plugin_scope):
+    metadata = dict(entry.metadata)
+    configured = metadata.get("terminology_plugin_id")
+    if isinstance(configured, str) and configured.strip():
+        return entry
+    qualified = getattr(entry, "form_id_with_plugin", None)
+    owner = qualified.rsplit("|", 1)[1].strip() if isinstance(qualified, str) and "|" in qualified else None
+    owner = owner or plugin_scope
+    if not owner:
+        return entry
+    metadata["terminology_plugin_id"] = owner
+    return replace(entry, metadata=tuple(metadata.items()))

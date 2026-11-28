@@ -3,7 +3,7 @@
 
 纯 Python，无 PyQt 依赖（ADR-008）。翻译来源按 ADR-014 优先级：
 ① 旧归档（键对齐）→ ② 词典（文本/键兜底）→ ③ AI 翻译（AutoTranslator）。
-运行时上下文（llm_config / tm_manager）由调用方（GUI）注入。
+运行时可由调用方注入 llm_config 和内存翻译记忆。
 """
 
 from __future__ import annotations
@@ -199,9 +199,8 @@ class FomodPipeline:
             raise ValueError("target_locale is required for FOMOD translation planning")
         if not run_id or not run_id.strip():
             raise ValueError("run_id is required for FOMOD translation provenance")
-        tm = self._tm_manager or TranslationMemoryManager()
-        if self._tm_manager is None:
-            tm.load()
+        tm = self._tm_manager if self._tm_manager is not None else TranslationMemoryManager()
+        planner = FomodCandidatePlanner(TranslationMemoryQueryService(tm))
 
         plugins = [p for p in new_dir.rglob("*") if p.suffix.lower() in _PLUGIN_EXTS]
         for i, esp_path in enumerate(plugins):
@@ -235,7 +234,7 @@ class FomodPipeline:
                         cancellation=stop_event,
                     )
 
-            planned = FomodCandidatePlanner(TranslationMemoryQueryService(tm)).plan(
+            planned = planner.plan(
                 run_id=run_id,
                 entries=tuple(entry.snapshot() for entry in new_entries),
                 migration=migration,

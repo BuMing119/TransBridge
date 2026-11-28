@@ -2,6 +2,7 @@
 """Bind desktop file preparation and project commands to the admitted request."""
 
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 
 from transbridge.application.io import FormatId
@@ -13,6 +14,7 @@ from transbridge.application.io.open_translation_file import (
     register_opened_source,
 )
 from transbridge.application.io.translation_import import changed_translation_states, prepare_translation_import
+from transbridge.application.projects.dictionary_apply import automatic_dictionary_library
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 from transbridge.ui.text_encoding import context_text_encodings
@@ -79,14 +81,20 @@ def run_file_operation(file_type, path, args, ctx):
             raise ValueError("工程或翻译版本已变化，请重新选择文件。")
 
     check_current()
-    options = context_text_encodings(app, request).read_options()
+    encodings = context_text_encodings(app, request)
+    options = encodings.read_options()
     formats = _FORMATS[file_type]
     if action == "create_slot":
         opened = prepare_open_file(
             path,
             OpenFileOptions(format_hint=hint, skip_empty=skip_empty),
             request,
-            apply_dictionary=apply_open_file_dictionary,
+            apply_dictionary=partial(
+                apply_open_file_dictionary,
+                library=automatic_dictionary_library(app, encodings=encodings, variant_identity=target.identity),
+                mod_file_id=Path(path).stem,
+                plugin_scope=Path(path).name,
+            ),
             allowed_formats=formats,
             cancellation=cancellation,
             **options,

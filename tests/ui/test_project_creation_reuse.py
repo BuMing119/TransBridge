@@ -22,6 +22,7 @@ from transbridge.ui.coordinators.guided_project_coordinator import GuidedDraftPh
 from transbridge.ui.main_window import MainWindow
 from transbridge.ui.shell.action_catalog import IntentId
 from transbridge.ui.workbench.translation_table import COL_TRANSLATION
+from transbridge.ui.worker_registry import get_api_worker_registry
 
 _APP = QApplication.instance() or QApplication([])
 
@@ -43,9 +44,12 @@ def shared_plugin_window(tmp_path, monkeypatch, request):
     monkeypatch.setattr(
         "transbridge.ui.coordinators.project_coordinator.workspace_path", lambda: tmp_path / "workspace.json"
     )
-    plugin = write_plugin(tmp_path / "A.esp", [(0x800, "SharedNPC", "Original")])
-    runtime = build_runtime({"persistence_v2_root": tmp_path / "data", "ui_config_path": tmp_path / "config.ini"})
     setup = getattr(request, "param", True)
+    entries = [(0x800, "SharedNPC", "Original")]
+    if setup == "two_entries":
+        entries.append((0x801, "SecondNPC", "Second"))
+    plugin = write_plugin(tmp_path / "A.esp", entries)
+    runtime = build_runtime({"persistence_v2_root": tmp_path / "data", "ui_config_path": tmp_path / "config.ini"})
     with_project = bool(setup)
     request = RequestContext("gui", run_id="shared-plugin-creation", authorized_roots=(str(tmp_path),))
     services = runtime.use_cases.resolve("persistence_v2")
@@ -68,7 +72,11 @@ def shared_plugin_window(tmp_path, monkeypatch, request):
         assert commands.save(request).is_success
         original_variant_path = services.variants.path_for(active.formal_variant_ref)
     app_context = AppContext(
-        project_projection=services.project_projection, project_commands=commands, runtime_context=request
+        project_projection=services.project_projection,
+        project_commands=commands,
+        runtime_context=request,
+        dictionary_preferences=runtime.use_cases.resolve("dictionary_preferences"),
+        terminology_profile_service_factory=runtime.use_cases.resolve("terminology_profile_service_factory"),
     )
     window = MainWindow(app_context=app_context, runtime=runtime, runtime_context=request)
     window.show()
@@ -88,7 +96,10 @@ def shared_plugin_window(tmp_path, monkeypatch, request):
     finally:
         _until(
             lambda: (
-                window.foreground_worker is None and window.project_open_worker is None and window.save_worker is None
+                window.foreground_worker is None
+                and window.project_open_worker is None
+                and window.save_worker is None
+                and not get_api_worker_registry().busy
             )
         )
         window.tool_windows.dispose(wait_for_worker=True)

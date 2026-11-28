@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QMessageBox
 from transbridge.application.io.open_translation_file import (
     apply_open_file_dictionary as _apply_dictionary_to_collection,
 )
+from transbridge.application.projects.dictionary_apply import automatic_dictionary_library
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 from ..context import CollectionSlot
@@ -97,7 +98,11 @@ class ParseCoordinator:
         authority = self._capture_authoritative_target()
         publication = [authority]
         try:
-            read_options = context_text_encodings(self._host.context).read_options()
+            encodings = context_text_encodings(self._host.context)
+            read_options = encodings.read_options()
+            library = automatic_dictionary_library(
+                self._host.context, encodings=encodings, variant_identity=None if authority is None else authority[0]
+            )
         except (OSError, RuntimeError, ValueError) as exc:
             self._host.show_message(f"无法读取项目文本编码：{exc}", error=True)
             return
@@ -117,9 +122,10 @@ class ParseCoordinator:
                 context=self._host.context.runtime_context,
                 **read_options,
             )
-            collection = migration.collection
-            # 自动套用词典（全局词典兜底，填空译文）
-            migrate_count = migration.applied_count + _apply_dictionary_to_collection(collection)
+            collection, filled = _apply_dictionary_to_collection(
+                migration.collection, library, Path(esp_path).stem, plugin_scope=Path(esp_path).name
+            )
+            migrate_count = migration.applied_count + filled
             collection, hydration = self._commit_authoritative_source(
                 esp_path,
                 collection,
@@ -187,8 +193,15 @@ class ParseCoordinator:
 
         esp_paths = cfg.esp_paths
         total = len(esp_paths)
+        batch_identity = self._host.context.active_version_identity
+        publication = [self._capture_authoritative_target(expected_identity=batch_identity)]
         try:
             encodings = context_text_encodings(self._host.context)
+            library = automatic_dictionary_library(
+                self._host.context,
+                encodings=encodings,
+                variant_identity=None if publication[0] is None else batch_identity,
+            )
         except (OSError, RuntimeError, ValueError) as exc:
             self._host.show_message(f"无法读取项目文本编码：{exc}", error=True)
             return
@@ -199,8 +212,6 @@ class ParseCoordinator:
         failures = []
         migration_failures = []
         current = [0]
-        batch_identity = self._host.context.active_version_identity
-        publication = [self._capture_authoritative_target(expected_identity=batch_identity)]
 
         def _parse_next():
             if current[0] >= total:
@@ -234,9 +245,10 @@ class ParseCoordinator:
                     context=self._host.context.runtime_context,
                     **encodings.read_options(),
                 )
-                collection = migration.collection
-                # 自动套用词典（全局词典兜底，填空译文）
-                migrate_count = migration.applied_count + _apply_dictionary_to_collection(collection)
+                collection, filled = _apply_dictionary_to_collection(
+                    migration.collection, library, Path(esp_path).stem, plugin_scope=Path(esp_path).name
+                )
+                migrate_count = migration.applied_count + filled
                 collection, hydration = self._commit_authoritative_source(
                     esp_path,
                     collection,

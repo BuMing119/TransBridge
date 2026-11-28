@@ -54,11 +54,13 @@ def test_two_clean_saves_reuse_delivery_without_visiting_any_of_2000_rows(view_f
     host = SimpleNamespace(
         _ctx=view.context,
         _runtime_context=SimpleNamespace(run_id="save"),
-        _project_commands=SimpleNamespace(save=lambda context: saved.append(context) or "saved"),
+        _project_commands=SimpleNamespace(
+            save=lambda context, *, include_entry_delta: saved.append((context, include_entry_delta)) or "saved"
+        ),
     )
     assert MainWindow._save_current_project(host) == "saved"
     assert MainWindow._save_current_project(host) == "saved"
-    assert len(saved) == 2
+    assert saved == [(host._runtime_context, True)] * 2
     assert visits == reads == []
 
     with pytest.warns(DeprecationWarning):

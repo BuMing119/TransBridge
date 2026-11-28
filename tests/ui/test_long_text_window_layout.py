@@ -7,13 +7,16 @@ from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtWidgets import QLabel
 import pytest
 
+from tests.ui.fixtures.dictionary import wait_for_dictionary
 from tests.ui.responsive_layout_support import settle_layout, themed_layout_app as themed_layout_app
+from transbridge.application.projects.dictionary_apply import dictionary_library
+from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.ui.coordinators.guided_project_coordinator import GuidedProjectDraftState
 from transbridge.ui.operations.batch_download_dialog import BatchDownloadDialog
 from transbridge.ui.operations.categorized_upload_dialog import CategorizedUploadDialog
 from transbridge.ui.shell.plugin_drop_dialog import PluginDropDialog
 from transbridge.ui.shell.start_center import StartCenterViewState, StartCenterWidget, StartDestinationState
-from transbridge.ui.tools.dictionary_panel import DictionaryPanel
+from transbridge.ui.tools.dictionary_lookup import DictionaryLookupDialog
 from transbridge.ui.tools.terminology.source_browser import SourceBrowser
 from transbridge.ui.workbench.remote_target_view import ParaTranzTargetDialog
 
@@ -129,20 +132,28 @@ def test_target_picker_error_does_not_lock_width(layout_app):
         view.close()
 
 
-def test_dictionary_load_error_does_not_lock_width(layout_app, monkeypatch):
-    def fail_load():
-        raise RuntimeError(LONG_ERROR)
-
-    monkeypatch.setattr(
-        "transbridge.ui.tools.dictionary_panel.TranslationMemoryManager",
-        lambda **kwargs: SimpleNamespace(load=fail_load),
-    )
-    view = DictionaryPanel(None)
+def test_dictionary_long_results_fit_the_lookup_window(layout_app, tmp_path):
+    translation = "译文" * 150
+    entry = TranslationEntry("long", "long", LONG_NAME, translation, 1, "NPC_:FULL")
+    assert dictionary_library(None, tmp_path).save((entry,), LONG_PATH) == 1
+    view = DictionaryLookupDialog(None, base_dir=tmp_path)
     view.show()
     try:
-        assert LONG_ERROR in view._status.text()
-        # The existing toolbar needs about 780 px even with a short status.
-        _assert_resizable(layout_app, view, (view._status,), widths=(850, 1200, 800, 850))
+        wait_for_dictionary(view)
+        table = view._table
+        model = table.model()
+        assert tuple(model.index(0, column).data() for column in range(model.columnCount())) == (
+            LONG_NAME,
+            translation,
+            LONG_PATH,
+        )
+        _assert_resizable(layout_app, view, (), widths=(850, 640, 1200))
+        wide_row_height = table.rowHeight(0)
+        view.resize(640, 480)
+        settle_layout(layout_app)
+        assert view.width() == 640
+        assert table.horizontalScrollBar().maximum() == 0
+        assert table.rowHeight(0) > wide_row_height
     finally:
         view.close()
 

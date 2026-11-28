@@ -54,8 +54,10 @@ You can also use uploaded reference files, such as correction lists, glossaries,
   and saves translations directly through the same workflow as the GUI. It does not return a saved result_id:
   do not follow it with `get_task_result` or `merge_task_result`. Temporary download data is cleared when the
   call ends; retrying downloads fresh content. File registration and translation import use the active project.
-- `apply_dictionary` fills empty translations through the workbench dictionary command. It returns match counts.
-  When the workbench offers alternatives, the user can select a translation or keep the automatic choice.
+- `apply_dictionary` fills only untranslated (stage 0) entries with empty translations and returns match counts.
+  The workbench determines the game, languages, and matching priority automatically.
+- `save_dictionary` saves translations from the current workbench source to the personal dictionary.
+  Use `selected_only` to save the workbench selection.
 - When a tool fails, use the error details to decide whether retrying is appropriate.
   Retry only operations whose results establish that replay is safe. An interrupted upload may
   already have changed the remote project: an unknown remote outcome must be checked before resending.

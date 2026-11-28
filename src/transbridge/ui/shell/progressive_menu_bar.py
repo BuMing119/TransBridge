@@ -3,9 +3,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QCursor, QEnterEvent, QFocusEvent, QMouseEvent
-from PyQt6.QtWidgets import QMenuBar, QWidget
+from PyQt6.QtWidgets import QMenu, QMenuBar, QWidget
+
+
+def _menus(actions: tuple[QAction, ...] | list[QAction]) -> Iterator[QMenu]:
+    for action in actions:
+        if (menu := action.menu()) is not None:
+            yield menu
+            yield from _menus(menu.actions())
 
 
 class ProgressiveMenuBar(QMenuBar):
@@ -64,11 +73,9 @@ class ProgressiveMenuBar(QMenuBar):
             self.collapse()
             return
         self._menu_actions = actions
-        for action in actions:
-            menu = action.menu()
-            if menu is not None:
-                menu.aboutToShow.connect(self._keep_expanded)
-                menu.aboutToHide.connect(self._menu_hidden)
+        for menu in _menus(actions):
+            menu.aboutToShow.connect(self._keep_expanded)
+            menu.aboutToHide.connect(self._menu_hidden)
         self.collapse()
 
     def expand(self) -> None:
@@ -159,11 +166,7 @@ class ProgressiveMenuBar(QMenuBar):
         self.collapse()
 
     def _has_open_menu(self) -> bool:
-        for action in self._menu_actions:
-            menu = action.menu()
-            if menu is not None and menu.isVisible():
-                return True
-        return False
+        return any(menu.isVisible() for menu in _menus(self._menu_actions))
 
 
 __all__ = ["ProgressiveMenuBar"]

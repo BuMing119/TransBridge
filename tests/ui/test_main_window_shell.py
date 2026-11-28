@@ -72,16 +72,20 @@ def test_menu_builder_connects_each_intent_once() -> None:
     handles.prepare_content.trigger()
     handles.upload.trigger()
     handles.smart_assistant.trigger()
+    handles.dictionary.trigger()
     handles.history_search.trigger()
     handles.appearance.trigger()
 
-    assert calls == ["prepare_content", "upload", "assistant", "history_search", "appearance"]
+    assert calls == ["prepare_content", "upload", "assistant", "dictionary", "history_search", "appearance"]
     assert handles.prepare_content.data() == IntentId.WORKBENCH_CONTENT_PREPARE.value
     assert handles.prepare_content.text() == "添加翻译文件…"
     assert handles.upload.text() == "上传…"
     assert handles.smart_assistant is handles.view_assistant
     assert handles.smart_assistant.shortcut().toString() == "Ctrl+Shift+I"
     assert handles.smart_assistant.data() == IntentId.VIEW_SMART_ASSISTANT.value
+    assert handles.dictionary.data() == IntentId.TRANSLATION_DICTIONARY.value
+    assert handles.dictionary.text() == "词典查询…"
+    assert handles.dictionary.shortcut().isEmpty()
     assert handles.history_search.data() == IntentId.TRANSLATION_HISTORY_SEARCH.value
     assert handles.appearance.data() == IntentId.SETTINGS_APPEARANCE.value
     assert handles.appearance.text() == "通用设置…"
@@ -137,8 +141,11 @@ def test_menu_tree_has_the_approved_six_groups_and_keeps_legacy_handles() -> Non
                 IntentId.TRANSLATION_AI,
                 None,
                 IntentId.TERMINOLOGY_WORKBENCH,
-                IntentId.TRANSLATION_DICTIONARY,
                 IntentId.TRANSLATION_HISTORY_SEARCH,
+                IntentId.TRANSLATION_DICTIONARY,
+                None,
+                IntentId.TRANSLATION_DICTIONARY_SAVE,
+                IntentId.TRANSLATION_DICTIONARY_APPLY,
                 None,
                 IntentId.PUBLISH_WRITE,
                 IntentId.PUBLISH_WRITE_BATCH,
@@ -168,6 +175,7 @@ def test_menu_tree_has_the_approved_six_groups_and_keeps_legacy_handles() -> Non
                 None,
                 IntentId.SETTINGS_SERVICES,
                 IntentId.SETTINGS_TERMINOLOGY_ALIGNMENT,
+                "翻译词典",
             ),
         ),
         ("帮助", ActionSection.HELP, (IntentId.HELP_CONTEXT, IntentId.HELP_ABOUT)),
@@ -184,7 +192,11 @@ def test_menu_tree_has_the_approved_six_groups_and_keeps_legacy_handles() -> Non
                 if action.isSeparator():
                     actual.append(None)
                     continue
-                assert action.menu() is None
+                if action.menu() is not None:
+                    assert name == "设置"
+                    assert action.menu() is handles.dictionary_settings
+                    actual.append(action.text())
+                    continue
                 intent = IntentId(action.data())
                 assert intent not in actions
                 actions[intent] = action
@@ -214,6 +226,94 @@ def test_menu_tree_has_the_approved_six_groups_and_keeps_legacy_handles() -> Non
             "load_snapshot",
         ]
     finally:
+        window.close()
+
+
+def test_dictionary_menu_requires_current_file_and_tracks_busy_commands(monkeypatch) -> None:
+    calls = []
+
+    class Context(QObject):
+        collection_changed = pyqtSignal(object)
+        collection = None
+
+    class Commands(QObject):
+        busy_changed = pyqtSignal()
+        busy = False
+
+        def save(self):
+            calls.append("save")
+            self.busy = True
+            self.busy_changed.emit()
+
+        def apply(self):
+            calls.append("apply")
+
+        def close(self):
+            pass
+
+    class Noop:
+        def __getattr__(self, _name):
+            return self
+
+        def __call__(self, *_args, **_kwargs):
+            return None
+
+    commands = Commands()
+    monkeypatch.setattr("transbridge.ui.shell.intent_composition.DictionaryCommands", lambda _: commands)
+    window = QMainWindow()
+    window.context = Context()
+    for name in (
+        "variant_coordinator",
+        "project_transfer_coordinator",
+        "operation_coordinator",
+        "parse_coordinator",
+        "update_controller",
+        "show_about",
+        "show_message",
+        "tool_windows",
+    ):
+        setattr(window, name, Noop())
+    window.tool_windows.open_dictionary = lambda _query: calls.append("lookup")
+    composition = ShellIntentComposition(window)
+    menu = MenuBuilder(window, composition.menu_callbacks()).build()
+    composition.bind_dictionary_menu(menu)
+    commands_intents = (IntentId.TRANSLATION_DICTIONARY_SAVE, IntentId.TRANSLATION_DICTIONARY_APPLY)
+    try:
+        assert menu.save_dictionary.text() == "存入词典"
+        assert menu.apply_dictionary.text() == "套用词典"
+        assert not menu.save_dictionary.isEnabled()
+        assert not menu.apply_dictionary.isEnabled()
+        assert all(not composition.router.availability(intent).enabled for intent in commands_intents)
+        assert menu.dictionary.isEnabled()
+        menu.dictionary.trigger()
+        assert calls == ["lookup"]
+
+        window.context.collection = []
+        window.context.collection_changed.emit(window.context.collection)
+        assert menu.save_dictionary.isEnabled()
+        assert menu.apply_dictionary.isEnabled()
+        assert all(composition.router.availability(intent).enabled for intent in commands_intents)
+        menu.save_dictionary.trigger()
+        assert not menu.save_dictionary.isEnabled()
+        assert not menu.apply_dictionary.isEnabled()
+        assert menu.dictionary.isEnabled()
+        assert not composition.dispatch(IntentId.TRANSLATION_DICTIONARY_APPLY).accepted
+        assert calls == ["lookup", "save"]
+
+        commands.busy = False
+        commands.busy_changed.emit()
+        assert menu.save_dictionary.isEnabled()
+        assert menu.apply_dictionary.isEnabled()
+        menu.apply_dictionary.trigger()
+        assert calls == ["lookup", "save", "apply"]
+
+        window.context.collection = None
+        window.context.collection_changed.emit(None)
+        assert not menu.save_dictionary.isEnabled()
+        assert not menu.apply_dictionary.isEnabled()
+        assert menu.dictionary.isEnabled()
+    finally:
+        composition.close()
         window.close()
 
 

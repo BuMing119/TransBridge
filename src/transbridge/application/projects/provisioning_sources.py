@@ -4,14 +4,21 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, replace
+import logging
+from pathlib import Path
 
 from transbridge.application.contracts import DomainError, ErrorCategory, RequestContext
 from transbridge.application.io import FormatId, Stage
 from transbridge.application.io.identity import SourceNamespace
 from transbridge.config.text_encoding import TextEncodings
+from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.persistence.v2.variant import SourceBaseline
+from transbridge.translation_memory.library import DictionaryLibrary
 
+from .dictionary_apply import prepare_library_application
+from .prepared_source_results import with_initial_entry_states
 from .provisioning_models import (
     PreparedProjectSource,
     PreparedSourceHydration,
@@ -69,6 +76,8 @@ def prepare_project_sources(
     request: ProjectProvisioningRequest,
     context: RequestContext,
     encodings: TextEncodings,
+    *,
+    initial_dictionary: Callable[[TextEncodings], DictionaryLibrary | None] | None = None,
 ) -> PreparedProjectSources:
     candidates = (
         *((source, "primary") for source in request.sources),
@@ -104,6 +113,7 @@ def prepare_project_sources(
     primary_count = len(request.sources)
     translation_pairs = []
     folded_migrations = set()
+    changed_primaries = set()
     persist_prepared = getattr(sources, "persist_prepared_source", None)
     for indices in groups.values():
         if len(indices) == 1:
@@ -121,12 +131,28 @@ def prepare_project_sources(
         registrations[primary_index] = _merge_plugin_translation(
             registrations[primary_index], registrations[migration_index]
         )
-        # Only folding changes the already-persisted parser result. Bind that
-        # final baseline and hydration without rebuilding unchanged sources.
-        if persist_prepared is not None:
-            registrations[primary_index] = persist_prepared(registrations[primary_index])
+        changed_primaries.add(primary_index)
         translation_pairs.append((primary_index, migration_index))
         folded_migrations.add(migration_index)
+
+    if initial_dictionary is not None:
+        plugins = [
+            index
+            for index, source in enumerate(registrations[:primary_count])
+            if source.hydration is not None and source.hydration.format_id is FormatId.PLUGIN_SSE
+        ]
+        library = initial_dictionary(encodings) if plugins else None
+        if library is not None:
+            for index in plugins:
+                prepared = registrations[index]
+                filled = _apply_initial_dictionary(prepared, library)
+                if filled is not prepared:
+                    registrations[index] = filled
+                    changed_primaries.add(index)
+
+    if persist_prepared is not None:
+        for index in sorted(changed_primaries):
+            registrations[index] = persist_prepared(registrations[index])
 
     baseline_sources = tuple(item for index, item in enumerate(registrations) if index not in folded_migrations)
     hydrations = tuple(item.hydration for item in baseline_sources if item.hydration is not None)
@@ -136,6 +162,32 @@ def prepare_project_sources(
         hydrations if len(hydrations) == len(baseline_sources) else (),
         tuple(translation_pairs),
     )
+
+
+def _apply_initial_dictionary(prepared: PreparedProjectSource, library: DictionaryLibrary) -> PreparedProjectSource:
+    """Apply the new Variant's default library to empty rows after explicit import."""
+    hydration = prepared.hydration
+    assert hydration is not None
+    candidates = (
+        TranslationEntry(
+            row.legacy_id,
+            row.entry_key.local_key,
+            row.original,
+            row.translation,
+            row.stage,
+            row.context,
+            entry_key=row.entry_key,
+            metadata=row.metadata,
+        )
+        for row in hydration.entries
+        if not row.translation and Stage.from_value(row.stage) is Stage.UNTRANSLATED
+    )
+    try:
+        plan = prepare_library_application(candidates, library, mod_file_id=Path(hydration.location).stem)
+    except Exception:  # noqa: BLE001 - optional automation cannot block project creation
+        logging.getLogger(__name__).warning("新建工程时无法套用词典：%s", hydration.location, exc_info=True)
+        return prepared
+    return with_initial_entry_states(prepared, plan.states)
 
 
 def _merge_plugin_translation(

@@ -1,12 +1,10 @@
 """翻译记忆（Translation Memory）单元测试。
 
-覆盖：数据模型往返、add 双索引、query 多词典组合查询（同名 mod 优先 + 冲突仲裁）、
-存为词典、套用到集合、持久化往返（.tbdict）、scope 校验、merge、主键 scope 解耦。
+覆盖：独立快照、add 双索引、query 多词典组合查询（同名 mod 优先 + 冲突仲裁）、
+存为词典、套用到集合、scope 校验、merge、主键 scope 解耦。
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
@@ -18,7 +16,6 @@ from transbridge.translation_memory import (
 )
 from transbridge.translation_memory.model import (
     Dictionary,
-    DictionaryEntry,
     entry_id,
 )
 
@@ -27,40 +24,24 @@ from transbridge.translation_memory.model import (
 # ---------------------------------------------------------------------------
 
 
-def test_dictionary_entry_roundtrip():
-    e = DictionaryEntry(
-        translation="你好",
-        original="Hello",
-        source_mod="LegacyPatch",
-        form_id_with_plugin="0001A2B3|LegacyPatch.esp",
-        imported_at="2026-01-01T00:00:00+00:00",
-        updated_at="2026-01-02T00:00:00+00:00",
-        tags=["a", "b"],
-    )
-    e2 = DictionaryEntry.from_dict(e.to_dict())
-    assert e2 == e
-    assert e2.source_mod == "LegacyPatch"
-    assert e2.form_id_with_plugin == "0001A2B3|LegacyPatch.esp"
-    assert e2.tags == ["a", "b"]
-
-
 def test_dictionary_invalid_scope():
     with pytest.raises(ValueError):
         Dictionary(scope="invalid")
 
 
-def test_dictionary_roundtrip_with_indexes():
-    d = Dictionary(scope="project", mod_file_id="LegacyPatch")
-    d.entries["id1"] = DictionaryEntry(translation="译", original="原")
-    d.key_index["K|1~NPC_:FULL"] = {"entry_id": "id1", "hits": 3}
-    d.text_index["原"] = {"entry_id": "id1", "hits": 5}
-    d2 = Dictionary.from_dict(d.to_dict())
-    assert d2.scope == "project"
-    assert d2.mod_file_id == "LegacyPatch"
-    assert d2.entries["id1"].translation == "译"
-    assert d2.key_index["K|1~NPC_:FULL"]["hits"] == 3
-    assert d2.text_index["原"]["hits"] == 5
-    assert d2.to_dict()["schema_version"] == 2
+def test_dictionary_snapshot_preserves_entries_and_indexes_without_aliasing():
+    manager = TranslationMemoryManager()
+    manager.add("K|1~NPC_:FULL", "原", "译", mod_file_id="LegacyPatch", scope="project", tags=["a"])
+    dictionary = manager.dictionaries["LegacyPatch"]
+    (snapshot,) = manager.snapshot_dictionaries()
+    assert snapshot == dictionary
+    entry = next(iter(snapshot.entries.values()))
+    entry.tags.append("b")
+    snapshot.key_index["K|1~NPC_:FULL"]["hits"] = 3
+    snapshot.text_index["原"]["hits"] = 5
+    assert next(iter(dictionary.entries.values())).tags == ["a"]
+    assert dictionary.key_index["K|1~NPC_:FULL"]["hits"] == 0
+    assert dictionary.text_index["原"]["hits"] == 0
 
 
 def test_entry_id_excludes_scope():
@@ -264,29 +245,11 @@ def test_apply_excludes_locked_stage():
 
 
 # ---------------------------------------------------------------------------
-# 持久化 / merge / 导入导出
+# 命中计数 / merge / scope
 # ---------------------------------------------------------------------------
 
 
-def test_save_load_roundtrip(tm_tmp_dir: Path):
-    m = TranslationMemoryManager()
-    m.add("K1|1~NPC_:FULL", "Hello there", "你好", mod_file_id="LegacyPatch", scope="global")
-    m.add("", "Find the key", "找到钥匙", mod_file_id="OtherMod", scope="project")
-    files = m.save(tm_tmp_dir)
-    assert len(files) == 2
-    assert all(f.suffix == ".tbdict" for f in files)
-
-    m2 = TranslationMemoryManager()
-    n = m2.load(tm_tmp_dir)
-    assert n == 2
-    r = m2.query("K1|1~NPC_:FULL", "Hello there", QueryContext(mod_file_id="LegacyPatch"))
-    assert r.translation == "你好"
-    assert r.match_status == "EXACT"
-    r2 = m2.query("", "Find the key", QueryContext(mod_file_id="OtherMod"))
-    assert r2.translation == "找到钥匙"
-
-
-def test_hit_count_persists_and_increments_once_per_table():
+def test_hit_count_increments_once_per_index():
     m = TranslationMemoryManager()
     m.add("K1|1~NPC_:FULL", "Hello", "你好", mod_file_id="LegacyPatch", scope="global")
     m.query("K1|1~NPC_:FULL", "Hello", QueryContext(mod_file_id="LegacyPatch"))
@@ -294,59 +257,6 @@ def test_hit_count_persists_and_increments_once_per_table():
     d = m.dictionaries["LegacyPatch"]
     assert d.key_index["K1|1~NPC_:FULL"]["hits"] == 1
     assert d.text_index["Hello"]["hits"] == 1
-
-
-def test_load_corrupt_file_raises_and_preserves(tm_tmp_dir: Path):
-    m = TranslationMemoryManager()
-    m.add("K1", "Hello", "你好", mod_file_id="LegacyPatch", scope="global")
-    m.save(tm_tmp_dir)
-    # 破坏 LegacyPatch.tbdict
-    bad = tm_tmp_dir / "LegacyPatch.tbdict"
-    bad.write_text("{ not valid json", encoding="utf-8")
-    m2 = TranslationMemoryManager()
-    with pytest.raises(RuntimeError):
-        m2.load(tm_tmp_dir)
-    # 现场保留为 .corrupt-*
-    assert list(tm_tmp_dir.glob("*.corrupt-*"))
-
-
-def test_load_duplicate_mod_raises(tm_tmp_dir: Path):
-    """同名 .tbdict（mod_file_id 重复）应抛错，不静默覆盖。"""
-    m = TranslationMemoryManager()
-    m.add("K1", "Hello", "你好", mod_file_id="LegacyPatch", scope="global")
-    m.save(tm_tmp_dir)
-    # 手动复制出另一个同名文件（不同内容）触发重复检测比较难，改为直接写入第二个文件
-    (tm_tmp_dir / "LegacyPatch.tbdict").write_text(
-        '{"schema_version": 1, "mod_file_id": "LegacyPatch", "scope": "global", '
-        '"entries": {}, "key_index": {}, "text_index": {}}',
-        encoding="utf-8",
-    )
-    # 已有一个 LegacyPatch.tbdict，且目录里还有另一文件——但 load 只 glob 一次，重复在内存层检测
-    # 这里验证：同一 mod_file_id 出现两份文件时抛错
-    (tm_tmp_dir / "LegacyPatch_copy.tbdict").write_text(
-        '{"schema_version": 1, "mod_file_id": "LegacyPatch", "scope": "global", '
-        '"entries": {}, "key_index": {}, "text_index": {}}',
-        encoding="utf-8",
-    )
-    m2 = TranslationMemoryManager()
-    with pytest.raises(RuntimeError):
-        m2.load(tm_tmp_dir)
-
-
-def test_failed_reload_preserves_previous_snapshot_and_duplicate_files(tmp_path):
-    manager = TranslationMemoryManager(base_dir=tmp_path)
-    manager.add("key", "Original", "Translation", mod_file_id="mod")
-    manager.save()
-    manager.load()
-    before = manager.snapshot_dictionaries()
-    source = tmp_path / "mod.tbdict"
-    duplicate = tmp_path / "duplicate.tbdict"
-    duplicate.write_bytes(source.read_bytes())
-    with pytest.raises(RuntimeError, match="mod_file_id 重复"):
-        manager.load()
-    assert source.exists() and duplicate.exists()
-    assert not list(tmp_path.glob("*.corrupt-*"))
-    assert manager.snapshot_dictionaries() == before
 
 
 def test_merge_counts_added():
@@ -373,29 +283,3 @@ def test_set_scope_switch():
     assert m.dictionaries["ModA"].scope == "project"
     with pytest.raises(ValueError):
         m.set_scope("ModA", "invalid")
-
-
-def test_import_dict(tm_tmp_dir: Path):
-    # 源目录：有一本 ModA.tbdict
-    src_dir = tm_tmp_dir / "src"
-    src_dir.mkdir(exist_ok=True)
-    m_src = TranslationMemoryManager(base_dir=src_dir)
-    m_src.add("K1", "Hello", "你好", mod_file_id="ModA", scope="global")
-    m_src.save()
-
-    # 目标目录：另一个 base_dir
-    dst_dir = tm_tmp_dir / "dst"
-    dst_dir.mkdir(exist_ok=True)
-    src_file = src_dir / "ModA.tbdict"
-
-    m2 = TranslationMemoryManager(base_dir=dst_dir)
-    ok = m2.import_dict(src_file)
-    assert ok is True
-    assert (dst_dir / "ModA.tbdict").exists()
-
-    # 同名再次导入（不覆盖）→ False
-    ok2 = m2.import_dict(src_file)
-    assert ok2 is False
-    # 覆盖 → True
-    ok3 = m2.import_dict(src_file, overwrite=True)
-    assert ok3 is True

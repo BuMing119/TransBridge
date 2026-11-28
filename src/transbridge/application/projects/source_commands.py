@@ -16,14 +16,15 @@ from transbridge.application.contracts import (
     OperationResult,
     RequestContext,
 )
-from transbridge.application.io.identity import EntryKey, SourceNamespace
+from transbridge.application.io.identity import EntryKey
 from transbridge.config.text_encoding import TextEncodings
 from transbridge.persistence.v2.baselines import BaselineRegistry
 from transbridge.persistence.v2.ids import VariantId, VariantRef
 from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
-from transbridge.persistence.v2.variant import SourceBaseline, VariantSnapshot
+from transbridge.persistence.v2.variant import VariantSnapshot
 
 from .lifecycle import ProjectLifecycleService
+from .prepared_source_results import with_initial_entry_states
 from .provisioning import (
     PreparedSourceHydration,
     ProjectSourcePreparationPort,
@@ -88,7 +89,7 @@ class ProjectSourceMutationService:
             encodings = TextEncodings.from_project_data(active.project.envelope.data)
             source_request = with_source_read_options(source_request, encodings)
             parsed = self._preparer.prepare_source(source_request, context, role="primary", common_options=())
-            prepared = _apply_initial_entry_states(parsed, initial_states)
+            prepared = with_initial_entry_states(parsed, initial_states)
         except Exception as exc:
             return OperationResult.from_exception(exc, run_id=context.run_id)
         return self._publish_prepared_source(
@@ -441,39 +442,6 @@ def _split_initial_entry_states(
         tuple(options.items()),
     )
     return sanitized, states
-
-
-def _apply_initial_entry_states(prepared, states: Mapping[EntryKey | str, tuple[str, int]]):
-    if not states:
-        return prepared
-
-    def apply(entry):
-        state = states.get(entry.entry_key)
-        if state is None:
-            # The GUI parser uses legacy:v1 before this command assigns the
-            # verified source namespace. Rebind only that source-local identity,
-            # preserving its original discriminator; other namespaces stay exact.
-            state = states.get(replace(entry.entry_key, namespace=SourceNamespace.legacy()))
-        if state is None and entry.entry_key.original is None:
-            state = states.get(entry.entry_key.local_key)
-        current_stage = entry.stage.value if hasattr(entry.stage, "value") else int(entry.stage)
-        if state is None or state == (entry.translation, current_stage):
-            return entry
-        return replace(
-            entry,
-            translation=state[0],
-            stage=state[1],
-            revision=entry.revision.next(),
-        )
-
-    baseline = SourceBaseline(
-        prepared.baseline.fingerprint,
-        tuple(apply(entry) for entry in prepared.baseline.entries),
-    )
-    hydration = prepared.hydration
-    if hydration is not None:
-        hydration = replace(hydration, entries=tuple(apply(entry) for entry in hydration.entries))
-    return replace(prepared, baseline=baseline, hydration=hydration)
 
 
 def _failed[T](code: str, message: str, context: RequestContext) -> OperationResult[T]:

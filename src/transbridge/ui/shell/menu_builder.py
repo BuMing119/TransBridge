@@ -10,6 +10,7 @@ from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QMainWindow, QMenu
 
 from .action_catalog import DEFAULT_ACTION_CATALOG, ActionCatalog, IntentId
+from .dictionary_settings import DictionarySettingsMenu
 
 VoidCallback = Callable[[], None]
 
@@ -57,6 +58,8 @@ class MenuCallbacks:
     manage_variants: VoidCallback = lambda: None
     manage_history: VoidCallback = lambda: None
     open_project_properties: VoidCallback = lambda: None
+    save_dictionary: VoidCallback = lambda: None
+    apply_dictionary: VoidCallback = lambda: None
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +86,9 @@ class MenuHandles:
     terminology: QAction
     fomod: QAction
     appearance: QAction
+    save_dictionary: QAction
+    apply_dictionary: QAction
+    dictionary_settings: DictionarySettingsMenu
 
 
 class MenuBuilder:
@@ -157,11 +163,18 @@ class MenuBuilder:
         ai_translator = self._intent_action(translation_menu, IntentId.TRANSLATION_AI, callbacks.open_ai_translator)
         translation_menu.addSeparator()
         terminology = self._intent_action(translation_menu, IntentId.TERMINOLOGY_WORKBENCH, callbacks.open_terminology)
-        dictionary = self._intent_action(translation_menu, IntentId.TRANSLATION_DICTIONARY, callbacks.open_dictionary)
         history_search = self._intent_action(
             translation_menu,
             IntentId.TRANSLATION_HISTORY_SEARCH,
             callbacks.open_history_search,
+        )
+        dictionary = self._intent_action(translation_menu, IntentId.TRANSLATION_DICTIONARY, callbacks.open_dictionary)
+        translation_menu.addSeparator()
+        save_dictionary = self._intent_action(
+            translation_menu, IntentId.TRANSLATION_DICTIONARY_SAVE, callbacks.save_dictionary
+        )
+        apply_dictionary = self._intent_action(
+            translation_menu, IntentId.TRANSLATION_DICTIONARY_APPLY, callbacks.apply_dictionary
         )
         translation_menu.addSeparator()
         write = self._intent_action(translation_menu, IntentId.PUBLISH_WRITE, callbacks.write)
@@ -197,6 +210,8 @@ class MenuBuilder:
         self._intent_action(
             settings_menu, IntentId.SETTINGS_TERMINOLOGY_ALIGNMENT, callbacks.show_terminology_alignment
         )
+        dictionary_settings = DictionarySettingsMenu(settings_menu, self._gettext)
+        settings_menu.addMenu(dictionary_settings)
         help_menu = bar.addMenu(self._gettext("帮助"))
         self._intent_action(help_menu, IntentId.HELP_CONTEXT, callbacks.show_context_help)
         self._intent_action(help_menu, IntentId.HELP_ABOUT, callbacks.show_about)
@@ -228,6 +243,9 @@ class MenuBuilder:
             smart_assistant=smart_assistant,
             view_assistant=view_assistant,
             dictionary=dictionary,
+            save_dictionary=save_dictionary,
+            apply_dictionary=apply_dictionary,
+            dictionary_settings=dictionary_settings,
             history_search=history_search,
             terminology=terminology,
             fomod=fomod,

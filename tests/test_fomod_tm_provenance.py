@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import threading
 
@@ -32,7 +31,6 @@ from transbridge.translation_memory import (
     TranslationMemoryManager,
     TranslationMemoryQuery,
     TranslationMemoryQueryService,
-    migrate_legacy_dictionary,
 )
 
 
@@ -165,12 +163,12 @@ def test_tm_hidden_and_locked_never_auto_apply(stage):
     assert not result.blocks_publish
 
 
-def test_legacy_locale_unknown_is_read_only_not_auto_enabled():
+def test_unknown_locale_is_read_only_not_auto_enabled():
     manager = TranslationMemoryManager()
-    manager.add("K1", "Hello", "你好", mod_file_id="legacy")
+    manager.add("K1", "Hello", "你好", mod_file_id="unknown-locale")
     result = TranslationMemoryQueryService(manager).query(_query())
     assert result.selected is None
-    assert any(item.code == "TM_LEGACY_LOCALE_UNKNOWN" for item in result.diagnostics)
+    assert any(item.code == "TM_ENTRY_DISABLED_OR_LOCALE_UNKNOWN" for item in result.diagnostics)
     assert manager.query("K1", "Hello").translation == "你好"
 
 
@@ -356,55 +354,6 @@ def test_candidate_set_commits_once_with_provenance_and_cancel_is_zero_mutation(
     report = CommitFomodCandidates(port, commit_guard=RejectGuard()).execute(candidates, context)
     assert report.outcome is OperationOutcome.CANCELLED
     assert port.calls == 1
-
-
-def test_legacy_tm_migration_is_atomic_backed_up_and_unknown_locale_disabled(tmp_path: Path):
-    source = tmp_path / "Legacy.tbdict"
-    source.write_text(
-        json.dumps({
-            "schema_version": 1,
-            "mod_file_id": "Legacy",
-            "scope": "global",
-            "entries": {"one": {"original": "Hello", "translation": "你好"}},
-            "key_index": {"K1": {"entry_id": "one", "hits": 0}},
-            "text_index": {"Hello": {"entry_id": "one", "hits": 0}},
-        }),
-        encoding="utf-8",
-    )
-    original = source.read_bytes()
-
-    report = migrate_legacy_dictionary(source, run_id="migration-1")
-
-    assert Path(report.backup).read_bytes() == original
-    migrated = json.loads(source.read_text(encoding="utf-8"))
-    assert migrated["schema_version"] == 2
-    assert migrated["entries"]["one"]["enabled"] is False
-    assert report.disabled == 1
-    assert report.diagnostics[0].code == "TM_MIGRATION_LOCALE_UNKNOWN"
-
-
-def test_legacy_tm_migration_failure_keeps_original_and_backup(tmp_path: Path, monkeypatch):
-    source = tmp_path / "Legacy.tbdict"
-    source.write_text(
-        json.dumps({
-            "schema_version": 1,
-            "mod_file_id": "Legacy",
-            "entries": {},
-        }),
-        encoding="utf-8",
-    )
-    original = source.read_bytes()
-    import transbridge.translation_memory.migration as migration_module
-
-    def fail_write(path, payload):
-        del path, payload
-        raise OSError("disk full")
-
-    monkeypatch.setattr(migration_module, "_atomic_write_json", fail_write)
-    with pytest.raises(OSError, match="disk full"):
-        migrate_legacy_dictionary(source, run_id="migration-failed")
-    assert source.read_bytes() == original
-    assert (tmp_path / "Legacy.tbdict.v1.bak").read_bytes() == original
 
 
 def test_cancelled_query_and_migration_produce_no_candidate():

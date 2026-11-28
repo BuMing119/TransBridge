@@ -34,7 +34,6 @@ from transbridge.ui.context import AppContext, CollectionSlot
 from transbridge.ui.coordinators.parse_coordinator import ParseCoordinator
 from transbridge.ui.coordinators.project_transfer_coordinator import ProjectTransferCoordinator
 from transbridge.ui.coordinators.variant_coordinator import VariantCoordinator
-from transbridge.ui.tools.dictionary_panel import DictionaryPanel
 from transbridge.ui.tools.terminology.conflict_review_dialog import ConflictReviewDialog
 from transbridge.ui.tools.terminology.draft_interactions import DraftInteractionController
 from transbridge.ui.workbench import step1
@@ -187,17 +186,6 @@ def _command(case, host, original, monkeypatch):
         return _conflict_command(host)
     if case == "term-suppress":
         return _draft_command(host)
-    if case == "dictionary-overwrite":
-        state = {"dictionary": "original"}
-
-        def import_dict(_path, *, overwrite=False):
-            if overwrite:
-                state["dictionary"] = "imported"
-            return overwrite
-
-        host._manager = SimpleNamespace(import_dict=import_dict)
-        host._rebuild_combo = host._refresh_table = Mock()
-        return lambda: DictionaryPanel._on_import_dict(host), lambda: state["dictionary"] == "imported"
     if case == "workbench-remove":
         services = build_persistence_v2_services(
             host._test_root / "data", id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now"
@@ -248,7 +236,6 @@ _CASES = (
     "step-json-overwrite",
     "step-parse-overwrite",
     "workbench-remove",
-    "dictionary-overwrite",
     "term-exclude",
     "term-suppress",
 )

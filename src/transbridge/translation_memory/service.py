@@ -122,8 +122,8 @@ class TranslationMemoryQueryService:
             if not entry.enabled or not entry.source_locale or not entry.target_locale:
                 diagnostics.append(
                     Diagnostic(
-                        "TM_LEGACY_LOCALE_UNKNOWN",
-                        "A legacy dictionary entry has no proven locale and was not auto-enabled.",
+                        "TM_ENTRY_DISABLED_OR_LOCALE_UNKNOWN",
+                        "The dictionary entry is disabled or lacks a source or target locale.",
                         DiagnosticSeverity.WARNING,
                         details=(("dictionary_id", dictionary_id),),
                     )

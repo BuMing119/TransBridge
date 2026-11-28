@@ -6,12 +6,43 @@ from dataclasses import replace
 from transbridge.application.contracts import DomainError, ErrorCategory
 from transbridge.application.io import FormatId
 from transbridge.application.io.text_source_options import snapshot_read_options
-from transbridge.config.text_encoding import TextEncodings
+from transbridge.config.text_encoding import TextEncodingDefaults, TextEncodings
 
 from .provisioning_models import ProjectSourceRequest
 
 TEXT_ENCODING_FORMATS = frozenset({FormatId.PLUGIN_SSE, FormatId.STRINGS, FormatId.DLSTRINGS, FormatId.ILSTRINGS})
 TEXT_READ_OPTION_KEYS = ("input_encoding", "source_language", "text_read_policy")
+
+
+def request_for_project(context, request):
+    return replace(
+        request,
+        project_id=getattr(context, "active_project_id", request.project_id),
+        variant_id=getattr(context, "active_variant_id", request.variant_id),
+    )
+
+
+def effective_text_encodings(request, service=None, defaults=None):
+    if request is None or request.project_id is None:
+        return (defaults or TextEncodingDefaults()).load()
+    if service is None:
+        return TextEncodings()
+    try:
+        encodings = service.active_encodings(request)
+    except (DomainError, ValueError) as exc:
+        raise RuntimeError(f"无法读取项目文本编码：{exc}") from exc
+    if encodings is None:
+        raise RuntimeError("当前项目已变化，请重新发起操作。")
+    return encodings
+
+
+def context_text_encodings(context, request=None):
+    request = getattr(context, "runtime_context", None) if request is None else request
+    return effective_text_encodings(
+        None if request is None else request_for_project(context, request),
+        getattr(context, "project_text_encodings", None),
+        getattr(context, "text_encoding_defaults", None),
+    )
 
 
 def with_source_read_options(request: ProjectSourceRequest, encodings: TextEncodings) -> ProjectSourceRequest:

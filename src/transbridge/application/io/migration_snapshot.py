@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from copy import copy, deepcopy
 
 from transbridge.converter.translation_entry import TranslationEntry
 
-from .identity import ExternalEntryRef, Provenance
+from .identity import EntryKey, ExternalEntryRef, Provenance
 
 
 def _immutable(value: object) -> bool:
@@ -39,3 +39,16 @@ def detached_entries(entries: Iterable[TranslationEntry]) -> tuple[TranslationEn
                 object.__setattr__(detached, name, deepcopy(value, memo))
         result.append(detached)
     return tuple(result)
+
+
+def freeze_collection_entries(
+    collection, entry_keys: Iterable[EntryKey] | None = None
+) -> Callable[[], tuple[TranslationEntry, ...]]:
+    """Capture a revision-bound page reader or copy the requested in-memory entries."""
+    keys = None if entry_keys is None else tuple(dict.fromkeys(entry_keys))
+    if callable(freeze := getattr(collection, "freeze_entries", None)):
+        reader = freeze()
+        return lambda: reader(keys)
+    entries = collection if keys is None else (collection.get(key) for key in keys)
+    frozen = detached_entries(entry for entry in entries if entry is not None)
+    return lambda: frozen

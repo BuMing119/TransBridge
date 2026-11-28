@@ -3,6 +3,8 @@
 
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
+from transbridge.config.dictionary_preferences import dictionary_preferences
+
 
 class ProfileVariantSaveCoordinator:
     def __init__(self, host):
@@ -84,6 +86,7 @@ class ProfileVariantSaveCoordinator:
                 return
         context = self._host.runtime_context
         project_revision, variant_revision = revisions
+        source_key = self._host.context.active_key
         self._host.start_foreground_task(
             lambda: self._host.project_commands.save_profile_variant(
                 name,
@@ -98,7 +101,7 @@ class ProfileVariantSaveCoordinator:
                 expected_variant_revision=variant_revision,
             ),
             message=f"正在保存翻译版本「{name}」…",
-            on_result=lambda saved: self._finished(saved, name),
+            on_result=lambda saved: self._finished(saved, name, identity[0], source_key),
         )
 
     def _failed(self, result):
@@ -106,12 +109,27 @@ class ProfileVariantSaveCoordinator:
         self._host.show_message(f"{diagnostic.code}: {diagnostic.message}")
         QMessageBox.warning(self._host, "方案译文保存失败", diagnostic.message)
 
-    def _finished(self, result, name):
+    def _finished(self, result, name, project_id, source_key):
         if not result.is_success:
             self._failed(result)
             return
         self._host.show_message(f"翻译版本「{name}」已保存，可独立编辑和继续翻译。")
-        self._host.project_coordinator.restore_active_sources()
+        target = (project_id, result.value["id"])
+
+        def publish_saved_variant():
+            context = self._host.context
+            if (
+                context.active_version_identity == target
+                and source_key in context.slots
+                and dictionary_preferences(context).save_on_project_save
+            ):
+                # The restored target is already clean. Its save receipt binds the dictionary
+                # reader to the committed target version, including its actual naming profile.
+                self._host.save_current_project_async(
+                    automatic=True, include_dictionary=True, dictionary_source_key=source_key
+                )
+
+        self._host.project_coordinator.restore_active_sources(on_restored=publish_saved_variant)
 
 
 __all__ = ["ProfileVariantSaveCoordinator"]

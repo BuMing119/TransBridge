@@ -17,7 +17,6 @@ from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.fomod.pipeline import FomodPipeline, PipelineResult, _select_fomod_ai_entry_ids
 from transbridge.parser.plugin_parser import PluginParser
-from transbridge.translation_memory import TranslationMemoryManager
 
 
 @pytest.mark.parametrize("same_key", [False, True], ids=["ordinary-keys", "original-qualified-keys"])
@@ -57,10 +56,7 @@ def test_fomod_ai_translations_survive_plugin_writeback(tmp_path, monkeypatch, s
             return SimpleNamespace(success_count=len(selected), failed_count=0)
 
     monkeypatch.setattr("transbridge.ai_translator.translator.AutoTranslator", OfflineTranslator)
-    pipeline = FomodPipeline(
-        llm_config=SimpleNamespace(target_lang="zh_CN"),
-        tm_manager=TranslationMemoryManager(tmp_path / "empty-dictionaries"),
-    )
+    pipeline = FomodPipeline(llm_config=SimpleNamespace(target_lang="zh_CN"))
     result = PipelineResult()
     pipeline._translate_plugins(source_dir, None, result, None, None, target_locale="zh_CN", run_id="audit-fomod")
 

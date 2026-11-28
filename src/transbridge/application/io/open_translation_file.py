@@ -41,17 +41,24 @@ class OpenedTranslationFile:
     note: str = ""
 
 
-def apply_open_file_dictionary(collection):
-    """Opening a plugin optionally fills empty translations from the desktop dictionary."""
-    from transbridge.translation_memory.manager import QueryContext, TranslationMemoryManager
+def apply_open_file_dictionary(collection, library, mod_file_id, *, plugin_scope=None):
+    """Opening a plugin uses the same library and stage policy as explicit application."""
+    from transbridge.application.projects.dictionary_apply import prepare_library_application
 
+    if library is None:
+        return collection, 0
     try:
-        manager = TranslationMemoryManager()
-        manager.load()
-        return manager.apply_to_collection(collection, context=QueryContext(mod_file_id="")).applied
+        plan = prepare_library_application(collection, library, mod_file_id=mod_file_id, plugin_scope=plugin_scope)
+        if not plan.states:
+            return collection, 0
+        translated = TranslationEntryCollection(
+            replace(entry, translation=state[0]) if (state := plan.states.get(entry.identity)) else entry
+            for entry in collection
+        )
+        return translated, plan.result.applied
     except Exception:
         logging.getLogger(__name__).warning("Could not apply optional dictionary while opening plugin", exc_info=True)
-        return 0
+        return collection, 0
 
 
 def prepare_open_file(
@@ -128,7 +135,7 @@ def prepare_open_file(
         if not imported.applied_count:
             note = "文件已打开；所选译文未产生更新，请检查匹配内容和保留/替换策略。"
     if format_id is FormatId.PLUGIN_SSE and apply_dictionary is not None:
-        apply_dictionary(collection)
+        collection, _ = apply_dictionary(collection)
     prepared = prepare_parsed_source(
         str(source_path),
         tuple(collection),

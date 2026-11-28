@@ -9,6 +9,7 @@ import json
 from transbridge.application.terminology.effective import EffectiveSnapshotStatus, EffectiveTerminologySnapshot
 from transbridge.application.terminology_profiles.models import TerminologyProfileSelection
 from transbridge.persistence.project_store.connection import project_connection
+from transbridge.persistence.project_store.format import ProjectStoreError
 from transbridge.persistence.project_store.records import WorkspaceProjects
 from transbridge.persistence.v2.ids import ProjectId, VariantId
 from transbridge.persistence.v2.schema import serialize_document
@@ -23,12 +24,16 @@ class ProjectTerminologySelection:
         self._projects = WorkspaceProjects(root)
         self._paths = TerminologyPaths(root)
 
-    def selection(self, project_id, variant_id):
+    def selection(self, project_id, variant_id, *, require_variant=False):
         path = self._projects.store_for(ProjectId(project_id)).path
         with project_connection(path) as connection:
             row = connection.execute(
-                "SELECT terminology_selection FROM variant WHERE identity = ?", (VariantId(variant_id).value,)
+                "SELECT variant.terminology_selection FROM variant JOIN project ON project.singleton = 1 "
+                "WHERE project.identity = ? AND variant.identity = ?",
+                (project_id, VariantId(variant_id).value),
             ).fetchone()
+        if row is None and require_variant:
+            raise ProjectStoreError(f"unknown project Variant {project_id!r}/{variant_id!r}")
         return None if row is None else decode_selection(row[0], project_id, variant_id)
 
     def selections(self, project_id):
@@ -76,7 +81,9 @@ class ProjectTerminologySelection:
     def base_snapshot(self, project_id, variant_id):
         if not self._paths.database(project_id).is_file():
             return EffectiveTerminologySnapshot(project_id, variant_id, EffectiveSnapshotStatus.NO_PROJECT_VERSION)
-        repository = SqliteTerminologyRepository.open(str(self._paths.root), project_id, writable=False)
+        # Effective snapshots require a healthy authoritative repository. The read-only
+        # recovery mode deliberately reports UNAVAILABLE even for readable history.
+        repository = SqliteTerminologyRepository.open(str(self._paths.root), project_id)
         try:
             return SqliteEffectiveTerminologySnapshotPort(repository).snapshot(project_id, variant_id)
         finally:

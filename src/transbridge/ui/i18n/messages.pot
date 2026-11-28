@@ -30,6 +30,26 @@ msgstr ""
 msgid "设置"
 msgstr ""
 
+#: ui/shell/dictionary_settings.py
+msgid "翻译词典"
+msgstr ""
+
+#: ui/shell/dictionary_settings.py
+msgid "保存工程时将译文存入词典"
+msgstr ""
+
+#: ui/shell/dictionary_settings.py
+msgid "打开插件时自动套用词典"
+msgstr ""
+
+#: ui/shell/dictionary_settings.py
+msgid "主库"
+msgstr ""
+
+#: ui/shell/dictionary_settings.py
+msgid "不选择主库"
+msgstr ""
+
 #: ui/shell/menu_builder.py
 msgid "帮助"
 msgstr ""
@@ -90,8 +110,24 @@ msgstr ""
 msgid "AI 自动翻译…"
 msgstr ""
 
-#: ui/shell/menu_builder.py
-msgid "翻译词典…"
+#: ui/shell/action_catalog.py
+msgid "词典查询…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "存入词典"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "将当前文件的双语词条存入词典"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "套用词典"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "用词典补全当前文件的空白译文"
 msgstr ""
 
 #: ui/shell/action_catalog.py
