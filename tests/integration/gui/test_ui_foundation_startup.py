@@ -7,7 +7,8 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6 import sip
+from PyQt6.QtWidgets import QApplication, QWidget
 import pytest
 
 from transbridge.config.paratranz_credentials import UnavailableCredentialStore
@@ -75,6 +76,7 @@ class _Runtime:
     task_projection = object()
 
     def __init__(self, preferences: UiPreferenceRepository, events: list[str]) -> None:
+        self.settings = {}
         self.use_cases = _UseCases(preferences)
         self.tasks = object()
         self._events = events
@@ -116,13 +118,16 @@ def test_gui_entrypoint_creates_foundation_before_window_and_closes_it_before_ru
     monkeypatch.setattr(app_module.QMessageBox, "warning", lambda *_: events.append("warning"))
     captured: dict[str, object] = {}
 
-    class Window:
+    class Window(QWidget):
         def __init__(self, **kwargs) -> None:
+            super().__init__()
             self.close_ready = close_ready
             self.storage_migration_destination = tmp_path / "TransBridge" if request_move else None
             foundation = kwargs["ui_foundation"]
             assert foundation.initial_theme_result.snapshot is not None
             captured.update(kwargs)
+            captured["child"] = QWidget(self)
+            self.destroyed.connect(lambda: events.append("window.destroy"))
             events.append("window.create")
 
         def show(self) -> None:
@@ -153,7 +158,8 @@ def test_gui_entrypoint_creates_foundation_before_window_and_closes_it_before_ru
     assert app_module.main(runtime) == int(not closed)
     assert captured["runtime"] is runtime
     assert captured["ui_foundation"] is application._transbridge_ui_foundation
-    expected = ["window.create", "window.show", "foundation.close", "runtime.close"]
+    assert sip.isdeleted(captured["child"])
+    expected = ["window.create", "window.show", "window.destroy", "foundation.close", "runtime.close"]
     if request_move and close_ready:
         expected.append("migrate" if closed else "warning")
     assert events == expected
@@ -168,8 +174,9 @@ def test_gui_entrypoint_keeps_business_window_available_when_foundation_startup_
     runtime = _Runtime(_preferences(tmp_path), events)
     captured: dict[str, object] = {}
 
-    class Window:
+    class Window(QWidget):
         def __init__(self, **kwargs) -> None:
+            super().__init__()
             captured.update(kwargs)
             events.append("window.create")
 

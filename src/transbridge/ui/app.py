@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import traceback
 
+from PyQt6 import sip
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
@@ -145,6 +146,7 @@ def _run_window(app, runtime, initial_project_path, initial_import_path):
     )
     ui_foundation: GuiFoundation | None = None
     hang_watchdog: UiHangWatchdog | None = None
+    window: MainWindow | None = None
     try:
         app.setApplicationName("TransBridge")
         app.setOrganizationName("TransBridge")
@@ -186,6 +188,9 @@ def _run_window(app, runtime, initial_project_path, initial_import_path):
     finally:
         if hang_watchdog is not None:
             hang_watchdog.close()
+        # Destroy the owned widget tree on the GUI thread while its services are still alive.
+        if window is not None and not sip.isdeleted(window):
+            sip.delete(window)
         if ui_foundation is not None:
             ui_foundation.close()
         closed = app_runtime.close()
