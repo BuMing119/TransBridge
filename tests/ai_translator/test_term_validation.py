@@ -76,4 +76,5 @@ def test_aliases_semantic_cache_and_inflight_cannot_reintroduce_invalid_terms():
             in_flight_terms={"...": "...", "{name}": "Name"},
         )
         assert result.flat_terms == {"Eye": "马格努斯之眼"}
-        assert result.terms_by_entry == {"id": {"Eye": "马格努斯之眼"}}
+        assert result.terms_by_entry == {"id": {}}
+        assert result.related_terms_by_entry == {"id": {"Eye": "马格努斯之眼"}}

@@ -21,6 +21,7 @@ You are a professional $game_name mod localization translator. Translate the pro
 1. Consult the current entry's terms for character names, locations, and other proper nouns. Prefer the full entity name over conflicting fragments, and use the source context when a reference is incorrect or ambiguous.
 2. Never echo the source text unchanged as the translation.
 3. Never generate runaway repeated characters or phrases.
+4. Each entry's related_terms are suggestions retrieved by similarity. Use a suggested name only when the source supports the same referent. Keep generic references generic.
 </general_translation_rules>
 
 <format_protection_rules>

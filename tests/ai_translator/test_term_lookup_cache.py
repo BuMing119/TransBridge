@@ -411,7 +411,7 @@ def test_new_batch_captures_reuse_snapshot_and_matcher_without_scanning_records(
     snapshot_method = setup_terms.pool.snapshot
     built = []
 
-    def build(entries, _flat, _batch_type, *, terms_by_entry):
+    def build(entries, _flat, _batch_type, *, terms_by_entry, related_terms_by_entry):
         built.append(terms_by_entry)
         return []
 

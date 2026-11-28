@@ -639,11 +639,13 @@ def test_stream_candidate_is_only_accepted_after_durable_checkpoint_and_retries(
             batch_type,
             *,
             terms_by_entry=None,
+            related_terms_by_entry=None,
         ):
             captured_prompt_calls.append({
                 "entries": {entry.key: entry.original for entry in entries},
                 "terms": dict(terms),
                 "terms_by_entry": {key: dict(value) for key, value in (terms_by_entry or {}).items()},
+                "related_terms_by_entry": related_terms_by_entry,
             })
             return [{"role": "system", "content": "fixture"}, {"role": "user", "content": "fixture"}]
 
@@ -664,6 +666,7 @@ def test_stream_candidate_is_only_accepted_after_durable_checkpoint_and_retries(
             return SimpleNamespace(
                 flat_terms={"stream-source": "流式源文"},
                 terms_by_entry={"stream": {"stream-source": "流式源文"}},
+                related_terms_by_entry={"stream": {"Stream": "溪流"}},
             )
 
         def exact_match(self, originals):
@@ -729,4 +732,5 @@ def test_stream_candidate_is_only_accepted_after_durable_checkpoint_and_retries(
         "entries": {"stream": "stream-source"},
         "terms": {"stream-source": "流式源文"},
         "terms_by_entry": {"stream": {"stream-source": "流式源文"}},
+        "related_terms_by_entry": {"stream": {"Stream": "溪流"}},
     }

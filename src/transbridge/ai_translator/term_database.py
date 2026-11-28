@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from datetime import datetime
 import json
 import logging
@@ -33,6 +33,7 @@ from transbridge.ai_translator.term_formats import (
 from transbridge.ai_translator.term_validation import valid_term_pair
 from transbridge.application.translation.entry_alias import ai_entry_key
 
+from .related_terms import RELATED_TERM_LIMIT, hybrid_terms_by_original, select_related_terms
 from .shared_term_snapshot import FrozenTermEntry
 from .term_lookup_cache import TermLookupCache, invalidate_lookup_load, lookup_view, revisioned_dynamic_mutation
 
@@ -71,10 +72,11 @@ def _normalized_primary_term(value: str) -> str:
 
 @dataclass
 class ScopedTermMatches:
-    """一次请求内的平面术语结果及逐条作用域，不参与任何持久化。"""
+    """Batch-wide union plus per-entry direct matches and ranked semantic candidates."""
 
     flat_terms: dict[str, str]
     terms_by_entry: dict[str, dict[str, str]]
+    related_terms_by_entry: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 # ─────────────────────────── DynamicTermDatabase ─────────────────────────────
@@ -754,27 +756,14 @@ class TermDatabaseManager:
                     ):
                         candidate_terms_by_entry[ai_entry_key(entry)].add(term)
 
-        # 阶段2：语义召回（仅对子串未命中的原文）
+        related_by_original = {}
         if enable_semantic and self._vector_index and self._vector_index.available:
-            # 找出没有子串命中的原文
-            unmatched_originals = [
-                e.original for e in entries if not any(term.lower() in e.original.lower() for term in substring_matched)
-            ]
-
-            # 批量语义检索（BM25 混合，_bm25 缺失时退化为纯向量），补充高置信术语
-            batch_results = self._vector_index.search_hybrid_batch(unmatched_originals, top_k=3)
-            entry_keys_by_original: dict[str, list[str]] = {}
-            for entry in entries:
-                entry_keys_by_original.setdefault(entry.original, []).append(ai_entry_key(entry))
-            for original, results in batch_results.items():
-                for r in results:
-                    if not valid_term_pair(r.term, r.translation):
-                        continue
-                    if r.term not in matched:
-                        matched[r.term] = r.translation
-                        priority[r.term] = 3  # 语义召回优先级最低
-                    for entry_key in entry_keys_by_original.get(original, ()):
-                        candidate_terms_by_entry[entry_key].add(r.term)
+            related_by_original = hybrid_terms_by_original(self._vector_index, originals, substring_matched)
+            for candidates in related_by_original.values():
+                for term, translation in candidates.items():
+                    if term not in matched:
+                        matched[term] = translation
+                        priority[term] = 3
 
         # 硬上限保护：按优先级排序后截断
         if len(matched) > max_terms:
@@ -793,6 +782,15 @@ class TermDatabaseManager:
         return ScopedTermMatches(
             flat_terms=matched,
             terms_by_entry=terms_by_entry,
+            related_terms_by_entry={
+                ai_entry_key(entry): {
+                    term: translation
+                    for term, translation in related_by_original[entry.original].items()
+                    if term in matched
+                }
+                for entry in entries
+                if entry.original in related_by_original
+            },
         )
 
     def _uses_project_context(self) -> bool:
@@ -809,13 +807,11 @@ class TermDatabaseManager:
     ) -> ScopedTermMatches:
         """Delegate each entry to its explicit plugin/global lookup context."""
         terms_by_entry: dict[str, dict[str, str]] = {}
+        related_by_entry: dict[str, dict[str, str]] = {}
         flat_terms: dict[str, str] = {}
         for entry in entries:
             context = self.lookup_context_for_entry(entry)
             matched = self.match_terms([entry.original], context=context)
-            if enable_semantic:
-                for term, translation in self.semantic_match([entry.original], top_k=3, context=context).items():
-                    matched.setdefault(term, translation)
             if in_flight_terms:
                 for term, translation in in_flight_terms.items():
                     if valid_term_pair(term, translation) and self._match_key_applies_to_original(
@@ -824,6 +820,11 @@ class TermDatabaseManager:
                         matched.setdefault(term, translation)
             terms_by_entry[ai_entry_key(entry)] = matched
             flat_terms.update(matched)
+            if enable_semantic:
+                candidates = self.semantic_match([entry.original], top_k=RELATED_TERM_LIMIT, context=context)
+                related = select_related_terms(matched, candidates)
+                related_by_entry[ai_entry_key(entry)] = related
+                flat_terms.update(related)
         if len(flat_terms) > max_terms:
             selected = tuple(sorted(flat_terms, key=lambda term: (len(term), term.casefold())))[:max_terms]
             flat_terms = {term: flat_terms[term] for term in selected}
@@ -831,7 +832,11 @@ class TermDatabaseManager:
                 key: {term: translation for term, translation in values.items() if term in flat_terms}
                 for key, values in terms_by_entry.items()
             }
-        return ScopedTermMatches(flat_terms, terms_by_entry)
+            related_by_entry = {
+                key: {term: value for term, value in values.items() if term in flat_terms}
+                for key, values in related_by_entry.items()
+            }
+        return ScopedTermMatches(flat_terms, terms_by_entry, related_by_entry)
 
     def match_terms(
         self,

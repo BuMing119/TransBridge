@@ -78,7 +78,13 @@ def translation_request(
                 effective_required[ai_entry_key(entry)] = resolved
                 terms.update(resolved)
         flat = {term: target for terms in terms_by_entry.values() for term, target in terms.items()}
-        messages = builder.build_translation_prompt(entries, flat, batch_type, terms_by_entry=terms_by_entry)
+        messages = builder.build_translation_prompt(
+            entries,
+            flat,
+            batch_type,
+            terms_by_entry=terms_by_entry,
+            related_terms_by_entry=getattr(matches, "related_terms_by_entry", {}),
+        )
         prepared()
         if stream is not None:
             stream("\n[DEBUG] 匹配到的术语\n" + "\n".join(f"{term} → {target}" for term, target in flat.items()))

@@ -280,6 +280,22 @@ def test_user_json_uses_nested_input_but_keeps_entry_order(builder):
     assert f"<translation_entries>\n{expected}\n</translation_entries>" in user_content
 
 
+def test_related_terms_take_first_three_distinct_candidates_after_direct_matches(builder):
+    messages = builder.build_translation_prompt(
+        [_entry("a", "Speak to the hero."), _entry("b", "Talk to the hero.")],
+        {},
+        "对话",
+        terms_by_entry={"a": {"Hero": "英雄"}, "b": {"Hero": "英雄"}},
+        related_terms_by_entry={
+            "a": {"ＨＥＲＯ": "旧译", "B": "乙", "b": "变体", "C": "丙", "A": "甲", "D": "丁"},
+            "b": {"hero": "旧译"},
+        },
+    )
+    payload = _translation_payload(messages[-1]["content"])
+    assert list(payload["a"]["related_terms"].items()) == [("B", "乙"), ("C", "丙"), ("A", "甲")]
+    assert payload["b"] == {"source": "Talk to the hero.", "terms": {"Hero": "英雄"}}
+
+
 def test_flat_terms_fallback_only_binds_terms_visible_in_same_source(builder):
     """旧调用未传逐条映射时，不把不可定位的平面术语复制给所有条目。"""
     entries = [_entry("dragon", "Dragon attacks"), _entry("other", "Hello")]
@@ -370,6 +386,7 @@ def test_fallback_defaults_when_prompt_toml_missing(monkeypatch):
     directives = extract_prompt_cache_directives(msgs)[1]
     assert [d["breakpoint"] for d in directives] == ["A", "B"]
     assert "Simplified Chinese" in msgs[0]["content"]
+    assert "related_terms" in msgs[0]["content"]
     assert '"results":' not in msgs[0]["content"]
     assert '"entry_id":' not in msgs[0]["content"]
 

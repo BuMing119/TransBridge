@@ -56,7 +56,7 @@ class _PromptBuilder:
     def __init__(self, *_args, **_kwargs) -> None:
         self.calls: list[dict] = []
 
-    def build_translation_prompt(self, entries, terms, batch_type, *, terms_by_entry=None):
+    def build_translation_prompt(self, entries, terms, batch_type, *, terms_by_entry=None, related_terms_by_entry=None):
         payload = {
             "keys": [entry.key for entry in entries],
             "terms": dict(terms),

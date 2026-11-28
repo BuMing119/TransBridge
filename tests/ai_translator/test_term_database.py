@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import json
+from threading import Lock
 from types import SimpleNamespace
 
+import pytest
+
+from transbridge.ai_translator.prompt_builder import PromptBuilder
 from transbridge.ai_translator.term_database import TermDatabaseManager, TermEntry
+from transbridge.ai_translator.translation_request import translation_request
 
 
 def _entry(key: str, original: str):
@@ -187,7 +193,8 @@ def test_semantic_top_three_results_preserve_query_ownership_and_duplicate_origi
 
     assert calls == [(["first query", "first query", "second query"], 3)]
     assert scoped.flat_terms == {"A": "甲", "B": "乙", "C": "丙", "D": "丁"}
-    assert scoped.terms_by_entry == {
+    assert scoped.terms_by_entry == {"first-1": {}, "first-2": {}, "second": {}}
+    assert scoped.related_terms_by_entry == {
         "first-1": {"A": "甲", "B": "乙", "C": "丙"},
         "first-2": {"A": "甲", "B": "乙", "C": "丙"},
         "second": {"B": "乙", "D": "丁"},
@@ -205,6 +212,58 @@ def test_batch_limit_uses_existing_priority_and_filters_entry_bindings():
         "exact": {"Exact": "精确"},
         "forward": {},
     }
+
+
+@pytest.mark.parametrize("contextual", [False, True])
+def test_request_separates_ranked_candidates_after_fresh_terms_arrive(contextual):
+    entries = [_entry("a", "Ask the Hero."), _entry("b", "Ask the stranger."), _entry("c", "Farewell.")]
+    candidates = {"hero": "候选英雄", "Whiterun": "雪漫", "Riften": "裂谷", "Solitude": "独孤"}
+
+    def search(originals, *, top_k):
+        assert top_k == 3
+        return {
+            text: [SimpleNamespace(term=k, translation=v) for k, v in candidates.items()][:top_k]
+            for text in originals
+            if text != "Farewell."
+        }
+
+    manager = _manager([], SimpleNamespace(available=True, search_hybrid_batch=search, search_batch=search))
+    manager._uses_project_context = lambda: contextual
+    manager.lookup_context_for_entry = lambda _entry: None
+    manager._snapshot_identity = lambda _context: "legacy-global"
+    manager._vector_lock = Lock()
+    shared_terms = {}
+    request = translation_request(
+        manager=manager,
+        builder=PromptBuilder(),
+        entries=entries,
+        batch_type="对话",
+        config=SimpleNamespace(),
+        shared_terms=shared_terms,
+        terms_lock=Lock(),
+        required_terms={},
+        effective_required={},
+        log=lambda _: None,
+    )
+    matches = request.prepare()
+    shared_terms["Hero"] = "英雄"
+    messages = request.finalize(matches)
+    payload = json.loads(messages[-1]["content"].split("<translation_entries>")[1].split("</translation_entries>")[0])
+
+    assert "related_terms" in messages[0]["content"]
+    assert payload == {
+        "a": {
+            "source": entries[0].original,
+            "terms": {"Hero": "英雄"},
+            "related_terms": {"Whiterun": "雪漫", "Riften": "裂谷"},
+        },
+        "b": {
+            "source": entries[1].original,
+            "related_terms": {"hero": "候选英雄", "Whiterun": "雪漫", "Riften": "裂谷"},
+        },
+        "c": {"source": entries[2].original},
+    }
+    assert list(payload["b"]["related_terms"]) == ["hero", "Whiterun", "Riften"]
 
 
 def test_empty_entries_and_non_positive_limit_return_empty_scopes():

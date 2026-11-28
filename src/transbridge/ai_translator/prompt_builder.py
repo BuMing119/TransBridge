@@ -37,6 +37,7 @@ from transbridge.infra.prompt_cache import (
     build_prompt_cache_key,
 )
 
+from .related_terms import select_related_terms
 from .structured_schemas import TERM_EXTRACTION_OUTPUT_SCHEMA, TRANSLATION_OUTPUT_SCHEMA
 
 # ── 翻译模式归一化 ─────────────────────────────────────────────────────────────
@@ -85,6 +86,7 @@ _DEFAULT_TRANSLATION_COMMON_SYSTEM = (
     "1. Produce natural, fluent translations that follow $target_lang conventions.\n"
     "2. Each entry's terms are fallible reference material for that entry. Prefer consistent names for the same "
     "entity, but use context to resolve ambiguous, erroneous or inapplicable mappings; do not force them into text.\n"
+    "Use related_terms only when the source supports the same referent. Keep generic references generic.\n"
     "3. Preserve source markers such as <br>, [pagebreak], \\n, and format placeholders such as %s.\n"
     "4. Return only the structured translation result, with no explanations or comments.\n"
     "5. Return exactly one translation for every input entry and preserve each entry ID exactly.\n"
@@ -269,6 +271,7 @@ class PromptBuilder:
         batch_type: str,
         *,
         terms_by_entry: Mapping[str, Mapping[str, str]] | None = None,
+        related_terms_by_entry: Mapping[str, Mapping[str, str]] | None = None,
     ) -> list[dict]:
         translation_mode = self._translation_mode(batch_type)
 
@@ -288,11 +291,16 @@ class PromptBuilder:
         scoped_terms = terms_by_entry if terms_by_entry is not None else self._scope_flat_terms(entries, matched_terms)
         input_payload: dict[str, dict[str, object]] = {}
         for entry in entries:
+            key = ai_entry_key(entry)
             item: dict[str, object] = {"source": entry.original}
-            entry_terms = scoped_terms.get(ai_entry_key(entry), {})
+            entry_terms = scoped_terms.get(key, {})
             if entry_terms:
                 item["terms"] = dict(entry_terms)
-            input_payload[ai_entry_key(entry)] = item
+            if related_terms_by_entry and (candidates := related_terms_by_entry.get(key)):
+                related = select_related_terms(entry_terms, candidates)
+                if related:
+                    item["related_terms"] = related
+            input_payload[key] = item
         input_json = json.dumps(input_payload, ensure_ascii=False, indent=2)
         user_content = self._render(
             self._translation_user_tpl,
