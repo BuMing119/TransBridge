@@ -2382,7 +2382,7 @@ wheels = [
 
 [[package]]
 name = "transbridge"
-version = "0.2.1.17"
+version = "0.2.1.18"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
