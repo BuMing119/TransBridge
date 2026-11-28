@@ -19,7 +19,9 @@ def source_spans(source: str, term: str) -> tuple[tuple[int, int], ...]:
     return tuple(match.span() for match in re.finditer(pattern, source))
 
 
-def literal_spans(text, needle):
+def literal_spans(text, needle, *, overlapping=False):
+    if overlapping and needle:
+        return tuple(match.span(1) for match in re.finditer(rf"(?=({re.escape(needle)}))", text))
     return tuple(match.span() for match in re.finditer(re.escape(needle), text)) if needle else ()
 
 
@@ -34,12 +36,15 @@ class OccurrenceAnalysis:
     reason: str = ""
 
 
-def analyze_occurrences(entry_key, original, text, plugin_id, mappings, candidates, target_term_keys=frozenset()):
+def analyze_occurrences(
+    entry_key, original, text, plugin_id, mappings, candidates, target_term_keys=frozenset(), *, required_keys=None
+):
     """Counts prioritize work; matching counts are a heuristic, not semantic proof."""
     by_key = {mapping.term_key: mapping for mapping in mappings}
     source = {key: source_spans(original, mapping.original) for key, mapping in by_key.items()}
-    old = {key: literal_spans(text, mapping.base_translation) for key, mapping in by_key.items()}
-    target = {key: literal_spans(text, mapping.translation) for key, mapping in by_key.items()}
+    strict = required_keys is not None
+    old = {key: literal_spans(text, mapping.base_translation, overlapping=strict) for key, mapping in by_key.items()}
+    target = {key: literal_spans(text, mapping.translation, overlapping=strict) for key, mapping in by_key.items()}
     # A complete changed mapping owns an exact whole-entry source/translation pair.
     # Base-filled no-op names are context, never authority to freeze their components.
     exact = [
@@ -116,7 +121,11 @@ def analyze_occurrences(entry_key, original, text, plugin_id, mappings, candidat
         retained.append(candidate)
 
     counts = []
-    for key in dict.fromkeys(candidate.term_key for candidate in candidates):
+    target_occurrences = []
+    count_keys = dict.fromkeys(candidate.term_key for candidate in candidates)
+    if required_keys is not None:
+        count_keys.update(dict.fromkeys(sorted(required_keys)))
+    for key in count_keys:
         mapping = by_key[key]
         independent_targets = tuple(
             span
@@ -125,6 +134,8 @@ def analyze_occurrences(entry_key, original, text, plugin_id, mappings, candidat
             and not unrelated_container(key, span)
             and not completed_container(key, span)
         )
+        if strict:
+            target_occurrences.extend((span, key) for span in independent_targets)
         remaining_source = tuple(
             span
             for span in source[key]
@@ -140,16 +151,18 @@ def analyze_occurrences(entry_key, original, text, plugin_id, mappings, candidat
             )
         )
     request = AlignmentRequest(entry_key, original, text, plugin_id, tuple(retained), tuple(counts))
-    if not retained:
+    if not retained and not strict:
         return OccurrenceAnalysis(request, ())
     mismatch = [count for count in counts if count.source_count != count.old_count + count.target_count]
-    ordered = sorted(retained, key=lambda item: (item.start, item.end))
-    overlap = any(left.end > right.start for left, right in zip(ordered, ordered[1:]))
+    occurrences = [((item.start, item.end), item.term_key) for item in retained]
+    occurrences.extend(target_occurrences)
+    ordered = sorted(span for span, _ in occurrences)
+    overlap = any(left[1] > right[0] for left, right in zip(ordered, ordered[1:]))
     shared = any(
-        (candidate.start, candidate.end) in old[other_key] + target[other_key]
-        for candidate in retained
+        span in old[other_key] + target[other_key] and (not strict or not completed_container(other_key, span))
+        for span, term_key in occurrences
         for other_key in by_key
-        if other_key != candidate.term_key
+        if other_key != term_key
     )
     if mismatch or overlap or shared:
         detail = "；".join(
@@ -161,7 +174,8 @@ def analyze_occurrences(entry_key, original, text, plugin_id, mappings, candidat
             detail = f"{detail}；候选位置重叠" if detail else "候选位置重叠"
         if shared:
             detail = f"{detail}；同一区间对应多个术语" if detail else "同一区间对应多个术语"
-        return OccurrenceAnalysis(request, None, f"{detail}。已保留整条译文，可使用 AI 定位。")
+        action = "已跳过整条词典译文。" if strict else "已保留整条译文，可使用 AI 定位。"
+        return OccurrenceAnalysis(request, None, f"{detail}。{action}")
     return OccurrenceAnalysis(request, tuple(range(len(retained))))
 
 

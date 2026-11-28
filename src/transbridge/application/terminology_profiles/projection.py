@@ -11,7 +11,7 @@ from types import MappingProxyType
 
 from .models import ProfileOccurrenceBinding, ProfileTermMapping, TerminologyProfileContent, normalize_term
 from .occurrence_alignment import AlignmentResolver, checked_decision
-from .occurrence_matching import analyze_occurrences, candidate_for
+from .occurrence_matching import analyze_occurrences, candidate_for, literal_spans, source_spans
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +132,7 @@ class TerminologyProfileProjector:
         *,
         ignore_missing: bool = False,
         target_term_keys: frozenset[str] = frozenset(),
+        unavailable_term_keys: frozenset[str] | None = None,
     ) -> PreparedProfileProjector:
         cached = self._prepared
         if (
@@ -139,9 +140,12 @@ class TerminologyProfileProjector:
             and cached[0] is content
             and cached[1]._ignore_missing == ignore_missing
             and cached[1]._target_term_keys == target_term_keys
+            and cached[1]._unavailable_term_keys == unavailable_term_keys
         ):
             return cached[1]
-        prepared = PreparedProfileProjector(_profile_indexes(content), ignore_missing, self._resolver, target_term_keys)
+        prepared = PreparedProfileProjector(
+            _profile_indexes(content), ignore_missing, self._resolver, target_term_keys, unavailable_term_keys
+        )
         # Publish the pair together; concurrent callers retain their own frozen result.
         self._prepared = (content, prepared)
         return prepared
@@ -168,6 +172,8 @@ class PreparedProfileProjector:
     _ignore_missing: bool = False
     _resolver: AlignmentResolver | None = None
     _target_term_keys: frozenset[str] = frozenset()
+    # A set enables complete-entry projection, even when every term is paired.
+    _unavailable_term_keys: frozenset[str] | None = None
 
     def project(
         self, *, entry_key: str, original: str, common_translation: str, plugin_id: str | None = None
@@ -177,11 +183,35 @@ class PreparedProfileProjector:
             value = indexes.overrides[entry_key]
             return ProjectedTranslation(common_translation, value, used_override=True)
 
+        matches = indexes.matching(original, plugin_id)
+        unavailable = self._unavailable_term_keys
+        if unavailable is not None:
+            missing = tuple(
+                ProjectionDiagnostic(
+                    "term_mapping_unavailable",
+                    "当前作用域的术语缺少来源或目标译名，已跳过整条译文。",
+                    entry_key,
+                    mapping.term_key,
+                )
+                for mapping in matches
+                if mapping.term_key in unavailable
+            )
+            if missing:
+                return ProjectedTranslation(common_translation, common_translation, diagnostics=missing)
+        strict = unavailable is not None
+        binding_keys = (
+            {mapping.term_key for mapping in matches if mapping.translation != mapping.base_translation}
+            if strict
+            else set()
+        )
         diagnostics: list[ProjectionDiagnostic] = []
         replacements: list[_Replacement] = []
         bound_keys: set[str] = set()
+        bound_counts: Counter[str] = Counter()
 
         for binding in indexes.bindings.get(entry_key, ()):
+            if strict and binding.term_key not in binding_keys:
+                continue
             # The presence of an explicit binding is itself authoritative. If
             # it is stale or unmapped, do not fall through to heuristic
             # recognition and silently move the occurrence elsewhere.
@@ -207,16 +237,27 @@ class PreparedProfileProjector:
                     )
                 )
                 continue
-            if mapping.translation == binding.expected_text:
+            if strict:
+                bound_counts[binding.term_key] += 1
+            if mapping.translation == binding.expected_text and not strict:
                 continue
             replacements.append(_Replacement(binding.start, binding.end, mapping.translation, binding.term_key, True))
 
-        matches = indexes.matching(original, plugin_id)
         candidates = []
+        required_keys = set()
         for mapping in matches:
-            if mapping.term_key in bound_keys:
-                continue
             if mapping.translation == mapping.base_translation:
+                continue
+            if mapping.term_key in bound_keys:
+                if strict and bound_counts[mapping.term_key] != len(source_spans(original, mapping.original)):
+                    diagnostics.append(
+                        ProjectionDiagnostic(
+                            "binding_occurrence_count_mismatch",
+                            "受控位置没有覆盖原文中的全部术语，已跳过整条译文。",
+                            entry_key,
+                            mapping.term_key,
+                        )
+                    )
                 continue
             if not mapping.base_translation:
                 diagnostics.append(
@@ -228,8 +269,10 @@ class PreparedProfileProjector:
                     )
                 )
                 continue
-            spans = _literal_spans(common_translation, mapping.base_translation)
-            if not spans:
+            spans = literal_spans(common_translation, mapping.base_translation, overlapping=strict)
+            if strict:
+                required_keys.add(mapping.term_key)
+            elif not spans:
                 if self._ignore_missing or mapping.translation in common_translation:
                     continue
                 diagnostics.append(
@@ -243,7 +286,7 @@ class PreparedProfileProjector:
                 continue
             candidates.extend(candidate_for(mapping, common_translation, start, end) for start, end in spans)
 
-        if candidates and not diagnostics:
+        if (candidates or required_keys) and not diagnostics:
             candidates = [
                 candidate
                 for candidate in candidates
@@ -252,7 +295,14 @@ class PreparedProfileProjector:
                 )
             ]
             analysis = analyze_occurrences(
-                entry_key, original, common_translation, plugin_id, matches, candidates, self._target_term_keys
+                entry_key,
+                original,
+                common_translation,
+                plugin_id,
+                matches,
+                candidates,
+                self._target_term_keys,
+                required_keys=required_keys if strict else None,
             )
             selected = analysis.automatic
             if selected is None:
@@ -348,12 +398,6 @@ def _source_candidate_indexes(buckets: Mapping[str, tuple[int, ...]], source_nor
     for key in bucket_keys:
         candidates.update(buckets.get(key, ()))
     return tuple(sorted(candidates))
-
-
-def _literal_spans(text: str, needle: str) -> tuple[tuple[int, int], ...]:
-    if not needle:
-        return ()
-    return tuple((match.start(), match.end()) for match in re.finditer(re.escape(needle), text))
 
 
 def _without_overlaps(replacements: list[_Replacement]) -> tuple[tuple[_Replacement, ...], tuple[_Replacement, ...]]:
