@@ -1,5 +1,7 @@
 # 变更日志索引
 
+- 2026-11-28：[AI 初译按原文发送最多三个语义候选](ai-translation/story-16-entry-scoped-terminology/2026-11-28-002-related-terms.md)。
+
 - 2026-11-28：[词典按默认译名入库，按工程实际方案套用](translation-memory/story-11-to-13/2026-11-28-006-dictionary-default-terminology.md)。
 
 - 2026-11-28：[工程保存时只将变更的词条存入词典](translation-memory/story-11-to-13/2026-11-28-005-incremental-dictionary-save.md)，含 10 万条分页工程的新旧流程对照实测。
