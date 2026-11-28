@@ -7,7 +7,7 @@
 
 ## 目标与验收
 
-TM 保存 locale/Stage/provenance/dictionary source；Key migration 使用 namespace/fingerprint；冲突可见并显式仲裁；不同 locale 不串用，locked-empty 阻断发布。
+调用方显式提供的内存 TM 候选保留 locale/Stage/provenance/dictionary source；Key migration 使用 namespace/fingerprint；冲突可见并显式仲裁；不同 locale 不串用，locked-empty 阻断发布。
 
 ## 数据流与接口
 
@@ -15,7 +15,7 @@ source collections + fingerprints → KeyMigrationPlan(match/conflict/unmatched)
 
 ## 实施步骤
 
-1. 扩展 DictionaryEntry schema：source locale、target locale、stage、provenance、dictionary id/revision、source namespace。
+1. 内存候选保留 source locale、target locale、stage、provenance、dictionary id/revision、source namespace 和 fingerprint。
 2. KeyMigrator 返回计划和诊断，不按文本相同静默覆盖；fingerprint 变化标 stale。
 3. 查询按 locale/source/scope 优先，所有冲突保留候选及理由。
 4. StagePolicy 排除 hidden/locked；locked-empty 产生 publish blocker；AI 只处理未解决候选。
@@ -23,4 +23,4 @@ source collections + fingerprints → KeyMigrationPlan(match/conflict/unmatched)
 
 ## 测试、边界与迁移
 
-覆盖多 locale、多词典同键/同文本冲突、source change、STALE、hidden/locked/empty 和取消；旧 TM JSON 迁移生成备份/报告，无法推导 locale 的记录不自动启用。回退允许只读查询旧词典，不允许直接套用正式集合。
+覆盖多 locale、多来源同键/同文本冲突、source change、STALE、hidden/locked/empty 和取消。缺少显式 TM 候选时，继续使用归档迁移结果与可选 AI 翻译。FOMOD 不读取或迁移磁盘词典。

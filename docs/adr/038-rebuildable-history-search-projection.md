@@ -8,10 +8,10 @@
 
 ## 背景与约束
 
-FR29 需要通过统一搜索窗口检索三种已有资产：Project/Variant 的完整译文、`.tbdict` 翻译记忆和当前生效项目术语；用户可以同时打开多个窗口，并在每个窗口独立选择全部来源、单个 Project 或单个词典。这三类数据具有不同所有者和存储方式：
+FR29 需要通过统一搜索窗口检索三种已有资产：Project/Variant 的完整译文、SQLite 翻译词典和当前生效项目术语；用户可以同时打开多个窗口，并在每个窗口独立选择全部来源、单个 Project 或单个词典库。这三类数据具有不同所有者和存储方式：
 
 - Project/Variant 由 ADR-018 的 JSON repository 拥有；Variant 保存完整 `EntryKey` 与译文状态，但不复制原文，原文从 Project 登记的保存来源成果恢复；
-- `.tbdict` 由翻译记忆模块拥有，按 mod 文件分库；
+- SQLite 翻译词典由 FR15.1 的词典服务拥有，按游戏、源语言和目标语言分区，每个分区包含个人库和具名主库；
 - 项目术语由 ADR-034 的每 Project SQLite repository 拥有，并按 Project/Variant 保存不可变发布版本。
 
 直接把任何一类资产复制成新的可编辑“总库”会制造第四个权威状态，并产生删除、冲突、版本和写回语义。另一方面，每次键入都重新解析所有 Project 来源或遍历全部术语版本无法满足搜索响应预算。搜索必须只读、可追溯、失败隔离，并且不扩张 `AppContext` 或让 PyQt 直接读取存储文件。
@@ -31,7 +31,7 @@ HistorySearchIndexPort + HistoryRecordProvider ports
         ↑
 Project/Variant provider  TM provider  Terminology provider
         ↓                    ↓                ↓
-V2 repositories       .tbdict model     terminology repository
+V2 repositories       SQLite libraries  terminology repository
 SavedProjectSourcePreparer
 ```
 
@@ -39,7 +39,7 @@ SavedProjectSourcePreparer
 
 ### 2. 使用可重建 SQLite 投影，而不是第四个权威存储
 
-搜索索引使用单独 SQLite 文件作为派生读模型。它只保存搜索所需的规范文本、记录类型、语言方向、作用域、状态和来源投影；不保存可被业务写回使用的权威对象。索引可随时删除并由三类权威来源完整重建，不参与 Project/Variant 保存、术语发布或 `.tbdict` 更新事务。
+搜索索引使用单独 SQLite 文件作为派生读模型。它只保存搜索所需的规范文本、记录类型、语言方向、作用域、状态和来源投影；不保存可被业务写回使用的权威对象。索引可随时删除并由三类权威来源完整重建，不参与 Project/Variant 保存、术语发布或词典更新事务。
 
 刷新在同目录 staging 数据库中完整构建、校验后原子替换当前索引。失败或取消时保留上一份完整索引并清理本次 staging；不得留下半刷新结果。查询与替换由索引 adapter 的进程内锁协调，避免 Windows 上替换打开数据库文件失败；同一窗口只允许一个刷新任务。
 
@@ -55,7 +55,7 @@ Project provider 从只读 Project catalog 枚举可用 Project，以 `ProjectRe
 
 ### 4. 翻译记忆与术语使用只读投影
 
-`.tbdict` provider 按文件独立读取并用现有 `Dictionary` 模型校验。一个文件损坏只产生一个诊断；搜索刷新不得调用会改名隔离损坏文件的维护型加载路径。原文和译文非空的词条进入只读索引；旧数据中 disabled 的记录仍可被人工搜索，但明确显示 disabled，且不改变其自动套用资格。来源使用词典 `mod_file_id`、scope、locale 和条目来源字段。
+词典 provider 经词典服务只读枚举全部分区的个人库和具名主库，并投影有双语文本的记录。来源提供游戏、语言方向、库名和插件标识；库身份由游戏、语言方向与库名共同确定。词典数据库不可读时生成词典诊断，其他 provider 继续刷新。包含旧 `.tbdict` 数据的索引版本失效，由当前权威来源重建。
 
 术语 provider 对每个可用 Project 的每个已保存 Variant 查询当前 effective version，只纳入 `TermDecision.is_effective` 的决定。草稿、历史版本、suppressed、review-required 和 unresolved 决定不进入首版普通结果。项目作用域和插件作用域使用不同 scope key。
 
@@ -94,7 +94,7 @@ record_kind + normalized_original + normalized_translation
 
 ### 每次键入直接扇出查询三套存储
 
-`.tbdict` 和术语可直接遍历，但 Project 原文需要重新解析登记来源；延迟、线程和失败语义会随每次按键重复，拒绝。
+每次按键都要读取三类资产，重复承担读取延迟、线程调度和来源失败处理的成本，拒绝。
 
 ### 窗口打开时建立纯内存快照
 
@@ -104,7 +104,7 @@ record_kind + normalized_original + normalized_translation
 
 会混淆完整句段与术语、丢失 Variant/作用域语义，并使只读搜索产生业务写入，拒绝。
 
-### 首版只搜索 `.tbdict`
+### 首版只搜索翻译词典
 
 无法找到用户已经保存但从未“存为词典”的译文，违背 FR29 的核心目标，拒绝。
 
@@ -120,6 +120,6 @@ record_kind + normalized_original + normalized_translation
 
 1. 新增搜索应用合同和 SQLite 生产 adapter；不修改任何权威 schema。
 2. 接入三类 provider 和后台刷新，首次打开时在无索引或显式刷新时构建。
-3. 接入独立窗口与菜单 intent；旧翻译词典和术语工作台入口保持不变。
-4. 若生产索引出现问题，禁用 FR29 入口或删除派生索引即可回退；Project、Variant、`.tbdict` 和术语数据无需回滚。
+3. 接入独立窗口与菜单 intent；翻译词典和术语工作台继续通过各自的窗口访问。
+4. 若生产索引出现问题，禁用 FR29 入口或删除派生索引即可回退；Project、Variant、翻译词典和术语数据无需回滚。
 5. 增量刷新、历史术语版本、远端 ParaTranz 和“采用译文”均通过后续独立需求扩展，不在本 ADR 中预留隐式写路径。

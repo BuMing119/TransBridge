@@ -1,6 +1,6 @@
 # ADR-014: FOMOD 安装包翻译流水线 + 通用翻译记忆系统
 
-- **状态**: 已接受
+- **状态**: FOMOD 事务流水线决策已接受，当前翻译记忆来源见末节。早期桌面词典决策已由 [FR15.1 主库与个人库](../requirements.md#fr151-翻译词典) 和 [实施计划](../../plans/translation-memory/plan.md) 取代。
 - **日期**: 2026-08-14
 - **决策者**: BuMing
 - **对应需求**: [FR15](../requirements.md)
@@ -235,8 +235,10 @@ for esp in new_dir 插件:
 
 **影响**: `pipeline.py` 新增 `_translate_plugins`/`_ai_translate`/`_write_back` 三个私有方法；`FomodPipeline` 构造与 `run()` 增加 `llm_config`/`tm_manager`/`progress_callback`/`stop_event` 注入参数；复用 `ai_translator.translator.AutoTranslator`（`TranslatorConfig(llm_config, esp_path)`）
 
-### 更新：2026-08-18 — Typed Transactional FOMOD Pipeline（已接受）
+### 当前决策：Typed Transactional FOMOD Pipeline（2026-08-18 接受）
 
 FOMOD/TM 资产和“FOMOD 只产出新安装包”的边界继续有效；流水线改由 application use case 编排，现有 `FomodPipeline` 作为 compatibility adapter。每个阶段返回 typed outcome，统一使用 ADR-019 的 JobSpec、取消和互斥终态；fatal/failed/cancelled 阻止发布，所有中间产物进入 staging，验证后原子发布。
 
-TM 记录 SHALL 保存 locale、Stage、provenance、source namespace 和 revision；匹配使用 ADR-017 EntryKey，外部 ID 不参与内部匹配。`locked(9)` 空译文阻断正式发布，hidden 写原文。归档处理统一使用 ADR-015 的 ArchivePolicy；FOMOD XML 更新保留命名空间、未翻译节点、属性和图片引用。旧“扩展名白名单即可保证安全/保真”和直接逐阶段 mutation 被本更新取代。
+FOMOD 的翻译记忆候选仅由调用方显式提供，保留 locale、Stage、provenance、source namespace、fingerprint 和 revision 等证据；匹配使用 ADR-017 EntryKey，外部 ID 不参与内部匹配。未提供候选时，流程继续使用旧归档迁移结果及可选的 AI 翻译。流水线没有磁盘词典读取入口。桌面 SQLite 词典服务于 FR15.1，缺少 FOMOD 所需的来源与状态证据。前文 2026-08-14 的默认词典读取、归档译文写词典及冲突对话框为历史设计。
+
+`locked(9)` 空译文阻断正式发布，hidden 写原文。归档处理统一使用 ADR-015 的 ArchivePolicy；FOMOD XML 更新保留命名空间、未翻译节点、属性和图片引用。旧“扩展名白名单即可保证安全/保真”和直接逐阶段 mutation 被本决策取代。

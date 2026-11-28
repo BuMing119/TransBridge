@@ -11,7 +11,7 @@
 
 把 FOMOD 的发现、解包、差异、迁移、翻译、XML 更新、资源过滤、构建和发布建模为 typed stages。所有中间产物进入 staging；致命失败或取消阻断发布；target language、Stage、TM provenance 与报告贯通。
 
-现有 builder、XML、TM、fileops 和 UI 资产作为 adapters 保留。本 Plan 不开放未经支持矩阵验证的格式，也不删除旧入口。
+builder、XML、fileops 和 UI 资产作为 adapters 使用。归档格式受支持矩阵约束。翻译记忆通过调用方显式提供的内存候选接入，按 FR23.3 校验；流水线不读取磁盘词典。
 
 ## Story 清单
 
@@ -41,7 +41,7 @@
 
 - **目标**：统一插件翻译、FOMOD XML、TM 套用和 AI 候选的身份/语言/冲突语义。
 - **文件落点**：`translation_memory/`、`migrator/` adapters、FOMOD translation stages、CandidateSet commit。
-- **实施**：TM 保存 locale/Stage/provenance/dictionary source；KeyMigrator 使用 source namespace/fingerprint；冲突输出候选并按显式策略仲裁；hidden/locked/empty 遵守 StagePolicy；正式状态只在唯一 commit 点更新。
+- **实施**：内存 TM 候选保留 locale/Stage/provenance/dictionary source；KeyMigrator 使用 source namespace/fingerprint；冲突输出候选并按显式策略仲裁；hidden/locked/empty 遵守 StagePolicy；正式状态只在唯一 commit 点更新。
 - **验收**：不同 locale 不串用；STALE/冲突可见；TM/AI/XML 报告来源可追溯；locked-empty 阻断正式发布。
 - **测试**：多词典/多 locale fixtures、冲突、source change、Stage 矩阵、候选提交/取消。
 

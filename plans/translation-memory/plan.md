@@ -3,30 +3,21 @@
 **对应需求**: FR15.1（通用翻译记忆系统）
 **技术模块**: backend + ui
 **业务域**: 翻译基础设施
-**状态**: 已实现（S01-05 + S06-10 词典粒度重构）
-**创建日期**: 2026-08-14
+**状态**：S11–13 已实现（2026-11-26）。验证范围见[词典库](../../docs/changelogs/translation-memory/story-11-to-13/2026-11-26-001-dictionary-libraries.md)及[只读查询窗口](../../docs/changelogs/translation-memory/story-11-to-13/2026-11-26-002-read-only-lookup.md)的交付记录。 2026-11-27 补充[保存入库与套用条件](../../docs/changelogs/translation-memory/story-11-to-13/2026-11-27-003-save-and-apply.md)与[词典设置](../../docs/changelogs/translation-memory/story-11-to-13/2026-11-27-004-dictionary-settings.md)。
 
-## 功能边界
+## 当前交付计划
 
-### 范围内
+对应 [FR15.1](../../docs/requirements.md)。以下 Story 11 至 13 接替早期桌面词典方案，01 至 10 为历史实施记录。
 
-- 两档 scope（project 项目专属 / global 全局共享）+ 单表权威对象 + 双索引（键索引 `key_index` / 文本索引 `text_index`）模型
-- 词典持久化存储（本地 JSON，长期累积，多词典库并存，原子写 + schema_version）
-- 词典查询：键索引优先（命中即停，返回 EXACT/STALE）+ 文本索引兜底，按 project → global 逐级兜底
-- 「存为词典」：将当前集合（或选中条目）中的已翻译条目写入词典（键索引 + 文本索引）
-- 「套用到集合」：批量按词典填补空译文，产出键命中/文本命中/未命中/需复核统计
-- 词典标签（字段名 `tags`，仅管理/筛选展示，不参与匹配纪律）
-- GUI 集成：存为词典入口 + 词典库管理面板
+S11、S12 已接入工程的实际译名方案。保存整句时使用默认译名，套用时转换到目标正文方案。见[实现、回归及性能实测](../../docs/changelogs/translation-memory/story-11-to-13/2026-11-28-006-dictionary-default-terminology.md)。
 
-### 范围外
+- **S11 SQLite 保存。** 在 `translation_memory/` 实现按游戏和语言分区的个人与具名主库、活动主库持久化、事务化增量保存。验证修订重存、不同来源同文异译、取消与语言隔离。工程保存时按上次成功入库的版本读取当前来源，首次全读，后续只读变更词条。见[实现与 10 万条实测](../../docs/changelogs/translation-memory/story-11-to-13/2026-11-28-005-incremental-dictionary-save.md)。
+- **S12 套用与共享入口。** 统一桌面、助手和插件打开时的来源识别、个人库及当前主库候选排序、阶段限制和修订校验。验证补丁覆盖、文本兜底、库间优先级及稳定性。历史搜索通过只读接口读取 SQLite 中各分区的全部库。
+- **S13 独立词典查询窗口。** 翻译菜单及编辑器选区共用只读查询窗口。后台读取当前游戏及语言分区的个人库和所有具名主库，按双语文本检索；表格呈现来源文件、命中高亮和自动换行。验证无来源、请求取消和语言分区切换场景。
 
-- 「导入翻译」能力（已存在：XT/EET/ESP 解析 → `TranslationEntryCollection`）
-- 批量转换词典（见 `docs/MEMO.md` MEMO-001，后续）
-- FOMOD 翻译流水线（独立 Epic，后续）
-- TMX 标准格式读写
-- 语义/模糊匹配（本次仅精确匹配，见 ADR-014 决策 2）
+**旧格式退役**：`.tbdict` 文件留在原位置，应用移除读取、导入和迁移路径。回归覆盖旧文件原样保留、套用和查询跳过旧记录、历史搜索排除旧缓存记录，以及 FOMOD 显式候选边界。
 
-## Story 清单
+## 历史 Story
 
 ### Story 01: 词典数据模型与持久化存储
 

@@ -64,7 +64,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-011](adr/011-graph-orchestration-engine.md) | 自研有状态图编排引擎（StatefulDAGExecutor，零新依赖） | ✅ 历史与 Task workload 增量已接受 |
 | [ADR-012](adr/012-safety-observability-mcp.md) | 安全护栏（中间件链）+ 可观测性（pyqtSignal遥测）+ MCP Server（stdio） | ✅ 历史与 MCP 拓扑/安全增量已接受 |
 | [ADR-013](adr/013-vector-retrieval-enhancement.md) | 向量语义检索增强（BM25 混合检索 + 增量索引 + 编码缓存） | ✅ 历史与 capability/依赖增量已接受 |
-| [ADR-014](adr/014-fomod-translation-memory.md) | FOMOD 翻译流水线 + 通用翻译记忆（键+文本分层匹配 / 独立双包 / py7zr+rarfile 自包含 / 精确匹配） | ✅ 历史与事务流水线增量已接受 |
+| [ADR-014](adr/014-fomod-translation-memory.md) | FOMOD 事务流水线与显式翻译记忆候选 | ✅ 已接受；早期词典设计为历史记录 |
 | [ADR-015](adr/015-generic-file-entry-tools.md) | 通用文件与词条工具（fileops/migrator 独立包 / archive·editor·translator namespace / 键对齐与词典套用严格分离） | ✅ 历史与 ArchivePolicy 增量已接受 |
 | [ADR-016](adr/016-modular-monolith-application-composition.md) | 模块化单体应用层、Ports/Adapters 与 Composition Root | ✅ 已接受（2026-08-18） |
 | [ADR-017](adr/017-translation-io-kernel-v2.md) | Translation I/O Kernel V2、双层身份与原子发布 | ✅ 已接受（2026-08-18） |
@@ -72,6 +72,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-019](adr/019-unified-task-runtime.md) | Unified Task Runtime、互斥终态与幂等恢复 | ✅ 已接受（2026-08-18） |
 | [ADR-021](adr/021-ui-presentation-modularization.md) | UI 展示层模块化：View/Presenter 边界、显式窄依赖、规模门禁（FR25） | ✅ 已接受并实施（2026-08-19） |
 | [ADR-034](adr/034-project-terminology-build-versioning-reporting.md) | 项目全来源术语构建、不可变版本与统一报告事实源（FR5.16） | 📝 提议（2026-08-28） |
+| [ADR-038](adr/038-rebuildable-history-search-projection.md) | 历史翻译与术语搜索的可重建投影；词典来源为 SQLite 库 | 📝 提议（2026-09-06） |
 | [ADR-044](adr/044-source-file-update.md) | 源文件更新、全部翻译版本迁移与可恢复事务 | 📝 提议（2026-10-01） |
 
 > 详细架构文档见 [dev/ARCHITECTURE.md](dev/ARCHITECTURE.md)（模块依赖、数据流、全局状态管理、设计决策）。
@@ -138,7 +139,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [session-controller](../plans/session-controller/plan.md) | ✅ 全部完成（2/2） | 2 |
 | [session-manager](../plans/session-manager/plan.md) | ✅ 全部完成（3/3） | 3 |
 | [task-monitor](../plans/task-monitor/plan.md) | ✔️ 已实现 (2/2 Story + QA 通过) | 2 |
-| [translation-memory](../plans/translation-memory/plan.md) | ✅ 全部完成 (S01-10，含词典粒度重构) | 10 |
+| [translation-memory](../plans/translation-memory/plan.md) | S11–13 为 SQLite 主库与个人库；S01–10 为历史记录 | 13 |
 | [stage-unification](../plans/stage-unification/plan.md) | ✔️ 已实现 | 3 |
 | [label-system](../plans/label-system/plan.md) | ✔️ 已实现 | 4 |
 | [project-persistence](../plans/project-persistence/plan.md) | ✔️ 已实现 | 8 |
